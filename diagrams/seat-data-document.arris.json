@@ -3,7 +3,7 @@
   "format": "arris",
   "format_version": 1,
   "document_id": "seat-data-document",
-  "revision": 7,
+  "revision": 8,
   "nodes": [
     {
       "id": "card",
@@ -11,7 +11,7 @@
       "schema_version": 1,
       "provider": "arris.architecture",
       "created_revision": 1,
-      "updated_revision": 1,
+      "updated_revision": 8,
       "hierarchies": {
         "group": {
           "parent": "card.group"
@@ -21,9 +21,10 @@
         }
       },
       "domain_attributes": {
-        "display_name": "hrc.document",
+        "plane_index": 0,
         "order": 37,
-        "order_authored": true,
+        "display_name": "hrc.annotation",
+        "provider_version": "0.1.0",
         "placement": {
           "transform": {
             "translate": [
@@ -32,20 +33,20 @@
             ]
           }
         },
-        "plane_index": 0,
-        "provider_version": "0.1.0"
+        "order_authored": true
       },
       "payload": {
+        "body": "",
         "bullets": [
-          "ns + id, JSON ≤ 64 KB",
-          "c2 card keyed by attention.at",
-          "vesta_ask on Vesta's own generation"
+          "ns · kind · id, JSON ≤ 64 KB",
+          "c2.card keyed by attention.at",
+          "any new kind: no HRC change"
         ],
         "emphasis": false,
         "icon": "",
-        "kicker": "NODE · SEAT DOCUMENT",
-        "meta": "key: hostSessionId, ns, docId",
-        "name": "hrc.document",
+        "kicker": "NODE · ANNOTATION",
+        "meta": "key: subject, ns, kind, id",
+        "name": "hrc.annotation",
         "presentation": {
           "caption": "card.caption",
           "group": "card.group",
@@ -61,7 +62,7 @@
       "schema_version": 1,
       "provider": "arris.reference-core",
       "created_revision": 1,
-      "updated_revision": 1,
+      "updated_revision": 8,
       "hierarchies": {
         "group": {
           "parent": "card.group"
@@ -71,16 +72,10 @@
         }
       },
       "domain_attributes": {
-        "bindings": [
-          {
-            "input": "caption_region",
-            "output_port": "caption",
-            "producer": "card.shape"
-          }
-        ],
-        "display_name": "card.caption",
+        "plane_index": 0,
         "order": 35,
-        "order_authored": true,
+        "display_name": "card.caption",
+        "provider_version": "0.6.0",
         "placement": {
           "transform": {
             "translate": [
@@ -89,13 +84,19 @@
             ]
           }
         },
-        "plane_index": 0,
-        "provider_version": "0.6.0",
+        "order_authored": true,
+        "bindings": [
+          {
+            "input": "caption_region",
+            "producer": "card.shape",
+            "output_port": "caption"
+          }
+        ],
         "style_bindings": [
           {
             "property": "fill",
-            "slot": "colour",
-            "style": "lead"
+            "style": "lead",
+            "slot": "colour"
           }
         ]
       },
@@ -109,158 +110,158 @@
         "padding": 8.0,
         "runs": [
           {
+            "start": 0,
             "end": 1,
             "face": "mono.regular",
-            "fill": {
-              "token": "hue.viridian.ink"
-            },
             "size": 10.0,
-            "start": 0,
-            "tracking": 6.0
-          },
-          {
-            "end": 21,
-            "face": "cond.semibold",
+            "tracking": 6.0,
             "fill": {
               "token": "hue.viridian.ink"
-            },
-            "size": 9.5,
+            }
+          },
+          {
             "start": 1,
-            "tracking": 0.9
+            "end": 18,
+            "face": "cond.semibold",
+            "size": 9.5,
+            "tracking": 0.9,
+            "fill": {
+              "token": "hue.viridian.ink"
+            }
           },
           {
-            "end": 22,
-            "start": 21
+            "start": 18,
+            "end": 19
           },
           {
-            "end": 34,
+            "start": 19,
+            "end": 33,
             "face": "sans.semibold",
             "fill": {
               "token": "graphite"
             },
             "size": 14.0,
-            "start": 22,
             "tracking": 0.0
           },
           {
-            "end": 35,
-            "start": 34
+            "start": 33,
+            "end": 34
           },
           {
+            "start": 34,
+            "end": 35,
+            "face": "sans.regular",
+            "size": 11.5,
+            "tracking": 0.0,
+            "fill": {
+              "token": "lead"
+            }
+          },
+          {
+            "start": 35,
             "end": 36,
             "face": "sans.regular",
+            "size": 11.5,
+            "tracking": 3.286,
             "fill": {
               "token": "lead"
-            },
-            "size": 11.5,
-            "start": 35,
-            "tracking": 0.0
+            }
           },
           {
-            "end": 37,
-            "face": "sans.regular",
-            "fill": {
-              "token": "lead"
-            },
-            "size": 11.5,
             "start": 36,
-            "tracking": 3.286
-          },
-          {
-            "end": 58,
+            "end": 64,
             "face": "sans.regular",
+            "size": 11.5,
+            "tracking": 0.0,
             "fill": {
               "token": "lead"
-            },
-            "size": 11.5,
-            "start": 37,
-            "tracking": 0.0
+            }
           },
           {
-            "end": 59,
-            "start": 58
+            "start": 64,
+            "end": 65
           },
           {
-            "end": 60,
+            "start": 65,
+            "end": 66,
             "face": "sans.regular",
+            "size": 11.5,
+            "tracking": 0.0,
             "fill": {
               "token": "lead"
-            },
-            "size": 11.5,
-            "start": 59,
-            "tracking": 0.0
+            }
           },
           {
-            "end": 61,
+            "start": 66,
+            "end": 67,
             "face": "sans.regular",
+            "size": 11.5,
+            "tracking": 3.286,
             "fill": {
               "token": "lead"
-            },
-            "size": 11.5,
-            "start": 60,
-            "tracking": 3.286
+            }
           },
           {
-            "end": 90,
+            "start": 67,
+            "end": 96,
             "face": "sans.regular",
+            "size": 11.5,
+            "tracking": 0.0,
             "fill": {
               "token": "lead"
-            },
-            "size": 11.5,
-            "start": 61,
-            "tracking": 0.0
+            }
           },
           {
-            "end": 91,
-            "start": 90
+            "start": 96,
+            "end": 97
           },
           {
-            "end": 92,
+            "start": 97,
+            "end": 98,
             "face": "sans.regular",
+            "size": 11.5,
+            "tracking": 0.0,
             "fill": {
               "token": "lead"
-            },
-            "size": 11.5,
-            "start": 91,
-            "tracking": 0.0
+            }
           },
           {
-            "end": 93,
+            "start": 98,
+            "end": 99,
             "face": "sans.regular",
+            "size": 11.5,
+            "tracking": 3.286,
             "fill": {
               "token": "lead"
-            },
-            "size": 11.5,
-            "start": 92,
-            "tracking": 3.286
+            }
           },
           {
-            "end": 128,
+            "start": 99,
+            "end": 126,
             "face": "sans.regular",
+            "size": 11.5,
+            "tracking": 0.0,
             "fill": {
               "token": "lead"
-            },
-            "size": 11.5,
-            "start": 93,
-            "tracking": 0.0
+            }
           },
           {
-            "end": 129,
-            "start": 128
+            "start": 126,
+            "end": 127
           },
           {
-            "end": 158,
+            "start": 127,
+            "end": 153,
             "face": "mono.regular",
+            "size": 10.0,
+            "tracking": 0.0,
             "fill": {
               "token": "silver"
-            },
-            "size": 10.0,
-            "start": 129,
-            "tracking": 0.0
+            }
           }
         ],
         "size": 11.5,
-        "text": " NODE · SEAT DOCUMENT\nhrc.document\n• ns + id, JSON ≤ 64 KB\n• c2 card keyed by attention.at\n• vesta_ask on Vesta's own generation\nkey: hostSessionId, ns, docId",
+        "text": " NODE · ANNOTATION\nhrc.annotation\n• ns · kind · id, JSON ≤ 64 KB\n• c2.card keyed by attention.at\n• any new kind: no HRC change\nkey: subject, ns, kind, id",
         "tracking": 0.0,
         "vertical_align": "center"
       }
@@ -271,7 +272,7 @@
       "schema_version": 1,
       "provider": "arris",
       "created_revision": 1,
-      "updated_revision": 1,
+      "updated_revision": 8,
       "hierarchies": {
         "group": {
           "parent": "doc.group"
@@ -281,9 +282,9 @@
         }
       },
       "domain_attributes": {
-        "display_name": "hrc.document",
+        "plane_index": 0,
         "order": 0,
-        "plane_index": 0
+        "display_name": "hrc.annotation"
       },
       "payload": {}
     },
@@ -292,8 +293,8 @@
       "type": "arris.scenario.kicker_mark",
       "schema_version": 1,
       "provider": "arris.scenario",
-      "created_revision": 1,
-      "updated_revision": 1,
+      "created_revision": 8,
+      "updated_revision": 8,
       "hierarchies": {
         "group": {
           "parent": "card.group"
@@ -303,16 +304,10 @@
         }
       },
       "domain_attributes": {
-        "bindings": [
-          {
-            "input": "layout",
-            "output_port": "text_layout_v2",
-            "producer": "card.caption"
-          }
-        ],
+        "plane_index": 0,
+        "order": 78,
         "display_name": "card.mark",
-        "order": 36,
-        "order_authored": true,
+        "provider_version": "0.1.0",
         "placement": {
           "transform": {
             "translate": [
@@ -321,13 +316,19 @@
             ]
           }
         },
-        "plane_index": 0,
-        "provider_version": "0.1.0",
+        "order_authored": true,
+        "bindings": [
+          {
+            "input": "layout",
+            "producer": "card.caption",
+            "output_port": "text_layout_v2"
+          }
+        ],
         "style_bindings": [
           {
             "property": "fill",
-            "slot": "colour",
-            "style": "hue.viridian.line"
+            "style": "hue.viridian.line",
+            "slot": "colour"
           }
         ]
       },
@@ -424,7 +425,7 @@
       "schema_version": 1,
       "provider": "arris.reference-core",
       "created_revision": 1,
-      "updated_revision": 1,
+      "updated_revision": 8,
       "hierarchies": {
         "group": {
           "parent": "card.group"
@@ -434,17 +435,10 @@
         }
       },
       "domain_attributes": {
-        "attachments": {
-          "geometry": {
-            "parameters": {},
-            "schema_version": 1,
-            "type": "arris.attachment.box"
-          },
-          "ports": []
-        },
-        "display_name": "hrc.document",
+        "plane_index": 0,
         "order": 34,
-        "order_authored": true,
+        "display_name": "hrc.annotation",
+        "provider_version": "0.6.0",
         "placement": {
           "transform": {
             "translate": [
@@ -453,18 +447,25 @@
             ]
           }
         },
-        "plane_index": 0,
-        "provider_version": "0.6.0",
+        "order_authored": true,
+        "attachments": {
+          "geometry": {
+            "parameters": {},
+            "schema_version": 1,
+            "type": "arris.attachment.box"
+          },
+          "ports": []
+        },
         "style_bindings": [
           {
             "property": "fill",
-            "slot": "colour",
-            "style": "paper"
+            "style": "paper",
+            "slot": "colour"
           },
           {
             "property": "stroke",
-            "slot": "colour",
-            "style": "hue.viridian.line"
+            "style": "hue.viridian.line",
+            "slot": "colour"
           }
         ]
       },
@@ -485,7 +486,7 @@
       "schema_version": 1,
       "provider": "arris.architecture",
       "created_revision": 1,
-      "updated_revision": 1,
+      "updated_revision": 8,
       "hierarchies": {
         "group": {
           "parent": "cardprev.group"
@@ -495,9 +496,10 @@
         }
       },
       "domain_attributes": {
-        "display_name": "hrc.document (superseded)",
+        "plane_index": 0,
         "order": 42,
-        "order_authored": true,
+        "display_name": "hrc.annotation (superseded)",
+        "provider_version": "0.1.0",
         "placement": {
           "transform": {
             "translate": [
@@ -506,17 +508,16 @@
             ]
           }
         },
-        "plane_index": 0,
-        "provider_version": "0.1.0"
+        "order_authored": true
       },
       "payload": {
         "body": "Stays with its generation until it drops out",
         "bullets": [],
         "emphasis": false,
         "icon": "",
-        "kicker": "NODE · SEAT DOCUMENT",
+        "kicker": "NODE · ANNOTATION",
         "meta": "",
-        "name": "hrc.document (superseded)",
+        "name": "hrc.annotation (superseded)",
         "presentation": {
           "caption": "cardprev.caption",
           "group": "cardprev.group",
@@ -532,7 +533,7 @@
       "schema_version": 1,
       "provider": "arris.reference-core",
       "created_revision": 1,
-      "updated_revision": 1,
+      "updated_revision": 8,
       "hierarchies": {
         "group": {
           "parent": "cardprev.group"
@@ -542,16 +543,10 @@
         }
       },
       "domain_attributes": {
-        "bindings": [
-          {
-            "input": "caption_region",
-            "output_port": "caption",
-            "producer": "cardprev.shape"
-          }
-        ],
-        "display_name": "cardprev.caption",
+        "plane_index": 0,
         "order": 40,
-        "order_authored": true,
+        "display_name": "cardprev.caption",
+        "provider_version": "0.6.0",
         "placement": {
           "transform": {
             "translate": [
@@ -560,13 +555,19 @@
             ]
           }
         },
-        "plane_index": 0,
-        "provider_version": "0.6.0",
+        "order_authored": true,
+        "bindings": [
+          {
+            "input": "caption_region",
+            "producer": "cardprev.shape",
+            "output_port": "caption"
+          }
+        ],
         "style_bindings": [
           {
             "property": "fill",
-            "slot": "colour",
-            "style": "lead"
+            "style": "lead",
+            "slot": "colour"
           }
         ]
       },
@@ -580,56 +581,56 @@
         "padding": 8.0,
         "runs": [
           {
+            "start": 0,
             "end": 1,
             "face": "mono.regular",
-            "fill": {
-              "token": "hue.viridian.ink"
-            },
             "size": 10.0,
-            "start": 0,
-            "tracking": 6.0
-          },
-          {
-            "end": 21,
-            "face": "cond.semibold",
+            "tracking": 6.0,
             "fill": {
               "token": "hue.viridian.ink"
-            },
-            "size": 9.5,
+            }
+          },
+          {
             "start": 1,
-            "tracking": 0.9
+            "end": 18,
+            "face": "cond.semibold",
+            "size": 9.5,
+            "tracking": 0.9,
+            "fill": {
+              "token": "hue.viridian.ink"
+            }
           },
           {
-            "end": 22,
-            "start": 21
+            "start": 18,
+            "end": 19
           },
           {
-            "end": 47,
+            "start": 19,
+            "end": 46,
             "face": "sans.semibold",
             "fill": {
               "token": "graphite"
             },
             "size": 14.0,
-            "start": 22,
             "tracking": 0.0
           },
           {
-            "end": 48,
-            "start": 47
+            "start": 46,
+            "end": 47
           },
           {
-            "end": 92,
+            "start": 47,
+            "end": 91,
             "face": "sans.regular",
+            "size": 11.5,
+            "tracking": 0.0,
             "fill": {
               "token": "lead"
-            },
-            "size": 11.5,
-            "start": 48,
-            "tracking": 0.0
+            }
           }
         ],
         "size": 11.5,
-        "text": " NODE · SEAT DOCUMENT\nhrc.document (superseded)\nStays with its generation until it drops out",
+        "text": " NODE · ANNOTATION\nhrc.annotation (superseded)\nStays with its generation until it drops out",
         "tracking": 0.0,
         "vertical_align": "center"
       }
@@ -640,7 +641,7 @@
       "schema_version": 1,
       "provider": "arris",
       "created_revision": 1,
-      "updated_revision": 1,
+      "updated_revision": 8,
       "hierarchies": {
         "group": {
           "parent": "doc.group"
@@ -650,9 +651,9 @@
         }
       },
       "domain_attributes": {
-        "display_name": "hrc.document (superseded)",
+        "plane_index": 0,
         "order": 0,
-        "plane_index": 0
+        "display_name": "hrc.annotation (superseded)"
       },
       "payload": {}
     },
@@ -661,8 +662,8 @@
       "type": "arris.scenario.kicker_mark",
       "schema_version": 1,
       "provider": "arris.scenario",
-      "created_revision": 1,
-      "updated_revision": 1,
+      "created_revision": 8,
+      "updated_revision": 8,
       "hierarchies": {
         "group": {
           "parent": "cardprev.group"
@@ -672,16 +673,10 @@
         }
       },
       "domain_attributes": {
-        "bindings": [
-          {
-            "input": "layout",
-            "output_port": "text_layout_v2",
-            "producer": "cardprev.caption"
-          }
-        ],
+        "plane_index": 0,
+        "order": 79,
         "display_name": "cardprev.mark",
-        "order": 41,
-        "order_authored": true,
+        "provider_version": "0.1.0",
         "placement": {
           "transform": {
             "translate": [
@@ -690,13 +685,19 @@
             ]
           }
         },
-        "plane_index": 0,
-        "provider_version": "0.1.0",
+        "order_authored": true,
+        "bindings": [
+          {
+            "input": "layout",
+            "producer": "cardprev.caption",
+            "output_port": "text_layout_v2"
+          }
+        ],
         "style_bindings": [
           {
             "property": "fill",
-            "slot": "colour",
-            "style": "hue.viridian.line"
+            "style": "hue.viridian.line",
+            "slot": "colour"
           }
         ]
       },
@@ -767,7 +768,7 @@
       "schema_version": 1,
       "provider": "arris.reference-core",
       "created_revision": 1,
-      "updated_revision": 1,
+      "updated_revision": 8,
       "hierarchies": {
         "group": {
           "parent": "cardprev.group"
@@ -777,17 +778,10 @@
         }
       },
       "domain_attributes": {
-        "attachments": {
-          "geometry": {
-            "parameters": {},
-            "schema_version": 1,
-            "type": "arris.attachment.box"
-          },
-          "ports": []
-        },
-        "display_name": "hrc.document (superseded)",
+        "plane_index": 0,
         "order": 39,
-        "order_authored": true,
+        "display_name": "hrc.annotation (superseded)",
+        "provider_version": "0.6.0",
         "placement": {
           "transform": {
             "translate": [
@@ -796,18 +790,25 @@
             ]
           }
         },
-        "plane_index": 0,
-        "provider_version": "0.6.0",
+        "order_authored": true,
+        "attachments": {
+          "geometry": {
+            "parameters": {},
+            "schema_version": 1,
+            "type": "arris.attachment.box"
+          },
+          "ports": []
+        },
         "style_bindings": [
           {
             "property": "fill",
-            "slot": "colour",
-            "style": "paper"
+            "style": "paper",
+            "slot": "colour"
           },
           {
             "property": "stroke",
-            "slot": "colour",
-            "style": "hue.viridian.line"
+            "style": "hue.viridian.line",
+            "slot": "colour"
           }
         ]
       },
@@ -849,7 +850,7 @@
       "schema_version": 1,
       "provider": "arris.architecture",
       "created_revision": 1,
-      "updated_revision": 2,
+      "updated_revision": 8,
       "hierarchies": {
         "group": {
           "parent": null
@@ -859,9 +860,10 @@
         }
       },
       "domain_attributes": {
-        "display_name": "The hrc document is a lineage: project › seat › generation › runtime, with documents on the generation",
+        "plane_index": 0,
         "order": 0,
-        "order_authored": true,
+        "display_name": "The hrc document is a lineage: project › seat › generation › runtime, with documents on the generation",
+        "provider_version": "0.1.0",
         "placement": {
           "transform": {
             "translate": [
@@ -870,8 +872,7 @@
             ]
           }
         },
-        "plane_index": 0,
-        "provider_version": "0.1.0"
+        "order_authored": true
       },
       "payload": {
         "aspect_check": {
@@ -916,7 +917,7 @@
         "stamp": "TO-BE · DRAFT 2026-10-31",
         "subtitle": "hrc:hrc node types · to-be · proposal 2026-10-31",
         "theme": "transit",
-        "title": "The hrc document is a lineage: project › seat › generation › runtime, with documents on the generation"
+        "title": "The hrc document is a lineage: project › seat › generation › runtime, with annotations on the seat or the generation"
       }
     },
     {
@@ -1252,7 +1253,7 @@
       "schema_version": 1,
       "provider": "arris.reference-core",
       "created_revision": 1,
-      "updated_revision": 1,
+      "updated_revision": 8,
       "hierarchies": {
         "group": {
           "parent": null
@@ -1262,9 +1263,10 @@
         }
       },
       "domain_attributes": {
-        "display_name": "stamp",
+        "plane_index": 0,
         "order": 3,
-        "order_authored": true,
+        "display_name": "stamp",
+        "provider_version": "0.6.0",
         "placement": {
           "transform": {
             "translate": [
@@ -1273,13 +1275,12 @@
             ]
           }
         },
-        "plane_index": 0,
-        "provider_version": "0.6.0",
+        "order_authored": true,
         "style_bindings": [
           {
             "property": "fill",
-            "slot": "colour",
-            "style": "silver"
+            "style": "silver",
+            "slot": "colour"
           }
         ]
       },
@@ -1301,7 +1302,7 @@
       "schema_version": 1,
       "provider": "arris.reference-core",
       "created_revision": 1,
-      "updated_revision": 7,
+      "updated_revision": 8,
       "hierarchies": {
         "group": {
           "parent": null
@@ -1311,9 +1312,10 @@
         }
       },
       "domain_attributes": {
-        "display_name": "subtitle",
+        "plane_index": 0,
         "order": 2,
-        "order_authored": true,
+        "display_name": "subtitle",
+        "provider_version": "0.6.0",
         "placement": {
           "transform": {
             "translate": [
@@ -1322,13 +1324,12 @@
             ]
           }
         },
-        "plane_index": 0,
-        "provider_version": "0.6.0",
+        "order_authored": true,
         "style_bindings": [
           {
             "property": "fill",
-            "slot": "colour",
-            "style": "lead"
+            "style": "lead",
+            "slot": "colour"
           }
         ]
       },
@@ -1350,7 +1351,7 @@
       "schema_version": 1,
       "provider": "arris.reference-core",
       "created_revision": 1,
-      "updated_revision": 7,
+      "updated_revision": 8,
       "hierarchies": {
         "group": {
           "parent": null
@@ -1360,9 +1361,10 @@
         }
       },
       "domain_attributes": {
-        "display_name": "title",
+        "plane_index": 0,
         "order": 1,
-        "order_authored": true,
+        "display_name": "title",
+        "provider_version": "0.6.0",
         "placement": {
           "transform": {
             "translate": [
@@ -1371,13 +1373,12 @@
             ]
           }
         },
-        "plane_index": 0,
-        "provider_version": "0.6.0",
+        "order_authored": true,
         "style_bindings": [
           {
             "property": "fill",
-            "slot": "colour",
-            "style": "graphite"
+            "style": "graphite",
+            "slot": "colour"
           }
         ]
       },
@@ -1389,7 +1390,7 @@
         "max_height": 0.0,
         "max_width": 1053.32,
         "size": 28.0,
-        "text": "The hrc document is a lineage: project › seat › generation › runtime, with documents on the generation",
+        "text": "The hrc document is a lineage: project › seat › generation › runtime, with annotations on the seat or the generation",
         "tracking": -0.4
       }
     },
@@ -2069,7 +2070,7 @@
       "schema_version": 1,
       "provider": "arris",
       "created_revision": 1,
-      "updated_revision": 7,
+      "updated_revision": 8,
       "hierarchies": {
         "group": {
           "parent": null
@@ -2079,8 +2080,6 @@
         }
       },
       "domain_attributes": {
-        "display_name": "lineage",
-        "edge_order": 61,
         "end": {
           "parameters": {
             "length": 8.4,
@@ -2089,46 +2088,14 @@
           "schema_version": 1,
           "type": "arris.filled"
         },
-        "labels": [
-          {
-            "clearance": 0.0,
-            "label_id": "label",
-            "parameters": {
-              "face": "sans.medium",
-              "fill": {
-                "token": "hue.cobalt.ink"
-              },
-              "height": 18.0,
-              "padding": 8.0,
-              "paint": true,
-              "radius": 9.0,
-              "size": 10.5,
-              "tag_fill": {
-                "token": "paper"
-              },
-              "tag_stroke": {
-                "token": "hue.cobalt.line"
-              },
-              "tag_stroke_width": 1.0,
-              "text": "lineage"
-            },
-            "placement": {
-              "anchor": "center",
-              "distance": 142.66,
-              "kind": "route-distance",
-              "offset": [
-                0.0,
-                0.0
-              ],
-              "orientation": "route",
-              "rotation": 0.0
-            },
-            "schema_version": 1,
-            "type": "arris.tag"
-          }
-        ],
+        "display_name": "lineage",
         "order": 61,
-        "plane_index": 0,
+        "source": {
+          "ref": "gen.shape"
+        },
+        "target": {
+          "ref": "card.shape"
+        },
         "route": {
           "corner_radius": 8.0,
           "obstacles": {
@@ -2170,9 +2137,46 @@
           },
           "width": 1.5
         },
-        "source": {
-          "ref": "gen.shape"
-        },
+        "labels": [
+          {
+            "clearance": 0.0,
+            "label_id": "label",
+            "parameters": {
+              "face": "sans.medium",
+              "fill": {
+                "token": "hue.cobalt.ink"
+              },
+              "height": 18.0,
+              "padding": 8.0,
+              "paint": true,
+              "radius": 9.0,
+              "size": 10.5,
+              "tag_fill": {
+                "token": "paper"
+              },
+              "tag_stroke": {
+                "token": "hue.cobalt.line"
+              },
+              "tag_stroke_width": 1.0,
+              "text": "lineage"
+            },
+            "placement": {
+              "kind": "route-distance",
+              "distance": 142.66,
+              "offset": [
+                0.0,
+                0.0
+              ],
+              "orientation": "route",
+              "rotation": 0.0,
+              "anchor": "center"
+            },
+            "schema_version": 1,
+            "type": "arris.tag"
+          }
+        ],
+        "plane_index": 0,
+        "edge_order": 61,
         "source_detail": {
           "attachment": {
             "approach": {
@@ -2185,9 +2189,6 @@
             "offset": 0.0,
             "side": "bottom"
           }
-        },
-        "target": {
-          "ref": "card.shape"
         },
         "target_detail": {
           "attachment": {
@@ -2251,7 +2252,7 @@
       "schema_version": 1,
       "provider": "arris",
       "created_revision": 1,
-      "updated_revision": 7,
+      "updated_revision": 8,
       "hierarchies": {
         "group": {
           "parent": null
@@ -2261,8 +2262,6 @@
         }
       },
       "domain_attributes": {
-        "display_name": "lineage",
-        "edge_order": 59,
         "end": {
           "parameters": {
             "length": 8.4,
@@ -2271,46 +2270,14 @@
           "schema_version": 1,
           "type": "arris.filled"
         },
-        "labels": [
-          {
-            "clearance": 0.0,
-            "label_id": "label",
-            "parameters": {
-              "face": "sans.medium",
-              "fill": {
-                "token": "hue.cobalt.ink"
-              },
-              "height": 18.0,
-              "padding": 8.0,
-              "paint": true,
-              "radius": 9.0,
-              "size": 10.5,
-              "tag_fill": {
-                "token": "paper"
-              },
-              "tag_stroke": {
-                "token": "hue.cobalt.line"
-              },
-              "tag_stroke_width": 1.0,
-              "text": "lineage"
-            },
-            "placement": {
-              "anchor": "center",
-              "distance": 131.11,
-              "kind": "route-distance",
-              "offset": [
-                0.0,
-                0.0
-              ],
-              "orientation": "route",
-              "rotation": 0.0
-            },
-            "schema_version": 1,
-            "type": "arris.tag"
-          }
-        ],
+        "display_name": "lineage",
         "order": 59,
-        "plane_index": 0,
+        "source": {
+          "ref": "gen.shape"
+        },
+        "target": {
+          "ref": "runtime.shape"
+        },
         "route": {
           "corner_radius": 8.0,
           "obstacles": {
@@ -2345,9 +2312,46 @@
           },
           "width": 1.5
         },
-        "source": {
-          "ref": "gen.shape"
-        },
+        "labels": [
+          {
+            "clearance": 0.0,
+            "label_id": "label",
+            "parameters": {
+              "face": "sans.medium",
+              "fill": {
+                "token": "hue.cobalt.ink"
+              },
+              "height": 18.0,
+              "padding": 8.0,
+              "paint": true,
+              "radius": 9.0,
+              "size": 10.5,
+              "tag_fill": {
+                "token": "paper"
+              },
+              "tag_stroke": {
+                "token": "hue.cobalt.line"
+              },
+              "tag_stroke_width": 1.0,
+              "text": "lineage"
+            },
+            "placement": {
+              "kind": "route-distance",
+              "distance": 131.11,
+              "offset": [
+                0.0,
+                0.0
+              ],
+              "orientation": "route",
+              "rotation": 0.0,
+              "anchor": "center"
+            },
+            "schema_version": 1,
+            "type": "arris.tag"
+          }
+        ],
+        "plane_index": 0,
+        "edge_order": 59,
         "source_detail": {
           "attachment": {
             "approach": {
@@ -2360,9 +2364,6 @@
             "offset": 0.0,
             "side": "bottom"
           }
-        },
-        "target": {
-          "ref": "runtime.shape"
         },
         "target_detail": {
           "attachment": {
@@ -3526,7 +3527,7 @@
       "schema_version": 1,
       "provider": "arris.architecture",
       "created_revision": 1,
-      "updated_revision": 1,
+      "updated_revision": 8,
       "hierarchies": {
         "group": {
           "parent": "ledger.group"
@@ -3536,9 +3537,10 @@
         }
       },
       "domain_attributes": {
-        "display_name": "Event ledger",
+        "plane_index": 0,
         "order": 47,
-        "order_authored": true,
+        "display_name": "Event ledger",
+        "provider_version": "0.1.0",
         "placement": {
           "transform": {
             "translate": [
@@ -3547,11 +3549,10 @@
             ]
           }
         },
-        "plane_index": 0,
-        "provider_version": "0.1.0"
+        "order_authored": true
       },
       "payload": {
-        "body": "turn.attention and seat.document.action stay events, never nodes",
+        "body": "turn.attention and seat.annotation.action stay events, never nodes",
         "bullets": [],
         "emphasis": false,
         "icon": "",
@@ -3573,7 +3574,7 @@
       "schema_version": 1,
       "provider": "arris.reference-core",
       "created_revision": 1,
-      "updated_revision": 1,
+      "updated_revision": 8,
       "hierarchies": {
         "group": {
           "parent": "ledger.group"
@@ -3583,16 +3584,10 @@
         }
       },
       "domain_attributes": {
-        "bindings": [
-          {
-            "input": "caption_region",
-            "output_port": "caption",
-            "producer": "ledger.shape"
-          }
-        ],
-        "display_name": "ledger.caption",
+        "plane_index": 0,
         "order": 45,
-        "order_authored": true,
+        "display_name": "ledger.caption",
+        "provider_version": "0.6.0",
         "placement": {
           "transform": {
             "translate": [
@@ -3601,13 +3596,19 @@
             ]
           }
         },
-        "plane_index": 0,
-        "provider_version": "0.6.0",
+        "order_authored": true,
+        "bindings": [
+          {
+            "input": "caption_region",
+            "producer": "ledger.shape",
+            "output_port": "caption"
+          }
+        ],
         "style_bindings": [
           {
             "property": "fill",
-            "slot": "colour",
-            "style": "lead"
+            "style": "lead",
+            "slot": "colour"
           }
         ]
       },
@@ -3621,70 +3622,70 @@
         "padding": 8.0,
         "runs": [
           {
+            "start": 0,
             "end": 1,
             "face": "mono.regular",
+            "size": 10.0,
+            "tracking": 6.0,
             "fill": {
               "token": "hue.graphite.ink"
-            },
-            "size": 10.0,
-            "start": 0,
-            "tracking": 6.0
+            }
           },
           {
+            "start": 1,
             "end": 16,
             "face": "cond.semibold",
+            "size": 9.5,
+            "tracking": 0.9,
             "fill": {
               "token": "hue.graphite.ink"
-            },
-            "size": 9.5,
-            "start": 1,
-            "tracking": 0.9
+            }
           },
           {
-            "end": 17,
-            "start": 16
+            "start": 16,
+            "end": 17
           },
           {
+            "start": 17,
             "end": 29,
             "face": "sans.semibold",
             "fill": {
               "token": "graphite"
             },
             "size": 14.0,
-            "start": 17,
             "tracking": 0.0
           },
           {
-            "end": 30,
-            "start": 29
+            "start": 29,
+            "end": 30
           },
           {
-            "end": 94,
+            "start": 30,
+            "end": 96,
             "face": "sans.regular",
+            "size": 11.5,
+            "tracking": 0.0,
             "fill": {
               "token": "lead"
-            },
-            "size": 11.5,
-            "start": 30,
-            "tracking": 0.0
+            }
           },
           {
-            "end": 95,
-            "start": 94
+            "start": 96,
+            "end": 97
           },
           {
-            "end": 105,
+            "start": 97,
+            "end": 107,
             "face": "mono.regular",
+            "size": 10.0,
+            "tracking": 0.0,
             "fill": {
               "token": "silver"
-            },
-            "size": 10.0,
-            "start": 95,
-            "tracking": 0.0
+            }
           }
         ],
         "size": 11.5,
-        "text": " DATASTORE · HRC\nEvent ledger\nturn.attention and seat.document.action stay events, never nodes\nhrc_events",
+        "text": " DATASTORE · HRC\nEvent ledger\nturn.attention and seat.annotation.action stay events, never nodes\nhrc_events",
         "tracking": 0.0,
         "vertical_align": "center"
       }
@@ -3695,7 +3696,7 @@
       "schema_version": 1,
       "provider": "arris",
       "created_revision": 1,
-      "updated_revision": 1,
+      "updated_revision": 8,
       "hierarchies": {
         "group": {
           "parent": "outside.group"
@@ -3705,9 +3706,9 @@
         }
       },
       "domain_attributes": {
-        "display_name": "Event ledger",
+        "plane_index": 0,
         "order": 0,
-        "plane_index": 0
+        "display_name": "Event ledger"
       },
       "payload": {}
     },
@@ -3716,8 +3717,8 @@
       "type": "arris.scenario.kicker_mark",
       "schema_version": 1,
       "provider": "arris.scenario",
-      "created_revision": 1,
-      "updated_revision": 1,
+      "created_revision": 8,
+      "updated_revision": 8,
       "hierarchies": {
         "group": {
           "parent": "ledger.group"
@@ -3727,16 +3728,10 @@
         }
       },
       "domain_attributes": {
-        "bindings": [
-          {
-            "input": "layout",
-            "output_port": "text_layout_v2",
-            "producer": "ledger.caption"
-          }
-        ],
+        "plane_index": 0,
+        "order": 81,
         "display_name": "ledger.mark",
-        "order": 46,
-        "order_authored": true,
+        "provider_version": "0.1.0",
         "placement": {
           "transform": {
             "translate": [
@@ -3745,13 +3740,19 @@
             ]
           }
         },
-        "plane_index": 0,
-        "provider_version": "0.1.0",
+        "order_authored": true,
+        "bindings": [
+          {
+            "input": "layout",
+            "producer": "ledger.caption",
+            "output_port": "text_layout_v2"
+          }
+        ],
         "style_bindings": [
           {
             "property": "fill",
-            "slot": "colour",
-            "style": "hue.graphite.line"
+            "style": "hue.graphite.line",
+            "slot": "colour"
           }
         ]
       },
@@ -3822,7 +3823,7 @@
       "schema_version": 1,
       "provider": "arris.reference-core",
       "created_revision": 1,
-      "updated_revision": 1,
+      "updated_revision": 8,
       "hierarchies": {
         "group": {
           "parent": "ledger.group"
@@ -3832,17 +3833,10 @@
         }
       },
       "domain_attributes": {
-        "attachments": {
-          "geometry": {
-            "parameters": {},
-            "schema_version": 1,
-            "type": "arris.attachment.box"
-          },
-          "ports": []
-        },
-        "display_name": "Event ledger",
+        "plane_index": 0,
         "order": 44,
-        "order_authored": true,
+        "display_name": "Event ledger",
+        "provider_version": "0.6.0",
         "placement": {
           "transform": {
             "translate": [
@@ -3851,18 +3845,25 @@
             ]
           }
         },
-        "plane_index": 0,
-        "provider_version": "0.6.0",
+        "order_authored": true,
+        "attachments": {
+          "geometry": {
+            "parameters": {},
+            "schema_version": 1,
+            "type": "arris.attachment.box"
+          },
+          "ports": []
+        },
         "style_bindings": [
           {
             "property": "fill",
-            "slot": "colour",
-            "style": "paper"
+            "style": "paper",
+            "slot": "colour"
           },
           {
             "property": "stroke",
-            "slot": "colour",
-            "style": "card.neutral"
+            "style": "card.neutral",
+            "slot": "colour"
           }
         ]
       },
@@ -3924,7 +3925,7 @@
       "schema_version": 1,
       "provider": "arris",
       "created_revision": 1,
-      "updated_revision": 7,
+      "updated_revision": 8,
       "hierarchies": {
         "group": {
           "parent": null
@@ -3934,8 +3935,6 @@
         }
       },
       "domain_attributes": {
-        "display_name": "selected event → attention",
-        "edge_order": 65,
         "end": {
           "parameters": {
             "length": 8.4,
@@ -3943,6 +3942,48 @@
           },
           "schema_version": 1,
           "type": "arris.filled"
+        },
+        "display_name": "selected event → attention",
+        "order": 65,
+        "source": {
+          "ref": "ledger.shape"
+        },
+        "target": {
+          "ref": "gen.shape"
+        },
+        "route": {
+          "corner_radius": 8.0,
+          "obstacles": {
+            "mode": "none"
+          },
+          "strategy": {
+            "parameters": {},
+            "schema_version": 1,
+            "type": "arris.polyline"
+          },
+          "waypoints": [
+            {
+              "space": "page",
+              "point": [
+                1060.0,
+                726.04
+              ]
+            },
+            {
+              "space": "page",
+              "point": [
+                351.76,
+                726.04
+              ]
+            }
+          ]
+        },
+        "shaft": {
+          "dash_offset": 0.0,
+          "stroke": {
+            "token": "hue.viridian.line"
+          },
+          "width": 1.5
         },
         "labels": [
           {
@@ -3968,59 +4009,22 @@
               "text": "selected event → attention"
             },
             "placement": {
-              "anchor": "center",
-              "distance": 466.79,
               "kind": "route-distance",
+              "distance": 466.79,
               "offset": [
                 0.0,
                 0.0
               ],
               "orientation": "route",
-              "rotation": 0.0
+              "rotation": 0.0,
+              "anchor": "center"
             },
             "schema_version": 1,
             "type": "arris.tag"
           }
         ],
-        "order": 65,
         "plane_index": 0,
-        "route": {
-          "corner_radius": 8.0,
-          "obstacles": {
-            "mode": "none"
-          },
-          "strategy": {
-            "parameters": {},
-            "schema_version": 1,
-            "type": "arris.polyline"
-          },
-          "waypoints": [
-            {
-              "point": [
-                1060.0,
-                726.04
-              ],
-              "space": "page"
-            },
-            {
-              "point": [
-                351.76,
-                726.04
-              ],
-              "space": "page"
-            }
-          ]
-        },
-        "shaft": {
-          "dash_offset": 0.0,
-          "stroke": {
-            "token": "hue.viridian.line"
-          },
-          "width": 1.5
-        },
-        "source": {
-          "ref": "ledger.shape"
-        },
+        "edge_order": 65,
         "source_detail": {
           "attachment": {
             "approach": {
@@ -4034,20 +4038,17 @@
             "side": "bottom"
           }
         },
-        "target": {
-          "ref": "gen.shape"
-        },
         "target_detail": {
           "attachment": {
-            "approach": {
-              "min_straight": 0.0,
-              "mode": "normal"
-            },
-            "clearance": 0.0,
-            "fraction": 0.5,
             "kind": "side",
+            "side": "top",
+            "fraction": 0.5,
             "offset": 0.0,
-            "side": "top"
+            "clearance": 0.0,
+            "approach": {
+              "mode": "normal",
+              "min_straight": 0.0
+            }
           }
         }
       },
@@ -5335,7 +5336,7 @@
       "schema_version": 1,
       "provider": "arris.architecture",
       "created_revision": 1,
-      "updated_revision": 1,
+      "updated_revision": 8,
       "hierarchies": {
         "group": {
           "parent": "seat.group"
@@ -5345,9 +5346,10 @@
         }
       },
       "domain_attributes": {
-        "display_name": "hrc.seat",
+        "plane_index": 0,
         "order": 17,
-        "order_authored": true,
+        "display_name": "hrc.seat",
+        "provider_version": "0.1.0",
         "placement": {
           "transform": {
             "translate": [
@@ -5356,14 +5358,14 @@
             ]
           }
         },
-        "plane_index": 0,
-        "provider_version": "0.1.0"
+        "order_authored": true
       },
       "payload": {
+        "body": "",
         "bullets": [
           "identity: agent, project, task, role",
-          "metadata: title, colour, hcs ref",
-          "activeGeneration, status summary"
+          "metadata: title, colour",
+          "seat-scoped annotations: hcs ref"
         ],
         "emphasis": true,
         "icon": "",
@@ -5385,7 +5387,7 @@
       "schema_version": 1,
       "provider": "arris.reference-core",
       "created_revision": 1,
-      "updated_revision": 1,
+      "updated_revision": 8,
       "hierarchies": {
         "group": {
           "parent": "seat.group"
@@ -5395,16 +5397,10 @@
         }
       },
       "domain_attributes": {
-        "bindings": [
-          {
-            "input": "caption_region",
-            "output_port": "caption",
-            "producer": "seat.shape"
-          }
-        ],
-        "display_name": "seat.caption",
+        "plane_index": 0,
         "order": 15,
-        "order_authored": true,
+        "display_name": "seat.caption",
+        "provider_version": "0.6.0",
         "placement": {
           "transform": {
             "translate": [
@@ -5413,13 +5409,19 @@
             ]
           }
         },
-        "plane_index": 0,
-        "provider_version": "0.6.0",
+        "order_authored": true,
+        "bindings": [
+          {
+            "input": "caption_region",
+            "producer": "seat.shape",
+            "output_port": "caption"
+          }
+        ],
         "style_bindings": [
           {
             "property": "fill",
-            "slot": "colour",
-            "style": "lead"
+            "style": "lead",
+            "slot": "colour"
           }
         ]
       },
@@ -5433,158 +5435,158 @@
         "padding": 14.0,
         "runs": [
           {
+            "start": 0,
             "end": 1,
             "face": "mono.regular",
+            "size": 10.0,
+            "tracking": 6.0,
             "fill": {
               "token": "hue.graphite.ink"
-            },
-            "size": 10.0,
-            "start": 0,
-            "tracking": 6.0
+            }
           },
           {
+            "start": 1,
             "end": 18,
             "face": "cond.semibold",
+            "size": 9.5,
+            "tracking": 0.9,
             "fill": {
               "token": "hue.graphite.ink"
-            },
-            "size": 9.5,
-            "start": 1,
-            "tracking": 0.9
+            }
           },
           {
-            "end": 19,
-            "start": 18
+            "start": 18,
+            "end": 19
           },
           {
+            "start": 19,
             "end": 27,
             "face": "sans.semibold",
             "fill": {
               "token": "graphite"
             },
             "size": 14.0,
-            "start": 19,
             "tracking": 0.0
           },
           {
-            "end": 28,
-            "start": 27
+            "start": 27,
+            "end": 28
           },
           {
+            "start": 28,
             "end": 29,
             "face": "sans.regular",
+            "size": 11.5,
+            "tracking": 0.0,
             "fill": {
               "token": "lead"
-            },
-            "size": 11.5,
-            "start": 28,
-            "tracking": 0.0
+            }
           },
           {
+            "start": 29,
             "end": 30,
             "face": "sans.regular",
+            "size": 11.5,
+            "tracking": 3.286,
             "fill": {
               "token": "lead"
-            },
-            "size": 11.5,
-            "start": 29,
-            "tracking": 3.286
+            }
           },
           {
+            "start": 30,
             "end": 66,
             "face": "sans.regular",
+            "size": 11.5,
+            "tracking": 0.0,
             "fill": {
               "token": "lead"
-            },
-            "size": 11.5,
-            "start": 30,
-            "tracking": 0.0
+            }
           },
           {
-            "end": 67,
-            "start": 66
+            "start": 66,
+            "end": 67
           },
           {
+            "start": 67,
             "end": 68,
             "face": "sans.regular",
+            "size": 11.5,
+            "tracking": 0.0,
             "fill": {
               "token": "lead"
-            },
-            "size": 11.5,
-            "start": 67,
-            "tracking": 0.0
+            }
           },
           {
+            "start": 68,
             "end": 69,
             "face": "sans.regular",
+            "size": 11.5,
+            "tracking": 3.286,
             "fill": {
               "token": "lead"
-            },
-            "size": 11.5,
-            "start": 68,
-            "tracking": 3.286
+            }
           },
           {
-            "end": 101,
-            "face": "sans.regular",
-            "fill": {
-              "token": "lead"
-            },
-            "size": 11.5,
             "start": 69,
-            "tracking": 0.0
-          },
-          {
-            "end": 102,
-            "start": 101
-          },
-          {
-            "end": 103,
+            "end": 92,
             "face": "sans.regular",
+            "size": 11.5,
+            "tracking": 0.0,
             "fill": {
               "token": "lead"
-            },
-            "size": 11.5,
-            "start": 102,
-            "tracking": 0.0
+            }
           },
           {
-            "end": 104,
+            "start": 92,
+            "end": 93
+          },
+          {
+            "start": 93,
+            "end": 94,
             "face": "sans.regular",
+            "size": 11.5,
+            "tracking": 0.0,
             "fill": {
               "token": "lead"
-            },
-            "size": 11.5,
-            "start": 103,
-            "tracking": 3.286
+            }
           },
           {
-            "end": 136,
+            "start": 94,
+            "end": 95,
             "face": "sans.regular",
+            "size": 11.5,
+            "tracking": 3.286,
             "fill": {
               "token": "lead"
-            },
+            }
+          },
+          {
+            "start": 95,
+            "end": 127,
+            "face": "sans.regular",
             "size": 11.5,
-            "start": 104,
-            "tracking": 0.0
+            "tracking": 0.0,
+            "fill": {
+              "token": "lead"
+            }
           },
           {
-            "end": 137,
-            "start": 136
+            "start": 127,
+            "end": 128
           },
           {
-            "end": 165,
+            "start": 128,
+            "end": 156,
             "face": "mono.regular",
+            "size": 10.0,
+            "tracking": 0.0,
             "fill": {
               "token": "silver"
-            },
-            "size": 10.0,
-            "start": 137,
-            "tracking": 0.0
+            }
           }
         ],
         "size": 11.5,
-        "text": " NODE · CONTINUITY\nhrc.seat\n• identity: agent, project, task, role\n• metadata: title, colour, hcs ref\n• activeGeneration, status summary\nkey: sessionRef = scope/lane",
+        "text": " NODE · CONTINUITY\nhrc.seat\n• identity: agent, project, task, role\n• metadata: title, colour\n• seat-scoped annotations: hcs ref\nkey: sessionRef = scope/lane",
         "tracking": 0.0,
         "vertical_align": "center"
       }
@@ -5595,7 +5597,7 @@
       "schema_version": 1,
       "provider": "arris",
       "created_revision": 1,
-      "updated_revision": 1,
+      "updated_revision": 8,
       "hierarchies": {
         "group": {
           "parent": "doc.group"
@@ -5605,9 +5607,9 @@
         }
       },
       "domain_attributes": {
-        "display_name": "hrc.seat",
+        "plane_index": 0,
         "order": 0,
-        "plane_index": 0
+        "display_name": "hrc.seat"
       },
       "payload": {}
     },
@@ -5616,8 +5618,8 @@
       "type": "arris.scenario.kicker_mark",
       "schema_version": 1,
       "provider": "arris.scenario",
-      "created_revision": 1,
-      "updated_revision": 1,
+      "created_revision": 8,
+      "updated_revision": 8,
       "hierarchies": {
         "group": {
           "parent": "seat.group"
@@ -5627,16 +5629,10 @@
         }
       },
       "domain_attributes": {
-        "bindings": [
-          {
-            "input": "layout",
-            "output_port": "text_layout_v2",
-            "producer": "seat.caption"
-          }
-        ],
+        "plane_index": 0,
+        "order": 80,
         "display_name": "seat.mark",
-        "order": 16,
-        "order_authored": true,
+        "provider_version": "0.1.0",
         "placement": {
           "transform": {
             "translate": [
@@ -5645,13 +5641,19 @@
             ]
           }
         },
-        "plane_index": 0,
-        "provider_version": "0.1.0",
+        "order_authored": true,
+        "bindings": [
+          {
+            "input": "layout",
+            "producer": "seat.caption",
+            "output_port": "text_layout_v2"
+          }
+        ],
         "style_bindings": [
           {
             "property": "fill",
-            "slot": "colour",
-            "style": "hue.graphite.line"
+            "style": "hue.graphite.line",
+            "slot": "colour"
           }
         ]
       },
@@ -5722,7 +5724,7 @@
       "schema_version": 1,
       "provider": "arris.reference-core",
       "created_revision": 1,
-      "updated_revision": 1,
+      "updated_revision": 8,
       "hierarchies": {
         "group": {
           "parent": "seat.group"
@@ -5732,17 +5734,10 @@
         }
       },
       "domain_attributes": {
-        "attachments": {
-          "geometry": {
-            "parameters": {},
-            "schema_version": 1,
-            "type": "arris.attachment.box"
-          },
-          "ports": []
-        },
-        "display_name": "hrc.seat",
+        "plane_index": 0,
         "order": 14,
-        "order_authored": true,
+        "display_name": "hrc.seat",
+        "provider_version": "0.6.0",
         "placement": {
           "transform": {
             "translate": [
@@ -5751,18 +5746,25 @@
             ]
           }
         },
-        "plane_index": 0,
-        "provider_version": "0.6.0",
+        "order_authored": true,
+        "attachments": {
+          "geometry": {
+            "parameters": {},
+            "schema_version": 1,
+            "type": "arris.attachment.box"
+          },
+          "ports": []
+        },
         "style_bindings": [
           {
             "property": "fill",
-            "slot": "colour",
-            "style": "paper"
+            "style": "paper",
+            "slot": "colour"
           },
           {
             "property": "stroke",
-            "slot": "colour",
-            "style": "card.neutral"
+            "style": "card.neutral",
+            "slot": "colour"
           }
         ]
       },
@@ -5822,7 +5824,7 @@
       "schema_version": 1,
       "provider": "arris",
       "created_revision": 1,
-      "updated_revision": 7,
+      "updated_revision": 8,
       "hierarchies": {
         "group": {
           "parent": null
@@ -5832,8 +5834,6 @@
         }
       },
       "domain_attributes": {
-        "display_name": "lineage",
-        "edge_order": 55,
         "end": {
           "parameters": {
             "length": 8.4,
@@ -5842,46 +5842,14 @@
           "schema_version": 1,
           "type": "arris.filled"
         },
-        "labels": [
-          {
-            "clearance": 0.0,
-            "label_id": "label",
-            "parameters": {
-              "face": "sans.medium",
-              "fill": {
-                "token": "hue.cobalt.ink"
-              },
-              "height": 18.0,
-              "padding": 8.0,
-              "paint": true,
-              "radius": 9.0,
-              "size": 10.5,
-              "tag_fill": {
-                "token": "paper"
-              },
-              "tag_stroke": {
-                "token": "hue.cobalt.line"
-              },
-              "tag_stroke_width": 1.0,
-              "text": "lineage"
-            },
-            "placement": {
-              "anchor": "center",
-              "distance": 206.28,
-              "kind": "route-distance",
-              "offset": [
-                0.0,
-                0.0
-              ],
-              "orientation": "route",
-              "rotation": 0.0
-            },
-            "schema_version": 1,
-            "type": "arris.tag"
-          }
-        ],
+        "display_name": "lineage",
         "order": 55,
-        "plane_index": 0,
+        "source": {
+          "ref": "seat.shape"
+        },
+        "target": {
+          "ref": "gen.shape"
+        },
         "route": {
           "corner_radius": 8.0,
           "obstacles": {
@@ -5916,9 +5884,46 @@
           },
           "width": 1.5
         },
-        "source": {
-          "ref": "seat.shape"
-        },
+        "labels": [
+          {
+            "clearance": 0.0,
+            "label_id": "label",
+            "parameters": {
+              "face": "sans.medium",
+              "fill": {
+                "token": "hue.cobalt.ink"
+              },
+              "height": 18.0,
+              "padding": 8.0,
+              "paint": true,
+              "radius": 9.0,
+              "size": 10.5,
+              "tag_fill": {
+                "token": "paper"
+              },
+              "tag_stroke": {
+                "token": "hue.cobalt.line"
+              },
+              "tag_stroke_width": 1.0,
+              "text": "lineage"
+            },
+            "placement": {
+              "kind": "route-distance",
+              "distance": 206.28,
+              "offset": [
+                0.0,
+                0.0
+              ],
+              "orientation": "route",
+              "rotation": 0.0,
+              "anchor": "center"
+            },
+            "schema_version": 1,
+            "type": "arris.tag"
+          }
+        ],
+        "plane_index": 0,
+        "edge_order": 55,
         "source_detail": {
           "attachment": {
             "approach": {
@@ -5931,9 +5936,6 @@
             "offset": 0.0,
             "side": "bottom"
           }
-        },
-        "target": {
-          "ref": "gen.shape"
         },
         "target_detail": {
           "attachment": {
@@ -5997,7 +5999,7 @@
       "schema_version": 1,
       "provider": "arris",
       "created_revision": 1,
-      "updated_revision": 7,
+      "updated_revision": 8,
       "hierarchies": {
         "group": {
           "parent": null
@@ -6007,8 +6009,6 @@
         }
       },
       "domain_attributes": {
-        "display_name": "lineage",
-        "edge_order": 57,
         "end": {
           "parameters": {
             "length": 8.4,
@@ -6017,46 +6017,14 @@
           "schema_version": 1,
           "type": "arris.filled"
         },
-        "labels": [
-          {
-            "clearance": 0.0,
-            "label_id": "label",
-            "parameters": {
-              "face": "sans.medium",
-              "fill": {
-                "token": "hue.cobalt.ink"
-              },
-              "height": 18.0,
-              "padding": 8.0,
-              "paint": true,
-              "radius": 9.0,
-              "size": 10.5,
-              "tag_fill": {
-                "token": "paper"
-              },
-              "tag_stroke": {
-                "token": "hue.cobalt.line"
-              },
-              "tag_stroke_width": 1.0,
-              "text": "lineage"
-            },
-            "placement": {
-              "anchor": "center",
-              "distance": 61.0,
-              "kind": "route-distance",
-              "offset": [
-                0.0,
-                0.0
-              ],
-              "orientation": "route",
-              "rotation": 0.0
-            },
-            "schema_version": 1,
-            "type": "arris.tag"
-          }
-        ],
+        "display_name": "lineage",
         "order": 57,
-        "plane_index": 0,
+        "source": {
+          "ref": "seat.shape"
+        },
+        "target": {
+          "ref": "genprev.shape"
+        },
         "route": {
           "corner_radius": 8.0,
           "obstacles": {
@@ -6084,9 +6052,46 @@
           },
           "width": 1.5
         },
-        "source": {
-          "ref": "seat.shape"
-        },
+        "labels": [
+          {
+            "clearance": 0.0,
+            "label_id": "label",
+            "parameters": {
+              "face": "sans.medium",
+              "fill": {
+                "token": "hue.cobalt.ink"
+              },
+              "height": 18.0,
+              "padding": 8.0,
+              "paint": true,
+              "radius": 9.0,
+              "size": 10.5,
+              "tag_fill": {
+                "token": "paper"
+              },
+              "tag_stroke": {
+                "token": "hue.cobalt.line"
+              },
+              "tag_stroke_width": 1.0,
+              "text": "lineage"
+            },
+            "placement": {
+              "kind": "route-distance",
+              "distance": 61.0,
+              "offset": [
+                0.0,
+                0.0
+              ],
+              "orientation": "route",
+              "rotation": 0.0,
+              "anchor": "center"
+            },
+            "schema_version": 1,
+            "type": "arris.tag"
+          }
+        ],
+        "plane_index": 0,
+        "edge_order": 57,
         "source_detail": {
           "attachment": {
             "approach": {
@@ -6099,9 +6104,6 @@
             "offset": 0.0,
             "side": "bottom"
           }
-        },
-        "target": {
-          "ref": "genprev.shape"
         },
         "target_detail": {
           "attachment": {
@@ -6151,7 +6153,7 @@
       "schema_version": 1,
       "provider": "arris.architecture",
       "created_revision": 1,
-      "updated_revision": 1,
+      "updated_revision": 8,
       "hierarchies": {
         "group": {
           "parent": "tables.group"
@@ -6161,9 +6163,10 @@
         }
       },
       "domain_attributes": {
-        "display_name": "Store rows",
+        "plane_index": 0,
         "order": 52,
-        "order_authored": true,
+        "display_name": "Store rows",
+        "provider_version": "0.1.0",
         "placement": {
           "transform": {
             "translate": [
@@ -6172,8 +6175,7 @@
             ]
           }
         },
-        "plane_index": 0,
-        "provider_version": "0.1.0"
+        "order_authored": true
       },
       "payload": {
         "body": "Every node mirrors one row; a client changes the row, never the node",
@@ -6181,7 +6183,7 @@
         "emphasis": false,
         "icon": "",
         "kicker": "DATASTORE · HRC",
-        "meta": "continuities · sessions · runtimes · session_metadata · seat_documents",
+        "meta": "continuities · sessions · runtimes · session_metadata · seat_annotations",
         "name": "Store rows",
         "presentation": {
           "caption": "tables.caption",
@@ -6198,7 +6200,7 @@
       "schema_version": 1,
       "provider": "arris.reference-core",
       "created_revision": 1,
-      "updated_revision": 1,
+      "updated_revision": 8,
       "hierarchies": {
         "group": {
           "parent": "tables.group"
@@ -6208,16 +6210,10 @@
         }
       },
       "domain_attributes": {
-        "bindings": [
-          {
-            "input": "caption_region",
-            "output_port": "caption",
-            "producer": "tables.shape"
-          }
-        ],
-        "display_name": "tables.caption",
+        "plane_index": 0,
         "order": 50,
-        "order_authored": true,
+        "display_name": "tables.caption",
+        "provider_version": "0.6.0",
         "placement": {
           "transform": {
             "translate": [
@@ -6226,13 +6222,19 @@
             ]
           }
         },
-        "plane_index": 0,
-        "provider_version": "0.6.0",
+        "order_authored": true,
+        "bindings": [
+          {
+            "input": "caption_region",
+            "producer": "tables.shape",
+            "output_port": "caption"
+          }
+        ],
         "style_bindings": [
           {
             "property": "fill",
-            "slot": "colour",
-            "style": "lead"
+            "style": "lead",
+            "slot": "colour"
           }
         ]
       },
@@ -6246,70 +6248,70 @@
         "padding": 8.0,
         "runs": [
           {
+            "start": 0,
             "end": 1,
             "face": "mono.regular",
+            "size": 10.0,
+            "tracking": 6.0,
             "fill": {
               "token": "hue.graphite.ink"
-            },
-            "size": 10.0,
-            "start": 0,
-            "tracking": 6.0
+            }
           },
           {
+            "start": 1,
             "end": 16,
             "face": "cond.semibold",
+            "size": 9.5,
+            "tracking": 0.9,
             "fill": {
               "token": "hue.graphite.ink"
-            },
-            "size": 9.5,
-            "start": 1,
-            "tracking": 0.9
+            }
           },
           {
-            "end": 17,
-            "start": 16
+            "start": 16,
+            "end": 17
           },
           {
+            "start": 17,
             "end": 27,
             "face": "sans.semibold",
             "fill": {
               "token": "graphite"
             },
             "size": 14.0,
-            "start": 17,
             "tracking": 0.0
           },
           {
-            "end": 28,
-            "start": 27
+            "start": 27,
+            "end": 28
           },
           {
+            "start": 28,
             "end": 96,
             "face": "sans.regular",
+            "size": 11.5,
+            "tracking": 0.0,
             "fill": {
               "token": "lead"
-            },
-            "size": 11.5,
-            "start": 28,
-            "tracking": 0.0
+            }
           },
           {
-            "end": 97,
-            "start": 96
+            "start": 96,
+            "end": 97
           },
           {
-            "end": 167,
+            "start": 97,
+            "end": 169,
             "face": "mono.regular",
+            "size": 10.0,
+            "tracking": 0.0,
             "fill": {
               "token": "silver"
-            },
-            "size": 10.0,
-            "start": 97,
-            "tracking": 0.0
+            }
           }
         ],
         "size": 11.5,
-        "text": " DATASTORE · HRC\nStore rows\nEvery node mirrors one row; a client changes the row, never the node\ncontinuities · sessions · runtimes · session_metadata · seat_documents",
+        "text": " DATASTORE · HRC\nStore rows\nEvery node mirrors one row; a client changes the row, never the node\ncontinuities · sessions · runtimes · session_metadata · seat_annotations",
         "tracking": 0.0,
         "vertical_align": "center"
       }
@@ -6320,7 +6322,7 @@
       "schema_version": 1,
       "provider": "arris",
       "created_revision": 1,
-      "updated_revision": 1,
+      "updated_revision": 8,
       "hierarchies": {
         "group": {
           "parent": "outside.group"
@@ -6330,9 +6332,9 @@
         }
       },
       "domain_attributes": {
-        "display_name": "Store rows",
+        "plane_index": 0,
         "order": 0,
-        "plane_index": 0
+        "display_name": "Store rows"
       },
       "payload": {}
     },
@@ -6341,8 +6343,8 @@
       "type": "arris.scenario.kicker_mark",
       "schema_version": 1,
       "provider": "arris.scenario",
-      "created_revision": 1,
-      "updated_revision": 1,
+      "created_revision": 8,
+      "updated_revision": 8,
       "hierarchies": {
         "group": {
           "parent": "tables.group"
@@ -6352,16 +6354,10 @@
         }
       },
       "domain_attributes": {
-        "bindings": [
-          {
-            "input": "layout",
-            "output_port": "text_layout_v2",
-            "producer": "tables.caption"
-          }
-        ],
+        "plane_index": 0,
+        "order": 82,
         "display_name": "tables.mark",
-        "order": 51,
-        "order_authored": true,
+        "provider_version": "0.1.0",
         "placement": {
           "transform": {
             "translate": [
@@ -6370,13 +6366,19 @@
             ]
           }
         },
-        "plane_index": 0,
-        "provider_version": "0.1.0",
+        "order_authored": true,
+        "bindings": [
+          {
+            "input": "layout",
+            "producer": "tables.caption",
+            "output_port": "text_layout_v2"
+          }
+        ],
         "style_bindings": [
           {
             "property": "fill",
-            "slot": "colour",
-            "style": "hue.graphite.line"
+            "style": "hue.graphite.line",
+            "slot": "colour"
           }
         ]
       },
@@ -6447,7 +6449,7 @@
       "schema_version": 1,
       "provider": "arris.reference-core",
       "created_revision": 1,
-      "updated_revision": 1,
+      "updated_revision": 8,
       "hierarchies": {
         "group": {
           "parent": "tables.group"
@@ -6457,17 +6459,10 @@
         }
       },
       "domain_attributes": {
-        "attachments": {
-          "geometry": {
-            "parameters": {},
-            "schema_version": 1,
-            "type": "arris.attachment.box"
-          },
-          "ports": []
-        },
-        "display_name": "Store rows",
+        "plane_index": 0,
         "order": 49,
-        "order_authored": true,
+        "display_name": "Store rows",
+        "provider_version": "0.6.0",
         "placement": {
           "transform": {
             "translate": [
@@ -6476,18 +6471,25 @@
             ]
           }
         },
-        "plane_index": 0,
-        "provider_version": "0.6.0",
+        "order_authored": true,
+        "attachments": {
+          "geometry": {
+            "parameters": {},
+            "schema_version": 1,
+            "type": "arris.attachment.box"
+          },
+          "ports": []
+        },
         "style_bindings": [
           {
             "property": "fill",
-            "slot": "colour",
-            "style": "paper"
+            "style": "paper",
+            "slot": "colour"
           },
           {
             "property": "stroke",
-            "slot": "colour",
-            "style": "card.neutral"
+            "style": "card.neutral",
+            "slot": "colour"
           }
         ]
       },
@@ -6547,7 +6549,7 @@
       "schema_version": 1,
       "provider": "arris",
       "created_revision": 1,
-      "updated_revision": 7,
+      "updated_revision": 8,
       "hierarchies": {
         "group": {
           "parent": null
@@ -6557,11 +6559,15 @@
         }
       },
       "domain_attributes": {
-        "display_name": "tables__card",
-        "edge_order": 69,
         "labels": [],
+        "display_name": "tables__card",
         "order": 69,
-        "plane_index": 0,
+        "source": {
+          "ref": "tables.shape"
+        },
+        "target": {
+          "ref": "card.shape"
+        },
         "route": {
           "corner_radius": 8.0,
           "obstacles": {
@@ -6574,18 +6580,18 @@
           },
           "waypoints": [
             {
+              "space": "page",
               "point": [
                 1348.0,
                 1132.04
-              ],
-              "space": "page"
+              ]
             },
             {
+              "space": "page",
               "point": [
                 468.0,
                 1132.04
-              ],
-              "space": "page"
+              ]
             }
           ]
         },
@@ -6600,9 +6606,8 @@
           },
           "width": 1.25
         },
-        "source": {
-          "ref": "tables.shape"
-        },
+        "plane_index": 0,
+        "edge_order": 69,
         "source_detail": {
           "attachment": {
             "approach": {
@@ -6616,20 +6621,17 @@
             "side": "bottom"
           }
         },
-        "target": {
-          "ref": "card.shape"
-        },
         "target_detail": {
           "attachment": {
-            "approach": {
-              "min_straight": 0.0,
-              "mode": "normal"
-            },
-            "clearance": 0.0,
-            "fraction": 0.5,
             "kind": "side",
+            "side": "bottom",
+            "fraction": 0.5,
             "offset": 0.0,
-            "side": "bottom"
+            "clearance": 0.0,
+            "approach": {
+              "mode": "normal",
+              "min_straight": 0.0
+            }
           }
         }
       },
@@ -6687,7 +6689,7 @@
       "schema_version": 1,
       "provider": "arris",
       "created_revision": 1,
-      "updated_revision": 7,
+      "updated_revision": 8,
       "hierarchies": {
         "group": {
           "parent": null
@@ -6697,11 +6699,15 @@
         }
       },
       "domain_attributes": {
-        "display_name": "tables__seat",
-        "edge_order": 67,
         "labels": [],
+        "display_name": "tables__seat",
         "order": 67,
-        "plane_index": 0,
+        "source": {
+          "ref": "tables.shape"
+        },
+        "target": {
+          "ref": "seat.shape"
+        },
         "route": {
           "corner_radius": 8.0,
           "obstacles": {
@@ -6714,18 +6720,18 @@
           },
           "waypoints": [
             {
+              "space": "page",
               "point": [
                 1348.0,
                 400.04
-              ],
-              "space": "page"
+              ]
             },
             {
+              "space": "page",
               "point": [
                 592.52,
                 400.04
-              ],
-              "space": "page"
+              ]
             }
           ]
         },
@@ -6740,36 +6746,32 @@
           },
           "width": 1.25
         },
-        "source": {
-          "ref": "tables.shape"
-        },
+        "plane_index": 0,
+        "edge_order": 67,
         "source_detail": {
           "attachment": {
-            "approach": {
-              "min_straight": 0.0,
-              "mode": "normal"
-            },
-            "clearance": 0.0,
-            "fraction": 0.5,
             "kind": "side",
+            "side": "top",
+            "fraction": 0.5,
             "offset": 0.0,
-            "side": "top"
+            "clearance": 0.0,
+            "approach": {
+              "mode": "normal",
+              "min_straight": 0.0
+            }
           }
-        },
-        "target": {
-          "ref": "seat.shape"
         },
         "target_detail": {
           "attachment": {
-            "approach": {
-              "min_straight": 0.0,
-              "mode": "normal"
-            },
-            "clearance": 0.0,
-            "fraction": 0.5,
             "kind": "side",
+            "side": "top",
+            "fraction": 0.5,
             "offset": 0.0,
-            "side": "top"
+            "clearance": 0.0,
+            "approach": {
+              "mode": "normal",
+              "min_straight": 0.0
+            }
           }
         }
       },

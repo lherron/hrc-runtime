@@ -20,6 +20,11 @@
       "id": "seat-data-document",
       "src": "seat-data-document.arris.json",
       "title": "seat-data-document"
+    },
+    {
+      "id": "seat-data-model",
+      "src": "seat-data-model.arris.json",
+      "title": "seat-data-model"
     }
   ]
 }

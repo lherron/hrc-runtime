@@ -1,0 +1,5030 @@
+{
+  "cardo_doms": 1,
+  "format": "arris",
+  "format_version": 1,
+  "document_id": "seat-data-model",
+  "revision": 5,
+  "nodes": [
+    {
+      "id": "card.1",
+      "type": "arris.box",
+      "schema_version": 1,
+      "provider": "arris.reference-core",
+      "created_revision": 5,
+      "updated_revision": 5,
+      "hierarchies": {
+        "group": {
+          "parent": null
+        },
+        "owner": {
+          "parent": "page-1"
+        }
+      },
+      "domain_attributes": {
+        "plane_index": 0,
+        "order": 15,
+        "display_name": "card.1",
+        "provider_version": "0.6.0",
+        "placement": {
+          "transform": {
+            "translate": [
+              112.0,
+              386.0
+            ]
+          }
+        },
+        "order_authored": true
+      },
+      "payload": {
+        "corner_radius": 8.0,
+        "fill": "#F3F5F8",
+        "height": 104.0,
+        "opacity": 1.0,
+        "stroke": "#7D8898",
+        "stroke_dash": [
+          4,
+          3
+        ],
+        "stroke_width": 1.4,
+        "width": 258.0
+      }
+    },
+    {
+      "id": "card.10",
+      "type": "arris.box",
+      "schema_version": 1,
+      "provider": "arris.reference-core",
+      "created_revision": 5,
+      "updated_revision": 5,
+      "hierarchies": {
+        "group": {
+          "parent": null
+        },
+        "owner": {
+          "parent": "page-1"
+        }
+      },
+      "domain_attributes": {
+        "plane_index": 0,
+        "order": 51,
+        "display_name": "card.10",
+        "provider_version": "0.6.0",
+        "placement": {
+          "transform": {
+            "translate": [
+              112.0,
+              1050.0
+            ]
+          }
+        },
+        "order_authored": true
+      },
+      "payload": {
+        "corner_radius": 8.0,
+        "fill": "#FFFFFF",
+        "height": 104.0,
+        "opacity": 1.0,
+        "stroke": "#2E9C84",
+        "stroke_width": 1.4,
+        "width": 258.0
+      }
+    },
+    {
+      "id": "card.11",
+      "type": "arris.box",
+      "schema_version": 1,
+      "provider": "arris.reference-core",
+      "created_revision": 5,
+      "updated_revision": 5,
+      "hierarchies": {
+        "group": {
+          "parent": null
+        },
+        "owner": {
+          "parent": "page-1"
+        }
+      },
+      "domain_attributes": {
+        "plane_index": 0,
+        "order": 55,
+        "display_name": "card.11",
+        "provider_version": "0.6.0",
+        "placement": {
+          "transform": {
+            "translate": [
+              1690.0,
+              190.0
+            ]
+          }
+        },
+        "order_authored": true
+      },
+      "payload": {
+        "corner_radius": 8.0,
+        "fill": "#FFFFFF",
+        "height": 84,
+        "opacity": 1.0,
+        "stroke": "#7D8898",
+        "stroke_width": 1.4,
+        "width": 298.0
+      }
+    },
+    {
+      "id": "card.12",
+      "type": "arris.box",
+      "schema_version": 1,
+      "provider": "arris.reference-core",
+      "created_revision": 5,
+      "updated_revision": 5,
+      "hierarchies": {
+        "group": {
+          "parent": null
+        },
+        "owner": {
+          "parent": "page-1"
+        }
+      },
+      "domain_attributes": {
+        "plane_index": 0,
+        "order": 57,
+        "display_name": "card.12",
+        "provider_version": "0.6.0",
+        "placement": {
+          "transform": {
+            "translate": [
+              1690.0,
+              288.0
+            ]
+          }
+        },
+        "order_authored": true
+      },
+      "payload": {
+        "corner_radius": 8.0,
+        "fill": "#FFFFFF",
+        "height": 84,
+        "opacity": 1.0,
+        "stroke": "#7D8898",
+        "stroke_width": 1.4,
+        "width": 298.0
+      }
+    },
+    {
+      "id": "card.13",
+      "type": "arris.box",
+      "schema_version": 1,
+      "provider": "arris.reference-core",
+      "created_revision": 5,
+      "updated_revision": 5,
+      "hierarchies": {
+        "group": {
+          "parent": null
+        },
+        "owner": {
+          "parent": "page-1"
+        }
+      },
+      "domain_attributes": {
+        "plane_index": 0,
+        "order": 59,
+        "display_name": "card.13",
+        "provider_version": "0.6.0",
+        "placement": {
+          "transform": {
+            "translate": [
+              1690.0,
+              386.0
+            ]
+          }
+        },
+        "order_authored": true
+      },
+      "payload": {
+        "corner_radius": 8.0,
+        "fill": "#FFFFFF",
+        "height": 84,
+        "opacity": 1.0,
+        "stroke": "#7D8898",
+        "stroke_width": 1.4,
+        "width": 298.0
+      }
+    },
+    {
+      "id": "card.14",
+      "type": "arris.box",
+      "schema_version": 1,
+      "provider": "arris.reference-core",
+      "created_revision": 5,
+      "updated_revision": 5,
+      "hierarchies": {
+        "group": {
+          "parent": null
+        },
+        "owner": {
+          "parent": "page-1"
+        }
+      },
+      "domain_attributes": {
+        "plane_index": 0,
+        "order": 61,
+        "display_name": "card.14",
+        "provider_version": "0.6.0",
+        "placement": {
+          "transform": {
+            "translate": [
+              1690.0,
+              484.0
+            ]
+          }
+        },
+        "order_authored": true
+      },
+      "payload": {
+        "corner_radius": 8.0,
+        "fill": "#FFFFFF",
+        "height": 84,
+        "opacity": 1.0,
+        "stroke": "#7D8898",
+        "stroke_width": 1.4,
+        "width": 298.0
+      }
+    },
+    {
+      "id": "card.15",
+      "type": "arris.box",
+      "schema_version": 1,
+      "provider": "arris.reference-core",
+      "created_revision": 5,
+      "updated_revision": 5,
+      "hierarchies": {
+        "group": {
+          "parent": null
+        },
+        "owner": {
+          "parent": "page-1"
+        }
+      },
+      "domain_attributes": {
+        "plane_index": 0,
+        "order": 63,
+        "display_name": "card.15",
+        "provider_version": "0.6.0",
+        "placement": {
+          "transform": {
+            "translate": [
+              1690.0,
+              582.0
+            ]
+          }
+        },
+        "order_authored": true,
+        "attachments": {
+          "geometry": {
+            "type": "arris.attachment.box",
+            "schema_version": 1,
+            "parameters": {}
+          },
+          "ports": [
+            {
+              "port_id": "l",
+              "attachment": {
+                "kind": "side",
+                "side": "left",
+                "fraction": 0.5,
+                "offset": 0.0,
+                "clearance": 0.0,
+                "approach": {
+                  "mode": "normal",
+                  "min_straight": 0.0
+                }
+              }
+            }
+          ]
+        }
+      },
+      "payload": {
+        "corner_radius": 8.0,
+        "fill": "#F3EEFA",
+        "height": 84,
+        "opacity": 1.0,
+        "stroke": "#9877C9",
+        "stroke_width": 1.4,
+        "width": 298.0
+      }
+    },
+    {
+      "id": "card.16",
+      "type": "arris.box",
+      "schema_version": 1,
+      "provider": "arris.reference-core",
+      "created_revision": 5,
+      "updated_revision": 5,
+      "hierarchies": {
+        "group": {
+          "parent": null
+        },
+        "owner": {
+          "parent": "page-1"
+        }
+      },
+      "domain_attributes": {
+        "plane_index": 0,
+        "order": 65,
+        "display_name": "card.16",
+        "provider_version": "0.6.0",
+        "placement": {
+          "transform": {
+            "translate": [
+              1690.0,
+              736.0
+            ]
+          }
+        },
+        "order_authored": true,
+        "attachments": {
+          "geometry": {
+            "type": "arris.attachment.box",
+            "schema_version": 1,
+            "parameters": {}
+          },
+          "ports": [
+            {
+              "port_id": "b",
+              "attachment": {
+                "kind": "side",
+                "side": "bottom",
+                "fraction": 0.5,
+                "offset": 0.0,
+                "clearance": 0.0,
+                "approach": {
+                  "mode": "normal",
+                  "min_straight": 0.0
+                }
+              }
+            },
+            {
+              "port_id": "l",
+              "attachment": {
+                "kind": "side",
+                "side": "left",
+                "fraction": 0.5,
+                "offset": 0.0,
+                "clearance": 0.0,
+                "approach": {
+                  "mode": "normal",
+                  "min_straight": 0.0
+                }
+              }
+            }
+          ]
+        }
+      },
+      "payload": {
+        "corner_radius": 8.0,
+        "fill": "#FFFFFF",
+        "height": 92,
+        "opacity": 1.0,
+        "stroke": "#2E9C84",
+        "stroke_width": 1.4,
+        "width": 298.0
+      }
+    },
+    {
+      "id": "card.17",
+      "type": "arris.box",
+      "schema_version": 1,
+      "provider": "arris.reference-core",
+      "created_revision": 5,
+      "updated_revision": 5,
+      "hierarchies": {
+        "group": {
+          "parent": null
+        },
+        "owner": {
+          "parent": "page-1"
+        }
+      },
+      "domain_attributes": {
+        "plane_index": 0,
+        "order": 67,
+        "display_name": "card.17",
+        "provider_version": "0.6.0",
+        "placement": {
+          "transform": {
+            "translate": [
+              1690.0,
+              868.0
+            ]
+          }
+        },
+        "order_authored": true,
+        "attachments": {
+          "geometry": {
+            "type": "arris.attachment.box",
+            "schema_version": 1,
+            "parameters": {}
+          },
+          "ports": [
+            {
+              "port_id": "t",
+              "attachment": {
+                "kind": "side",
+                "side": "top",
+                "fraction": 0.5,
+                "offset": 0.0,
+                "clearance": 0.0,
+                "approach": {
+                  "mode": "normal",
+                  "min_straight": 0.0
+                }
+              }
+            }
+          ]
+        }
+      },
+      "payload": {
+        "corner_radius": 8.0,
+        "fill": "#FFFFFF",
+        "height": 70,
+        "opacity": 1.0,
+        "stroke": "#7D8898",
+        "stroke_width": 1.4,
+        "width": 298.0
+      }
+    },
+    {
+      "id": "card.2",
+      "type": "arris.box",
+      "schema_version": 1,
+      "provider": "arris.reference-core",
+      "created_revision": 5,
+      "updated_revision": 5,
+      "hierarchies": {
+        "group": {
+          "parent": null
+        },
+        "owner": {
+          "parent": "page-1"
+        }
+      },
+      "domain_attributes": {
+        "plane_index": 0,
+        "order": 17,
+        "display_name": "card.2",
+        "provider_version": "0.6.0",
+        "placement": {
+          "transform": {
+            "translate": [
+              384.0,
+              386.0
+            ]
+          }
+        },
+        "order_authored": true
+      },
+      "payload": {
+        "corner_radius": 8.0,
+        "fill": "#FFFFFF",
+        "height": 104.0,
+        "opacity": 1.0,
+        "stroke": "#9877C9",
+        "stroke_width": 1.4,
+        "width": 258.0
+      }
+    },
+    {
+      "id": "card.3",
+      "type": "arris.box",
+      "schema_version": 1,
+      "provider": "arris.reference-core",
+      "created_revision": 5,
+      "updated_revision": 5,
+      "hierarchies": {
+        "group": {
+          "parent": null
+        },
+        "owner": {
+          "parent": "page-1"
+        }
+      },
+      "domain_attributes": {
+        "plane_index": 0,
+        "order": 23,
+        "display_name": "card.3",
+        "provider_version": "0.6.0",
+        "placement": {
+          "transform": {
+            "translate": [
+              688.0,
+              386.0
+            ]
+          }
+        },
+        "order_authored": true
+      },
+      "payload": {
+        "corner_radius": 8.0,
+        "fill": "#FFFFFF",
+        "height": 104.0,
+        "opacity": 1.0,
+        "stroke": "#2E9C84",
+        "stroke_width": 1.4,
+        "width": 258.0
+      }
+    },
+    {
+      "id": "card.4",
+      "type": "arris.box",
+      "schema_version": 1,
+      "provider": "arris.reference-core",
+      "created_revision": 5,
+      "updated_revision": 5,
+      "hierarchies": {
+        "group": {
+          "parent": null
+        },
+        "owner": {
+          "parent": "page-1"
+        }
+      },
+      "domain_attributes": {
+        "plane_index": 0,
+        "order": 25,
+        "display_name": "card.4",
+        "provider_version": "0.6.0",
+        "placement": {
+          "transform": {
+            "translate": [
+              960.0,
+              386.0
+            ]
+          }
+        },
+        "order_authored": true
+      },
+      "payload": {
+        "corner_radius": 8.0,
+        "fill": "#F3EEFA",
+        "height": 104.0,
+        "opacity": 1.0,
+        "stroke": "#9877C9",
+        "stroke_width": 1.4,
+        "width": 258.0
+      }
+    },
+    {
+      "id": "card.5",
+      "type": "arris.box",
+      "schema_version": 1,
+      "provider": "arris.reference-core",
+      "created_revision": 5,
+      "updated_revision": 5,
+      "hierarchies": {
+        "group": {
+          "parent": null
+        },
+        "owner": {
+          "parent": "page-1"
+        }
+      },
+      "domain_attributes": {
+        "plane_index": 0,
+        "order": 27,
+        "display_name": "card.5",
+        "provider_version": "0.6.0",
+        "placement": {
+          "transform": {
+            "translate": [
+              1232.0,
+              386.0
+            ]
+          }
+        },
+        "order_authored": true
+      },
+      "payload": {
+        "corner_radius": 8.0,
+        "fill": "#FFFFFF",
+        "height": 104.0,
+        "opacity": 1.0,
+        "stroke": "#9877C9",
+        "stroke_dash": [
+          5,
+          4
+        ],
+        "stroke_width": 1.4,
+        "width": 258.0
+      }
+    },
+    {
+      "id": "card.6",
+      "type": "arris.box",
+      "schema_version": 1,
+      "provider": "arris.reference-core",
+      "created_revision": 5,
+      "updated_revision": 5,
+      "hierarchies": {
+        "group": {
+          "parent": null
+        },
+        "owner": {
+          "parent": "page-1"
+        }
+      },
+      "domain_attributes": {
+        "plane_index": 0,
+        "order": 37,
+        "display_name": "card.6",
+        "provider_version": "0.6.0",
+        "placement": {
+          "transform": {
+            "translate": [
+              112.0,
+              746.0
+            ]
+          }
+        },
+        "order_authored": true
+      },
+      "payload": {
+        "corner_radius": 8.0,
+        "fill": "#FFFFFF",
+        "height": 104.0,
+        "opacity": 1.0,
+        "stroke": "#2E9C84",
+        "stroke_width": 1.4,
+        "width": 258.0
+      }
+    },
+    {
+      "id": "card.7",
+      "type": "arris.box",
+      "schema_version": 1,
+      "provider": "arris.reference-core",
+      "created_revision": 5,
+      "updated_revision": 5,
+      "hierarchies": {
+        "group": {
+          "parent": null
+        },
+        "owner": {
+          "parent": "page-1"
+        }
+      },
+      "domain_attributes": {
+        "plane_index": 0,
+        "order": 39,
+        "display_name": "card.7",
+        "provider_version": "0.6.0",
+        "placement": {
+          "transform": {
+            "translate": [
+              384.0,
+              746.0
+            ]
+          }
+        },
+        "order_authored": true
+      },
+      "payload": {
+        "corner_radius": 8.0,
+        "fill": "#F3EEFA",
+        "height": 104.0,
+        "opacity": 1.0,
+        "stroke": "#9877C9",
+        "stroke_width": 1.4,
+        "width": 258.0
+      }
+    },
+    {
+      "id": "card.8",
+      "type": "arris.box",
+      "schema_version": 1,
+      "provider": "arris.reference-core",
+      "created_revision": 5,
+      "updated_revision": 5,
+      "hierarchies": {
+        "group": {
+          "parent": null
+        },
+        "owner": {
+          "parent": "page-1"
+        }
+      },
+      "domain_attributes": {
+        "plane_index": 0,
+        "order": 41,
+        "display_name": "card.8",
+        "provider_version": "0.6.0",
+        "placement": {
+          "transform": {
+            "translate": [
+              656.0,
+              746.0
+            ]
+          }
+        },
+        "order_authored": true
+      },
+      "payload": {
+        "corner_radius": 8.0,
+        "fill": "#FFFFFF",
+        "height": 104.0,
+        "opacity": 1.0,
+        "stroke": "#9877C9",
+        "stroke_width": 1.4,
+        "width": 258.0
+      }
+    },
+    {
+      "id": "card.9",
+      "type": "arris.box",
+      "schema_version": 1,
+      "provider": "arris.reference-core",
+      "created_revision": 5,
+      "updated_revision": 5,
+      "hierarchies": {
+        "group": {
+          "parent": null
+        },
+        "owner": {
+          "parent": "page-1"
+        }
+      },
+      "domain_attributes": {
+        "plane_index": 0,
+        "order": 46,
+        "display_name": "card.9",
+        "provider_version": "0.6.0",
+        "placement": {
+          "transform": {
+            "translate": [
+              726.0,
+              902.0
+            ]
+          }
+        },
+        "order_authored": true,
+        "attachments": {
+          "geometry": {
+            "type": "arris.attachment.box",
+            "schema_version": 1,
+            "parameters": {}
+          },
+          "ports": [
+            {
+              "port_id": "r",
+              "attachment": {
+                "kind": "side",
+                "side": "right",
+                "fraction": 0.5,
+                "offset": 0.0,
+                "clearance": 0.0,
+                "approach": {
+                  "mode": "normal",
+                  "min_straight": 0.0
+                }
+              }
+            }
+          ]
+        }
+      },
+      "payload": {
+        "corner_radius": 8.0,
+        "fill": "#F3EEFA",
+        "height": 78,
+        "opacity": 1.0,
+        "stroke": "#9877C9",
+        "stroke_width": 1.4,
+        "width": 258.0
+      }
+    },
+    {
+      "id": "cont.1",
+      "type": "arris.box",
+      "schema_version": 1,
+      "provider": "arris.reference-core",
+      "created_revision": 5,
+      "updated_revision": 5,
+      "hierarchies": {
+        "group": {
+          "parent": null
+        },
+        "owner": {
+          "parent": "page-1"
+        }
+      },
+      "domain_attributes": {
+        "plane_index": 0,
+        "order": 5,
+        "display_name": "cont.1",
+        "provider_version": "0.6.0",
+        "placement": {
+          "transform": {
+            "translate": [
+              48.0,
+              150.0
+            ]
+          }
+        },
+        "order_authored": true
+      },
+      "payload": {
+        "corner_radius": 10.0,
+        "fill": "#F3F5F8",
+        "height": 1066.0,
+        "opacity": 1.0,
+        "stroke": "#F3F5F8",
+        "stroke_width": 0.0,
+        "width": 1506.0
+      }
+    },
+    {
+      "id": "cont.10",
+      "type": "arris.box",
+      "schema_version": 1,
+      "provider": "arris.reference-core",
+      "created_revision": 5,
+      "updated_revision": 5,
+      "hierarchies": {
+        "group": {
+          "parent": null
+        },
+        "owner": {
+          "parent": "page-1"
+        }
+      },
+      "domain_attributes": {
+        "plane_index": 0,
+        "order": 48,
+        "display_name": "cont.10",
+        "provider_version": "0.6.0",
+        "placement": {
+          "transform": {
+            "translate": [
+              96.0,
+              978.0
+            ]
+          }
+        },
+        "order_authored": true
+      },
+      "payload": {
+        "corner_radius": 10.0,
+        "fill": "#D0D8E3",
+        "height": 190.0,
+        "opacity": 1.0,
+        "stroke": "#D0D8E3",
+        "stroke_width": 0.0,
+        "width": 290.0
+      }
+    },
+    {
+      "id": "cont.11",
+      "type": "arris.box",
+      "schema_version": 1,
+      "provider": "arris.reference-core",
+      "created_revision": 5,
+      "updated_revision": 5,
+      "hierarchies": {
+        "group": {
+          "parent": null
+        },
+        "owner": {
+          "parent": "page-1"
+        }
+      },
+      "domain_attributes": {
+        "plane_index": 0,
+        "order": 53,
+        "display_name": "cont.11",
+        "provider_version": "0.6.0",
+        "placement": {
+          "transform": {
+            "translate": [
+              1674.0,
+              150.0
+            ]
+          }
+        },
+        "order_authored": true
+      },
+      "payload": {
+        "corner_radius": 10.0,
+        "fill": "#F3F5F8",
+        "height": 546.0,
+        "opacity": 1.0,
+        "stroke": "#F3F5F8",
+        "stroke_width": 0.0,
+        "width": 330
+      }
+    },
+    {
+      "id": "cont.2",
+      "type": "arris.box",
+      "schema_version": 1,
+      "provider": "arris.reference-core",
+      "created_revision": 5,
+      "updated_revision": 5,
+      "hierarchies": {
+        "group": {
+          "parent": null
+        },
+        "owner": {
+          "parent": "page-1"
+        }
+      },
+      "domain_attributes": {
+        "plane_index": 0,
+        "order": 7,
+        "display_name": "cont.2",
+        "provider_version": "0.6.0",
+        "placement": {
+          "transform": {
+            "translate": [
+              64.0,
+              190.0
+            ]
+          }
+        },
+        "order_authored": true
+      },
+      "payload": {
+        "corner_radius": 10.0,
+        "fill": "#E2E7EE",
+        "height": 346.0,
+        "opacity": 1.0,
+        "stroke": "#E2E7EE",
+        "stroke_width": 0.0,
+        "width": 1474.0
+      }
+    },
+    {
+      "id": "cont.3",
+      "type": "arris.box",
+      "schema_version": 1,
+      "provider": "arris.reference-core",
+      "created_revision": 5,
+      "updated_revision": 5,
+      "hierarchies": {
+        "group": {
+          "parent": null
+        },
+        "owner": {
+          "parent": "page-1"
+        }
+      },
+      "domain_attributes": {
+        "plane_index": 0,
+        "order": 9,
+        "display_name": "cont.3",
+        "provider_version": "0.6.0",
+        "placement": {
+          "transform": {
+            "translate": [
+              80.0,
+              230.0
+            ]
+          }
+        },
+        "order_authored": true
+      },
+      "payload": {
+        "corner_radius": 10.0,
+        "fill": "#FFFFFF",
+        "height": 290.0,
+        "opacity": 1.0,
+        "stroke": "#5C7BD9",
+        "stroke_width": 1.0,
+        "width": 1442.0
+      }
+    },
+    {
+      "id": "cont.4",
+      "type": "arris.box",
+      "schema_version": 1,
+      "provider": "arris.reference-core",
+      "created_revision": 5,
+      "updated_revision": 5,
+      "hierarchies": {
+        "group": {
+          "parent": null
+        },
+        "owner": {
+          "parent": "page-1"
+        }
+      },
+      "domain_attributes": {
+        "plane_index": 0,
+        "order": 12,
+        "display_name": "cont.4",
+        "provider_version": "0.6.0",
+        "placement": {
+          "transform": {
+            "translate": [
+              96.0,
+              314.0
+            ]
+          }
+        },
+        "order_authored": true
+      },
+      "payload": {
+        "corner_radius": 10.0,
+        "fill": "#F3F5F8",
+        "height": 190.0,
+        "opacity": 1.0,
+        "stroke": "#7D8898",
+        "stroke_dash": [
+          5,
+          4
+        ],
+        "stroke_width": 1.0,
+        "width": 562.0
+      }
+    },
+    {
+      "id": "cont.5",
+      "type": "arris.box",
+      "schema_version": 1,
+      "provider": "arris.reference-core",
+      "created_revision": 5,
+      "updated_revision": 5,
+      "hierarchies": {
+        "group": {
+          "parent": null
+        },
+        "owner": {
+          "parent": "page-1"
+        }
+      },
+      "domain_attributes": {
+        "plane_index": 0,
+        "order": 19,
+        "display_name": "cont.5",
+        "provider_version": "0.6.0",
+        "placement": {
+          "transform": {
+            "translate": [
+              672.0,
+              314.0
+            ]
+          }
+        },
+        "order_authored": true
+      },
+      "payload": {
+        "corner_radius": 10.0,
+        "fill": "#D0D8E3",
+        "height": 190.0,
+        "opacity": 1.0,
+        "stroke": "#D0D8E3",
+        "stroke_width": 0.0,
+        "width": 834.0
+      }
+    },
+    {
+      "id": "cont.6",
+      "type": "arris.box",
+      "schema_version": 1,
+      "provider": "arris.reference-core",
+      "created_revision": 5,
+      "updated_revision": 5,
+      "hierarchies": {
+        "group": {
+          "parent": null
+        },
+        "owner": {
+          "parent": "page-1"
+        }
+      },
+      "domain_attributes": {
+        "plane_index": 0,
+        "order": 29,
+        "display_name": "cont.6",
+        "provider_version": "0.6.0",
+        "placement": {
+          "transform": {
+            "translate": [
+              64.0,
+              550.0
+            ]
+          }
+        },
+        "order_authored": true
+      },
+      "payload": {
+        "corner_radius": 10.0,
+        "fill": "#E2E7EE",
+        "height": 650.0,
+        "opacity": 1.0,
+        "stroke": "#E2E7EE",
+        "stroke_width": 0.0,
+        "width": 952.0
+      }
+    },
+    {
+      "id": "cont.7",
+      "type": "arris.box",
+      "schema_version": 1,
+      "provider": "arris.reference-core",
+      "created_revision": 5,
+      "updated_revision": 5,
+      "hierarchies": {
+        "group": {
+          "parent": null
+        },
+        "owner": {
+          "parent": "page-1"
+        }
+      },
+      "domain_attributes": {
+        "plane_index": 0,
+        "order": 31,
+        "display_name": "cont.7",
+        "provider_version": "0.6.0",
+        "placement": {
+          "transform": {
+            "translate": [
+              80.0,
+              590.0
+            ]
+          }
+        },
+        "order_authored": true
+      },
+      "payload": {
+        "corner_radius": 10.0,
+        "fill": "#FFFFFF",
+        "height": 290.0,
+        "opacity": 1.0,
+        "stroke": "#5C7BD9",
+        "stroke_width": 1.0,
+        "width": 920
+      }
+    },
+    {
+      "id": "cont.8",
+      "type": "arris.box",
+      "schema_version": 1,
+      "provider": "arris.reference-core",
+      "created_revision": 5,
+      "updated_revision": 5,
+      "hierarchies": {
+        "group": {
+          "parent": null
+        },
+        "owner": {
+          "parent": "page-1"
+        }
+      },
+      "domain_attributes": {
+        "plane_index": 0,
+        "order": 34,
+        "display_name": "cont.8",
+        "provider_version": "0.6.0",
+        "placement": {
+          "transform": {
+            "translate": [
+              96.0,
+              674.0
+            ]
+          }
+        },
+        "order_authored": true
+      },
+      "payload": {
+        "corner_radius": 10.0,
+        "fill": "#D0D8E3",
+        "height": 190.0,
+        "opacity": 1.0,
+        "stroke": "#D0D8E3",
+        "stroke_width": 0.0,
+        "width": 834.0
+      }
+    },
+    {
+      "id": "cont.9",
+      "type": "arris.box",
+      "schema_version": 1,
+      "provider": "arris.reference-core",
+      "created_revision": 5,
+      "updated_revision": 5,
+      "hierarchies": {
+        "group": {
+          "parent": null
+        },
+        "owner": {
+          "parent": "page-1"
+        }
+      },
+      "domain_attributes": {
+        "plane_index": 0,
+        "order": 43,
+        "display_name": "cont.9",
+        "provider_version": "0.6.0",
+        "placement": {
+          "transform": {
+            "translate": [
+              80.0,
+              894.0
+            ]
+          }
+        },
+        "order_authored": true
+      },
+      "payload": {
+        "corner_radius": 10.0,
+        "fill": "#FFFFFF",
+        "height": 290.0,
+        "opacity": 1.0,
+        "stroke": "#5C7BD9",
+        "stroke_width": 1.0,
+        "width": 920
+      }
+    },
+    {
+      "id": "defs",
+      "type": "arris.defs",
+      "schema_version": 1,
+      "provider": "arris",
+      "created_revision": 0,
+      "updated_revision": 0,
+      "hierarchies": {
+        "group": {
+          "parent": null
+        },
+        "owner": {
+          "parent": null
+        }
+      },
+      "domain_attributes": {
+        "order": 0,
+        "plane_index": 0
+      },
+      "payload": {}
+    },
+    {
+      "id": "edge.1",
+      "type": "arris.edge",
+      "schema_version": 1,
+      "provider": "arris",
+      "created_revision": 5,
+      "updated_revision": 5,
+      "hierarchies": {
+        "group": {
+          "parent": null
+        },
+        "owner": {
+          "parent": "page-1"
+        }
+      },
+      "domain_attributes": {
+        "end": {
+          "type": "arris.filled",
+          "schema_version": 1,
+          "parameters": {
+            "length": 9.0,
+            "width": 7.0
+          }
+        },
+        "display_name": "edge.1",
+        "order": 69,
+        "source": {
+          "ref": "card.17"
+        },
+        "target": {
+          "ref": "card.16"
+        },
+        "route": {
+          "strategy": {
+            "type": "arris.polyline",
+            "schema_version": 1,
+            "parameters": {}
+          },
+          "waypoints": [],
+          "corner_radius": 0.0,
+          "obstacles": {
+            "mode": "none"
+          }
+        },
+        "shaft": {
+          "stroke": "#5C7BD9",
+          "width": 1.4,
+          "dash_offset": 0.0
+        },
+        "labels": [
+          {
+            "label_id": "l",
+            "type": "arris.label",
+            "schema_version": 1,
+            "parameters": {
+              "align": "left",
+              "face": "sans.regular",
+              "fill": "#4A5565",
+              "line_height": 1.25,
+              "size": 10,
+              "text": "turn.attention"
+            },
+            "placement": {
+              "kind": "route-fraction",
+              "fraction": 0.5,
+              "offset": [
+                0.0,
+                0.0
+              ]
+            },
+            "clearance": 3.0
+          }
+        ],
+        "plane_index": 0,
+        "edge_order": 69,
+        "source_detail": {
+          "port_id": "t"
+        },
+        "target_detail": {
+          "port_id": "b"
+        }
+      },
+      "payload": {}
+    },
+    {
+      "id": "edge.2",
+      "type": "arris.edge",
+      "schema_version": 1,
+      "provider": "arris",
+      "created_revision": 5,
+      "updated_revision": 5,
+      "hierarchies": {
+        "group": {
+          "parent": null
+        },
+        "owner": {
+          "parent": "page-1"
+        }
+      },
+      "domain_attributes": {
+        "labels": [
+          {
+            "label_id": "l",
+            "type": "arris.label",
+            "schema_version": 1,
+            "parameters": {
+              "align": "left",
+              "face": "sans.regular",
+              "fill": "#4A5565",
+              "line_height": 1.25,
+              "size": 10,
+              "text": "mirrors"
+            },
+            "placement": {
+              "kind": "route-fraction",
+              "fraction": 0.5,
+              "offset": [
+                0.0,
+                0.0
+              ]
+            },
+            "clearance": 3.0
+          }
+        ],
+        "display_name": "edge.2",
+        "order": 70,
+        "source": {
+          "ref": "card.15"
+        },
+        "target": {
+          "ref": "card.9"
+        },
+        "route": {
+          "strategy": {
+            "type": "arris.polyline",
+            "schema_version": 1,
+            "parameters": {}
+          },
+          "waypoints": [
+            {
+              "space": "page",
+              "point": [
+                1644.0,
+                624.0
+              ]
+            },
+            {
+              "space": "page",
+              "point": [
+                1644.0,
+                941.0
+              ]
+            }
+          ],
+          "corner_radius": 6.0,
+          "obstacles": {
+            "mode": "none"
+          }
+        },
+        "shaft": {
+          "stroke": "#9877C9",
+          "width": 1.3,
+          "dash_offset": 0.0,
+          "dash": [
+            2.0,
+            3.0
+          ]
+        },
+        "plane_index": 0,
+        "edge_order": 70,
+        "source_detail": {
+          "port_id": "l"
+        },
+        "target_detail": {
+          "port_id": "r"
+        }
+      },
+      "payload": {}
+    },
+    {
+      "id": "edge.3",
+      "type": "arris.edge",
+      "schema_version": 1,
+      "provider": "arris",
+      "created_revision": 5,
+      "updated_revision": 5,
+      "hierarchies": {
+        "group": {
+          "parent": null
+        },
+        "owner": {
+          "parent": "page-1"
+        }
+      },
+      "domain_attributes": {
+        "end": {
+          "type": "arris.filled",
+          "schema_version": 1,
+          "parameters": {
+            "length": 9.0,
+            "width": 7.0
+          }
+        },
+        "display_name": "edge.3",
+        "order": 71,
+        "source": {
+          "ref": "card.16"
+        },
+        "target": {
+          "ref": "pill.1"
+        },
+        "route": {
+          "strategy": {
+            "type": "arris.polyline",
+            "schema_version": 1,
+            "parameters": {}
+          },
+          "waypoints": [
+            {
+              "space": "page",
+              "point": [
+                1614.0,
+                782.0
+              ]
+            },
+            {
+              "space": "page",
+              "point": [
+                1614.0,
+                367.0
+              ]
+            }
+          ],
+          "corner_radius": 6.0,
+          "obstacles": {
+            "mode": "none"
+          }
+        },
+        "shaft": {
+          "stroke": "#2E9C84",
+          "width": 1.6,
+          "dash_offset": 0.0
+        },
+        "labels": [
+          {
+            "label_id": "l",
+            "type": "arris.label",
+            "schema_version": 1,
+            "parameters": {
+              "align": "left",
+              "face": "sans.regular",
+              "fill": "#4A5565",
+              "line_height": 1.25,
+              "size": 10,
+              "text": "selected event → attention"
+            },
+            "placement": {
+              "kind": "route-fraction",
+              "fraction": 0.5,
+              "offset": [
+                0.0,
+                0.0
+              ]
+            },
+            "clearance": 3.0
+          }
+        ],
+        "plane_index": 0,
+        "edge_order": 71,
+        "source_detail": {
+          "port_id": "l"
+        },
+        "target_detail": {
+          "port_id": "r"
+        }
+      },
+      "payload": {}
+    },
+    {
+      "id": "free.1",
+      "type": "arris.styled_text",
+      "schema_version": 1,
+      "provider": "arris.reference-core",
+      "created_revision": 5,
+      "updated_revision": 5,
+      "hierarchies": {
+        "group": {
+          "parent": null
+        },
+        "owner": {
+          "parent": "page-1"
+        }
+      },
+      "domain_attributes": {
+        "plane_index": 0,
+        "order": 1,
+        "display_name": "free.1",
+        "provider_version": "0.6.0",
+        "placement": {
+          "transform": {
+            "translate": [
+              48.0,
+              40.0
+            ]
+          }
+        },
+        "order_authored": true
+      },
+      "payload": {
+        "align": "left",
+        "face": "sans.regular",
+        "fill": "#4A5565",
+        "line_height": 1.3,
+        "max_height": 0.0,
+        "max_width": 1500,
+        "runs": [
+          {
+            "start": 0,
+            "end": 120,
+            "face": "sans.semibold",
+            "size": 24.0,
+            "fill": "#1A2330"
+          }
+        ],
+        "size": 11.0,
+        "text": "The hrc document, instanced: one node per seat, generation, runtime and annotation; containment is the lineage hierarchy"
+      }
+    },
+    {
+      "id": "free.10",
+      "type": "arris.styled_text",
+      "schema_version": 1,
+      "provider": "arris.reference-core",
+      "created_revision": 5,
+      "updated_revision": 5,
+      "hierarchies": {
+        "group": {
+          "parent": null
+        },
+        "owner": {
+          "parent": "page-1"
+        }
+      },
+      "domain_attributes": {
+        "plane_index": 0,
+        "order": 72,
+        "display_name": "free.10",
+        "provider_version": "0.6.0",
+        "placement": {
+          "transform": {
+            "translate": [
+              48.0,
+              1252.0
+            ]
+          }
+        },
+        "order_authored": true
+      },
+      "payload": {
+        "align": "left",
+        "face": "sans.regular",
+        "fill": "#4A5565",
+        "line_height": 1.3,
+        "max_height": 0.0,
+        "max_width": 0.0,
+        "runs": [
+          {
+            "start": 0,
+            "end": 3,
+            "face": "cond.semibold",
+            "size": 9.5,
+            "tracking": 0.9,
+            "fill": "#4A5565"
+          }
+        ],
+        "size": 11.0,
+        "text": "KEY"
+      }
+    },
+    {
+      "id": "free.11",
+      "type": "arris.styled_text",
+      "schema_version": 1,
+      "provider": "arris.reference-core",
+      "created_revision": 5,
+      "updated_revision": 5,
+      "hierarchies": {
+        "group": {
+          "parent": null
+        },
+        "owner": {
+          "parent": "page-1"
+        }
+      },
+      "domain_attributes": {
+        "plane_index": 0,
+        "order": 74,
+        "display_name": "free.11",
+        "provider_version": "0.6.0",
+        "placement": {
+          "transform": {
+            "translate": [
+              126.0,
+              1250.0
+            ]
+          }
+        },
+        "order_authored": true
+      },
+      "payload": {
+        "align": "left",
+        "face": "sans.regular",
+        "fill": "#4A5565",
+        "line_height": 1.3,
+        "max_height": 0.0,
+        "max_width": 0.0,
+        "runs": [
+          {
+            "start": 0,
+            "end": 8,
+            "face": "sans.semibold",
+            "size": 11.0,
+            "fill": "#1A2330"
+          },
+          {
+            "start": 10,
+            "end": 63,
+            "size": 11.0,
+            "fill": "#4A5565"
+          }
+        ],
+        "size": 11.0,
+        "text": "hrc.seat  the continuity · key sessionRef · metadata lives here"
+      }
+    },
+    {
+      "id": "free.12",
+      "type": "arris.styled_text",
+      "schema_version": 1,
+      "provider": "arris.reference-core",
+      "created_revision": 5,
+      "updated_revision": 5,
+      "hierarchies": {
+        "group": {
+          "parent": null
+        },
+        "owner": {
+          "parent": "page-1"
+        }
+      },
+      "domain_attributes": {
+        "plane_index": 0,
+        "order": 76,
+        "display_name": "free.12",
+        "provider_version": "0.6.0",
+        "placement": {
+          "transform": {
+            "translate": [
+              886.0,
+              1250.0
+            ]
+          }
+        },
+        "order_authored": true
+      },
+      "payload": {
+        "align": "left",
+        "face": "sans.regular",
+        "fill": "#4A5565",
+        "line_height": 1.3,
+        "max_height": 0.0,
+        "max_width": 0.0,
+        "runs": [
+          {
+            "start": 0,
+            "end": 14,
+            "face": "sans.semibold",
+            "size": 11.0,
+            "fill": "#1A2330"
+          },
+          {
+            "start": 16,
+            "end": 106,
+            "size": 11.0,
+            "fill": "#4A5565"
+          }
+        ],
+        "size": 11.0,
+        "text": "hrc.generation  one per host session · ordered · attention is its field · live 24 h after its runtime ends"
+      }
+    },
+    {
+      "id": "free.13",
+      "type": "arris.styled_text",
+      "schema_version": 1,
+      "provider": "arris.reference-core",
+      "created_revision": 5,
+      "updated_revision": 5,
+      "hierarchies": {
+        "group": {
+          "parent": null
+        },
+        "owner": {
+          "parent": "page-1"
+        }
+      },
+      "domain_attributes": {
+        "plane_index": 0,
+        "order": 78,
+        "display_name": "free.13",
+        "provider_version": "0.6.0",
+        "placement": {
+          "transform": {
+            "translate": [
+              126.0,
+              1274.0
+            ]
+          }
+        },
+        "order_authored": true
+      },
+      "payload": {
+        "align": "left",
+        "face": "sans.regular",
+        "fill": "#4A5565",
+        "line_height": 1.3,
+        "max_height": 0.0,
+        "max_width": 0.0,
+        "runs": [
+          {
+            "start": 0,
+            "end": 11,
+            "face": "sans.semibold",
+            "size": 11.0,
+            "fill": "#1A2330"
+          },
+          {
+            "start": 13,
+            "end": 53,
+            "size": 11.0,
+            "fill": "#4A5565"
+          }
+        ],
+        "size": 11.0,
+        "text": "hrc.runtime  the process · key runtimeId · attachable"
+      }
+    },
+    {
+      "id": "free.14",
+      "type": "arris.styled_text",
+      "schema_version": 1,
+      "provider": "arris.reference-core",
+      "created_revision": 5,
+      "updated_revision": 5,
+      "hierarchies": {
+        "group": {
+          "parent": null
+        },
+        "owner": {
+          "parent": "page-1"
+        }
+      },
+      "domain_attributes": {
+        "plane_index": 0,
+        "order": 80,
+        "display_name": "free.14",
+        "provider_version": "0.6.0",
+        "placement": {
+          "transform": {
+            "translate": [
+              886.0,
+              1274.0
+            ]
+          }
+        },
+        "order_authored": true
+      },
+      "payload": {
+        "align": "left",
+        "face": "sans.regular",
+        "fill": "#4A5565",
+        "line_height": 1.3,
+        "max_height": 0.0,
+        "max_width": 0.0,
+        "runs": [
+          {
+            "start": 0,
+            "end": 14,
+            "face": "sans.semibold",
+            "size": 11.0,
+            "fill": "#1A2330"
+          },
+          {
+            "start": 16,
+            "end": 104,
+            "size": 11.0,
+            "fill": "#4A5565"
+          }
+        ],
+        "size": 11.0,
+        "text": "hrc.annotation  client-owned JSON on a seat or generation · key subject + ns + kind + id · opaque to HRC"
+      }
+    },
+    {
+      "id": "free.15",
+      "type": "arris.styled_text",
+      "schema_version": 1,
+      "provider": "arris.reference-core",
+      "created_revision": 5,
+      "updated_revision": 5,
+      "hierarchies": {
+        "group": {
+          "parent": null
+        },
+        "owner": {
+          "parent": "page-1"
+        }
+      },
+      "domain_attributes": {
+        "plane_index": 0,
+        "order": 81,
+        "display_name": "free.15",
+        "provider_version": "0.6.0",
+        "placement": {
+          "transform": {
+            "translate": [
+              108.0,
+              1304.0
+            ]
+          }
+        },
+        "order_authored": true
+      },
+      "payload": {
+        "align": "left",
+        "face": "sans.regular",
+        "fill": "#4A5565",
+        "line_height": 1.3,
+        "max_height": 0.0,
+        "max_width": 0.0,
+        "runs": [
+          {
+            "start": 0,
+            "end": 7,
+            "face": "sans.semibold",
+            "size": 11.0,
+            "fill": "#1A2330"
+          },
+          {
+            "start": 9,
+            "end": 104,
+            "size": 11.0,
+            "fill": "#4A5565"
+          },
+          {
+            "start": 110,
+            "end": 116,
+            "face": "sans.semibold",
+            "size": 11.0,
+            "fill": "#1A2330"
+          },
+          {
+            "start": 118,
+            "end": 141,
+            "size": 11.0,
+            "fill": "#4A5565"
+          },
+          {
+            "start": 147,
+            "end": 152,
+            "face": "sans.semibold",
+            "size": 11.0,
+            "fill": "#0B6E5B"
+          },
+          {
+            "start": 154,
+            "end": 204,
+            "size": 11.0,
+            "fill": "#4A5565"
+          }
+        ],
+        "size": 11.0,
+        "text": "nesting  = the lineage hierarchy (project › seat › generation › runtime | annotation; seat › annotation)      dotted  = mirrors one store row      green  = folded from the ledger, never stored on the node"
+      }
+    },
+    {
+      "id": "free.2",
+      "type": "arris.styled_text",
+      "schema_version": 1,
+      "provider": "arris.reference-core",
+      "created_revision": 5,
+      "updated_revision": 5,
+      "hierarchies": {
+        "group": {
+          "parent": null
+        },
+        "owner": {
+          "parent": "page-1"
+        }
+      },
+      "domain_attributes": {
+        "plane_index": 0,
+        "order": 2,
+        "display_name": "free.2",
+        "provider_version": "0.6.0",
+        "placement": {
+          "transform": {
+            "translate": [
+              48.0,
+              78.0
+            ]
+          }
+        },
+        "order_authored": true
+      },
+      "payload": {
+        "align": "left",
+        "face": "sans.regular",
+        "fill": "#4A5565",
+        "line_height": 1.3,
+        "max_height": 0.0,
+        "max_width": 0.0,
+        "runs": [
+          {
+            "start": 0,
+            "end": 71,
+            "size": 13.0,
+            "fill": "#4A5565"
+          }
+        ],
+        "size": 11.0,
+        "text": "hrc:hrc to-be · real seats on max3, 2026-10-31 · proposal, not approved"
+      }
+    },
+    {
+      "id": "free.3",
+      "type": "arris.styled_text",
+      "schema_version": 1,
+      "provider": "arris.reference-core",
+      "created_revision": 5,
+      "updated_revision": 5,
+      "hierarchies": {
+        "group": {
+          "parent": null
+        },
+        "owner": {
+          "parent": "page-1"
+        }
+      },
+      "domain_attributes": {
+        "plane_index": 0,
+        "order": 3,
+        "display_name": "free.3",
+        "provider_version": "0.6.0",
+        "placement": {
+          "transform": {
+            "translate": [
+              1582.0,
+              20.0
+            ]
+          }
+        },
+        "order_authored": true
+      },
+      "payload": {
+        "align": "right",
+        "face": "sans.regular",
+        "fill": "#4A5565",
+        "line_height": 1.3,
+        "max_height": 0.0,
+        "max_width": 420,
+        "runs": [
+          {
+            "start": 0,
+            "end": 24,
+            "face": "mono.regular",
+            "size": 10.0,
+            "fill": "#8792A2"
+          }
+        ],
+        "size": 11.0,
+        "text": "TO-BE · DRAFT 2026-10-31"
+      }
+    },
+    {
+      "id": "free.4",
+      "type": "arris.styled_text",
+      "schema_version": 1,
+      "provider": "arris.reference-core",
+      "created_revision": 5,
+      "updated_revision": 5,
+      "hierarchies": {
+        "group": {
+          "parent": null
+        },
+        "owner": {
+          "parent": "page-1"
+        }
+      },
+      "domain_attributes": {
+        "plane_index": 0,
+        "order": 11,
+        "display_name": "free.4",
+        "provider_version": "0.6.0",
+        "placement": {
+          "transform": {
+            "translate": [
+              92.0,
+              268.0
+            ]
+          }
+        },
+        "order_authored": true
+      },
+      "payload": {
+        "align": "left",
+        "face": "sans.regular",
+        "fill": "#4A5565",
+        "line_height": 1.3,
+        "max_height": 0.0,
+        "max_width": 0.0,
+        "runs": [
+          {
+            "start": 0,
+            "end": 10,
+            "face": "sans.semibold",
+            "size": 10.5,
+            "fill": "#4A5565"
+          },
+          {
+            "start": 10,
+            "end": 37,
+            "size": 10.5,
+            "fill": "#4A5565"
+          },
+          {
+            "start": 43,
+            "end": 53,
+            "face": "sans.semibold",
+            "size": 10.5,
+            "fill": "#4A5565"
+          },
+          {
+            "start": 53,
+            "end": 87,
+            "size": 10.5,
+            "fill": "#4A5565"
+          },
+          {
+            "start": 93,
+            "end": 111,
+            "face": "sans.semibold",
+            "size": 10.5,
+            "fill": "#4A5565"
+          },
+          {
+            "start": 111,
+            "end": 113,
+            "size": 10.5,
+            "fill": "#4A5565"
+          }
+        ],
+        "size": 11.0,
+        "text": "identity  mable · taskboard · primary      metadata  title: Taskboard · colour: #2449B8      activeGeneration  16"
+      }
+    },
+    {
+      "id": "free.5",
+      "type": "arris.styled_text",
+      "schema_version": 1,
+      "provider": "arris.reference-core",
+      "created_revision": 5,
+      "updated_revision": 5,
+      "hierarchies": {
+        "group": {
+          "parent": null
+        },
+        "owner": {
+          "parent": "page-1"
+        }
+      },
+      "domain_attributes": {
+        "plane_index": 0,
+        "order": 14,
+        "display_name": "free.5",
+        "provider_version": "0.6.0",
+        "placement": {
+          "transform": {
+            "translate": [
+              118.0,
+              360.0
+            ]
+          }
+        },
+        "order_authored": true
+      },
+      "payload": {
+        "align": "left",
+        "face": "sans.regular",
+        "fill": "#4A5565",
+        "line_height": 1.3,
+        "max_height": 0.0,
+        "max_width": 0.0,
+        "runs": [
+          {
+            "start": 0,
+            "end": 15,
+            "size": 10.0,
+            "fill": "#8792A2"
+          }
+        ],
+        "size": 11.0,
+        "text": "attention  none"
+      }
+    },
+    {
+      "id": "free.6",
+      "type": "arris.styled_text",
+      "schema_version": 1,
+      "provider": "arris.reference-core",
+      "created_revision": 5,
+      "updated_revision": 5,
+      "hierarchies": {
+        "group": {
+          "parent": null
+        },
+        "owner": {
+          "parent": "page-1"
+        }
+      },
+      "domain_attributes": {
+        "plane_index": 0,
+        "order": 33,
+        "display_name": "free.6",
+        "provider_version": "0.6.0",
+        "placement": {
+          "transform": {
+            "translate": [
+              92.0,
+              628.0
+            ]
+          }
+        },
+        "order_authored": true
+      },
+      "payload": {
+        "align": "left",
+        "face": "sans.regular",
+        "fill": "#4A5565",
+        "line_height": 1.3,
+        "max_height": 0.0,
+        "max_width": 0.0,
+        "runs": [
+          {
+            "start": 0,
+            "end": 10,
+            "face": "sans.semibold",
+            "size": 10.5,
+            "fill": "#4A5565"
+          },
+          {
+            "start": 10,
+            "end": 30,
+            "size": 10.5,
+            "fill": "#4A5565"
+          },
+          {
+            "start": 36,
+            "end": 46,
+            "face": "sans.semibold",
+            "size": 10.5,
+            "fill": "#4A5565"
+          },
+          {
+            "start": 46,
+            "end": 74,
+            "size": 10.5,
+            "fill": "#4A5565"
+          },
+          {
+            "start": 80,
+            "end": 98,
+            "face": "sans.semibold",
+            "size": 10.5,
+            "fill": "#4A5565"
+          },
+          {
+            "start": 98,
+            "end": 99,
+            "size": 10.5,
+            "fill": "#4A5565"
+          }
+        ],
+        "size": 11.0,
+        "text": "identity  vesta · c2 · primary      metadata  title: Vesta · role: primary      activeGeneration  1"
+      }
+    },
+    {
+      "id": "free.7",
+      "type": "arris.styled_text",
+      "schema_version": 1,
+      "provider": "arris.reference-core",
+      "created_revision": 5,
+      "updated_revision": 5,
+      "hierarchies": {
+        "group": {
+          "parent": null
+        },
+        "owner": {
+          "parent": "page-1"
+        }
+      },
+      "domain_attributes": {
+        "plane_index": 0,
+        "order": 36,
+        "display_name": "free.7",
+        "provider_version": "0.6.0",
+        "placement": {
+          "transform": {
+            "translate": [
+              118.0,
+              720.0
+            ]
+          }
+        },
+        "order_authored": true
+      },
+      "payload": {
+        "align": "left",
+        "face": "sans.regular",
+        "fill": "#4A5565",
+        "line_height": 1.3,
+        "max_height": 0.0,
+        "max_width": 0.0,
+        "runs": [
+          {
+            "start": 0,
+            "end": 15,
+            "size": 10.0,
+            "fill": "#8792A2"
+          }
+        ],
+        "size": 11.0,
+        "text": "attention  none"
+      }
+    },
+    {
+      "id": "free.8",
+      "type": "arris.styled_text",
+      "schema_version": 1,
+      "provider": "arris.reference-core",
+      "created_revision": 5,
+      "updated_revision": 5,
+      "hierarchies": {
+        "group": {
+          "parent": null
+        },
+        "owner": {
+          "parent": "page-1"
+        }
+      },
+      "domain_attributes": {
+        "plane_index": 0,
+        "order": 45,
+        "display_name": "free.8",
+        "provider_version": "0.6.0",
+        "placement": {
+          "transform": {
+            "translate": [
+              92.0,
+              932.0
+            ]
+          }
+        },
+        "order_authored": true
+      },
+      "payload": {
+        "align": "left",
+        "face": "sans.regular",
+        "fill": "#4A5565",
+        "line_height": 1.3,
+        "max_height": 0.0,
+        "max_width": 0.0,
+        "runs": [
+          {
+            "start": 0,
+            "end": 10,
+            "face": "sans.semibold",
+            "size": 10.5,
+            "fill": "#4A5565"
+          },
+          {
+            "start": 10,
+            "end": 30,
+            "size": 10.5,
+            "fill": "#4A5565"
+          },
+          {
+            "start": 36,
+            "end": 46,
+            "face": "sans.semibold",
+            "size": 10.5,
+            "fill": "#4A5565"
+          },
+          {
+            "start": 46,
+            "end": 64,
+            "size": 10.5,
+            "fill": "#4A5565"
+          },
+          {
+            "start": 70,
+            "end": 88,
+            "face": "sans.semibold",
+            "size": 10.5,
+            "fill": "#4A5565"
+          },
+          {
+            "start": 88,
+            "end": 89,
+            "size": 10.5,
+            "fill": "#4A5565"
+          }
+        ],
+        "size": 11.0,
+        "text": "identity  mable · c2 · primary      metadata  title: c2 strategy      activeGeneration  1"
+      }
+    },
+    {
+      "id": "free.9",
+      "type": "arris.styled_text",
+      "schema_version": 1,
+      "provider": "arris.reference-core",
+      "created_revision": 5,
+      "updated_revision": 5,
+      "hierarchies": {
+        "group": {
+          "parent": null
+        },
+        "owner": {
+          "parent": "page-1"
+        }
+      },
+      "domain_attributes": {
+        "plane_index": 0,
+        "order": 50,
+        "display_name": "free.9",
+        "provider_version": "0.6.0",
+        "placement": {
+          "transform": {
+            "translate": [
+              118.0,
+              1024.0
+            ]
+          }
+        },
+        "order_authored": true
+      },
+      "payload": {
+        "align": "left",
+        "face": "sans.regular",
+        "fill": "#4A5565",
+        "line_height": 1.3,
+        "max_height": 0.0,
+        "max_width": 0.0,
+        "runs": [
+          {
+            "start": 0,
+            "end": 15,
+            "size": 10.0,
+            "fill": "#8792A2"
+          }
+        ],
+        "size": 11.0,
+        "text": "attention  none"
+      }
+    },
+    {
+      "id": "page-1",
+      "type": "arris.page",
+      "schema_version": 1,
+      "provider": "arris",
+      "created_revision": 0,
+      "updated_revision": 3,
+      "hierarchies": {
+        "group": {
+          "parent": null
+        },
+        "owner": {
+          "parent": null
+        }
+      },
+      "domain_attributes": {
+        "plane_index": 0,
+        "order": 0,
+        "width": 2052.0,
+        "height": 1342.0,
+        "fill": "#FFFFFF"
+      },
+      "payload": {}
+    },
+    {
+      "id": "pill.1",
+      "type": "arris.box",
+      "schema_version": 1,
+      "provider": "arris.reference-core",
+      "created_revision": 5,
+      "updated_revision": 5,
+      "hierarchies": {
+        "group": {
+          "parent": null
+        },
+        "owner": {
+          "parent": "page-1"
+        }
+      },
+      "domain_attributes": {
+        "plane_index": 0,
+        "order": 21,
+        "display_name": "pill.1",
+        "provider_version": "0.6.0",
+        "placement": {
+          "transform": {
+            "translate": [
+              688.0,
+              356.0
+            ]
+          }
+        },
+        "order_authored": true,
+        "attachments": {
+          "geometry": {
+            "type": "arris.attachment.box",
+            "schema_version": 1,
+            "parameters": {}
+          },
+          "ports": [
+            {
+              "port_id": "r",
+              "attachment": {
+                "kind": "side",
+                "side": "right",
+                "fraction": 0.5,
+                "offset": 0.0,
+                "clearance": 0.0,
+                "approach": {
+                  "mode": "normal",
+                  "min_straight": 0.0
+                }
+              }
+            }
+          ]
+        }
+      },
+      "payload": {
+        "corner_radius": 11.0,
+        "fill": "#FCEFE9",
+        "height": 22,
+        "opacity": 1.0,
+        "stroke": "#E0754C",
+        "stroke_width": 1.0,
+        "width": 330
+      }
+    },
+    {
+      "id": "rule.1",
+      "type": "arris.box",
+      "schema_version": 1,
+      "provider": "arris.reference-core",
+      "created_revision": 5,
+      "updated_revision": 5,
+      "hierarchies": {
+        "group": {
+          "parent": null
+        },
+        "owner": {
+          "parent": "page-1"
+        }
+      },
+      "domain_attributes": {
+        "plane_index": 0,
+        "order": 4,
+        "display_name": "rule.1",
+        "provider_version": "0.6.0",
+        "placement": {
+          "transform": {
+            "translate": [
+              48.0,
+              108.0
+            ]
+          }
+        },
+        "order_authored": true
+      },
+      "payload": {
+        "corner_radius": 0.0,
+        "fill": "#D8DEE5",
+        "height": 1.0,
+        "opacity": 1.0,
+        "stroke": "#D8DEE5",
+        "stroke_width": 0.0,
+        "width": 1752
+      }
+    },
+    {
+      "id": "sw.1",
+      "type": "arris.box",
+      "schema_version": 1,
+      "provider": "arris.reference-core",
+      "created_revision": 5,
+      "updated_revision": 5,
+      "hierarchies": {
+        "group": {
+          "parent": null
+        },
+        "owner": {
+          "parent": "page-1"
+        }
+      },
+      "domain_attributes": {
+        "plane_index": 0,
+        "order": 73,
+        "display_name": "sw.1",
+        "provider_version": "0.6.0",
+        "placement": {
+          "transform": {
+            "translate": [
+              108.0,
+              1254.0
+            ]
+          }
+        },
+        "order_authored": true
+      },
+      "payload": {
+        "corner_radius": 3.0,
+        "fill": "#5C7BD9",
+        "height": 12,
+        "opacity": 1.0,
+        "stroke": "#5C7BD9",
+        "stroke_width": 0.0,
+        "width": 12
+      }
+    },
+    {
+      "id": "sw.2",
+      "type": "arris.box",
+      "schema_version": 1,
+      "provider": "arris.reference-core",
+      "created_revision": 5,
+      "updated_revision": 5,
+      "hierarchies": {
+        "group": {
+          "parent": null
+        },
+        "owner": {
+          "parent": "page-1"
+        }
+      },
+      "domain_attributes": {
+        "plane_index": 0,
+        "order": 75,
+        "display_name": "sw.2",
+        "provider_version": "0.6.0",
+        "placement": {
+          "transform": {
+            "translate": [
+              868.0,
+              1254.0
+            ]
+          }
+        },
+        "order_authored": true
+      },
+      "payload": {
+        "corner_radius": 3.0,
+        "fill": "#1A2330",
+        "height": 12,
+        "opacity": 1.0,
+        "stroke": "#1A2330",
+        "stroke_width": 0.0,
+        "width": 12
+      }
+    },
+    {
+      "id": "sw.3",
+      "type": "arris.box",
+      "schema_version": 1,
+      "provider": "arris.reference-core",
+      "created_revision": 5,
+      "updated_revision": 5,
+      "hierarchies": {
+        "group": {
+          "parent": null
+        },
+        "owner": {
+          "parent": "page-1"
+        }
+      },
+      "domain_attributes": {
+        "plane_index": 0,
+        "order": 77,
+        "display_name": "sw.3",
+        "provider_version": "0.6.0",
+        "placement": {
+          "transform": {
+            "translate": [
+              108.0,
+              1278.0
+            ]
+          }
+        },
+        "order_authored": true
+      },
+      "payload": {
+        "corner_radius": 3.0,
+        "fill": "#2E9C84",
+        "height": 12,
+        "opacity": 1.0,
+        "stroke": "#2E9C84",
+        "stroke_width": 0.0,
+        "width": 12
+      }
+    },
+    {
+      "id": "sw.4",
+      "type": "arris.box",
+      "schema_version": 1,
+      "provider": "arris.reference-core",
+      "created_revision": 5,
+      "updated_revision": 5,
+      "hierarchies": {
+        "group": {
+          "parent": null
+        },
+        "owner": {
+          "parent": "page-1"
+        }
+      },
+      "domain_attributes": {
+        "plane_index": 0,
+        "order": 79,
+        "display_name": "sw.4",
+        "provider_version": "0.6.0",
+        "placement": {
+          "transform": {
+            "translate": [
+              868.0,
+              1278.0
+            ]
+          }
+        },
+        "order_authored": true
+      },
+      "payload": {
+        "corner_radius": 3.0,
+        "fill": "#9877C9",
+        "height": 12,
+        "opacity": 1.0,
+        "stroke": "#9877C9",
+        "stroke_width": 0.0,
+        "width": 12
+      }
+    },
+    {
+      "id": "txt.1",
+      "type": "arris.styled_text",
+      "schema_version": 1,
+      "provider": "arris.reference-core",
+      "created_revision": 5,
+      "updated_revision": 5,
+      "hierarchies": {
+        "group": {
+          "parent": null
+        },
+        "owner": {
+          "parent": "page-1"
+        }
+      },
+      "domain_attributes": {
+        "plane_index": 0,
+        "order": 6,
+        "display_name": "txt.1",
+        "provider_version": "0.6.0",
+        "placement": {
+          "transform": {
+            "translate": [
+              0.0,
+              0.0
+            ]
+          }
+        },
+        "order_authored": true,
+        "bindings": [
+          {
+            "input": "caption_region",
+            "producer": "cont.1",
+            "output_port": "caption"
+          }
+        ]
+      },
+      "payload": {
+        "align": "left",
+        "face": "sans.regular",
+        "fill": "#4A5565",
+        "line_height": 1.3,
+        "max_height": 0.0,
+        "max_width": 0.0,
+        "overflow": "clip_to_region",
+        "padding": 12.0,
+        "runs": [
+          {
+            "start": 0,
+            "end": 16,
+            "face": "cond.semibold",
+            "size": 9.5,
+            "tracking": 0.9,
+            "fill": "#4A5565"
+          },
+          {
+            "start": 18,
+            "end": 25,
+            "face": "sans.semibold",
+            "size": 12.5,
+            "fill": "#1A2330"
+          },
+          {
+            "start": 28,
+            "end": 89,
+            "face": "mono.regular",
+            "size": 9.5,
+            "fill": "#8792A2"
+          }
+        ],
+        "size": 11.0,
+        "text": "DOCUMENT · CARDO  hrc:hrc   rebuildable · observation types only · one hierarchy: lineage",
+        "vertical_align": "top"
+      }
+    },
+    {
+      "id": "txt.10",
+      "type": "arris.styled_text",
+      "schema_version": 1,
+      "provider": "arris.reference-core",
+      "created_revision": 5,
+      "updated_revision": 5,
+      "hierarchies": {
+        "group": {
+          "parent": null
+        },
+        "owner": {
+          "parent": "page-1"
+        }
+      },
+      "domain_attributes": {
+        "plane_index": 0,
+        "order": 26,
+        "display_name": "txt.10",
+        "provider_version": "0.6.0",
+        "placement": {
+          "transform": {
+            "translate": [
+              0.0,
+              0.0
+            ]
+          }
+        },
+        "order_authored": true,
+        "bindings": [
+          {
+            "input": "caption_region",
+            "producer": "card.4",
+            "output_port": "caption"
+          }
+        ]
+      },
+      "payload": {
+        "align": "left",
+        "face": "sans.regular",
+        "fill": "#4A5565",
+        "line_height": 1.3,
+        "max_height": 0.0,
+        "max_width": 0.0,
+        "overflow": "clip_to_region",
+        "padding": 10.0,
+        "runs": [
+          {
+            "start": 0,
+            "end": 26,
+            "face": "cond.semibold",
+            "size": 9.5,
+            "tracking": 0.9,
+            "fill": "#6A3C9E"
+          },
+          {
+            "start": 27,
+            "end": 43,
+            "face": "sans.semibold",
+            "size": 13.0,
+            "fill": "#1A2330"
+          },
+          {
+            "start": 44,
+            "end": 85,
+            "size": 10.5,
+            "fill": "#4A5565"
+          },
+          {
+            "start": 86,
+            "end": 120,
+            "face": "mono.regular",
+            "size": 9.0,
+            "fill": "#8792A2"
+          }
+        ],
+        "size": 11.0,
+        "text": "HRC.ANNOTATION · C2 · CARD\nopen · 4 actions\nJSON ≤ 64 KB · put fenced on attention.at\nmable@taskboard#16#…T15:43:37.837Z",
+        "vertical_align": "top"
+      }
+    },
+    {
+      "id": "txt.11",
+      "type": "arris.styled_text",
+      "schema_version": 1,
+      "provider": "arris.reference-core",
+      "created_revision": 5,
+      "updated_revision": 5,
+      "hierarchies": {
+        "group": {
+          "parent": null
+        },
+        "owner": {
+          "parent": "page-1"
+        }
+      },
+      "domain_attributes": {
+        "plane_index": 0,
+        "order": 28,
+        "display_name": "txt.11",
+        "provider_version": "0.6.0",
+        "placement": {
+          "transform": {
+            "translate": [
+              0.0,
+              0.0
+            ]
+          }
+        },
+        "order_authored": true,
+        "bindings": [
+          {
+            "input": "caption_region",
+            "producer": "card.5",
+            "output_port": "caption"
+          }
+        ]
+      },
+      "payload": {
+        "align": "left",
+        "face": "sans.regular",
+        "fill": "#4A5565",
+        "line_height": 1.3,
+        "max_height": 0.0,
+        "max_width": 0.0,
+        "overflow": "clip_to_region",
+        "padding": 10.0,
+        "runs": [
+          {
+            "start": 0,
+            "end": 31,
+            "face": "cond.semibold",
+            "size": 9.5,
+            "tracking": 0.9,
+            "fill": "#8792A2"
+          },
+          {
+            "start": 32,
+            "end": 43,
+            "face": "sans.semibold",
+            "size": 13.0,
+            "fill": "#1A2330"
+          },
+          {
+            "start": 44,
+            "end": 84,
+            "size": 10.5,
+            "fill": "#4A5565"
+          },
+          {
+            "start": 85,
+            "end": 105,
+            "face": "mono.regular",
+            "size": 9.0,
+            "fill": "#8792A2"
+          }
+        ],
+        "size": 11.0,
+        "text": "HRC.ANNOTATION · TURN · SUMMARY\nfuture kind\nany ns.kind; writer owns the body schema\nno HRC change needed",
+        "vertical_align": "top"
+      }
+    },
+    {
+      "id": "txt.12",
+      "type": "arris.styled_text",
+      "schema_version": 1,
+      "provider": "arris.reference-core",
+      "created_revision": 5,
+      "updated_revision": 5,
+      "hierarchies": {
+        "group": {
+          "parent": null
+        },
+        "owner": {
+          "parent": "page-1"
+        }
+      },
+      "domain_attributes": {
+        "plane_index": 0,
+        "order": 30,
+        "display_name": "txt.12",
+        "provider_version": "0.6.0",
+        "placement": {
+          "transform": {
+            "translate": [
+              0.0,
+              0.0
+            ]
+          }
+        },
+        "order_authored": true,
+        "bindings": [
+          {
+            "input": "caption_region",
+            "producer": "cont.6",
+            "output_port": "caption"
+          }
+        ]
+      },
+      "payload": {
+        "align": "left",
+        "face": "sans.regular",
+        "fill": "#4A5565",
+        "line_height": 1.3,
+        "max_height": 0.0,
+        "max_width": 0.0,
+        "overflow": "clip_to_region",
+        "padding": 12.0,
+        "runs": [
+          {
+            "start": 0,
+            "end": 11,
+            "face": "cond.semibold",
+            "size": 9.5,
+            "tracking": 0.9,
+            "fill": "#4A5565"
+          },
+          {
+            "start": 13,
+            "end": 15,
+            "face": "sans.semibold",
+            "size": 12.5,
+            "fill": "#1A2330"
+          },
+          {
+            "start": 18,
+            "end": 34,
+            "face": "mono.regular",
+            "size": 9.5,
+            "fill": "#8792A2"
+          }
+        ],
+        "size": 11.0,
+        "text": "HRC.PROJECT  c2   key projectId=c2",
+        "vertical_align": "top"
+      }
+    },
+    {
+      "id": "txt.13",
+      "type": "arris.styled_text",
+      "schema_version": 1,
+      "provider": "arris.reference-core",
+      "created_revision": 5,
+      "updated_revision": 5,
+      "hierarchies": {
+        "group": {
+          "parent": null
+        },
+        "owner": {
+          "parent": "page-1"
+        }
+      },
+      "domain_attributes": {
+        "plane_index": 0,
+        "order": 32,
+        "display_name": "txt.13",
+        "provider_version": "0.6.0",
+        "placement": {
+          "transform": {
+            "translate": [
+              0.0,
+              0.0
+            ]
+          }
+        },
+        "order_authored": true,
+        "bindings": [
+          {
+            "input": "caption_region",
+            "producer": "cont.7",
+            "output_port": "caption"
+          }
+        ]
+      },
+      "payload": {
+        "align": "left",
+        "face": "sans.regular",
+        "fill": "#4A5565",
+        "line_height": 1.3,
+        "max_height": 0.0,
+        "max_width": 0.0,
+        "overflow": "clip_to_region",
+        "padding": 12.0,
+        "runs": [
+          {
+            "start": 0,
+            "end": 8,
+            "face": "cond.semibold",
+            "size": 9.5,
+            "tracking": 0.9,
+            "fill": "#2449B8"
+          },
+          {
+            "start": 10,
+            "end": 26,
+            "face": "sans.semibold",
+            "size": 12.5,
+            "fill": "#1A2330"
+          },
+          {
+            "start": 29,
+            "end": 89,
+            "face": "mono.regular",
+            "size": 9.5,
+            "fill": "#8792A2"
+          }
+        ],
+        "size": 11.0,
+        "text": "HRC.SEAT  vesta@c2:primary   key sessionRef=agent:vesta:project:c2:task:primary/lane:main",
+        "vertical_align": "top"
+      }
+    },
+    {
+      "id": "txt.14",
+      "type": "arris.styled_text",
+      "schema_version": 1,
+      "provider": "arris.reference-core",
+      "created_revision": 5,
+      "updated_revision": 5,
+      "hierarchies": {
+        "group": {
+          "parent": null
+        },
+        "owner": {
+          "parent": "page-1"
+        }
+      },
+      "domain_attributes": {
+        "plane_index": 0,
+        "order": 35,
+        "display_name": "txt.14",
+        "provider_version": "0.6.0",
+        "placement": {
+          "transform": {
+            "translate": [
+              0.0,
+              0.0
+            ]
+          }
+        },
+        "order_authored": true,
+        "bindings": [
+          {
+            "input": "caption_region",
+            "producer": "cont.8",
+            "output_port": "caption"
+          }
+        ]
+      },
+      "payload": {
+        "align": "left",
+        "face": "sans.regular",
+        "fill": "#4A5565",
+        "line_height": 1.3,
+        "max_height": 0.0,
+        "max_width": 0.0,
+        "overflow": "clip_to_region",
+        "padding": 12.0,
+        "runs": [
+          {
+            "start": 0,
+            "end": 14,
+            "face": "cond.semibold",
+            "size": 9.5,
+            "tracking": 0.9,
+            "fill": "#1A2330"
+          },
+          {
+            "start": 16,
+            "end": 37,
+            "face": "sans.semibold",
+            "size": 12.5,
+            "fill": "#1A2330"
+          },
+          {
+            "start": 40,
+            "end": 67,
+            "face": "mono.regular",
+            "size": 9.5,
+            "fill": "#8792A2"
+          }
+        ],
+        "size": 11.0,
+        "text": "HRC.GENERATION  generation 1 · active   key hostSessionId · order 1",
+        "vertical_align": "top"
+      }
+    },
+    {
+      "id": "txt.15",
+      "type": "arris.styled_text",
+      "schema_version": 1,
+      "provider": "arris.reference-core",
+      "created_revision": 5,
+      "updated_revision": 5,
+      "hierarchies": {
+        "group": {
+          "parent": null
+        },
+        "owner": {
+          "parent": "page-1"
+        }
+      },
+      "domain_attributes": {
+        "plane_index": 0,
+        "order": 38,
+        "display_name": "txt.15",
+        "provider_version": "0.6.0",
+        "placement": {
+          "transform": {
+            "translate": [
+              0.0,
+              0.0
+            ]
+          }
+        },
+        "order_authored": true,
+        "bindings": [
+          {
+            "input": "caption_region",
+            "producer": "card.6",
+            "output_port": "caption"
+          }
+        ]
+      },
+      "payload": {
+        "align": "left",
+        "face": "sans.regular",
+        "fill": "#4A5565",
+        "line_height": 1.3,
+        "max_height": 0.0,
+        "max_width": 0.0,
+        "overflow": "clip_to_region",
+        "padding": 10.0,
+        "runs": [
+          {
+            "start": 0,
+            "end": 11,
+            "face": "cond.semibold",
+            "size": 9.5,
+            "tracking": 0.9,
+            "fill": "#0B6E5B"
+          },
+          {
+            "start": 12,
+            "end": 20,
+            "face": "sans.semibold",
+            "size": 13.0,
+            "fill": "#1A2330"
+          },
+          {
+            "start": 21,
+            "end": 37,
+            "size": 10.5,
+            "fill": "#4A5565"
+          },
+          {
+            "start": 38,
+            "end": 61,
+            "size": 10.5,
+            "fill": "#4A5565"
+          },
+          {
+            "start": 62,
+            "end": 92,
+            "face": "mono.regular",
+            "size": 9.0,
+            "fill": "#8792A2"
+          }
+        ],
+        "size": 11.0,
+        "text": "HRC.RUNTIME\nrt-7a40…\npi · tmux · busy\nattachable: tmux-attach\nkey runtimeId · contextReading",
+        "vertical_align": "top"
+      }
+    },
+    {
+      "id": "txt.16",
+      "type": "arris.styled_text",
+      "schema_version": 1,
+      "provider": "arris.reference-core",
+      "created_revision": 5,
+      "updated_revision": 5,
+      "hierarchies": {
+        "group": {
+          "parent": null
+        },
+        "owner": {
+          "parent": "page-1"
+        }
+      },
+      "domain_attributes": {
+        "plane_index": 0,
+        "order": 40,
+        "display_name": "txt.16",
+        "provider_version": "0.6.0",
+        "placement": {
+          "transform": {
+            "translate": [
+              0.0,
+              0.0
+            ]
+          }
+        },
+        "order_authored": true,
+        "bindings": [
+          {
+            "input": "caption_region",
+            "producer": "card.7",
+            "output_port": "caption"
+          }
+        ]
+      },
+      "payload": {
+        "align": "left",
+        "face": "sans.regular",
+        "fill": "#4A5565",
+        "line_height": 1.3,
+        "max_height": 0.0,
+        "max_width": 0.0,
+        "overflow": "clip_to_region",
+        "padding": 10.0,
+        "runs": [
+          {
+            "start": 0,
+            "end": 25,
+            "face": "cond.semibold",
+            "size": 9.5,
+            "tracking": 0.9,
+            "fill": "#6A3C9E"
+          },
+          {
+            "start": 26,
+            "end": 30,
+            "face": "sans.semibold",
+            "size": 13.0,
+            "fill": "#1A2330"
+          },
+          {
+            "start": 31,
+            "end": 72,
+            "size": 10.5,
+            "fill": "#4A5565"
+          },
+          {
+            "start": 73,
+            "end": 93,
+            "face": "mono.regular",
+            "size": 9.0,
+            "fill": "#8792A2"
+          }
+        ],
+        "size": 11.0,
+        "text": "HRC.ANNOTATION · C2 · ASK\nopen\nJSON ≤ 64 KB · put fenced on attention.at\nvesta@c2#scope-widen",
+        "vertical_align": "top"
+      }
+    },
+    {
+      "id": "txt.17",
+      "type": "arris.styled_text",
+      "schema_version": 1,
+      "provider": "arris.reference-core",
+      "created_revision": 5,
+      "updated_revision": 5,
+      "hierarchies": {
+        "group": {
+          "parent": null
+        },
+        "owner": {
+          "parent": "page-1"
+        }
+      },
+      "domain_attributes": {
+        "plane_index": 0,
+        "order": 42,
+        "display_name": "txt.17",
+        "provider_version": "0.6.0",
+        "placement": {
+          "transform": {
+            "translate": [
+              0.0,
+              0.0
+            ]
+          }
+        },
+        "order_authored": true,
+        "bindings": [
+          {
+            "input": "caption_region",
+            "producer": "card.8",
+            "output_port": "caption"
+          }
+        ]
+      },
+      "payload": {
+        "align": "left",
+        "face": "sans.regular",
+        "fill": "#4A5565",
+        "line_height": 1.3,
+        "max_height": 0.0,
+        "max_width": 0.0,
+        "overflow": "clip_to_region",
+        "padding": 10.0,
+        "runs": [
+          {
+            "start": 0,
+            "end": 25,
+            "face": "cond.semibold",
+            "size": 9.5,
+            "tracking": 0.9,
+            "fill": "#6A3C9E"
+          },
+          {
+            "start": 26,
+            "end": 34,
+            "face": "sans.semibold",
+            "size": 13.0,
+            "fill": "#1A2330"
+          },
+          {
+            "start": 35,
+            "end": 76,
+            "size": 10.5,
+            "fill": "#4A5565"
+          },
+          {
+            "start": 77,
+            "end": 97,
+            "face": "mono.regular",
+            "size": 9.0,
+            "fill": "#8792A2"
+          }
+        ],
+        "size": 11.0,
+        "text": "HRC.ANNOTATION · C2 · ASK\nresolved\nJSON ≤ 64 KB · put fenced on attention.at\nvesta@c2#remount-fix",
+        "vertical_align": "top"
+      }
+    },
+    {
+      "id": "txt.18",
+      "type": "arris.styled_text",
+      "schema_version": 1,
+      "provider": "arris.reference-core",
+      "created_revision": 5,
+      "updated_revision": 5,
+      "hierarchies": {
+        "group": {
+          "parent": null
+        },
+        "owner": {
+          "parent": "page-1"
+        }
+      },
+      "domain_attributes": {
+        "plane_index": 0,
+        "order": 44,
+        "display_name": "txt.18",
+        "provider_version": "0.6.0",
+        "placement": {
+          "transform": {
+            "translate": [
+              0.0,
+              0.0
+            ]
+          }
+        },
+        "order_authored": true,
+        "bindings": [
+          {
+            "input": "caption_region",
+            "producer": "cont.9",
+            "output_port": "caption"
+          }
+        ]
+      },
+      "payload": {
+        "align": "left",
+        "face": "sans.regular",
+        "fill": "#4A5565",
+        "line_height": 1.3,
+        "max_height": 0.0,
+        "max_width": 0.0,
+        "overflow": "clip_to_region",
+        "padding": 12.0,
+        "runs": [
+          {
+            "start": 0,
+            "end": 8,
+            "face": "cond.semibold",
+            "size": 9.5,
+            "tracking": 0.9,
+            "fill": "#2449B8"
+          },
+          {
+            "start": 10,
+            "end": 26,
+            "face": "sans.semibold",
+            "size": 12.5,
+            "fill": "#1A2330"
+          },
+          {
+            "start": 29,
+            "end": 89,
+            "face": "mono.regular",
+            "size": 9.5,
+            "fill": "#8792A2"
+          }
+        ],
+        "size": 11.0,
+        "text": "HRC.SEAT  mable@c2:primary   key sessionRef=agent:mable:project:c2:task:primary/lane:main",
+        "vertical_align": "top"
+      }
+    },
+    {
+      "id": "txt.19",
+      "type": "arris.styled_text",
+      "schema_version": 1,
+      "provider": "arris.reference-core",
+      "created_revision": 5,
+      "updated_revision": 5,
+      "hierarchies": {
+        "group": {
+          "parent": null
+        },
+        "owner": {
+          "parent": "page-1"
+        }
+      },
+      "domain_attributes": {
+        "plane_index": 0,
+        "order": 47,
+        "display_name": "txt.19",
+        "provider_version": "0.6.0",
+        "placement": {
+          "transform": {
+            "translate": [
+              0.0,
+              0.0
+            ]
+          }
+        },
+        "order_authored": true,
+        "bindings": [
+          {
+            "input": "caption_region",
+            "producer": "card.9",
+            "output_port": "caption"
+          }
+        ]
+      },
+      "payload": {
+        "align": "left",
+        "face": "sans.regular",
+        "fill": "#4A5565",
+        "line_height": 1.3,
+        "max_height": 0.0,
+        "max_width": 0.0,
+        "overflow": "clip_to_region",
+        "padding": 10.0,
+        "runs": [
+          {
+            "start": 0,
+            "end": 27,
+            "face": "cond.semibold",
+            "size": 9.5,
+            "tracking": 0.9,
+            "fill": "#6A3C9E"
+          },
+          {
+            "start": 28,
+            "end": 33,
+            "face": "sans.semibold",
+            "size": 13.0,
+            "fill": "#1A2330"
+          },
+          {
+            "start": 34,
+            "end": 70,
+            "size": 10.5,
+            "fill": "#4A5565"
+          },
+          {
+            "start": 71,
+            "end": 98,
+            "face": "mono.regular",
+            "size": 9.0,
+            "fill": "#8792A2"
+          }
+        ],
+        "size": 11.0,
+        "text": "HRC.ANNOTATION · WRKQ · HCS\nbound\ncontinuity-scoped: survives rotation\nhcs T-12170 · subject: seat",
+        "vertical_align": "top"
+      }
+    },
+    {
+      "id": "txt.2",
+      "type": "arris.styled_text",
+      "schema_version": 1,
+      "provider": "arris.reference-core",
+      "created_revision": 5,
+      "updated_revision": 5,
+      "hierarchies": {
+        "group": {
+          "parent": null
+        },
+        "owner": {
+          "parent": "page-1"
+        }
+      },
+      "domain_attributes": {
+        "plane_index": 0,
+        "order": 8,
+        "display_name": "txt.2",
+        "provider_version": "0.6.0",
+        "placement": {
+          "transform": {
+            "translate": [
+              0.0,
+              0.0
+            ]
+          }
+        },
+        "order_authored": true,
+        "bindings": [
+          {
+            "input": "caption_region",
+            "producer": "cont.2",
+            "output_port": "caption"
+          }
+        ]
+      },
+      "payload": {
+        "align": "left",
+        "face": "sans.regular",
+        "fill": "#4A5565",
+        "line_height": 1.3,
+        "max_height": 0.0,
+        "max_width": 0.0,
+        "overflow": "clip_to_region",
+        "padding": 12.0,
+        "runs": [
+          {
+            "start": 0,
+            "end": 11,
+            "face": "cond.semibold",
+            "size": 9.5,
+            "tracking": 0.9,
+            "fill": "#4A5565"
+          },
+          {
+            "start": 13,
+            "end": 22,
+            "face": "sans.semibold",
+            "size": 12.5,
+            "fill": "#1A2330"
+          },
+          {
+            "start": 25,
+            "end": 48,
+            "face": "mono.regular",
+            "size": 9.5,
+            "fill": "#8792A2"
+          }
+        ],
+        "size": 11.0,
+        "text": "HRC.PROJECT  taskboard   key projectId=taskboard",
+        "vertical_align": "top"
+      }
+    },
+    {
+      "id": "txt.20",
+      "type": "arris.styled_text",
+      "schema_version": 1,
+      "provider": "arris.reference-core",
+      "created_revision": 5,
+      "updated_revision": 5,
+      "hierarchies": {
+        "group": {
+          "parent": null
+        },
+        "owner": {
+          "parent": "page-1"
+        }
+      },
+      "domain_attributes": {
+        "plane_index": 0,
+        "order": 49,
+        "display_name": "txt.20",
+        "provider_version": "0.6.0",
+        "placement": {
+          "transform": {
+            "translate": [
+              0.0,
+              0.0
+            ]
+          }
+        },
+        "order_authored": true,
+        "bindings": [
+          {
+            "input": "caption_region",
+            "producer": "cont.10",
+            "output_port": "caption"
+          }
+        ]
+      },
+      "payload": {
+        "align": "left",
+        "face": "sans.regular",
+        "fill": "#4A5565",
+        "line_height": 1.3,
+        "max_height": 0.0,
+        "max_width": 0.0,
+        "overflow": "clip_to_region",
+        "padding": 12.0,
+        "runs": [
+          {
+            "start": 0,
+            "end": 14,
+            "face": "cond.semibold",
+            "size": 9.5,
+            "tracking": 0.9,
+            "fill": "#1A2330"
+          },
+          {
+            "start": 16,
+            "end": 37,
+            "face": "sans.semibold",
+            "size": 12.5,
+            "fill": "#1A2330"
+          },
+          {
+            "start": 40,
+            "end": 67,
+            "face": "mono.regular",
+            "size": 9.5,
+            "fill": "#8792A2"
+          }
+        ],
+        "size": 11.0,
+        "text": "HRC.GENERATION  generation 1 · active   key hostSessionId · order 1",
+        "vertical_align": "top"
+      }
+    },
+    {
+      "id": "txt.21",
+      "type": "arris.styled_text",
+      "schema_version": 1,
+      "provider": "arris.reference-core",
+      "created_revision": 5,
+      "updated_revision": 5,
+      "hierarchies": {
+        "group": {
+          "parent": null
+        },
+        "owner": {
+          "parent": "page-1"
+        }
+      },
+      "domain_attributes": {
+        "plane_index": 0,
+        "order": 52,
+        "display_name": "txt.21",
+        "provider_version": "0.6.0",
+        "placement": {
+          "transform": {
+            "translate": [
+              0.0,
+              0.0
+            ]
+          }
+        },
+        "order_authored": true,
+        "bindings": [
+          {
+            "input": "caption_region",
+            "producer": "card.10",
+            "output_port": "caption"
+          }
+        ]
+      },
+      "payload": {
+        "align": "left",
+        "face": "sans.regular",
+        "fill": "#4A5565",
+        "line_height": 1.3,
+        "max_height": 0.0,
+        "max_width": 0.0,
+        "overflow": "clip_to_region",
+        "padding": 10.0,
+        "runs": [
+          {
+            "start": 0,
+            "end": 11,
+            "face": "cond.semibold",
+            "size": 9.5,
+            "tracking": 0.9,
+            "fill": "#0B6E5B"
+          },
+          {
+            "start": 12,
+            "end": 20,
+            "face": "sans.semibold",
+            "size": 13.0,
+            "fill": "#1A2330"
+          },
+          {
+            "start": 21,
+            "end": 41,
+            "size": 10.5,
+            "fill": "#4A5565"
+          },
+          {
+            "start": 42,
+            "end": 65,
+            "size": 10.5,
+            "fill": "#4A5565"
+          },
+          {
+            "start": 66,
+            "end": 96,
+            "face": "mono.regular",
+            "size": 9.0,
+            "fill": "#8792A2"
+          }
+        ],
+        "size": 11.0,
+        "text": "HRC.RUNTIME\nrt-92d8…\nclaude · tmux · busy\nattachable: tmux-attach\nkey runtimeId · contextReading",
+        "vertical_align": "top"
+      }
+    },
+    {
+      "id": "txt.22",
+      "type": "arris.styled_text",
+      "schema_version": 1,
+      "provider": "arris.reference-core",
+      "created_revision": 5,
+      "updated_revision": 5,
+      "hierarchies": {
+        "group": {
+          "parent": null
+        },
+        "owner": {
+          "parent": "page-1"
+        }
+      },
+      "domain_attributes": {
+        "plane_index": 0,
+        "order": 54,
+        "display_name": "txt.22",
+        "provider_version": "0.6.0",
+        "placement": {
+          "transform": {
+            "translate": [
+              0.0,
+              0.0
+            ]
+          }
+        },
+        "order_authored": true,
+        "bindings": [
+          {
+            "input": "caption_region",
+            "producer": "cont.11",
+            "output_port": "caption"
+          }
+        ]
+      },
+      "payload": {
+        "align": "left",
+        "face": "sans.regular",
+        "fill": "#4A5565",
+        "line_height": 1.3,
+        "max_height": 0.0,
+        "max_width": 0.0,
+        "overflow": "clip_to_region",
+        "padding": 12.0,
+        "runs": [
+          {
+            "start": 0,
+            "end": 15,
+            "face": "cond.semibold",
+            "size": 9.5,
+            "tracking": 0.9,
+            "fill": "#4A5565"
+          },
+          {
+            "start": 17,
+            "end": 29,
+            "face": "sans.semibold",
+            "size": 12.5,
+            "fill": "#1A2330"
+          },
+          {
+            "start": 32,
+            "end": 53,
+            "face": "mono.regular",
+            "size": 9.5,
+            "fill": "#8792A2"
+          }
+        ],
+        "size": 11.0,
+        "text": "DATASTORE · HRC  state.sqlite   rows the nodes mirror",
+        "vertical_align": "top"
+      }
+    },
+    {
+      "id": "txt.23",
+      "type": "arris.styled_text",
+      "schema_version": 1,
+      "provider": "arris.reference-core",
+      "created_revision": 5,
+      "updated_revision": 5,
+      "hierarchies": {
+        "group": {
+          "parent": null
+        },
+        "owner": {
+          "parent": "page-1"
+        }
+      },
+      "domain_attributes": {
+        "plane_index": 0,
+        "order": 56,
+        "display_name": "txt.23",
+        "provider_version": "0.6.0",
+        "placement": {
+          "transform": {
+            "translate": [
+              0.0,
+              0.0
+            ]
+          }
+        },
+        "order_authored": true,
+        "bindings": [
+          {
+            "input": "caption_region",
+            "producer": "card.11",
+            "output_port": "caption"
+          }
+        ]
+      },
+      "payload": {
+        "align": "left",
+        "face": "sans.regular",
+        "fill": "#4A5565",
+        "line_height": 1.3,
+        "max_height": 0.0,
+        "max_width": 0.0,
+        "overflow": "clip_to_region",
+        "padding": 10.0,
+        "runs": [
+          {
+            "start": 0,
+            "end": 5,
+            "face": "cond.semibold",
+            "size": 9.5,
+            "tracking": 0.9,
+            "fill": "#1A2330"
+          },
+          {
+            "start": 6,
+            "end": 18,
+            "face": "sans.semibold",
+            "size": 13.0,
+            "fill": "#1A2330"
+          },
+          {
+            "start": 19,
+            "end": 65,
+            "size": 10.5,
+            "fill": "#4A5565"
+          },
+          {
+            "start": 66,
+            "end": 84,
+            "face": "mono.regular",
+            "size": 9.0,
+            "fill": "#8792A2"
+          }
+        ],
+        "size": 11.0,
+        "text": "TABLE\ncontinuities\nscope_ref, lane_ref → active session; identity\nmirrors → hrc.seat",
+        "vertical_align": "top"
+      }
+    },
+    {
+      "id": "txt.24",
+      "type": "arris.styled_text",
+      "schema_version": 1,
+      "provider": "arris.reference-core",
+      "created_revision": 5,
+      "updated_revision": 5,
+      "hierarchies": {
+        "group": {
+          "parent": null
+        },
+        "owner": {
+          "parent": "page-1"
+        }
+      },
+      "domain_attributes": {
+        "plane_index": 0,
+        "order": 58,
+        "display_name": "txt.24",
+        "provider_version": "0.6.0",
+        "placement": {
+          "transform": {
+            "translate": [
+              0.0,
+              0.0
+            ]
+          }
+        },
+        "order_authored": true,
+        "bindings": [
+          {
+            "input": "caption_region",
+            "producer": "card.12",
+            "output_port": "caption"
+          }
+        ]
+      },
+      "payload": {
+        "align": "left",
+        "face": "sans.regular",
+        "fill": "#4A5565",
+        "line_height": 1.3,
+        "max_height": 0.0,
+        "max_width": 0.0,
+        "overflow": "clip_to_region",
+        "padding": 10.0,
+        "runs": [
+          {
+            "start": 0,
+            "end": 5,
+            "face": "cond.semibold",
+            "size": 9.5,
+            "tracking": 0.9,
+            "fill": "#1A2330"
+          },
+          {
+            "start": 6,
+            "end": 22,
+            "face": "sans.semibold",
+            "size": 13.0,
+            "fill": "#1A2330"
+          },
+          {
+            "start": 23,
+            "end": 65,
+            "size": 10.5,
+            "fill": "#4A5565"
+          },
+          {
+            "start": 66,
+            "end": 93,
+            "face": "mono.regular",
+            "size": 9.0,
+            "fill": "#8792A2"
+          }
+        ],
+        "size": 11.0,
+        "text": "TABLE\nsession_metadata\ncontinuity scalars: title, colour, hcs ref\nmirrors → hrc.seat.metadata",
+        "vertical_align": "top"
+      }
+    },
+    {
+      "id": "txt.25",
+      "type": "arris.styled_text",
+      "schema_version": 1,
+      "provider": "arris.reference-core",
+      "created_revision": 5,
+      "updated_revision": 5,
+      "hierarchies": {
+        "group": {
+          "parent": null
+        },
+        "owner": {
+          "parent": "page-1"
+        }
+      },
+      "domain_attributes": {
+        "plane_index": 0,
+        "order": 60,
+        "display_name": "txt.25",
+        "provider_version": "0.6.0",
+        "placement": {
+          "transform": {
+            "translate": [
+              0.0,
+              0.0
+            ]
+          }
+        },
+        "order_authored": true,
+        "bindings": [
+          {
+            "input": "caption_region",
+            "producer": "card.13",
+            "output_port": "caption"
+          }
+        ]
+      },
+      "payload": {
+        "align": "left",
+        "face": "sans.regular",
+        "fill": "#4A5565",
+        "line_height": 1.3,
+        "max_height": 0.0,
+        "max_width": 0.0,
+        "overflow": "clip_to_region",
+        "padding": 10.0,
+        "runs": [
+          {
+            "start": 0,
+            "end": 5,
+            "face": "cond.semibold",
+            "size": 9.5,
+            "tracking": 0.9,
+            "fill": "#1A2330"
+          },
+          {
+            "start": 6,
+            "end": 14,
+            "face": "sans.semibold",
+            "size": 13.0,
+            "fill": "#1A2330"
+          },
+          {
+            "start": 15,
+            "end": 64,
+            "size": 10.5,
+            "fill": "#4A5565"
+          },
+          {
+            "start": 65,
+            "end": 89,
+            "face": "mono.regular",
+            "size": 9.0,
+            "fill": "#8792A2"
+          }
+        ],
+        "size": 11.0,
+        "text": "TABLE\nsessions\nhost_session_id, generation, status, continuation\nmirrors → hrc.generation",
+        "vertical_align": "top"
+      }
+    },
+    {
+      "id": "txt.26",
+      "type": "arris.styled_text",
+      "schema_version": 1,
+      "provider": "arris.reference-core",
+      "created_revision": 5,
+      "updated_revision": 5,
+      "hierarchies": {
+        "group": {
+          "parent": null
+        },
+        "owner": {
+          "parent": "page-1"
+        }
+      },
+      "domain_attributes": {
+        "plane_index": 0,
+        "order": 62,
+        "display_name": "txt.26",
+        "provider_version": "0.6.0",
+        "placement": {
+          "transform": {
+            "translate": [
+              0.0,
+              0.0
+            ]
+          }
+        },
+        "order_authored": true,
+        "bindings": [
+          {
+            "input": "caption_region",
+            "producer": "card.14",
+            "output_port": "caption"
+          }
+        ]
+      },
+      "payload": {
+        "align": "left",
+        "face": "sans.regular",
+        "fill": "#4A5565",
+        "line_height": 1.3,
+        "max_height": 0.0,
+        "max_width": 0.0,
+        "overflow": "clip_to_region",
+        "padding": 10.0,
+        "runs": [
+          {
+            "start": 0,
+            "end": 5,
+            "face": "cond.semibold",
+            "size": 9.5,
+            "tracking": 0.9,
+            "fill": "#1A2330"
+          },
+          {
+            "start": 6,
+            "end": 14,
+            "face": "sans.semibold",
+            "size": 13.0,
+            "fill": "#1A2330"
+          },
+          {
+            "start": 15,
+            "end": 64,
+            "size": 10.5,
+            "fill": "#4A5565"
+          },
+          {
+            "start": 65,
+            "end": 86,
+            "face": "mono.regular",
+            "size": 9.0,
+            "fill": "#8792A2"
+          }
+        ],
+        "size": 11.0,
+        "text": "TABLE\nruntimes\nruntime_id, transport, status, tmux, presentation\nmirrors → hrc.runtime",
+        "vertical_align": "top"
+      }
+    },
+    {
+      "id": "txt.27",
+      "type": "arris.styled_text",
+      "schema_version": 1,
+      "provider": "arris.reference-core",
+      "created_revision": 5,
+      "updated_revision": 5,
+      "hierarchies": {
+        "group": {
+          "parent": null
+        },
+        "owner": {
+          "parent": "page-1"
+        }
+      },
+      "domain_attributes": {
+        "plane_index": 0,
+        "order": 64,
+        "display_name": "txt.27",
+        "provider_version": "0.6.0",
+        "placement": {
+          "transform": {
+            "translate": [
+              0.0,
+              0.0
+            ]
+          }
+        },
+        "order_authored": true,
+        "bindings": [
+          {
+            "input": "caption_region",
+            "producer": "card.15",
+            "output_port": "caption"
+          }
+        ]
+      },
+      "payload": {
+        "align": "left",
+        "face": "sans.regular",
+        "fill": "#4A5565",
+        "line_height": 1.3,
+        "max_height": 0.0,
+        "max_width": 0.0,
+        "overflow": "clip_to_region",
+        "padding": 10.0,
+        "runs": [
+          {
+            "start": 0,
+            "end": 5,
+            "face": "cond.semibold",
+            "size": 9.5,
+            "tracking": 0.9,
+            "fill": "#6A3C9E"
+          },
+          {
+            "start": 6,
+            "end": 29,
+            "face": "sans.semibold",
+            "size": 13.0,
+            "fill": "#1A2330"
+          },
+          {
+            "start": 30,
+            "end": 83,
+            "size": 10.5,
+            "fill": "#4A5565"
+          },
+          {
+            "start": 84,
+            "end": 108,
+            "face": "mono.regular",
+            "size": 9.0,
+            "fill": "#8792A2"
+          }
+        ],
+        "size": 11.0,
+        "text": "TABLE\nseat_annotations  (new)\nsubject seat|generation · ns, kind, id → JSON · fence\nmirrors → hrc.annotation",
+        "vertical_align": "top"
+      }
+    },
+    {
+      "id": "txt.28",
+      "type": "arris.styled_text",
+      "schema_version": 1,
+      "provider": "arris.reference-core",
+      "created_revision": 5,
+      "updated_revision": 5,
+      "hierarchies": {
+        "group": {
+          "parent": null
+        },
+        "owner": {
+          "parent": "page-1"
+        }
+      },
+      "domain_attributes": {
+        "plane_index": 0,
+        "order": 66,
+        "display_name": "txt.28",
+        "provider_version": "0.6.0",
+        "placement": {
+          "transform": {
+            "translate": [
+              0.0,
+              0.0
+            ]
+          }
+        },
+        "order_authored": true,
+        "bindings": [
+          {
+            "input": "caption_region",
+            "producer": "card.16",
+            "output_port": "caption"
+          }
+        ]
+      },
+      "payload": {
+        "align": "left",
+        "face": "sans.regular",
+        "fill": "#4A5565",
+        "line_height": 1.3,
+        "max_height": 0.0,
+        "max_width": 0.0,
+        "overflow": "clip_to_region",
+        "padding": 10.0,
+        "runs": [
+          {
+            "start": 0,
+            "end": 15,
+            "face": "cond.semibold",
+            "size": 9.5,
+            "tracking": 0.9,
+            "fill": "#0B6E5B"
+          },
+          {
+            "start": 16,
+            "end": 35,
+            "face": "sans.semibold",
+            "size": 13.0,
+            "fill": "#1A2330"
+          },
+          {
+            "start": 36,
+            "end": 84,
+            "size": 10.5,
+            "fill": "#4A5565"
+          },
+          {
+            "start": 85,
+            "end": 115,
+            "size": 10.5,
+            "fill": "#4A5565"
+          },
+          {
+            "start": 116,
+            "end": 137,
+            "face": "mono.regular",
+            "size": 9.0,
+            "fill": "#8792A2"
+          }
+        ],
+        "size": 11.0,
+        "text": "DATASTORE · HRC\nhrc_events (ledger)\nturn.attention from jev · seat.annotation.action\ntime series stays outside doms\nappend-only · hrc_seq",
+        "vertical_align": "top"
+      }
+    },
+    {
+      "id": "txt.29",
+      "type": "arris.styled_text",
+      "schema_version": 1,
+      "provider": "arris.reference-core",
+      "created_revision": 5,
+      "updated_revision": 5,
+      "hierarchies": {
+        "group": {
+          "parent": null
+        },
+        "owner": {
+          "parent": "page-1"
+        }
+      },
+      "domain_attributes": {
+        "plane_index": 0,
+        "order": 68,
+        "display_name": "txt.29",
+        "provider_version": "0.6.0",
+        "placement": {
+          "transform": {
+            "translate": [
+              0.0,
+              0.0
+            ]
+          }
+        },
+        "order_authored": true,
+        "bindings": [
+          {
+            "input": "caption_region",
+            "producer": "card.17",
+            "output_port": "caption"
+          }
+        ]
+      },
+      "payload": {
+        "align": "left",
+        "face": "sans.regular",
+        "fill": "#4A5565",
+        "line_height": 1.3,
+        "max_height": 0.0,
+        "max_width": 0.0,
+        "overflow": "clip_to_region",
+        "padding": 10.0,
+        "runs": [
+          {
+            "start": 0,
+            "end": 27,
+            "face": "cond.semibold",
+            "size": 9.5,
+            "tracking": 0.9,
+            "fill": "#1A2330"
+          },
+          {
+            "start": 28,
+            "end": 42,
+            "face": "sans.semibold",
+            "size": 13.0,
+            "fill": "#1A2330"
+          },
+          {
+            "start": 43,
+            "end": 84,
+            "size": 10.5,
+            "fill": "#4A5565"
+          },
+          {
+            "start": 85,
+            "end": 97,
+            "face": "mono.regular",
+            "size": 9.0,
+            "fill": "#8792A2"
+          }
+        ],
+        "size": 11.0,
+        "text": "DAEMON · HRC-TURN-ATTENTION\njev classifier\nappends turn.attention per completed turn\nattention-v3",
+        "vertical_align": "top"
+      }
+    },
+    {
+      "id": "txt.3",
+      "type": "arris.styled_text",
+      "schema_version": 1,
+      "provider": "arris.reference-core",
+      "created_revision": 5,
+      "updated_revision": 5,
+      "hierarchies": {
+        "group": {
+          "parent": null
+        },
+        "owner": {
+          "parent": "page-1"
+        }
+      },
+      "domain_attributes": {
+        "plane_index": 0,
+        "order": 10,
+        "display_name": "txt.3",
+        "provider_version": "0.6.0",
+        "placement": {
+          "transform": {
+            "translate": [
+              0.0,
+              0.0
+            ]
+          }
+        },
+        "order_authored": true,
+        "bindings": [
+          {
+            "input": "caption_region",
+            "producer": "cont.3",
+            "output_port": "caption"
+          }
+        ]
+      },
+      "payload": {
+        "align": "left",
+        "face": "sans.regular",
+        "fill": "#4A5565",
+        "line_height": 1.3,
+        "max_height": 0.0,
+        "max_width": 0.0,
+        "overflow": "clip_to_region",
+        "padding": 12.0,
+        "runs": [
+          {
+            "start": 0,
+            "end": 8,
+            "face": "cond.semibold",
+            "size": 9.5,
+            "tracking": 0.9,
+            "fill": "#2449B8"
+          },
+          {
+            "start": 10,
+            "end": 33,
+            "face": "sans.semibold",
+            "size": 12.5,
+            "fill": "#1A2330"
+          },
+          {
+            "start": 36,
+            "end": 103,
+            "face": "mono.regular",
+            "size": 9.5,
+            "fill": "#8792A2"
+          }
+        ],
+        "size": 11.0,
+        "text": "HRC.SEAT  mable@taskboard:primary   key sessionRef=agent:mable:project:taskboard:task:primary/lane:main",
+        "vertical_align": "top"
+      }
+    },
+    {
+      "id": "txt.4",
+      "type": "arris.styled_text",
+      "schema_version": 1,
+      "provider": "arris.reference-core",
+      "created_revision": 5,
+      "updated_revision": 5,
+      "hierarchies": {
+        "group": {
+          "parent": null
+        },
+        "owner": {
+          "parent": "page-1"
+        }
+      },
+      "domain_attributes": {
+        "plane_index": 0,
+        "order": 13,
+        "display_name": "txt.4",
+        "provider_version": "0.6.0",
+        "placement": {
+          "transform": {
+            "translate": [
+              0.0,
+              0.0
+            ]
+          }
+        },
+        "order_authored": true,
+        "bindings": [
+          {
+            "input": "caption_region",
+            "producer": "cont.4",
+            "output_port": "caption"
+          }
+        ]
+      },
+      "payload": {
+        "align": "left",
+        "face": "sans.regular",
+        "fill": "#4A5565",
+        "line_height": 1.3,
+        "max_height": 0.0,
+        "max_width": 0.0,
+        "overflow": "clip_to_region",
+        "padding": 12.0,
+        "runs": [
+          {
+            "start": 0,
+            "end": 14,
+            "face": "cond.semibold",
+            "size": 9.5,
+            "tracking": 0.9,
+            "fill": "#8792A2"
+          },
+          {
+            "start": 16,
+            "end": 40,
+            "face": "sans.semibold",
+            "size": 12.5,
+            "fill": "#1A2330"
+          },
+          {
+            "start": 43,
+            "end": 71,
+            "face": "mono.regular",
+            "size": 9.5,
+            "fill": "#8792A2"
+          }
+        ],
+        "size": 11.0,
+        "text": "HRC.GENERATION  generation 15 · archived   key hostSessionId · order 15",
+        "vertical_align": "top"
+      }
+    },
+    {
+      "id": "txt.5",
+      "type": "arris.styled_text",
+      "schema_version": 1,
+      "provider": "arris.reference-core",
+      "created_revision": 5,
+      "updated_revision": 5,
+      "hierarchies": {
+        "group": {
+          "parent": null
+        },
+        "owner": {
+          "parent": "page-1"
+        }
+      },
+      "domain_attributes": {
+        "plane_index": 0,
+        "order": 16,
+        "display_name": "txt.5",
+        "provider_version": "0.6.0",
+        "placement": {
+          "transform": {
+            "translate": [
+              0.0,
+              0.0
+            ]
+          }
+        },
+        "order_authored": true,
+        "bindings": [
+          {
+            "input": "caption_region",
+            "producer": "card.1",
+            "output_port": "caption"
+          }
+        ]
+      },
+      "payload": {
+        "align": "left",
+        "face": "sans.regular",
+        "fill": "#4A5565",
+        "line_height": 1.3,
+        "max_height": 0.0,
+        "max_width": 0.0,
+        "overflow": "clip_to_region",
+        "padding": 10.0,
+        "runs": [
+          {
+            "start": 0,
+            "end": 11,
+            "face": "cond.semibold",
+            "size": 9.5,
+            "tracking": 0.9,
+            "fill": "#8792A2"
+          },
+          {
+            "start": 12,
+            "end": 16,
+            "face": "sans.semibold",
+            "size": 13.0,
+            "fill": "#1A2330"
+          },
+          {
+            "start": 17,
+            "end": 30,
+            "size": 10.5,
+            "fill": "#4A5565"
+          },
+          {
+            "start": 31,
+            "end": 52,
+            "size": 10.5,
+            "fill": "#4A5565"
+          },
+          {
+            "start": 53,
+            "end": 67,
+            "face": "mono.regular",
+            "size": 9.0,
+            "fill": "#8792A2"
+          }
+        ],
+        "size": 11.0,
+        "text": "HRC.RUNTIME\nnone\nprocess ended\nnode drops after 24 h\nlive_until set",
+        "vertical_align": "top"
+      }
+    },
+    {
+      "id": "txt.6",
+      "type": "arris.styled_text",
+      "schema_version": 1,
+      "provider": "arris.reference-core",
+      "created_revision": 5,
+      "updated_revision": 5,
+      "hierarchies": {
+        "group": {
+          "parent": null
+        },
+        "owner": {
+          "parent": "page-1"
+        }
+      },
+      "domain_attributes": {
+        "plane_index": 0,
+        "order": 18,
+        "display_name": "txt.6",
+        "provider_version": "0.6.0",
+        "placement": {
+          "transform": {
+            "translate": [
+              0.0,
+              0.0
+            ]
+          }
+        },
+        "order_authored": true,
+        "bindings": [
+          {
+            "input": "caption_region",
+            "producer": "card.2",
+            "output_port": "caption"
+          }
+        ]
+      },
+      "payload": {
+        "align": "left",
+        "face": "sans.regular",
+        "fill": "#4A5565",
+        "line_height": 1.3,
+        "max_height": 0.0,
+        "max_width": 0.0,
+        "overflow": "clip_to_region",
+        "padding": 10.0,
+        "runs": [
+          {
+            "start": 0,
+            "end": 26,
+            "face": "cond.semibold",
+            "size": 9.5,
+            "tracking": 0.9,
+            "fill": "#6A3C9E"
+          },
+          {
+            "start": 27,
+            "end": 37,
+            "face": "sans.semibold",
+            "size": 13.0,
+            "fill": "#1A2330"
+          },
+          {
+            "start": 38,
+            "end": 79,
+            "size": 10.5,
+            "fill": "#4A5565"
+          },
+          {
+            "start": 80,
+            "end": 110,
+            "face": "mono.regular",
+            "size": 9.0,
+            "fill": "#8792A2"
+          }
+        ],
+        "size": 11.0,
+        "text": "HRC.ANNOTATION · C2 · CARD\nsuperseded\nJSON ≤ 64 KB · put fenced on attention.at\nmable@taskboard#15#…T14:02:11Z",
+        "vertical_align": "top"
+      }
+    },
+    {
+      "id": "txt.7",
+      "type": "arris.styled_text",
+      "schema_version": 1,
+      "provider": "arris.reference-core",
+      "created_revision": 5,
+      "updated_revision": 5,
+      "hierarchies": {
+        "group": {
+          "parent": null
+        },
+        "owner": {
+          "parent": "page-1"
+        }
+      },
+      "domain_attributes": {
+        "plane_index": 0,
+        "order": 20,
+        "display_name": "txt.7",
+        "provider_version": "0.6.0",
+        "placement": {
+          "transform": {
+            "translate": [
+              0.0,
+              0.0
+            ]
+          }
+        },
+        "order_authored": true,
+        "bindings": [
+          {
+            "input": "caption_region",
+            "producer": "cont.5",
+            "output_port": "caption"
+          }
+        ]
+      },
+      "payload": {
+        "align": "left",
+        "face": "sans.regular",
+        "fill": "#4A5565",
+        "line_height": 1.3,
+        "max_height": 0.0,
+        "max_width": 0.0,
+        "overflow": "clip_to_region",
+        "padding": 12.0,
+        "runs": [
+          {
+            "start": 0,
+            "end": 14,
+            "face": "cond.semibold",
+            "size": 9.5,
+            "tracking": 0.9,
+            "fill": "#1A2330"
+          },
+          {
+            "start": 16,
+            "end": 38,
+            "face": "sans.semibold",
+            "size": 12.5,
+            "fill": "#1A2330"
+          },
+          {
+            "start": 41,
+            "end": 69,
+            "face": "mono.regular",
+            "size": 9.5,
+            "fill": "#8792A2"
+          }
+        ],
+        "size": 11.0,
+        "text": "HRC.GENERATION  generation 16 · active   key hostSessionId · order 16",
+        "vertical_align": "top"
+      }
+    },
+    {
+      "id": "txt.8",
+      "type": "arris.styled_text",
+      "schema_version": 1,
+      "provider": "arris.reference-core",
+      "created_revision": 5,
+      "updated_revision": 5,
+      "hierarchies": {
+        "group": {
+          "parent": null
+        },
+        "owner": {
+          "parent": "page-1"
+        }
+      },
+      "domain_attributes": {
+        "plane_index": 0,
+        "order": 22,
+        "display_name": "txt.8",
+        "provider_version": "0.6.0",
+        "placement": {
+          "transform": {
+            "translate": [
+              0.0,
+              0.0
+            ]
+          }
+        },
+        "order_authored": true,
+        "bindings": [
+          {
+            "input": "caption_region",
+            "producer": "pill.1",
+            "output_port": "caption"
+          }
+        ]
+      },
+      "payload": {
+        "align": "left",
+        "face": "sans.regular",
+        "fill": "#4A5565",
+        "line_height": 1.3,
+        "max_height": 0.0,
+        "max_width": 0.0,
+        "overflow": "clip_to_region",
+        "padding": 4.0,
+        "runs": [
+          {
+            "start": 0,
+            "end": 11,
+            "face": "sans.semibold",
+            "size": 10.0,
+            "fill": "#B4401A"
+          },
+          {
+            "start": 11,
+            "end": 52,
+            "size": 10.0,
+            "fill": "#B4401A"
+          }
+        ],
+        "size": 11.0,
+        "text": "attention  jev · decision · 2026-10-30T15:43:37.837Z",
+        "vertical_align": "center"
+      }
+    },
+    {
+      "id": "txt.9",
+      "type": "arris.styled_text",
+      "schema_version": 1,
+      "provider": "arris.reference-core",
+      "created_revision": 5,
+      "updated_revision": 5,
+      "hierarchies": {
+        "group": {
+          "parent": null
+        },
+        "owner": {
+          "parent": "page-1"
+        }
+      },
+      "domain_attributes": {
+        "plane_index": 0,
+        "order": 24,
+        "display_name": "txt.9",
+        "provider_version": "0.6.0",
+        "placement": {
+          "transform": {
+            "translate": [
+              0.0,
+              0.0
+            ]
+          }
+        },
+        "order_authored": true,
+        "bindings": [
+          {
+            "input": "caption_region",
+            "producer": "card.3",
+            "output_port": "caption"
+          }
+        ]
+      },
+      "payload": {
+        "align": "left",
+        "face": "sans.regular",
+        "fill": "#4A5565",
+        "line_height": 1.3,
+        "max_height": 0.0,
+        "max_width": 0.0,
+        "overflow": "clip_to_region",
+        "padding": 10.0,
+        "runs": [
+          {
+            "start": 0,
+            "end": 11,
+            "face": "cond.semibold",
+            "size": 9.5,
+            "tracking": 0.9,
+            "fill": "#0B6E5B"
+          },
+          {
+            "start": 12,
+            "end": 20,
+            "face": "sans.semibold",
+            "size": 13.0,
+            "fill": "#1A2330"
+          },
+          {
+            "start": 21,
+            "end": 37,
+            "size": 10.5,
+            "fill": "#4A5565"
+          },
+          {
+            "start": 38,
+            "end": 61,
+            "size": 10.5,
+            "fill": "#4A5565"
+          },
+          {
+            "start": 62,
+            "end": 92,
+            "face": "mono.regular",
+            "size": 9.0,
+            "fill": "#8792A2"
+          }
+        ],
+        "size": 11.0,
+        "text": "HRC.RUNTIME\nrt-1c9e…\npi · tmux · idle\nattachable: tmux-attach\nkey runtimeId · contextReading",
+        "vertical_align": "top"
+      }
+    }
+  ]
+}

@@ -3,7 +3,7 @@
   "format": "arris",
   "format_version": 1,
   "document_id": "seat-data-to-be",
-  "revision": 17,
+  "revision": 18,
   "nodes": [
     {
       "id": "c2",
@@ -11,7 +11,7 @@
       "schema_version": 1,
       "provider": "arris.architecture",
       "created_revision": 1,
-      "updated_revision": 1,
+      "updated_revision": 18,
       "hierarchies": {
         "group": {
           "parent": "c2.group"
@@ -21,9 +21,10 @@
         }
       },
       "domain_attributes": {
-        "display_name": "c2 plugin",
+        "plane_index": 0,
         "order": 76,
-        "order_authored": true,
+        "display_name": "c2 plugin",
+        "provider_version": "0.1.0",
         "placement": {
           "transform": {
             "translate": [
@@ -32,12 +33,12 @@
             ]
           }
         },
-        "plane_index": 0,
-        "provider_version": "0.1.0"
+        "order_authored": true
       },
       "payload": {
+        "body": "",
         "bullets": [
-          "Projection of hrc.document rows",
+          "Projection of hrc.annotation rows",
           "Actions are kernel ops",
           "No durable state of its own"
         ],
@@ -61,7 +62,7 @@
       "schema_version": 1,
       "provider": "arris.reference-core",
       "created_revision": 1,
-      "updated_revision": 1,
+      "updated_revision": 18,
       "hierarchies": {
         "group": {
           "parent": "c2.group"
@@ -71,16 +72,10 @@
         }
       },
       "domain_attributes": {
-        "bindings": [
-          {
-            "input": "caption_region",
-            "output_port": "caption",
-            "producer": "c2.shape"
-          }
-        ],
-        "display_name": "c2.caption",
+        "plane_index": 0,
         "order": 74,
-        "order_authored": true,
+        "display_name": "c2.caption",
+        "provider_version": "0.6.0",
         "placement": {
           "transform": {
             "translate": [
@@ -89,13 +84,19 @@
             ]
           }
         },
-        "plane_index": 0,
-        "provider_version": "0.6.0",
+        "order_authored": true,
+        "bindings": [
+          {
+            "input": "caption_region",
+            "producer": "c2.shape",
+            "output_port": "caption"
+          }
+        ],
         "style_bindings": [
           {
             "property": "fill",
-            "slot": "colour",
-            "style": "lead"
+            "style": "lead",
+            "slot": "colour"
           }
         ]
       },
@@ -109,144 +110,144 @@
         "padding": 14.0,
         "runs": [
           {
+            "start": 0,
             "end": 1,
             "face": "mono.regular",
+            "size": 10.0,
+            "tracking": 6.0,
             "fill": {
               "token": "hue.graphite.ink"
-            },
-            "size": 10.0,
-            "start": 0,
-            "tracking": 6.0
+            }
           },
           {
+            "start": 1,
             "end": 16,
             "face": "cond.semibold",
+            "size": 9.5,
+            "tracking": 0.9,
             "fill": {
               "token": "hue.graphite.ink"
-            },
-            "size": 9.5,
-            "start": 1,
-            "tracking": 0.9
+            }
           },
           {
-            "end": 17,
-            "start": 16
+            "start": 16,
+            "end": 17
           },
           {
+            "start": 17,
             "end": 26,
             "face": "sans.semibold",
             "fill": {
               "token": "graphite"
             },
             "size": 14.0,
-            "start": 17,
             "tracking": 0.0
           },
           {
-            "end": 27,
-            "start": 26
+            "start": 26,
+            "end": 27
           },
           {
+            "start": 27,
             "end": 28,
             "face": "sans.regular",
+            "size": 11.5,
+            "tracking": 0.0,
             "fill": {
               "token": "lead"
-            },
-            "size": 11.5,
-            "start": 27,
-            "tracking": 0.0
+            }
           },
           {
+            "start": 28,
             "end": 29,
             "face": "sans.regular",
+            "size": 11.5,
+            "tracking": 3.286,
             "fill": {
               "token": "lead"
-            },
-            "size": 11.5,
-            "start": 28,
-            "tracking": 3.286
+            }
           },
           {
-            "end": 60,
-            "face": "sans.regular",
-            "fill": {
-              "token": "lead"
-            },
-            "size": 11.5,
             "start": 29,
-            "tracking": 0.0
-          },
-          {
-            "end": 61,
-            "start": 60
-          },
-          {
             "end": 62,
             "face": "sans.regular",
+            "size": 11.5,
+            "tracking": 0.0,
             "fill": {
               "token": "lead"
-            },
-            "size": 11.5,
-            "start": 61,
-            "tracking": 0.0
+            }
           },
           {
-            "end": 63,
-            "face": "sans.regular",
-            "fill": {
-              "token": "lead"
-            },
-            "size": 11.5,
             "start": 62,
-            "tracking": 3.286
+            "end": 63
           },
           {
-            "end": 85,
+            "start": 63,
+            "end": 64,
             "face": "sans.regular",
+            "size": 11.5,
+            "tracking": 0.0,
             "fill": {
               "token": "lead"
-            },
+            }
+          },
+          {
+            "start": 64,
+            "end": 65,
+            "face": "sans.regular",
             "size": 11.5,
-            "start": 63,
-            "tracking": 0.0
+            "tracking": 3.286,
+            "fill": {
+              "token": "lead"
+            }
           },
           {
-            "end": 86,
-            "start": 85
-          },
-          {
+            "start": 65,
             "end": 87,
             "face": "sans.regular",
+            "size": 11.5,
+            "tracking": 0.0,
             "fill": {
               "token": "lead"
-            },
-            "size": 11.5,
-            "start": 86,
-            "tracking": 0.0
+            }
           },
           {
-            "end": 88,
-            "face": "sans.regular",
-            "fill": {
-              "token": "lead"
-            },
-            "size": 11.5,
             "start": 87,
-            "tracking": 3.286
+            "end": 88
           },
           {
-            "end": 115,
+            "start": 88,
+            "end": 89,
             "face": "sans.regular",
+            "size": 11.5,
+            "tracking": 0.0,
             "fill": {
               "token": "lead"
-            },
+            }
+          },
+          {
+            "start": 89,
+            "end": 90,
+            "face": "sans.regular",
             "size": 11.5,
-            "start": 88,
-            "tracking": 0.0
+            "tracking": 3.286,
+            "fill": {
+              "token": "lead"
+            }
+          },
+          {
+            "start": 90,
+            "end": 117,
+            "face": "sans.regular",
+            "size": 11.5,
+            "tracking": 0.0,
+            "fill": {
+              "token": "lead"
+            }
           }
         ],
         "size": 11.5,
-        "text": " PLUGIN · LOGGIA\nc2 plugin\n• Projection of hrc.document rows\n• Actions are kernel ops\n• No durable state of its own",
+        "text": " PLUGIN · LOGGIA\nc2 plugin\n• Projection of hrc.annotation rows\n• Actions are kernel ops\n• No durable state of its own",
         "tracking": 0.0,
         "vertical_align": "center"
       }
@@ -257,7 +258,7 @@
       "schema_version": 1,
       "provider": "arris",
       "created_revision": 1,
-      "updated_revision": 1,
+      "updated_revision": 18,
       "hierarchies": {
         "group": {
           "parent": "loggia.group"
@@ -267,9 +268,9 @@
         }
       },
       "domain_attributes": {
-        "display_name": "c2 plugin",
+        "plane_index": 0,
         "order": 0,
-        "plane_index": 0
+        "display_name": "c2 plugin"
       },
       "payload": {}
     },
@@ -278,8 +279,8 @@
       "type": "arris.scenario.kicker_mark",
       "schema_version": 1,
       "provider": "arris.scenario",
-      "created_revision": 1,
-      "updated_revision": 1,
+      "created_revision": 18,
+      "updated_revision": 18,
       "hierarchies": {
         "group": {
           "parent": "c2.group"
@@ -289,16 +290,10 @@
         }
       },
       "domain_attributes": {
-        "bindings": [
-          {
-            "input": "layout",
-            "output_port": "text_layout_v2",
-            "producer": "c2.caption"
-          }
-        ],
+        "plane_index": 0,
+        "order": 126,
         "display_name": "c2.mark",
-        "order": 75,
-        "order_authored": true,
+        "provider_version": "0.1.0",
         "placement": {
           "transform": {
             "translate": [
@@ -307,13 +302,19 @@
             ]
           }
         },
-        "plane_index": 0,
-        "provider_version": "0.1.0",
+        "order_authored": true,
+        "bindings": [
+          {
+            "input": "layout",
+            "producer": "c2.caption",
+            "output_port": "text_layout_v2"
+          }
+        ],
         "style_bindings": [
           {
             "property": "fill",
-            "slot": "colour",
-            "style": "hue.graphite.line"
+            "style": "hue.graphite.line",
+            "slot": "colour"
           }
         ]
       },
@@ -384,7 +385,7 @@
       "schema_version": 1,
       "provider": "arris.reference-core",
       "created_revision": 1,
-      "updated_revision": 1,
+      "updated_revision": 18,
       "hierarchies": {
         "group": {
           "parent": "c2.group"
@@ -394,17 +395,10 @@
         }
       },
       "domain_attributes": {
-        "attachments": {
-          "geometry": {
-            "parameters": {},
-            "schema_version": 1,
-            "type": "arris.attachment.box"
-          },
-          "ports": []
-        },
-        "display_name": "c2 plugin",
+        "plane_index": 0,
         "order": 73,
-        "order_authored": true,
+        "display_name": "c2 plugin",
+        "provider_version": "0.6.0",
         "placement": {
           "transform": {
             "translate": [
@@ -413,18 +407,25 @@
             ]
           }
         },
-        "plane_index": 0,
-        "provider_version": "0.6.0",
+        "order_authored": true,
+        "attachments": {
+          "geometry": {
+            "parameters": {},
+            "schema_version": 1,
+            "type": "arris.attachment.box"
+          },
+          "ports": []
+        },
         "style_bindings": [
           {
             "property": "fill",
-            "slot": "colour",
-            "style": "paper"
+            "style": "paper",
+            "slot": "colour"
           },
           {
             "property": "stroke",
-            "slot": "colour",
-            "style": "card.neutral"
+            "style": "card.neutral",
+            "slot": "colour"
           }
         ]
       },
@@ -435,7 +436,7 @@
         "opacity": 1.0,
         "stroke": "#171717",
         "stroke_width": 1.25,
-        "width": 208.0
+        "width": 216.0
       }
     },
     {
@@ -444,7 +445,7 @@
       "schema_version": 1,
       "provider": "arris.architecture",
       "created_revision": 1,
-      "updated_revision": 1,
+      "updated_revision": 18,
       "hierarchies": {
         "group": {
           "parent": null
@@ -454,9 +455,10 @@
         }
       },
       "domain_attributes": {
-        "display_name": "c2__ops",
+        "plane_index": 0,
         "order": 103,
-        "order_authored": true,
+        "display_name": "c2__ops",
+        "provider_version": "0.1.0",
         "placement": {
           "transform": {
             "translate": [
@@ -465,12 +467,11 @@
             ]
           }
         },
-        "plane_index": 0,
-        "provider_version": "0.1.0"
+        "order_authored": true
       },
       "payload": {
         "from": "c2",
-        "label": "document.put, send",
+        "label": "annotation.put, send",
         "presentation": {
           "edge": "c2__ops.edge",
           "label": "label"
@@ -484,7 +485,7 @@
       "schema_version": 1,
       "provider": "arris",
       "created_revision": 1,
-      "updated_revision": 1,
+      "updated_revision": 18,
       "hierarchies": {
         "group": {
           "parent": null
@@ -494,8 +495,6 @@
         }
       },
       "domain_attributes": {
-        "display_name": "document.put, send",
-        "edge_order": 102,
         "end": {
           "parameters": {
             "length": 8.4,
@@ -503,6 +502,48 @@
           },
           "schema_version": 1,
           "type": "arris.filled"
+        },
+        "display_name": "annotation.put, send",
+        "order": 102,
+        "source": {
+          "ref": "c2.shape"
+        },
+        "target": {
+          "ref": "ops.shape"
+        },
+        "route": {
+          "corner_radius": 8.0,
+          "obstacles": {
+            "mode": "none"
+          },
+          "strategy": {
+            "parameters": {},
+            "schema_version": 1,
+            "type": "arris.polyline"
+          },
+          "waypoints": [
+            {
+              "space": "page",
+              "point": [
+                2466.77,
+                1412.0
+              ]
+            },
+            {
+              "space": "page",
+              "point": [
+                2466.77,
+                1082.0
+              ]
+            }
+          ]
+        },
+        "shaft": {
+          "dash_offset": 0.0,
+          "stroke": {
+            "token": "hue.cobalt.line"
+          },
+          "width": 1.5
         },
         "labels": [
           {
@@ -525,62 +566,25 @@
                 "token": "hue.cobalt.line"
               },
               "tag_stroke_width": 1.0,
-              "text": "document.put, send"
+              "text": "annotation.put, send"
             },
             "placement": {
-              "anchor": "center",
-              "distance": 188.14,
               "kind": "route-distance",
+              "distance": 188.14,
               "offset": [
                 0.0,
                 0.0
               ],
               "orientation": "route",
-              "rotation": 0.0
+              "rotation": 0.0,
+              "anchor": "center"
             },
             "schema_version": 1,
             "type": "arris.tag"
           }
         ],
-        "order": 102,
         "plane_index": 0,
-        "route": {
-          "corner_radius": 8.0,
-          "obstacles": {
-            "mode": "none"
-          },
-          "strategy": {
-            "parameters": {},
-            "schema_version": 1,
-            "type": "arris.polyline"
-          },
-          "waypoints": [
-            {
-              "point": [
-                2466.77,
-                1412.0
-              ],
-              "space": "page"
-            },
-            {
-              "point": [
-                2466.77,
-                1082.0
-              ],
-              "space": "page"
-            }
-          ]
-        },
-        "shaft": {
-          "dash_offset": 0.0,
-          "stroke": {
-            "token": "hue.cobalt.line"
-          },
-          "width": 1.5
-        },
-        "source": {
-          "ref": "c2.shape"
-        },
+        "edge_order": 102,
         "source_detail": {
           "attachment": {
             "approach": {
@@ -593,9 +597,6 @@
             "offset": 0.0,
             "side": "left"
           }
-        },
-        "target": {
-          "ref": "ops.shape"
         },
         "target_detail": {
           "attachment": {
@@ -659,7 +660,7 @@
       "schema_version": 1,
       "provider": "arris",
       "created_revision": 1,
-      "updated_revision": 1,
+      "updated_revision": 18,
       "hierarchies": {
         "group": {
           "parent": null
@@ -669,8 +670,6 @@
         }
       },
       "domain_attributes": {
-        "display_name": "prefs",
-        "edge_order": 108,
         "end": {
           "parameters": {
             "length": 8.4,
@@ -678,6 +677,33 @@
           },
           "schema_version": 1,
           "type": "arris.filled"
+        },
+        "display_name": "prefs",
+        "order": 108,
+        "source": {
+          "ref": "c2.shape"
+        },
+        "target": {
+          "ref": "storage.shape"
+        },
+        "route": {
+          "corner_radius": 8.0,
+          "obstacles": {
+            "mode": "none"
+          },
+          "strategy": {
+            "parameters": {},
+            "schema_version": 1,
+            "type": "arris.polyline"
+          },
+          "waypoints": []
+        },
+        "shaft": {
+          "dash_offset": 0.0,
+          "stroke": {
+            "token": "hue.cobalt.line"
+          },
+          "width": 1.5
         },
         "labels": [
           {
@@ -717,45 +743,20 @@
             "type": "arris.tag"
           }
         ],
-        "order": 108,
         "plane_index": 0,
-        "route": {
-          "corner_radius": 8.0,
-          "obstacles": {
-            "mode": "none"
-          },
-          "strategy": {
-            "parameters": {},
-            "schema_version": 1,
-            "type": "arris.polyline"
-          },
-          "waypoints": []
-        },
-        "shaft": {
-          "dash_offset": 0.0,
-          "stroke": {
-            "token": "hue.cobalt.line"
-          },
-          "width": 1.5
-        },
-        "source": {
-          "ref": "c2.shape"
-        },
+        "edge_order": 108,
         "source_detail": {
           "attachment": {
-            "approach": {
-              "min_straight": 0.0,
-              "mode": "normal"
-            },
-            "clearance": 0.0,
-            "fraction": 0.6346153846153846,
             "kind": "side",
+            "side": "bottom",
+            "fraction": 0.6111111111111112,
             "offset": 0.0,
-            "side": "bottom"
+            "clearance": 0.0,
+            "approach": {
+              "mode": "normal",
+              "min_straight": 0.0
+            }
           }
-        },
-        "target": {
-          "ref": "storage.shape"
         },
         "target_detail": {
           "attachment": {
@@ -805,7 +806,7 @@
       "schema_version": 1,
       "provider": "arris.architecture",
       "created_revision": 1,
-      "updated_revision": 1,
+      "updated_revision": 18,
       "hierarchies": {
         "group": {
           "parent": "cli.group"
@@ -815,9 +816,10 @@
         }
       },
       "domain_attributes": {
-        "display_name": "hrc session doc",
+        "plane_index": 0,
         "order": 21,
-        "order_authored": true,
+        "display_name": "hrc session annotation",
+        "provider_version": "0.1.0",
         "placement": {
           "transform": {
             "translate": [
@@ -826,8 +828,7 @@
             ]
           }
         },
-        "plane_index": 0,
-        "provider_version": "0.1.0"
+        "order_authored": true
       },
       "payload": {
         "body": "put, get, list; federated to the owning node; meta stays for scalars",
@@ -836,7 +837,7 @@
         "icon": "",
         "kicker": "CLIENT · CLI",
         "meta": "",
-        "name": "hrc session doc",
+        "name": "hrc session annotation",
         "presentation": {
           "caption": "cli.caption",
           "group": "cli.group",
@@ -852,7 +853,7 @@
       "schema_version": 1,
       "provider": "arris.reference-core",
       "created_revision": 1,
-      "updated_revision": 1,
+      "updated_revision": 18,
       "hierarchies": {
         "group": {
           "parent": "cli.group"
@@ -862,16 +863,10 @@
         }
       },
       "domain_attributes": {
-        "bindings": [
-          {
-            "input": "caption_region",
-            "output_port": "caption",
-            "producer": "cli.shape"
-          }
-        ],
-        "display_name": "cli.caption",
+        "plane_index": 0,
         "order": 19,
-        "order_authored": true,
+        "display_name": "cli.caption",
+        "provider_version": "0.6.0",
         "placement": {
           "transform": {
             "translate": [
@@ -880,13 +875,19 @@
             ]
           }
         },
-        "plane_index": 0,
-        "provider_version": "0.6.0",
+        "order_authored": true,
+        "bindings": [
+          {
+            "input": "caption_region",
+            "producer": "cli.shape",
+            "output_port": "caption"
+          }
+        ],
         "style_bindings": [
           {
             "property": "fill",
-            "slot": "colour",
-            "style": "lead"
+            "style": "lead",
+            "slot": "colour"
           }
         ]
       },
@@ -900,56 +901,56 @@
         "padding": 14.0,
         "runs": [
           {
+            "start": 0,
             "end": 1,
             "face": "mono.regular",
+            "size": 10.0,
+            "tracking": 6.0,
             "fill": {
               "token": "hue.cobalt.ink"
-            },
-            "size": 10.0,
-            "start": 0,
-            "tracking": 6.0
+            }
           },
           {
+            "start": 1,
             "end": 13,
             "face": "cond.semibold",
+            "size": 9.5,
+            "tracking": 0.9,
             "fill": {
               "token": "hue.cobalt.ink"
-            },
-            "size": 9.5,
-            "start": 1,
-            "tracking": 0.9
+            }
           },
           {
-            "end": 14,
-            "start": 13
+            "start": 13,
+            "end": 14
           },
           {
-            "end": 29,
+            "start": 14,
+            "end": 36,
             "face": "sans.semibold",
             "fill": {
               "token": "graphite"
             },
             "size": 14.0,
-            "start": 14,
             "tracking": 0.0
           },
           {
-            "end": 30,
-            "start": 29
+            "start": 36,
+            "end": 37
           },
           {
-            "end": 98,
+            "start": 37,
+            "end": 105,
             "face": "sans.regular",
+            "size": 11.5,
+            "tracking": 0.0,
             "fill": {
               "token": "lead"
-            },
-            "size": 11.5,
-            "start": 30,
-            "tracking": 0.0
+            }
           }
         ],
         "size": 11.5,
-        "text": " CLIENT · CLI\nhrc session doc\nput, get, list; federated to the owning node; meta stays for scalars",
+        "text": " CLIENT · CLI\nhrc session annotation\nput, get, list; federated to the owning node; meta stays for scalars",
         "tracking": 0.0,
         "vertical_align": "center"
       }
@@ -960,7 +961,7 @@
       "schema_version": 1,
       "provider": "arris",
       "created_revision": 1,
-      "updated_revision": 1,
+      "updated_revision": 18,
       "hierarchies": {
         "group": {
           "parent": "clients.group"
@@ -970,9 +971,9 @@
         }
       },
       "domain_attributes": {
-        "display_name": "hrc session doc",
+        "plane_index": 0,
         "order": 0,
-        "plane_index": 0
+        "display_name": "hrc session annotation"
       },
       "payload": {}
     },
@@ -981,8 +982,8 @@
       "type": "arris.scenario.kicker_mark",
       "schema_version": 1,
       "provider": "arris.scenario",
-      "created_revision": 1,
-      "updated_revision": 1,
+      "created_revision": 18,
+      "updated_revision": 18,
       "hierarchies": {
         "group": {
           "parent": "cli.group"
@@ -992,16 +993,10 @@
         }
       },
       "domain_attributes": {
-        "bindings": [
-          {
-            "input": "layout",
-            "output_port": "text_layout_v2",
-            "producer": "cli.caption"
-          }
-        ],
+        "plane_index": 0,
+        "order": 125,
         "display_name": "cli.mark",
-        "order": 20,
-        "order_authored": true,
+        "provider_version": "0.1.0",
         "placement": {
           "transform": {
             "translate": [
@@ -1010,13 +1005,19 @@
             ]
           }
         },
-        "plane_index": 0,
-        "provider_version": "0.1.0",
+        "order_authored": true,
+        "bindings": [
+          {
+            "input": "layout",
+            "producer": "cli.caption",
+            "output_port": "text_layout_v2"
+          }
+        ],
         "style_bindings": [
           {
             "property": "fill",
-            "slot": "colour",
-            "style": "hue.cobalt.line"
+            "style": "hue.cobalt.line",
+            "slot": "colour"
           }
         ]
       },
@@ -1087,7 +1088,7 @@
       "schema_version": 1,
       "provider": "arris.reference-core",
       "created_revision": 1,
-      "updated_revision": 1,
+      "updated_revision": 18,
       "hierarchies": {
         "group": {
           "parent": "cli.group"
@@ -1097,17 +1098,10 @@
         }
       },
       "domain_attributes": {
-        "attachments": {
-          "geometry": {
-            "parameters": {},
-            "schema_version": 1,
-            "type": "arris.attachment.box"
-          },
-          "ports": []
-        },
-        "display_name": "hrc session doc",
+        "plane_index": 0,
         "order": 18,
-        "order_authored": true,
+        "display_name": "hrc session annotation",
+        "provider_version": "0.6.0",
         "placement": {
           "transform": {
             "translate": [
@@ -1116,18 +1110,25 @@
             ]
           }
         },
-        "plane_index": 0,
-        "provider_version": "0.6.0",
+        "order_authored": true,
+        "attachments": {
+          "geometry": {
+            "parameters": {},
+            "schema_version": 1,
+            "type": "arris.attachment.box"
+          },
+          "ports": []
+        },
         "style_bindings": [
           {
             "property": "fill",
-            "slot": "colour",
-            "style": "paper"
+            "style": "paper",
+            "slot": "colour"
           },
           {
             "property": "stroke",
-            "slot": "colour",
-            "style": "hue.cobalt.line"
+            "style": "hue.cobalt.line",
+            "slot": "colour"
           }
         ]
       },
@@ -1187,7 +1188,7 @@
       "schema_version": 1,
       "provider": "arris",
       "created_revision": 1,
-      "updated_revision": 7,
+      "updated_revision": 18,
       "hierarchies": {
         "group": {
           "parent": null
@@ -1197,8 +1198,6 @@
         }
       },
       "domain_attributes": {
-        "display_name": "put, fenced",
-        "edge_order": 86,
         "end": {
           "parameters": {
             "length": 8.4,
@@ -1206,6 +1205,41 @@
           },
           "schema_version": 1,
           "type": "arris.filled"
+        },
+        "display_name": "put, fenced",
+        "order": 86,
+        "source": {
+          "ref": "cli.shape"
+        },
+        "target": {
+          "ref": "docs.shape"
+        },
+        "route": {
+          "corner_radius": 8.0,
+          "obstacles": {
+            "mode": "none"
+          },
+          "strategy": {
+            "parameters": {},
+            "schema_version": 1,
+            "type": "arris.polyline"
+          },
+          "waypoints": [
+            {
+              "space": "page",
+              "point": [
+                460.0,
+                814.0
+              ]
+            }
+          ]
+        },
+        "shaft": {
+          "dash_offset": 0.0,
+          "stroke": {
+            "token": "hue.cobalt.line"
+          },
+          "width": 1.5
         },
         "labels": [
           {
@@ -1231,52 +1265,22 @@
               "text": "put, fenced"
             },
             "placement": {
-              "anchor": "center",
-              "distance": 667.61,
               "kind": "route-distance",
+              "distance": 667.61,
               "offset": [
                 0.0,
                 0.0
               ],
               "orientation": "route",
-              "rotation": 0.0
+              "rotation": 0.0,
+              "anchor": "center"
             },
             "schema_version": 1,
             "type": "arris.tag"
           }
         ],
-        "order": 86,
         "plane_index": 0,
-        "route": {
-          "corner_radius": 8.0,
-          "obstacles": {
-            "mode": "none"
-          },
-          "strategy": {
-            "parameters": {},
-            "schema_version": 1,
-            "type": "arris.polyline"
-          },
-          "waypoints": [
-            {
-              "point": [
-                460.0,
-                814.0
-              ],
-              "space": "page"
-            }
-          ]
-        },
-        "shaft": {
-          "dash_offset": 0.0,
-          "stroke": {
-            "token": "hue.cobalt.line"
-          },
-          "width": 1.5
-        },
-        "source": {
-          "ref": "cli.shape"
-        },
+        "edge_order": 86,
         "source_detail": {
           "attachment": {
             "approach": {
@@ -1290,20 +1294,17 @@
             "side": "bottom"
           }
         },
-        "target": {
-          "ref": "docs.shape"
-        },
         "target_detail": {
           "attachment": {
-            "approach": {
-              "min_straight": 0.0,
-              "mode": "normal"
-            },
-            "clearance": 0.0,
-            "fraction": 0.5,
             "kind": "side",
+            "side": "left",
+            "fraction": 0.5,
             "offset": 0.0,
-            "side": "left"
+            "clearance": 0.0,
+            "approach": {
+              "mode": "normal",
+              "min_straight": 0.0
+            }
           }
         }
       },
@@ -2256,7 +2257,7 @@
       "schema_version": 1,
       "provider": "arris.reference-core",
       "created_revision": 1,
-      "updated_revision": 7,
+      "updated_revision": 18,
       "hierarchies": {
         "group": {
           "parent": null
@@ -2266,9 +2267,10 @@
         }
       },
       "domain_attributes": {
-        "display_name": "subtitle",
+        "plane_index": 0,
         "order": 2,
-        "order_authored": true,
+        "display_name": "subtitle",
+        "provider_version": "0.6.0",
         "placement": {
           "transform": {
             "translate": [
@@ -2277,13 +2279,12 @@
             ]
           }
         },
-        "plane_index": 0,
-        "provider_version": "0.6.0",
+        "order_authored": true,
         "style_bindings": [
           {
             "property": "fill",
-            "slot": "colour",
-            "style": "lead"
+            "style": "lead",
+            "slot": "colour"
           }
         ]
       },
@@ -2305,7 +2306,7 @@
       "schema_version": 1,
       "provider": "arris.reference-core",
       "created_revision": 1,
-      "updated_revision": 7,
+      "updated_revision": 18,
       "hierarchies": {
         "group": {
           "parent": null
@@ -2315,9 +2316,10 @@
         }
       },
       "domain_attributes": {
-        "display_name": "title",
+        "plane_index": 0,
         "order": 1,
-        "order_authored": true,
+        "display_name": "title",
+        "provider_version": "0.6.0",
         "placement": {
           "transform": {
             "translate": [
@@ -2326,13 +2328,12 @@
             ]
           }
         },
-        "plane_index": 0,
-        "provider_version": "0.6.0",
+        "order_authored": true,
         "style_bindings": [
           {
             "property": "fill",
-            "slot": "colour",
-            "style": "graphite"
+            "style": "graphite",
+            "slot": "colour"
           }
         ]
       },
@@ -2354,7 +2355,7 @@
       "schema_version": 1,
       "provider": "arris.architecture",
       "created_revision": 1,
-      "updated_revision": 1,
+      "updated_revision": 18,
       "hierarchies": {
         "group": {
           "parent": "docs.group"
@@ -2364,9 +2365,10 @@
         }
       },
       "domain_attributes": {
-        "display_name": "Seat documents",
+        "plane_index": 0,
         "order": 56,
-        "order_authored": true,
+        "display_name": "Seat annotations",
+        "provider_version": "0.1.0",
         "placement": {
           "transform": {
             "translate": [
@@ -2375,20 +2377,20 @@
             ]
           }
         },
-        "plane_index": 0,
-        "provider_version": "0.1.0"
+        "order_authored": true
       },
       "payload": {
+        "body": "",
         "bullets": [
-          "JSON ≤ 64 KB per (generation, ns, id)",
-          "put fenced on attention: stale_document",
-          "c2 cards, Vesta asks, any plugin's ns"
+          "JSON ≤ 64 KB per subject · ns · kind · id",
+          "subject: a seat or a generation",
+          "put fenced on attention: stale_annotation"
         ],
         "emphasis": true,
         "icon": "",
         "kicker": "DATASTORE · HRC",
-        "meta": "seat_documents (new)",
-        "name": "Seat documents",
+        "meta": "seat_annotations (new)",
+        "name": "Seat annotations",
         "presentation": {
           "caption": "docs.caption",
           "group": "docs.group",
@@ -2404,7 +2406,7 @@
       "schema_version": 1,
       "provider": "arris.reference-core",
       "created_revision": 1,
-      "updated_revision": 1,
+      "updated_revision": 18,
       "hierarchies": {
         "group": {
           "parent": "docs.group"
@@ -2414,16 +2416,10 @@
         }
       },
       "domain_attributes": {
-        "bindings": [
-          {
-            "input": "caption_region",
-            "output_port": "caption",
-            "producer": "docs.shape"
-          }
-        ],
-        "display_name": "docs.caption",
+        "plane_index": 0,
         "order": 54,
-        "order_authored": true,
+        "display_name": "docs.caption",
+        "provider_version": "0.6.0",
         "placement": {
           "transform": {
             "translate": [
@@ -2432,13 +2428,19 @@
             ]
           }
         },
-        "plane_index": 0,
-        "provider_version": "0.6.0",
+        "order_authored": true,
+        "bindings": [
+          {
+            "input": "caption_region",
+            "producer": "docs.shape",
+            "output_port": "caption"
+          }
+        ],
         "style_bindings": [
           {
             "property": "fill",
-            "slot": "colour",
-            "style": "lead"
+            "style": "lead",
+            "slot": "colour"
           }
         ]
       },
@@ -2452,158 +2454,158 @@
         "padding": 8.0,
         "runs": [
           {
+            "start": 0,
             "end": 1,
             "face": "mono.regular",
+            "size": 10.0,
+            "tracking": 6.0,
             "fill": {
               "token": "hue.graphite.ink"
-            },
-            "size": 10.0,
-            "start": 0,
-            "tracking": 6.0
+            }
           },
           {
+            "start": 1,
             "end": 16,
             "face": "cond.semibold",
+            "size": 9.5,
+            "tracking": 0.9,
             "fill": {
               "token": "hue.graphite.ink"
-            },
-            "size": 9.5,
-            "start": 1,
-            "tracking": 0.9
+            }
           },
           {
-            "end": 17,
-            "start": 16
+            "start": 16,
+            "end": 17
           },
           {
-            "end": 31,
+            "start": 17,
+            "end": 33,
             "face": "sans.semibold",
             "fill": {
               "token": "graphite"
             },
             "size": 14.0,
-            "start": 17,
             "tracking": 0.0
           },
           {
-            "end": 32,
-            "start": 31
-          },
-          {
-            "end": 33,
-            "face": "sans.regular",
-            "fill": {
-              "token": "lead"
-            },
-            "size": 11.5,
-            "start": 32,
-            "tracking": 0.0
-          },
-          {
-            "end": 34,
-            "face": "sans.regular",
-            "fill": {
-              "token": "lead"
-            },
-            "size": 11.5,
             "start": 33,
-            "tracking": 3.286
+            "end": 34
           },
           {
-            "end": 71,
-            "face": "sans.regular",
-            "fill": {
-              "token": "lead"
-            },
-            "size": 11.5,
             "start": 34,
-            "tracking": 0.0
-          },
-          {
-            "end": 72,
-            "start": 71
-          },
-          {
-            "end": 73,
+            "end": 35,
             "face": "sans.regular",
+            "size": 11.5,
+            "tracking": 0.0,
             "fill": {
               "token": "lead"
-            },
-            "size": 11.5,
-            "start": 72,
-            "tracking": 0.0
+            }
           },
           {
-            "end": 74,
+            "start": 35,
+            "end": 36,
             "face": "sans.regular",
+            "size": 11.5,
+            "tracking": 3.286,
             "fill": {
               "token": "lead"
-            },
-            "size": 11.5,
-            "start": 73,
-            "tracking": 3.286
+            }
           },
           {
+            "start": 36,
+            "end": 77,
+            "face": "sans.regular",
+            "size": 11.5,
+            "tracking": 0.0,
+            "fill": {
+              "token": "lead"
+            }
+          },
+          {
+            "start": 77,
+            "end": 78
+          },
+          {
+            "start": 78,
+            "end": 79,
+            "face": "sans.regular",
+            "size": 11.5,
+            "tracking": 0.0,
+            "fill": {
+              "token": "lead"
+            }
+          },
+          {
+            "start": 79,
+            "end": 80,
+            "face": "sans.regular",
+            "size": 11.5,
+            "tracking": 3.286,
+            "fill": {
+              "token": "lead"
+            }
+          },
+          {
+            "start": 80,
+            "end": 111,
+            "face": "sans.regular",
+            "size": 11.5,
+            "tracking": 0.0,
+            "fill": {
+              "token": "lead"
+            }
+          },
+          {
+            "start": 111,
+            "end": 112
+          },
+          {
+            "start": 112,
             "end": 113,
             "face": "sans.regular",
+            "size": 11.5,
+            "tracking": 0.0,
             "fill": {
               "token": "lead"
-            },
-            "size": 11.5,
-            "start": 74,
-            "tracking": 0.0
+            }
           },
           {
+            "start": 113,
             "end": 114,
-            "start": 113
-          },
-          {
-            "end": 115,
             "face": "sans.regular",
+            "size": 11.5,
+            "tracking": 3.286,
             "fill": {
               "token": "lead"
-            },
-            "size": 11.5,
+            }
+          },
+          {
             "start": 114,
-            "tracking": 0.0
-          },
-          {
-            "end": 116,
+            "end": 155,
             "face": "sans.regular",
+            "size": 11.5,
+            "tracking": 0.0,
             "fill": {
               "token": "lead"
-            },
-            "size": 11.5,
-            "start": 115,
-            "tracking": 3.286
+            }
           },
           {
-            "end": 153,
-            "face": "sans.regular",
-            "fill": {
-              "token": "lead"
-            },
-            "size": 11.5,
-            "start": 116,
-            "tracking": 0.0
+            "start": 155,
+            "end": 156
           },
           {
-            "end": 154,
-            "start": 153
-          },
-          {
-            "end": 174,
+            "start": 156,
+            "end": 178,
             "face": "mono.regular",
+            "size": 10.0,
+            "tracking": 0.0,
             "fill": {
               "token": "silver"
-            },
-            "size": 10.0,
-            "start": 154,
-            "tracking": 0.0
+            }
           }
         ],
         "size": 11.5,
-        "text": " DATASTORE · HRC\nSeat documents\n• JSON ≤ 64 KB per (generation, ns, id)\n• put fenced on attention: stale_document\n• c2 cards, Vesta asks, any plugin's ns\nseat_documents (new)",
+        "text": " DATASTORE · HRC\nSeat annotations\n• JSON ≤ 64 KB per subject · ns · kind · id\n• subject: a seat or a generation\n• put fenced on attention: stale_annotation\nseat_annotations (new)",
         "tracking": 0.0,
         "vertical_align": "center"
       }
@@ -2614,7 +2616,7 @@
       "schema_version": 1,
       "provider": "arris",
       "created_revision": 1,
-      "updated_revision": 1,
+      "updated_revision": 18,
       "hierarchies": {
         "group": {
           "parent": "store.group"
@@ -2624,9 +2626,9 @@
         }
       },
       "domain_attributes": {
-        "display_name": "Seat documents",
+        "plane_index": 0,
         "order": 0,
-        "plane_index": 0
+        "display_name": "Seat annotations"
       },
       "payload": {}
     },
@@ -2635,8 +2637,8 @@
       "type": "arris.scenario.kicker_mark",
       "schema_version": 1,
       "provider": "arris.scenario",
-      "created_revision": 1,
-      "updated_revision": 1,
+      "created_revision": 18,
+      "updated_revision": 18,
       "hierarchies": {
         "group": {
           "parent": "docs.group"
@@ -2646,16 +2648,10 @@
         }
       },
       "domain_attributes": {
-        "bindings": [
-          {
-            "input": "layout",
-            "output_port": "text_layout_v2",
-            "producer": "docs.caption"
-          }
-        ],
+        "plane_index": 0,
+        "order": 121,
         "display_name": "docs.mark",
-        "order": 55,
-        "order_authored": true,
+        "provider_version": "0.1.0",
         "placement": {
           "transform": {
             "translate": [
@@ -2664,13 +2660,19 @@
             ]
           }
         },
-        "plane_index": 0,
-        "provider_version": "0.1.0",
+        "order_authored": true,
+        "bindings": [
+          {
+            "input": "layout",
+            "producer": "docs.caption",
+            "output_port": "text_layout_v2"
+          }
+        ],
         "style_bindings": [
           {
             "property": "fill",
-            "slot": "colour",
-            "style": "hue.graphite.line"
+            "style": "hue.graphite.line",
+            "slot": "colour"
           }
         ]
       },
@@ -2741,7 +2743,7 @@
       "schema_version": 1,
       "provider": "arris.reference-core",
       "created_revision": 1,
-      "updated_revision": 1,
+      "updated_revision": 18,
       "hierarchies": {
         "group": {
           "parent": "docs.group"
@@ -2751,17 +2753,10 @@
         }
       },
       "domain_attributes": {
-        "attachments": {
-          "geometry": {
-            "parameters": {},
-            "schema_version": 1,
-            "type": "arris.attachment.box"
-          },
-          "ports": []
-        },
-        "display_name": "Seat documents",
+        "plane_index": 0,
         "order": 53,
-        "order_authored": true,
+        "display_name": "Seat annotations",
+        "provider_version": "0.6.0",
         "placement": {
           "transform": {
             "translate": [
@@ -2770,18 +2765,25 @@
             ]
           }
         },
-        "plane_index": 0,
-        "provider_version": "0.6.0",
+        "order_authored": true,
+        "attachments": {
+          "geometry": {
+            "parameters": {},
+            "schema_version": 1,
+            "type": "arris.attachment.box"
+          },
+          "ports": []
+        },
         "style_bindings": [
           {
             "property": "fill",
-            "slot": "colour",
-            "style": "paper"
+            "style": "paper",
+            "slot": "colour"
           },
           {
             "property": "stroke",
-            "slot": "colour",
-            "style": "card.neutral"
+            "style": "card.neutral",
+            "slot": "colour"
           }
         ]
       },
@@ -2843,7 +2845,7 @@
       "schema_version": 1,
       "provider": "arris",
       "created_revision": 1,
-      "updated_revision": 7,
+      "updated_revision": 18,
       "hierarchies": {
         "group": {
           "parent": null
@@ -2853,8 +2855,6 @@
         }
       },
       "domain_attributes": {
-        "display_name": "ingest",
-        "edge_order": 94,
         "end": {
           "parameters": {
             "length": 8.4,
@@ -2862,6 +2862,48 @@
           },
           "schema_version": 1,
           "type": "arris.filled"
+        },
+        "display_name": "ingest",
+        "order": 94,
+        "source": {
+          "ref": "docs.shape"
+        },
+        "target": {
+          "ref": "kernel.shape"
+        },
+        "route": {
+          "corner_radius": 8.0,
+          "obstacles": {
+            "mode": "none"
+          },
+          "strategy": {
+            "parameters": {},
+            "schema_version": 1,
+            "type": "arris.polyline"
+          },
+          "waypoints": [
+            {
+              "space": "page",
+              "point": [
+                1770.49,
+                814.0
+              ]
+            },
+            {
+              "space": "page",
+              "point": [
+                1770.49,
+                912.0
+              ]
+            }
+          ]
+        },
+        "shaft": {
+          "dash_offset": 0.0,
+          "stroke": {
+            "token": "hue.viridian.line"
+          },
+          "width": 1.5
         },
         "labels": [
           {
@@ -2887,59 +2929,22 @@
               "text": "ingest"
             },
             "placement": {
-              "anchor": "center",
-              "distance": 77.57,
               "kind": "route-distance",
+              "distance": 77.57,
               "offset": [
                 0.0,
                 0.0
               ],
               "orientation": "route",
-              "rotation": 0.0
+              "rotation": 0.0,
+              "anchor": "center"
             },
             "schema_version": 1,
             "type": "arris.tag"
           }
         ],
-        "order": 94,
         "plane_index": 0,
-        "route": {
-          "corner_radius": 8.0,
-          "obstacles": {
-            "mode": "none"
-          },
-          "strategy": {
-            "parameters": {},
-            "schema_version": 1,
-            "type": "arris.polyline"
-          },
-          "waypoints": [
-            {
-              "point": [
-                1770.49,
-                814.0
-              ],
-              "space": "page"
-            },
-            {
-              "point": [
-                1770.49,
-                912.0
-              ],
-              "space": "page"
-            }
-          ]
-        },
-        "shaft": {
-          "dash_offset": 0.0,
-          "stroke": {
-            "token": "hue.viridian.line"
-          },
-          "width": 1.5
-        },
-        "source": {
-          "ref": "docs.shape"
-        },
+        "edge_order": 94,
         "source_detail": {
           "attachment": {
             "approach": {
@@ -2952,9 +2957,6 @@
             "offset": 0.0,
             "side": "right"
           }
-        },
-        "target": {
-          "ref": "kernel.shape"
         },
         "target_detail": {
           "attachment": {
@@ -4107,7 +4109,7 @@
       "schema_version": 1,
       "provider": "arris.architecture",
       "created_revision": 1,
-      "updated_revision": 1,
+      "updated_revision": 18,
       "hierarchies": {
         "group": {
           "parent": "kernel.group"
@@ -4117,9 +4119,10 @@
         }
       },
       "domain_attributes": {
-        "display_name": "hrc document",
+        "plane_index": 0,
         "order": 61,
-        "order_authored": true,
+        "display_name": "hrc document",
+        "provider_version": "0.1.0",
         "placement": {
           "transform": {
             "translate": [
@@ -4128,13 +4131,13 @@
             ]
           }
         },
-        "plane_index": 0,
-        "provider_version": "0.1.0"
+        "order_authored": true
       },
       "payload": {
+        "body": "",
         "bullets": [
           "lineage: project › seat › generation › runtime",
-          "hrc.document under its generation",
+          "hrc.annotation under its seat or generation",
           "attention on the generation; 24 h window"
         ],
         "emphasis": true,
@@ -4157,7 +4160,7 @@
       "schema_version": 1,
       "provider": "arris.reference-core",
       "created_revision": 1,
-      "updated_revision": 1,
+      "updated_revision": 18,
       "hierarchies": {
         "group": {
           "parent": "kernel.group"
@@ -4167,16 +4170,10 @@
         }
       },
       "domain_attributes": {
-        "bindings": [
-          {
-            "input": "caption_region",
-            "output_port": "caption",
-            "producer": "kernel.shape"
-          }
-        ],
-        "display_name": "kernel.caption",
+        "plane_index": 0,
         "order": 59,
-        "order_authored": true,
+        "display_name": "kernel.caption",
+        "provider_version": "0.6.0",
         "placement": {
           "transform": {
             "translate": [
@@ -4185,13 +4182,19 @@
             ]
           }
         },
-        "plane_index": 0,
-        "provider_version": "0.6.0",
+        "order_authored": true,
+        "bindings": [
+          {
+            "input": "caption_region",
+            "producer": "kernel.shape",
+            "output_port": "caption"
+          }
+        ],
         "style_bindings": [
           {
             "property": "fill",
-            "slot": "colour",
-            "style": "lead"
+            "style": "lead",
+            "slot": "colour"
           }
         ]
       },
@@ -4205,158 +4208,158 @@
         "padding": 8.0,
         "runs": [
           {
+            "start": 0,
             "end": 1,
             "face": "mono.regular",
+            "size": 10.0,
+            "tracking": 6.0,
             "fill": {
               "token": "hue.graphite.ink"
-            },
-            "size": 10.0,
-            "start": 0,
-            "tracking": 6.0
+            }
           },
           {
+            "start": 1,
             "end": 17,
             "face": "cond.semibold",
+            "size": 9.5,
+            "tracking": 0.9,
             "fill": {
               "token": "hue.graphite.ink"
-            },
-            "size": 9.5,
-            "start": 1,
-            "tracking": 0.9
+            }
           },
           {
-            "end": 18,
-            "start": 17
+            "start": 17,
+            "end": 18
           },
           {
+            "start": 18,
             "end": 30,
             "face": "sans.semibold",
             "fill": {
               "token": "graphite"
             },
             "size": 14.0,
-            "start": 18,
             "tracking": 0.0
           },
           {
-            "end": 31,
-            "start": 30
+            "start": 30,
+            "end": 31
           },
           {
+            "start": 31,
             "end": 32,
             "face": "sans.regular",
+            "size": 11.5,
+            "tracking": 0.0,
             "fill": {
               "token": "lead"
-            },
-            "size": 11.5,
-            "start": 31,
-            "tracking": 0.0
+            }
           },
           {
+            "start": 32,
             "end": 33,
             "face": "sans.regular",
+            "size": 11.5,
+            "tracking": 3.286,
             "fill": {
               "token": "lead"
-            },
-            "size": 11.5,
-            "start": 32,
-            "tracking": 3.286
+            }
           },
           {
+            "start": 33,
             "end": 79,
             "face": "sans.regular",
+            "size": 11.5,
+            "tracking": 0.0,
             "fill": {
               "token": "lead"
-            },
-            "size": 11.5,
-            "start": 33,
-            "tracking": 0.0
+            }
           },
           {
-            "end": 80,
-            "start": 79
+            "start": 79,
+            "end": 80
           },
           {
+            "start": 80,
             "end": 81,
             "face": "sans.regular",
+            "size": 11.5,
+            "tracking": 0.0,
             "fill": {
               "token": "lead"
-            },
-            "size": 11.5,
-            "start": 80,
-            "tracking": 0.0
+            }
           },
           {
+            "start": 81,
             "end": 82,
             "face": "sans.regular",
+            "size": 11.5,
+            "tracking": 3.286,
             "fill": {
               "token": "lead"
-            },
-            "size": 11.5,
-            "start": 81,
-            "tracking": 3.286
+            }
           },
           {
-            "end": 115,
-            "face": "sans.regular",
-            "fill": {
-              "token": "lead"
-            },
-            "size": 11.5,
             "start": 82,
-            "tracking": 0.0
-          },
-          {
-            "end": 116,
-            "start": 115
-          },
-          {
-            "end": 117,
+            "end": 125,
             "face": "sans.regular",
+            "size": 11.5,
+            "tracking": 0.0,
             "fill": {
               "token": "lead"
-            },
-            "size": 11.5,
-            "start": 116,
-            "tracking": 0.0
+            }
           },
           {
-            "end": 118,
+            "start": 125,
+            "end": 126
+          },
+          {
+            "start": 126,
+            "end": 127,
             "face": "sans.regular",
+            "size": 11.5,
+            "tracking": 0.0,
             "fill": {
               "token": "lead"
-            },
-            "size": 11.5,
-            "start": 117,
-            "tracking": 3.286
+            }
           },
           {
-            "end": 158,
+            "start": 127,
+            "end": 128,
             "face": "sans.regular",
+            "size": 11.5,
+            "tracking": 3.286,
             "fill": {
               "token": "lead"
-            },
+            }
+          },
+          {
+            "start": 128,
+            "end": 168,
+            "face": "sans.regular",
             "size": 11.5,
-            "start": 118,
-            "tracking": 0.0
+            "tracking": 0.0,
+            "fill": {
+              "token": "lead"
+            }
           },
           {
-            "end": 159,
-            "start": 158
+            "start": 168,
+            "end": 169
           },
           {
-            "end": 186,
+            "start": 169,
+            "end": 196,
             "face": "mono.regular",
+            "size": 10.0,
+            "tracking": 0.0,
             "fill": {
               "token": "silver"
-            },
-            "size": 10.0,
-            "start": 159,
-            "tracking": 0.0
+            }
           }
         ],
         "size": 11.5,
-        "text": " DOCUMENT · CARDO\nhrc document\n• lineage: project › seat › generation › runtime\n• hrc.document under its generation\n• attention on the generation; 24 h window\nhrc:hrc · still rebuildable",
+        "text": " DOCUMENT · CARDO\nhrc document\n• lineage: project › seat › generation › runtime\n• hrc.annotation under its seat or generation\n• attention on the generation; 24 h window\nhrc:hrc · still rebuildable",
         "tracking": 0.0,
         "vertical_align": "center"
       }
@@ -4367,7 +4370,7 @@
       "schema_version": 1,
       "provider": "arris",
       "created_revision": 1,
-      "updated_revision": 1,
+      "updated_revision": 18,
       "hierarchies": {
         "group": {
           "parent": "daemon.group"
@@ -4377,9 +4380,9 @@
         }
       },
       "domain_attributes": {
-        "display_name": "hrc document",
+        "plane_index": 0,
         "order": 0,
-        "plane_index": 0
+        "display_name": "hrc document"
       },
       "payload": {}
     },
@@ -4388,8 +4391,8 @@
       "type": "arris.scenario.kicker_mark",
       "schema_version": 1,
       "provider": "arris.scenario",
-      "created_revision": 1,
-      "updated_revision": 1,
+      "created_revision": 18,
+      "updated_revision": 18,
       "hierarchies": {
         "group": {
           "parent": "kernel.group"
@@ -4399,16 +4402,10 @@
         }
       },
       "domain_attributes": {
-        "bindings": [
-          {
-            "input": "layout",
-            "output_port": "text_layout_v2",
-            "producer": "kernel.caption"
-          }
-        ],
+        "plane_index": 0,
+        "order": 123,
         "display_name": "kernel.mark",
-        "order": 60,
-        "order_authored": true,
+        "provider_version": "0.1.0",
         "placement": {
           "transform": {
             "translate": [
@@ -4417,13 +4414,19 @@
             ]
           }
         },
-        "plane_index": 0,
-        "provider_version": "0.1.0",
+        "order_authored": true,
+        "bindings": [
+          {
+            "input": "layout",
+            "producer": "kernel.caption",
+            "output_port": "text_layout_v2"
+          }
+        ],
         "style_bindings": [
           {
             "property": "fill",
-            "slot": "colour",
-            "style": "hue.graphite.line"
+            "style": "hue.graphite.line",
+            "slot": "colour"
           }
         ]
       },
@@ -4494,7 +4497,7 @@
       "schema_version": 1,
       "provider": "arris.reference-core",
       "created_revision": 1,
-      "updated_revision": 1,
+      "updated_revision": 18,
       "hierarchies": {
         "group": {
           "parent": "kernel.group"
@@ -4504,17 +4507,10 @@
         }
       },
       "domain_attributes": {
-        "attachments": {
-          "geometry": {
-            "parameters": {},
-            "schema_version": 1,
-            "type": "arris.attachment.box"
-          },
-          "ports": []
-        },
-        "display_name": "hrc document",
+        "plane_index": 0,
         "order": 58,
-        "order_authored": true,
+        "display_name": "hrc document",
+        "provider_version": "0.6.0",
         "placement": {
           "transform": {
             "translate": [
@@ -4523,18 +4519,25 @@
             ]
           }
         },
-        "plane_index": 0,
-        "provider_version": "0.6.0",
+        "order_authored": true,
+        "attachments": {
+          "geometry": {
+            "parameters": {},
+            "schema_version": 1,
+            "type": "arris.attachment.box"
+          },
+          "ports": []
+        },
         "style_bindings": [
           {
             "property": "fill",
-            "slot": "colour",
-            "style": "paper"
+            "style": "paper",
+            "slot": "colour"
           },
           {
             "property": "stroke",
-            "slot": "colour",
-            "style": "card.neutral"
+            "style": "card.neutral",
+            "slot": "colour"
           }
         ]
       },
@@ -5113,7 +5116,7 @@
       "schema_version": 1,
       "provider": "arris",
       "created_revision": 1,
-      "updated_revision": 7,
+      "updated_revision": 18,
       "hierarchies": {
         "group": {
           "parent": null
@@ -5123,8 +5126,6 @@
         }
       },
       "domain_attributes": {
-        "display_name": "click action",
-        "edge_order": 100,
         "end": {
           "parameters": {
             "length": 7.25,
@@ -5132,6 +5133,52 @@
           },
           "schema_version": 1,
           "type": "arris.filled"
+        },
+        "display_name": "click action",
+        "order": 100,
+        "source": {
+          "ref": "lance.shape"
+        },
+        "target": {
+          "ref": "c2.shape"
+        },
+        "route": {
+          "corner_radius": 8.0,
+          "obstacles": {
+            "mode": "none"
+          },
+          "strategy": {
+            "parameters": {},
+            "schema_version": 1,
+            "type": "arris.polyline"
+          },
+          "waypoints": [
+            {
+              "space": "page",
+              "point": [
+                704.0,
+                1430.67
+              ]
+            },
+            {
+              "space": "page",
+              "point": [
+                2835.05,
+                1430.67
+              ]
+            }
+          ]
+        },
+        "shaft": {
+          "dash": [
+            5.0,
+            4.0
+          ],
+          "dash_offset": 0.0,
+          "stroke": {
+            "token": "hue.vermilion.line"
+          },
+          "width": 1.25
         },
         "labels": [
           {
@@ -5157,63 +5204,22 @@
               "text": "click action"
             },
             "placement": {
-              "anchor": "center",
-              "distance": 1836.76,
               "kind": "route-distance",
+              "distance": 1836.76,
               "offset": [
                 0.0,
                 0.0
               ],
               "orientation": "route",
-              "rotation": 0.0
+              "rotation": 0.0,
+              "anchor": "center"
             },
             "schema_version": 1,
             "type": "arris.tag"
           }
         ],
-        "order": 100,
         "plane_index": 0,
-        "route": {
-          "corner_radius": 8.0,
-          "obstacles": {
-            "mode": "none"
-          },
-          "strategy": {
-            "parameters": {},
-            "schema_version": 1,
-            "type": "arris.polyline"
-          },
-          "waypoints": [
-            {
-              "point": [
-                704.0,
-                1430.67
-              ],
-              "space": "page"
-            },
-            {
-              "point": [
-                2835.05,
-                1430.67
-              ],
-              "space": "page"
-            }
-          ]
-        },
-        "shaft": {
-          "dash": [
-            5.0,
-            4.0
-          ],
-          "dash_offset": 0.0,
-          "stroke": {
-            "token": "hue.vermilion.line"
-          },
-          "width": 1.25
-        },
-        "source": {
-          "ref": "lance.shape"
-        },
+        "edge_order": 100,
         "source_detail": {
           "attachment": {
             "approach": {
@@ -5227,20 +5233,17 @@
             "side": "bottom"
           }
         },
-        "target": {
-          "ref": "c2.shape"
-        },
         "target_detail": {
           "attachment": {
-            "approach": {
-              "min_straight": 0.0,
-              "mode": "normal"
-            },
-            "clearance": 0.0,
-            "fraction": 0.6666964285714292,
             "kind": "side",
+            "side": "left",
+            "fraction": 0.6666964285714292,
             "offset": 0.0,
-            "side": "left"
+            "clearance": 0.0,
+            "approach": {
+              "mode": "normal",
+              "min_straight": 0.0
+            }
           }
         }
       },
@@ -5278,7 +5281,7 @@
       "schema_version": 1,
       "provider": "arris.architecture",
       "created_revision": 1,
-      "updated_revision": 1,
+      "updated_revision": 18,
       "hierarchies": {
         "group": {
           "parent": "ledger.group"
@@ -5288,9 +5291,10 @@
         }
       },
       "domain_attributes": {
-        "display_name": "Event ledger",
+        "plane_index": 0,
         "order": 41,
-        "order_authored": true,
+        "display_name": "Event ledger",
+        "provider_version": "0.1.0",
         "placement": {
           "transform": {
             "translate": [
@@ -5299,14 +5303,14 @@
             ]
           }
         },
-        "plane_index": 0,
-        "provider_version": "0.1.0"
+        "order_authored": true
       },
       "payload": {
+        "body": "",
         "bullets": [
           "hrc_events, append-only",
           "turn.attention from jev",
-          "seat.document.action: every card click"
+          "seat.annotation.action: every card click"
         ],
         "emphasis": false,
         "icon": "",
@@ -5328,7 +5332,7 @@
       "schema_version": 1,
       "provider": "arris.reference-core",
       "created_revision": 1,
-      "updated_revision": 1,
+      "updated_revision": 18,
       "hierarchies": {
         "group": {
           "parent": "ledger.group"
@@ -5338,16 +5342,10 @@
         }
       },
       "domain_attributes": {
-        "bindings": [
-          {
-            "input": "caption_region",
-            "output_port": "caption",
-            "producer": "ledger.shape"
-          }
-        ],
-        "display_name": "ledger.caption",
+        "plane_index": 0,
         "order": 39,
-        "order_authored": true,
+        "display_name": "ledger.caption",
+        "provider_version": "0.6.0",
         "placement": {
           "transform": {
             "translate": [
@@ -5356,13 +5354,19 @@
             ]
           }
         },
-        "plane_index": 0,
-        "provider_version": "0.6.0",
+        "order_authored": true,
+        "bindings": [
+          {
+            "input": "caption_region",
+            "producer": "ledger.shape",
+            "output_port": "caption"
+          }
+        ],
         "style_bindings": [
           {
             "property": "fill",
-            "slot": "colour",
-            "style": "lead"
+            "style": "lead",
+            "slot": "colour"
           }
         ]
       },
@@ -5376,158 +5380,158 @@
         "padding": 8.0,
         "runs": [
           {
+            "start": 0,
             "end": 1,
             "face": "mono.regular",
+            "size": 10.0,
+            "tracking": 6.0,
             "fill": {
               "token": "hue.graphite.ink"
-            },
-            "size": 10.0,
-            "start": 0,
-            "tracking": 6.0
+            }
           },
           {
+            "start": 1,
             "end": 16,
             "face": "cond.semibold",
+            "size": 9.5,
+            "tracking": 0.9,
             "fill": {
               "token": "hue.graphite.ink"
-            },
-            "size": 9.5,
-            "start": 1,
-            "tracking": 0.9
+            }
           },
           {
-            "end": 17,
-            "start": 16
+            "start": 16,
+            "end": 17
           },
           {
+            "start": 17,
             "end": 29,
             "face": "sans.semibold",
             "fill": {
               "token": "graphite"
             },
             "size": 14.0,
-            "start": 17,
             "tracking": 0.0
           },
           {
-            "end": 30,
-            "start": 29
+            "start": 29,
+            "end": 30
           },
           {
+            "start": 30,
             "end": 31,
             "face": "sans.regular",
+            "size": 11.5,
+            "tracking": 0.0,
             "fill": {
               "token": "lead"
-            },
-            "size": 11.5,
-            "start": 30,
-            "tracking": 0.0
+            }
           },
           {
+            "start": 31,
             "end": 32,
             "face": "sans.regular",
+            "size": 11.5,
+            "tracking": 3.286,
             "fill": {
               "token": "lead"
-            },
-            "size": 11.5,
-            "start": 31,
-            "tracking": 3.286
+            }
           },
           {
+            "start": 32,
             "end": 55,
             "face": "sans.regular",
+            "size": 11.5,
+            "tracking": 0.0,
             "fill": {
               "token": "lead"
-            },
-            "size": 11.5,
-            "start": 32,
-            "tracking": 0.0
+            }
           },
           {
-            "end": 56,
-            "start": 55
+            "start": 55,
+            "end": 56
           },
           {
+            "start": 56,
             "end": 57,
             "face": "sans.regular",
+            "size": 11.5,
+            "tracking": 0.0,
             "fill": {
               "token": "lead"
-            },
-            "size": 11.5,
-            "start": 56,
-            "tracking": 0.0
+            }
           },
           {
+            "start": 57,
             "end": 58,
             "face": "sans.regular",
+            "size": 11.5,
+            "tracking": 3.286,
             "fill": {
               "token": "lead"
-            },
-            "size": 11.5,
-            "start": 57,
-            "tracking": 3.286
+            }
           },
           {
+            "start": 58,
             "end": 81,
             "face": "sans.regular",
+            "size": 11.5,
+            "tracking": 0.0,
             "fill": {
               "token": "lead"
-            },
-            "size": 11.5,
-            "start": 58,
-            "tracking": 0.0
+            }
           },
           {
-            "end": 82,
-            "start": 81
+            "start": 81,
+            "end": 82
           },
           {
+            "start": 82,
             "end": 83,
             "face": "sans.regular",
+            "size": 11.5,
+            "tracking": 0.0,
             "fill": {
               "token": "lead"
-            },
-            "size": 11.5,
-            "start": 82,
-            "tracking": 0.0
+            }
           },
           {
+            "start": 83,
             "end": 84,
             "face": "sans.regular",
+            "size": 11.5,
+            "tracking": 3.286,
             "fill": {
               "token": "lead"
-            },
-            "size": 11.5,
-            "start": 83,
-            "tracking": 3.286
+            }
           },
           {
-            "end": 122,
-            "face": "sans.regular",
-            "fill": {
-              "token": "lead"
-            },
-            "size": 11.5,
             "start": 84,
-            "tracking": 0.0
+            "end": 124,
+            "face": "sans.regular",
+            "size": 11.5,
+            "tracking": 0.0,
+            "fill": {
+              "token": "lead"
+            }
           },
           {
-            "end": 123,
-            "start": 122
+            "start": 124,
+            "end": 125
           },
           {
-            "end": 133,
+            "start": 125,
+            "end": 135,
             "face": "mono.regular",
+            "size": 10.0,
+            "tracking": 0.0,
             "fill": {
               "token": "silver"
-            },
-            "size": 10.0,
-            "start": 123,
-            "tracking": 0.0
+            }
           }
         ],
         "size": 11.5,
-        "text": " DATASTORE · HRC\nEvent ledger\n• hrc_events, append-only\n• turn.attention from jev\n• seat.document.action: every card click\nhrc_events",
+        "text": " DATASTORE · HRC\nEvent ledger\n• hrc_events, append-only\n• turn.attention from jev\n• seat.annotation.action: every card click\nhrc_events",
         "tracking": 0.0,
         "vertical_align": "center"
       }
@@ -5538,7 +5542,7 @@
       "schema_version": 1,
       "provider": "arris",
       "created_revision": 1,
-      "updated_revision": 1,
+      "updated_revision": 18,
       "hierarchies": {
         "group": {
           "parent": "store.group"
@@ -5548,9 +5552,9 @@
         }
       },
       "domain_attributes": {
-        "display_name": "Event ledger",
+        "plane_index": 0,
         "order": 0,
-        "plane_index": 0
+        "display_name": "Event ledger"
       },
       "payload": {}
     },
@@ -5559,8 +5563,8 @@
       "type": "arris.scenario.kicker_mark",
       "schema_version": 1,
       "provider": "arris.scenario",
-      "created_revision": 1,
-      "updated_revision": 1,
+      "created_revision": 18,
+      "updated_revision": 18,
       "hierarchies": {
         "group": {
           "parent": "ledger.group"
@@ -5570,16 +5574,10 @@
         }
       },
       "domain_attributes": {
-        "bindings": [
-          {
-            "input": "layout",
-            "output_port": "text_layout_v2",
-            "producer": "ledger.caption"
-          }
-        ],
+        "plane_index": 0,
+        "order": 122,
         "display_name": "ledger.mark",
-        "order": 40,
-        "order_authored": true,
+        "provider_version": "0.1.0",
         "placement": {
           "transform": {
             "translate": [
@@ -5588,13 +5586,19 @@
             ]
           }
         },
-        "plane_index": 0,
-        "provider_version": "0.1.0",
+        "order_authored": true,
+        "bindings": [
+          {
+            "input": "layout",
+            "producer": "ledger.caption",
+            "output_port": "text_layout_v2"
+          }
+        ],
         "style_bindings": [
           {
             "property": "fill",
-            "slot": "colour",
-            "style": "hue.graphite.line"
+            "style": "hue.graphite.line",
+            "slot": "colour"
           }
         ]
       },
@@ -5665,7 +5669,7 @@
       "schema_version": 1,
       "provider": "arris.reference-core",
       "created_revision": 1,
-      "updated_revision": 1,
+      "updated_revision": 18,
       "hierarchies": {
         "group": {
           "parent": "ledger.group"
@@ -5675,17 +5679,10 @@
         }
       },
       "domain_attributes": {
-        "attachments": {
-          "geometry": {
-            "parameters": {},
-            "schema_version": 1,
-            "type": "arris.attachment.box"
-          },
-          "ports": []
-        },
-        "display_name": "Event ledger",
+        "plane_index": 0,
         "order": 38,
-        "order_authored": true,
+        "display_name": "Event ledger",
+        "provider_version": "0.6.0",
         "placement": {
           "transform": {
             "translate": [
@@ -5694,18 +5691,25 @@
             ]
           }
         },
-        "plane_index": 0,
-        "provider_version": "0.6.0",
+        "order_authored": true,
+        "attachments": {
+          "geometry": {
+            "parameters": {},
+            "schema_version": 1,
+            "type": "arris.attachment.box"
+          },
+          "ports": []
+        },
         "style_bindings": [
           {
             "property": "fill",
-            "slot": "colour",
-            "style": "paper"
+            "style": "paper",
+            "slot": "colour"
           },
           {
             "property": "stroke",
-            "slot": "colour",
-            "style": "card.neutral"
+            "style": "card.neutral",
+            "slot": "colour"
           }
         ]
       },
@@ -5773,7 +5777,7 @@
       "schema_version": 1,
       "provider": "arris",
       "created_revision": 1,
-      "updated_revision": 7,
+      "updated_revision": 18,
       "hierarchies": {
         "group": {
           "parent": null
@@ -5783,8 +5787,6 @@
         }
       },
       "domain_attributes": {
-        "display_name": "ingest, wake",
-        "edge_order": 88,
         "end": {
           "parameters": {
             "length": 8.4,
@@ -5792,6 +5794,48 @@
           },
           "schema_version": 1,
           "type": "arris.filled"
+        },
+        "display_name": "ingest, wake",
+        "order": 88,
+        "source": {
+          "ref": "ledger.shape"
+        },
+        "target": {
+          "ref": "kernel.shape"
+        },
+        "route": {
+          "corner_radius": 8.0,
+          "obstacles": {
+            "mode": "none"
+          },
+          "strategy": {
+            "parameters": {},
+            "schema_version": 1,
+            "type": "arris.polyline"
+          },
+          "waypoints": [
+            {
+              "space": "page",
+              "point": [
+                1078.49,
+                722.0
+              ]
+            },
+            {
+              "space": "page",
+              "point": [
+                1934.49,
+                722.0
+              ]
+            }
+          ]
+        },
+        "shaft": {
+          "dash_offset": 0.0,
+          "stroke": {
+            "token": "hue.viridian.line"
+          },
+          "width": 1.5
         },
         "labels": [
           {
@@ -5817,22 +5861,23 @@
               "text": "ingest, wake"
             },
             "placement": {
-              "anchor": "center",
-              "distance": 244.57,
               "kind": "route-distance",
+              "distance": 244.57,
               "offset": [
                 0.0,
                 0.0
               ],
               "orientation": "route",
-              "rotation": 0.0
+              "rotation": 0.0,
+              "anchor": "center"
             },
             "schema_version": 1,
             "type": "arris.tag"
           },
           {
-            "clearance": 0.0,
             "label_id": "junction",
+            "type": "arris.dot",
+            "schema_version": 1,
             "parameters": {
               "fill": {
                 "token": "hue.viridian.line"
@@ -5840,23 +5885,23 @@
               "radius": 1.5
             },
             "placement": {
-              "anchor": "center",
+              "kind": "route-distance",
               "distance": 893.13,
-              "kind": "route-distance",
               "offset": [
                 0.0,
                 0.0
               ],
               "orientation": "route",
-              "rotation": 0.0
+              "rotation": 0.0,
+              "anchor": "center"
             },
-            "schema_version": 1,
-            "shaft_gap": "none",
-            "type": "arris.dot"
+            "clearance": 0.0,
+            "shaft_gap": "none"
           },
           {
-            "clearance": 0.0,
             "label_id": "junction.2",
+            "type": "arris.dot",
+            "schema_version": 1,
             "parameters": {
               "fill": {
                 "token": "hue.viridian.line"
@@ -5864,23 +5909,23 @@
               "radius": 1.5
             },
             "placement": {
-              "anchor": "center",
-              "distance": 288.57,
               "kind": "route-distance",
+              "distance": 288.57,
               "offset": [
                 0.0,
                 0.0
               ],
               "orientation": "route",
-              "rotation": 0.0
+              "rotation": 0.0,
+              "anchor": "center"
             },
-            "schema_version": 1,
-            "shaft_gap": "none",
-            "type": "arris.dot"
+            "clearance": 0.0,
+            "shaft_gap": "none"
           },
           {
-            "clearance": 0.0,
             "label_id": "junction.3",
+            "type": "arris.dot",
+            "schema_version": 1,
             "parameters": {
               "fill": {
                 "token": "hue.viridian.line"
@@ -5888,60 +5933,22 @@
               "radius": 1.5
             },
             "placement": {
-              "anchor": "center",
-              "distance": 560.57,
               "kind": "route-distance",
+              "distance": 560.57,
               "offset": [
                 0.0,
                 0.0
               ],
               "orientation": "route",
-              "rotation": 0.0
+              "rotation": 0.0,
+              "anchor": "center"
             },
-            "schema_version": 1,
-            "shaft_gap": "none",
-            "type": "arris.dot"
+            "clearance": 0.0,
+            "shaft_gap": "none"
           }
         ],
-        "order": 88,
         "plane_index": 0,
-        "route": {
-          "corner_radius": 8.0,
-          "obstacles": {
-            "mode": "none"
-          },
-          "strategy": {
-            "parameters": {},
-            "schema_version": 1,
-            "type": "arris.polyline"
-          },
-          "waypoints": [
-            {
-              "point": [
-                1078.49,
-                722.0
-              ],
-              "space": "page"
-            },
-            {
-              "point": [
-                1934.49,
-                722.0
-              ],
-              "space": "page"
-            }
-          ]
-        },
-        "shaft": {
-          "dash_offset": 0.0,
-          "stroke": {
-            "token": "hue.viridian.line"
-          },
-          "width": 1.5
-        },
-        "source": {
-          "ref": "ledger.shape"
-        },
+        "edge_order": 88,
         "source_detail": {
           "attachment": {
             "approach": {
@@ -5954,9 +5961,6 @@
             "offset": 0.0,
             "side": "bottom"
           }
-        },
-        "target": {
-          "ref": "kernel.shape"
         },
         "target_detail": {
           "attachment": {
@@ -6501,7 +6505,7 @@
       "schema_version": 1,
       "provider": "arris",
       "created_revision": 1,
-      "updated_revision": 7,
+      "updated_revision": 18,
       "hierarchies": {
         "group": {
           "parent": null
@@ -6511,8 +6515,6 @@
         }
       },
       "domain_attributes": {
-        "display_name": "ingest",
-        "edge_order": 90,
         "end": {
           "parameters": {
             "length": 8.4,
@@ -6520,6 +6522,48 @@
           },
           "schema_version": 1,
           "type": "arris.filled"
+        },
+        "display_name": "ingest",
+        "order": 90,
+        "source": {
+          "ref": "lineage.shape"
+        },
+        "target": {
+          "ref": "kernel.shape"
+        },
+        "route": {
+          "corner_radius": 8.0,
+          "obstacles": {
+            "mode": "none"
+          },
+          "strategy": {
+            "parameters": {},
+            "schema_version": 1,
+            "type": "arris.polyline"
+          },
+          "waypoints": [
+            {
+              "space": "page",
+              "point": [
+                1334.49,
+                722.0
+              ]
+            },
+            {
+              "space": "page",
+              "point": [
+                1934.49,
+                722.0
+              ]
+            }
+          ]
+        },
+        "shaft": {
+          "dash_offset": 0.0,
+          "stroke": {
+            "token": "hue.viridian.line"
+          },
+          "width": 1.5
         },
         "labels": [
           {
@@ -6545,59 +6589,22 @@
               "text": "ingest"
             },
             "placement": {
-              "anchor": "center",
-              "distance": 276.57,
               "kind": "route-distance",
+              "distance": 276.57,
               "offset": [
                 0.0,
                 0.0
               ],
               "orientation": "route",
-              "rotation": 0.0
+              "rotation": 0.0,
+              "anchor": "center"
             },
             "schema_version": 1,
             "type": "arris.tag"
           }
         ],
-        "order": 90,
         "plane_index": 0,
-        "route": {
-          "corner_radius": 8.0,
-          "obstacles": {
-            "mode": "none"
-          },
-          "strategy": {
-            "parameters": {},
-            "schema_version": 1,
-            "type": "arris.polyline"
-          },
-          "waypoints": [
-            {
-              "point": [
-                1334.49,
-                722.0
-              ],
-              "space": "page"
-            },
-            {
-              "point": [
-                1934.49,
-                722.0
-              ],
-              "space": "page"
-            }
-          ]
-        },
-        "shaft": {
-          "dash_offset": 0.0,
-          "stroke": {
-            "token": "hue.viridian.line"
-          },
-          "width": 1.5
-        },
-        "source": {
-          "ref": "lineage.shape"
-        },
+        "edge_order": 90,
         "source_detail": {
           "attachment": {
             "approach": {
@@ -6610,9 +6617,6 @@
             "offset": 0.0,
             "side": "bottom"
           }
-        },
-        "target": {
-          "ref": "kernel.shape"
         },
         "target_detail": {
           "attachment": {
@@ -7223,7 +7227,7 @@
       "schema_version": 1,
       "provider": "arris",
       "created_revision": 1,
-      "updated_revision": 7,
+      "updated_revision": 18,
       "hierarchies": {
         "group": {
           "parent": null
@@ -7233,8 +7237,6 @@
         }
       },
       "domain_attributes": {
-        "display_name": "ingest",
-        "edge_order": 92,
         "end": {
           "parameters": {
             "length": 8.4,
@@ -7242,6 +7244,48 @@
           },
           "schema_version": 1,
           "type": "arris.filled"
+        },
+        "display_name": "ingest",
+        "order": 92,
+        "source": {
+          "ref": "meta.shape"
+        },
+        "target": {
+          "ref": "kernel.shape"
+        },
+        "route": {
+          "corner_radius": 8.0,
+          "obstacles": {
+            "mode": "none"
+          },
+          "strategy": {
+            "parameters": {},
+            "schema_version": 1,
+            "type": "arris.polyline"
+          },
+          "waypoints": [
+            {
+              "space": "page",
+              "point": [
+                1606.49,
+                722.0
+              ]
+            },
+            {
+              "space": "page",
+              "point": [
+                1934.49,
+                722.0
+              ]
+            }
+          ]
+        },
+        "shaft": {
+          "dash_offset": 0.0,
+          "stroke": {
+            "token": "hue.viridian.line"
+          },
+          "width": 1.5
         },
         "labels": [
           {
@@ -7267,59 +7311,22 @@
               "text": "ingest"
             },
             "placement": {
-              "anchor": "center",
-              "distance": 18.0,
               "kind": "route-distance",
+              "distance": 18.0,
               "offset": [
                 0.0,
                 0.0
               ],
               "orientation": "route",
-              "rotation": 0.0
+              "rotation": 0.0,
+              "anchor": "center"
             },
             "schema_version": 1,
             "type": "arris.tag"
           }
         ],
-        "order": 92,
         "plane_index": 0,
-        "route": {
-          "corner_radius": 8.0,
-          "obstacles": {
-            "mode": "none"
-          },
-          "strategy": {
-            "parameters": {},
-            "schema_version": 1,
-            "type": "arris.polyline"
-          },
-          "waypoints": [
-            {
-              "point": [
-                1606.49,
-                722.0
-              ],
-              "space": "page"
-            },
-            {
-              "point": [
-                1934.49,
-                722.0
-              ],
-              "space": "page"
-            }
-          ]
-        },
-        "shaft": {
-          "dash_offset": 0.0,
-          "stroke": {
-            "token": "hue.viridian.line"
-          },
-          "width": 1.5
-        },
-        "source": {
-          "ref": "meta.shape"
-        },
+        "edge_order": 92,
         "source_detail": {
           "attachment": {
             "approach": {
@@ -7332,9 +7339,6 @@
             "offset": 0.0,
             "side": "bottom"
           }
-        },
-        "target": {
-          "ref": "kernel.shape"
         },
         "target_detail": {
           "attachment": {
@@ -7740,7 +7744,7 @@
       "schema_version": 1,
       "provider": "arris",
       "created_revision": 1,
-      "updated_revision": 1,
+      "updated_revision": 18,
       "hierarchies": {
         "group": {
           "parent": null
@@ -7750,8 +7754,6 @@
         }
       },
       "domain_attributes": {
-        "display_name": "lineage rows",
-        "edge_order": 98,
         "end": {
           "parameters": {
             "length": 8.4,
@@ -7759,6 +7761,48 @@
           },
           "schema_version": 1,
           "type": "arris.filled"
+        },
+        "display_name": "lineage rows",
+        "order": 98,
+        "source": {
+          "ref": "mount.shape"
+        },
+        "target": {
+          "ref": "c2.shape"
+        },
+        "route": {
+          "corner_radius": 8.0,
+          "obstacles": {
+            "mode": "none"
+          },
+          "strategy": {
+            "parameters": {},
+            "schema_version": 1,
+            "type": "arris.polyline"
+          },
+          "waypoints": [
+            {
+              "space": "page",
+              "point": [
+                2963.05,
+                1328.0
+              ]
+            },
+            {
+              "space": "page",
+              "point": [
+                2995.05,
+                1328.0
+              ]
+            }
+          ]
+        },
+        "shaft": {
+          "dash_offset": 0.0,
+          "stroke": {
+            "token": "hue.viridian.line"
+          },
+          "width": 1.5
         },
         "labels": [
           {
@@ -7784,86 +7828,46 @@
               "text": "lineage rows"
             },
             "placement": {
-              "anchor": "center",
-              "distance": 41.0,
               "kind": "route-distance",
+              "distance": 41.0,
               "offset": [
                 0.0,
                 0.0
               ],
               "orientation": "route",
-              "rotation": 0.0
+              "rotation": 0.0,
+              "anchor": "center"
             },
             "schema_version": 1,
             "type": "arris.tag"
           }
         ],
-        "order": 98,
         "plane_index": 0,
-        "route": {
-          "corner_radius": 8.0,
-          "obstacles": {
-            "mode": "none"
-          },
-          "strategy": {
-            "parameters": {},
-            "schema_version": 1,
-            "type": "arris.polyline"
-          },
-          "waypoints": [
-            {
-              "point": [
-                2963.05,
-                1328.0
-              ],
-              "space": "page"
-            },
-            {
-              "point": [
-                2989.72,
-                1328.0
-              ],
-              "space": "page"
-            }
-          ]
-        },
-        "shaft": {
-          "dash_offset": 0.0,
-          "stroke": {
-            "token": "hue.viridian.line"
-          },
-          "width": 1.5
-        },
-        "source": {
-          "ref": "mount.shape"
-        },
+        "edge_order": 98,
         "source_detail": {
           "attachment": {
-            "approach": {
-              "min_straight": 0.0,
-              "mode": "normal"
-            },
-            "clearance": 0.0,
-            "fraction": 0.5,
             "kind": "side",
+            "side": "bottom",
+            "fraction": 0.5,
             "offset": 0.0,
-            "side": "bottom"
+            "clearance": 0.0,
+            "approach": {
+              "mode": "normal",
+              "min_straight": 0.0
+            }
           }
-        },
-        "target": {
-          "ref": "c2.shape"
         },
         "target_detail": {
           "attachment": {
-            "approach": {
-              "min_straight": 0.0,
-              "mode": "normal"
-            },
-            "clearance": 0.0,
-            "fraction": 0.6666826923076905,
             "kind": "side",
+            "side": "top",
+            "fraction": 0.6666666666666666,
             "offset": 0.0,
-            "side": "top"
+            "clearance": 0.0,
+            "approach": {
+              "mode": "normal",
+              "min_straight": 0.0
+            }
           }
         }
       },
@@ -7875,7 +7879,7 @@
       "schema_version": 1,
       "provider": "arris.architecture",
       "created_revision": 1,
-      "updated_revision": 1,
+      "updated_revision": 18,
       "hierarchies": {
         "group": {
           "parent": "ops.group"
@@ -7885,9 +7889,10 @@
         }
       },
       "domain_attributes": {
-        "display_name": "Kernel ops",
+        "plane_index": 0,
         "order": 66,
-        "order_authored": true,
+        "display_name": "Kernel ops",
+        "provider_version": "0.1.0",
         "placement": {
           "transform": {
             "translate": [
@@ -7896,11 +7901,10 @@
             ]
           }
         },
-        "plane_index": 0,
-        "provider_version": "0.1.0"
+        "order_authored": true
       },
       "payload": {
-        "body": "seat.summon, restart, send, document.put; in-process dispatch",
+        "body": "seat.summon, restart, send, annotation.put; in-process dispatch",
         "bullets": [],
         "emphasis": false,
         "icon": "",
@@ -7922,7 +7926,7 @@
       "schema_version": 1,
       "provider": "arris.reference-core",
       "created_revision": 1,
-      "updated_revision": 1,
+      "updated_revision": 18,
       "hierarchies": {
         "group": {
           "parent": "ops.group"
@@ -7932,16 +7936,10 @@
         }
       },
       "domain_attributes": {
-        "bindings": [
-          {
-            "input": "caption_region",
-            "output_port": "caption",
-            "producer": "ops.shape"
-          }
-        ],
-        "display_name": "ops.caption",
+        "plane_index": 0,
         "order": 64,
-        "order_authored": true,
+        "display_name": "ops.caption",
+        "provider_version": "0.6.0",
         "placement": {
           "transform": {
             "translate": [
@@ -7950,13 +7948,19 @@
             ]
           }
         },
-        "plane_index": 0,
-        "provider_version": "0.6.0",
+        "order_authored": true,
+        "bindings": [
+          {
+            "input": "caption_region",
+            "producer": "ops.shape",
+            "output_port": "caption"
+          }
+        ],
         "style_bindings": [
           {
             "property": "fill",
-            "slot": "colour",
-            "style": "lead"
+            "style": "lead",
+            "slot": "colour"
           }
         ]
       },
@@ -7970,56 +7974,56 @@
         "padding": 8.0,
         "runs": [
           {
+            "start": 0,
             "end": 1,
             "face": "mono.regular",
+            "size": 10.0,
+            "tracking": 6.0,
             "fill": {
               "token": "hue.vermilion.ink"
-            },
-            "size": 10.0,
-            "start": 0,
-            "tracking": 6.0
+            }
           },
           {
+            "start": 1,
             "end": 14,
             "face": "cond.semibold",
+            "size": 9.5,
+            "tracking": 0.9,
             "fill": {
               "token": "hue.vermilion.ink"
-            },
-            "size": 9.5,
-            "start": 1,
-            "tracking": 0.9
+            }
           },
           {
-            "end": 15,
-            "start": 14
+            "start": 14,
+            "end": 15
           },
           {
+            "start": 15,
             "end": 25,
             "face": "sans.semibold",
             "fill": {
               "token": "graphite"
             },
             "size": 14.0,
-            "start": 15,
             "tracking": 0.0
           },
           {
-            "end": 26,
-            "start": 25
+            "start": 25,
+            "end": 26
           },
           {
-            "end": 87,
+            "start": 26,
+            "end": 89,
             "face": "sans.regular",
+            "size": 11.5,
+            "tracking": 0.0,
             "fill": {
               "token": "lead"
-            },
-            "size": 11.5,
-            "start": 26,
-            "tracking": 0.0
+            }
           }
         ],
         "size": 11.5,
-        "text": " CONTROL · HRC\nKernel ops\nseat.summon, restart, send, document.put; in-process dispatch",
+        "text": " CONTROL · HRC\nKernel ops\nseat.summon, restart, send, annotation.put; in-process dispatch",
         "tracking": 0.0,
         "vertical_align": "center"
       }
@@ -8030,7 +8034,7 @@
       "schema_version": 1,
       "provider": "arris",
       "created_revision": 1,
-      "updated_revision": 1,
+      "updated_revision": 18,
       "hierarchies": {
         "group": {
           "parent": "daemon.group"
@@ -8040,9 +8044,9 @@
         }
       },
       "domain_attributes": {
-        "display_name": "Kernel ops",
+        "plane_index": 0,
         "order": 0,
-        "plane_index": 0
+        "display_name": "Kernel ops"
       },
       "payload": {}
     },
@@ -8051,8 +8055,8 @@
       "type": "arris.scenario.kicker_mark",
       "schema_version": 1,
       "provider": "arris.scenario",
-      "created_revision": 1,
-      "updated_revision": 1,
+      "created_revision": 18,
+      "updated_revision": 18,
       "hierarchies": {
         "group": {
           "parent": "ops.group"
@@ -8062,16 +8066,10 @@
         }
       },
       "domain_attributes": {
-        "bindings": [
-          {
-            "input": "layout",
-            "output_port": "text_layout_v2",
-            "producer": "ops.caption"
-          }
-        ],
+        "plane_index": 0,
+        "order": 124,
         "display_name": "ops.mark",
-        "order": 65,
-        "order_authored": true,
+        "provider_version": "0.1.0",
         "placement": {
           "transform": {
             "translate": [
@@ -8080,13 +8078,19 @@
             ]
           }
         },
-        "plane_index": 0,
-        "provider_version": "0.1.0",
+        "order_authored": true,
+        "bindings": [
+          {
+            "input": "layout",
+            "producer": "ops.caption",
+            "output_port": "text_layout_v2"
+          }
+        ],
         "style_bindings": [
           {
             "property": "fill",
-            "slot": "colour",
-            "style": "hue.vermilion.line"
+            "style": "hue.vermilion.line",
+            "slot": "colour"
           }
         ]
       },
@@ -8157,7 +8161,7 @@
       "schema_version": 1,
       "provider": "arris.reference-core",
       "created_revision": 1,
-      "updated_revision": 1,
+      "updated_revision": 18,
       "hierarchies": {
         "group": {
           "parent": "ops.group"
@@ -8167,17 +8171,10 @@
         }
       },
       "domain_attributes": {
-        "attachments": {
-          "geometry": {
-            "parameters": {},
-            "schema_version": 1,
-            "type": "arris.attachment.box"
-          },
-          "ports": []
-        },
-        "display_name": "Kernel ops",
+        "plane_index": 0,
         "order": 63,
-        "order_authored": true,
+        "display_name": "Kernel ops",
+        "provider_version": "0.6.0",
         "placement": {
           "transform": {
             "translate": [
@@ -8186,18 +8183,25 @@
             ]
           }
         },
-        "plane_index": 0,
-        "provider_version": "0.6.0",
+        "order_authored": true,
+        "attachments": {
+          "geometry": {
+            "parameters": {},
+            "schema_version": 1,
+            "type": "arris.attachment.box"
+          },
+          "ports": []
+        },
         "style_bindings": [
           {
             "property": "fill",
-            "slot": "colour",
-            "style": "paper"
+            "style": "paper",
+            "slot": "colour"
           },
           {
             "property": "stroke",
-            "slot": "colour",
-            "style": "hue.vermilion.line"
+            "style": "hue.vermilion.line",
+            "slot": "colour"
           }
         ]
       },
@@ -8257,7 +8261,7 @@
       "schema_version": 1,
       "provider": "arris",
       "created_revision": 1,
-      "updated_revision": 7,
+      "updated_revision": 18,
       "hierarchies": {
         "group": {
           "parent": null
@@ -8267,8 +8271,6 @@
         }
       },
       "domain_attributes": {
-        "display_name": "write",
-        "edge_order": 104,
         "end": {
           "parameters": {
             "length": 8.4,
@@ -8277,46 +8279,14 @@
           "schema_version": 1,
           "type": "arris.filled"
         },
-        "labels": [
-          {
-            "clearance": 0.0,
-            "label_id": "label",
-            "parameters": {
-              "face": "sans.medium",
-              "fill": {
-                "token": "hue.cobalt.ink"
-              },
-              "height": 18.0,
-              "padding": 8.0,
-              "paint": true,
-              "radius": 9.0,
-              "size": 10.5,
-              "tag_fill": {
-                "token": "paper"
-              },
-              "tag_stroke": {
-                "token": "hue.cobalt.line"
-              },
-              "tag_stroke_width": 1.0,
-              "text": "write"
-            },
-            "placement": {
-              "anchor": "center",
-              "distance": 28.41,
-              "kind": "route-distance",
-              "offset": [
-                0.0,
-                0.0
-              ],
-              "orientation": "route",
-              "rotation": 0.0
-            },
-            "schema_version": 1,
-            "type": "arris.tag"
-          }
-        ],
+        "display_name": "write",
         "order": 104,
-        "plane_index": 0,
+        "source": {
+          "ref": "ops.shape"
+        },
+        "target": {
+          "ref": "docs.shape"
+        },
         "route": {
           "corner_radius": 8.0,
           "obstacles": {
@@ -8344,9 +8314,46 @@
           },
           "width": 1.5
         },
-        "source": {
-          "ref": "ops.shape"
-        },
+        "labels": [
+          {
+            "clearance": 0.0,
+            "label_id": "label",
+            "parameters": {
+              "face": "sans.medium",
+              "fill": {
+                "token": "hue.cobalt.ink"
+              },
+              "height": 18.0,
+              "padding": 8.0,
+              "paint": true,
+              "radius": 9.0,
+              "size": 10.5,
+              "tag_fill": {
+                "token": "paper"
+              },
+              "tag_stroke": {
+                "token": "hue.cobalt.line"
+              },
+              "tag_stroke_width": 1.0,
+              "text": "write"
+            },
+            "placement": {
+              "kind": "route-distance",
+              "distance": 28.41,
+              "offset": [
+                0.0,
+                0.0
+              ],
+              "orientation": "route",
+              "rotation": 0.0,
+              "anchor": "center"
+            },
+            "schema_version": 1,
+            "type": "arris.tag"
+          }
+        ],
+        "plane_index": 0,
+        "edge_order": 104,
         "source_detail": {
           "attachment": {
             "approach": {
@@ -8359,9 +8366,6 @@
             "offset": 0.0,
             "side": "left"
           }
-        },
-        "target": {
-          "ref": "docs.shape"
         },
         "target_detail": {
           "attachment": {
@@ -8425,7 +8429,7 @@
       "schema_version": 1,
       "provider": "arris",
       "created_revision": 1,
-      "updated_revision": 7,
+      "updated_revision": 18,
       "hierarchies": {
         "group": {
           "parent": null
@@ -8435,8 +8439,6 @@
         }
       },
       "domain_attributes": {
-        "display_name": "action event",
-        "edge_order": 106,
         "end": {
           "parameters": {
             "length": 8.4,
@@ -8444,6 +8446,55 @@
           },
           "schema_version": 1,
           "type": "arris.filled"
+        },
+        "display_name": "action event",
+        "order": 106,
+        "source": {
+          "ref": "ops.shape"
+        },
+        "target": {
+          "ref": "ledger.shape"
+        },
+        "route": {
+          "corner_radius": 8.0,
+          "obstacles": {
+            "mode": "none"
+          },
+          "strategy": {
+            "parameters": {},
+            "schema_version": 1,
+            "type": "arris.polyline"
+          },
+          "waypoints": [
+            {
+              "space": "page",
+              "point": [
+                1934.49,
+                1140.0
+              ]
+            },
+            {
+              "space": "page",
+              "point": [
+                1210.49,
+                1140.0
+              ]
+            },
+            {
+              "space": "page",
+              "point": [
+                1210.49,
+                614.0
+              ]
+            }
+          ]
+        },
+        "shaft": {
+          "dash_offset": 0.0,
+          "stroke": {
+            "token": "hue.cobalt.line"
+          },
+          "width": 1.5
         },
         "labels": [
           {
@@ -8469,81 +8520,34 @@
               "text": "action event"
             },
             "placement": {
-              "anchor": "center",
-              "distance": 998.23,
               "kind": "route-distance",
+              "distance": 998.23,
               "offset": [
                 0.0,
                 0.0
               ],
               "orientation": "route",
-              "rotation": 0.0
+              "rotation": 0.0,
+              "anchor": "center"
             },
             "schema_version": 1,
             "type": "arris.tag"
           }
         ],
-        "order": 106,
         "plane_index": 0,
-        "route": {
-          "corner_radius": 8.0,
-          "obstacles": {
-            "mode": "none"
-          },
-          "strategy": {
-            "parameters": {},
-            "schema_version": 1,
-            "type": "arris.polyline"
-          },
-          "waypoints": [
-            {
-              "point": [
-                1934.49,
-                1140.0
-              ],
-              "space": "page"
-            },
-            {
-              "point": [
-                1210.49,
-                1140.0
-              ],
-              "space": "page"
-            },
-            {
-              "point": [
-                1210.49,
-                614.0
-              ],
-              "space": "page"
-            }
-          ]
-        },
-        "shaft": {
-          "dash_offset": 0.0,
-          "stroke": {
-            "token": "hue.cobalt.line"
-          },
-          "width": 1.5
-        },
-        "source": {
-          "ref": "ops.shape"
-        },
+        "edge_order": 106,
         "source_detail": {
           "attachment": {
-            "approach": {
-              "min_straight": 0.0,
-              "mode": "normal"
-            },
-            "clearance": 0.0,
-            "fraction": 0.5,
             "kind": "side",
+            "side": "bottom",
+            "fraction": 0.5,
             "offset": 0.0,
-            "side": "bottom"
+            "clearance": 0.0,
+            "approach": {
+              "mode": "normal",
+              "min_straight": 0.0
+            }
           }
-        },
-        "target": {
-          "ref": "ledger.shape"
         },
         "target_detail": {
           "attachment": {
@@ -9224,7 +9228,7 @@
       "schema_version": 1,
       "provider": "arris.architecture",
       "created_revision": 1,
-      "updated_revision": 1,
+      "updated_revision": 18,
       "hierarchies": {
         "group": {
           "parent": "vesta.group"
@@ -9234,9 +9238,10 @@
         }
       },
       "domain_attributes": {
-        "display_name": "Vesta",
+        "plane_index": 0,
         "order": 26,
-        "order_authored": true,
+        "display_name": "Vesta",
+        "provider_version": "0.1.0",
         "placement": {
           "transform": {
             "translate": [
@@ -9245,11 +9250,10 @@
             ]
           }
         },
-        "plane_index": 0,
-        "provider_version": "0.1.0"
+        "order_authored": true
       },
       "payload": {
-        "body": "Writes cards and asks from any node through hrc",
+        "body": "Writes c2.card and c2.ask annotations from any node",
         "bullets": [],
         "emphasis": false,
         "icon": "bot",
@@ -9272,7 +9276,7 @@
       "schema_version": 1,
       "provider": "arris.reference-core",
       "created_revision": 1,
-      "updated_revision": 1,
+      "updated_revision": 18,
       "hierarchies": {
         "group": {
           "parent": "vesta.group"
@@ -9282,16 +9286,10 @@
         }
       },
       "domain_attributes": {
-        "bindings": [
-          {
-            "input": "caption_region",
-            "output_port": "caption",
-            "producer": "vesta.shape"
-          }
-        ],
-        "display_name": "vesta.caption",
+        "plane_index": 0,
         "order": 24,
-        "order_authored": true,
+        "display_name": "vesta.caption",
+        "provider_version": "0.6.0",
         "placement": {
           "transform": {
             "translate": [
@@ -9300,13 +9298,19 @@
             ]
           }
         },
-        "plane_index": 0,
-        "provider_version": "0.6.0",
+        "order_authored": true,
+        "bindings": [
+          {
+            "input": "caption_region",
+            "producer": "vesta.shape",
+            "output_port": "caption"
+          }
+        ],
         "style_bindings": [
           {
             "property": "fill",
-            "slot": "colour",
-            "style": "lead"
+            "style": "lead",
+            "slot": "colour"
           }
         ]
       },
@@ -9320,56 +9324,56 @@
         "padding": 14.0,
         "runs": [
           {
+            "start": 0,
             "end": 1,
             "face": "mono.regular",
+            "size": 10.0,
+            "tracking": 11.0,
             "fill": {
               "token": "hue.cobalt.ink"
-            },
-            "size": 10.0,
-            "start": 0,
-            "tracking": 11.0
+            }
           },
           {
+            "start": 1,
             "end": 11,
             "face": "cond.semibold",
+            "size": 9.5,
+            "tracking": 0.9,
             "fill": {
               "token": "hue.cobalt.ink"
-            },
-            "size": 9.5,
-            "start": 1,
-            "tracking": 0.9
+            }
           },
           {
-            "end": 12,
-            "start": 11
+            "start": 11,
+            "end": 12
           },
           {
+            "start": 12,
             "end": 17,
             "face": "sans.semibold",
             "fill": {
               "token": "graphite"
             },
             "size": 14.0,
-            "start": 12,
             "tracking": 0.0
           },
           {
-            "end": 18,
-            "start": 17
+            "start": 17,
+            "end": 18
           },
           {
-            "end": 65,
+            "start": 18,
+            "end": 69,
             "face": "sans.regular",
+            "size": 11.5,
+            "tracking": 0.0,
             "fill": {
               "token": "lead"
-            },
-            "size": 11.5,
-            "start": 18,
-            "tracking": 0.0
+            }
           }
         ],
         "size": 11.5,
-        "text": " AGENT · C2\nVesta\nWrites cards and asks from any node through hrc",
+        "text": " AGENT · C2\nVesta\nWrites c2.card and c2.ask annotations from any node",
         "tracking": 0.0,
         "vertical_align": "center"
       }
@@ -9380,7 +9384,7 @@
       "schema_version": 1,
       "provider": "arris",
       "created_revision": 1,
-      "updated_revision": 1,
+      "updated_revision": 18,
       "hierarchies": {
         "group": {
           "parent": "clients.group"
@@ -9390,9 +9394,9 @@
         }
       },
       "domain_attributes": {
-        "display_name": "Vesta",
+        "plane_index": 0,
         "order": 0,
-        "plane_index": 0
+        "display_name": "Vesta"
       },
       "payload": {}
     },
@@ -9401,8 +9405,8 @@
       "type": "arris.scenario.kicker_mark",
       "schema_version": 1,
       "provider": "arris.scenario",
-      "created_revision": 1,
-      "updated_revision": 1,
+      "created_revision": 18,
+      "updated_revision": 18,
       "hierarchies": {
         "group": {
           "parent": "vesta.group"
@@ -9412,16 +9416,10 @@
         }
       },
       "domain_attributes": {
-        "bindings": [
-          {
-            "input": "layout",
-            "output_port": "text_layout_v2",
-            "producer": "vesta.caption"
-          }
-        ],
+        "plane_index": 0,
+        "order": 127,
         "display_name": "vesta.mark",
-        "order": 25,
-        "order_authored": true,
+        "provider_version": "0.1.0",
         "placement": {
           "transform": {
             "translate": [
@@ -9430,13 +9428,19 @@
             ]
           }
         },
-        "plane_index": 0,
-        "provider_version": "0.1.0",
+        "order_authored": true,
+        "bindings": [
+          {
+            "input": "layout",
+            "producer": "vesta.caption",
+            "output_port": "text_layout_v2"
+          }
+        ],
         "style_bindings": [
           {
             "property": "fill",
-            "slot": "colour",
-            "style": "hue.cobalt.ink"
+            "style": "hue.cobalt.ink",
+            "slot": "colour"
           }
         ]
       },
@@ -9700,7 +9704,7 @@
       "schema_version": 1,
       "provider": "arris.reference-core",
       "created_revision": 1,
-      "updated_revision": 1,
+      "updated_revision": 18,
       "hierarchies": {
         "group": {
           "parent": "vesta.group"
@@ -9710,17 +9714,10 @@
         }
       },
       "domain_attributes": {
-        "attachments": {
-          "geometry": {
-            "parameters": {},
-            "schema_version": 1,
-            "type": "arris.attachment.box"
-          },
-          "ports": []
-        },
-        "display_name": "Vesta",
+        "plane_index": 0,
         "order": 23,
-        "order_authored": true,
+        "display_name": "Vesta",
+        "provider_version": "0.6.0",
         "placement": {
           "transform": {
             "translate": [
@@ -9729,18 +9726,25 @@
             ]
           }
         },
-        "plane_index": 0,
-        "provider_version": "0.6.0",
+        "order_authored": true,
+        "attachments": {
+          "geometry": {
+            "parameters": {},
+            "schema_version": 1,
+            "type": "arris.attachment.box"
+          },
+          "ports": []
+        },
         "style_bindings": [
           {
             "property": "fill",
-            "slot": "colour",
-            "style": "paper"
+            "style": "paper",
+            "slot": "colour"
           },
           {
             "property": "stroke",
-            "slot": "colour",
-            "style": "hue.cobalt.line"
+            "style": "hue.cobalt.line",
+            "slot": "colour"
           }
         ]
       },
@@ -9760,7 +9764,7 @@
       "schema_version": 1,
       "provider": "arris.architecture",
       "created_revision": 1,
-      "updated_revision": 1,
+      "updated_revision": 18,
       "hierarchies": {
         "group": {
           "parent": null
@@ -9770,9 +9774,10 @@
         }
       },
       "domain_attributes": {
-        "display_name": "vesta__cli",
+        "plane_index": 0,
         "order": 85,
-        "order_authored": true,
+        "display_name": "vesta__cli",
+        "provider_version": "0.1.0",
         "placement": {
           "transform": {
             "translate": [
@@ -9781,8 +9786,7 @@
             ]
           }
         },
-        "plane_index": 0,
-        "provider_version": "0.1.0"
+        "order_authored": true
       },
       "payload": {
         "from": "vesta",
@@ -9800,7 +9804,7 @@
       "schema_version": 1,
       "provider": "arris",
       "created_revision": 1,
-      "updated_revision": 1,
+      "updated_revision": 18,
       "hierarchies": {
         "group": {
           "parent": null
@@ -9810,8 +9814,6 @@
         }
       },
       "domain_attributes": {
-        "display_name": "card, ask",
-        "edge_order": 84,
         "end": {
           "parameters": {
             "length": 8.4,
@@ -9819,6 +9821,33 @@
           },
           "schema_version": 1,
           "type": "arris.filled"
+        },
+        "display_name": "card, ask",
+        "order": 84,
+        "source": {
+          "ref": "vesta.shape"
+        },
+        "target": {
+          "ref": "cli.shape"
+        },
+        "route": {
+          "corner_radius": 8.0,
+          "obstacles": {
+            "mode": "none"
+          },
+          "strategy": {
+            "parameters": {},
+            "schema_version": 1,
+            "type": "arris.polyline"
+          },
+          "waypoints": []
+        },
+        "shaft": {
+          "dash_offset": 0.0,
+          "stroke": {
+            "token": "hue.cobalt.line"
+          },
+          "width": 1.5
         },
         "labels": [
           {
@@ -9858,30 +9887,8 @@
             "type": "arris.tag"
           }
         ],
-        "order": 84,
         "plane_index": 0,
-        "route": {
-          "corner_radius": 8.0,
-          "obstacles": {
-            "mode": "none"
-          },
-          "strategy": {
-            "parameters": {},
-            "schema_version": 1,
-            "type": "arris.polyline"
-          },
-          "waypoints": []
-        },
-        "shaft": {
-          "dash_offset": 0.0,
-          "stroke": {
-            "token": "hue.cobalt.line"
-          },
-          "width": 1.5
-        },
-        "source": {
-          "ref": "vesta.shape"
-        },
+        "edge_order": 84,
         "source_detail": {
           "attachment": {
             "approach": {
@@ -9894,9 +9901,6 @@
             "offset": 0.0,
             "side": "bottom"
           }
-        },
-        "target": {
-          "ref": "cli.shape"
         },
         "target_detail": {
           "attachment": {
@@ -10322,7 +10326,7 @@
       "schema_version": 1,
       "provider": "arris",
       "created_revision": 1,
-      "updated_revision": 7,
+      "updated_revision": 18,
       "hierarchies": {
         "group": {
           "parent": null
@@ -10332,11 +10336,15 @@
         }
       },
       "domain_attributes": {
-        "display_name": "wrkq__lineage",
-        "edge_order": 110,
         "labels": [],
+        "display_name": "wrkq__lineage",
         "order": 110,
-        "plane_index": 0,
+        "source": {
+          "ref": "wrkq.shape"
+        },
+        "target": {
+          "ref": "lineage.shape"
+        },
         "route": {
           "corner_radius": 8.0,
           "obstacles": {
@@ -10349,18 +10357,18 @@
           },
           "waypoints": [
             {
+              "space": "page",
               "point": [
                 184.0,
                 482.0
-              ],
-              "space": "page"
+              ]
             },
             {
+              "space": "page",
               "point": [
                 1334.49,
                 482.0
-              ],
-              "space": "page"
+              ]
             }
           ]
         },
@@ -10375,36 +10383,32 @@
           },
           "width": 1.25
         },
-        "source": {
-          "ref": "wrkq.shape"
-        },
+        "plane_index": 0,
+        "edge_order": 110,
         "source_detail": {
           "attachment": {
-            "approach": {
-              "min_straight": 0.0,
-              "mode": "normal"
-            },
-            "clearance": 0.0,
-            "fraction": 0.5,
             "kind": "side",
+            "side": "top",
+            "fraction": 0.5,
             "offset": 0.0,
-            "side": "top"
+            "clearance": 0.0,
+            "approach": {
+              "mode": "normal",
+              "min_straight": 0.0
+            }
           }
-        },
-        "target": {
-          "ref": "lineage.shape"
         },
         "target_detail": {
           "attachment": {
-            "approach": {
-              "min_straight": 0.0,
-              "mode": "normal"
-            },
-            "clearance": 0.0,
-            "fraction": 0.5,
             "kind": "side",
+            "side": "top",
+            "fraction": 0.5,
             "offset": 0.0,
-            "side": "top"
+            "clearance": 0.0,
+            "approach": {
+              "mode": "normal",
+              "min_straight": 0.0
+            }
           }
         }
       },
