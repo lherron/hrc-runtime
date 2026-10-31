@@ -21,6 +21,11 @@
 docs/
 architecture/
 
+# Arris documents (native .arris.json, declarations, boards) and their rendered
+# preview PNGs. Nothing builds, packs or loads them, and Biome ignores *.json,
+# so no suite has anything to grade (Lance, 2026-10-31).
+/diagrams/
+
 # Prose wherever it sits, including beside the code it describes. No tracked
 # file with one of these extensions is loaded at runtime or packed into a
 # published package; if that ever changes, the file stops being documentation

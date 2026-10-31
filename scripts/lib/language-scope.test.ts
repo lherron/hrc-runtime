@@ -16,5 +16,15 @@ test('Rust, TS and shared paths select the required validation legs', () => {
     expect(languageScope([path])).toEqual({ ts: true, cargo: true })
   }
   expect(languageScope(['docs/guide.md'])).toEqual({ ts: false, cargo: false })
+  // Arris diagram sources and their rendered previews run no suite (Lance, 2026-10-31).
+  expect(
+    languageScope([
+      'diagrams/README.md',
+      'diagrams/seat-data-to-be.arris.json',
+      'diagrams/seat-data-to-be.declaration.json',
+      'diagrams/seat-data.arris-board.json',
+      'diagrams/seat-data.board-preview/overview.png',
+    ])
+  ).toEqual({ ts: false, cargo: false })
   expect(languageScope(['new-unknown-input'])).toEqual({ ts: true, cargo: false })
 })
