@@ -99,6 +99,8 @@ Ingest: the projector reads `seat_annotations` on its own read-only connection i
 
 Ops (bindings over in-process dispatch, as `seat.send`): `seat.annotation.put {session_ref, subject, generation?, ns, kind, id, body, expect?}` → `{updated_at, created}` and `seat.annotation.act {session_ref, subject, generation?, ns, kind, id, action, attributes?}` → `{hrc_seq}`. Fences are HRC's (`expect`), not cardo's: the generation node's revision changes on every activity, so a cardo node fence would be stale constantly and says nothing about attention. Declared `fences: "none", effect: "write"`, no cardo idempotency (put is idempotent by key).
 
+`seat.annotation.delete {session_ref, subject, generation?, ns, kind, id, expect?: {updatedAt}}` → `{deleted}` (T-12194) binds `POST /v1/sessions/annotations/delete` the same way, so c2 can prune ended cards; the route's `stale_annotation` fence and `session.annotation.changed {op: delete}` row are unchanged.
+
 ## 6. Consumers
 
 **c2** (its own c2 task, graded there, after this lands): `plugin.js` drops `cards`, `actions`, `inflight`; classifier cards become `seat.annotation.put` with `ns: c2, kind: card, subject: generation, expect: {attentionAt}`; Vesta's `card.put` becomes `hrc session annotation put --ns c2 --kind card` from any node, `card.retire` a put with `state: retired`; Vesta asks are `kind: ask` on her own generation; supersede/resolve on attention move stay plugin logic and write back with `expect.updatedAt`; clicks call `seat.annotation.act`; the pane queries `hrc.annotation where {ns: "c2"}`. `scope.allow` and `wake.*` stay in plugin storage; they are the host's.

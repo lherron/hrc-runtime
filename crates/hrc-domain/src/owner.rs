@@ -24,6 +24,7 @@ const OWNER_ROUTES: &[(&str, &str)] = &[
     ("POST", "/v1/sessions/restart"),
     ("PUT", "/v1/sessions/annotations"),
     ("POST", "/v1/sessions/annotations/act"),
+    ("POST", "/v1/sessions/annotations/delete"),
 ];
 
 fn reply(reply: OwnerReply, fallback: &str) -> Result<Value, HrcError> {

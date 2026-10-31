@@ -1,7 +1,7 @@
 use cardo_core::doms::Node;
 use hrc_domain::{
     HrcError,
-    annotation::{self, AnnotationAct, AnnotationPut},
+    annotation::{self, AnnotationAct, AnnotationDelete, AnnotationPut},
     attach::attach,
     owner::{OwnerCall, OwnerReply},
     restart::Restart,
@@ -271,6 +271,66 @@ fn annotation_ops_refuse_before_hrc_and_never_fabricate_a_receipt() {
     assert_eq!(act.run(&owner).unwrap_err().code, "hrc_response_invalid");
 }
 
+// Failure cases (T-12194 F3-F7): delete sent as another method or to a
+// forbidden route; the key not split or generation/expect.updatedAt lost; a
+// typo'd fence dropped silently; stale_annotation read as hrc_refused; a 2xx
+// without a boolean `deleted` fabricating a receipt.
+#[test]
+fn annotation_delete_posts_the_key_and_expect_and_reads_back_deleted() {
+    let owner = Scripted::new(vec![ok(json!({"deleted":true}))]);
+    let delete = AnnotationDelete::parse(
+        json!({"session_ref":SEAT,"subject":"generation","generation":2,
+        "ns":"c2","kind":"card","id":"k1","expect":{"updatedAt":"2026-10-31T00:00:00.000Z"}}),
+    )
+    .unwrap();
+    assert_eq!(delete.run(&owner).unwrap(), json!({"deleted":true}));
+    let calls = owner.calls();
+    assert_eq!(
+        (calls[0].0.as_str(), calls[0].1.as_str()),
+        ("POST", "/v1/sessions/annotations/delete")
+    );
+    assert_eq!(
+        calls[0].2,
+        Some(
+            json!({"scopeRef":"agent:a:project:p:task:t","laneRef":"main","subject":"generation",
+            "generation":2,"ns":"c2","kind":"card","id":"k1",
+            "expect":{"updatedAt":"2026-10-31T00:00:00.000Z"}})
+        )
+    );
+
+    let owner = Scripted::new(vec![refused(409, "stale_annotation"), ok(json!({}))]);
+    let key = json!({"session_ref":SEAT,"subject":"seat","ns":"c2","kind":"card","id":"k"});
+    let failure = AnnotationDelete::parse(key.clone())
+        .unwrap()
+        .run(&owner)
+        .unwrap_err();
+    assert_eq!(
+        (failure.code.as_str(), &failure.details["hrc_code"]),
+        ("stale_annotation", &json!("stale_annotation"))
+    );
+    assert_eq!(
+        AnnotationDelete::parse(key)
+            .unwrap()
+            .run(&owner)
+            .unwrap_err()
+            .code,
+        "hrc_response_invalid"
+    );
+
+    for args in [
+        json!({"session_ref":"agent:a:project:p","subject":"seat","ns":"n","kind":"k","id":"i"}),
+        json!({"session_ref":SEAT,"subject":"seat","ns":"n","kind":"k","id":"i","expect_updated_at":"x"}),
+        json!({"session_ref":SEAT,"subject":"seat","ns":"n","kind":"k"}),
+        json!({"session_ref":SEAT,"subject":"generation","generation":"1","ns":"n","kind":"k","id":"i"}),
+    ] {
+        assert_eq!(
+            AnnotationDelete::parse(args.clone()).err().map(|e| e.code),
+            Some("invalid_input".into()),
+            "{args}"
+        );
+    }
+}
+
 // Failure cases (F1-F3): the ops undeclared, declared with a cardo fence, or
 // read-effect; the declared input not naming the fields the binding accepts.
 #[test]
@@ -280,6 +340,7 @@ fn annotation_ops_are_declared_unfenced_writes() {
     for (name, input, output) in [
         (annotation::PUT, "body", "updated_at"),
         (annotation::ACT, "action", "hrc_seq"),
+        (annotation::DELETE, "expect", "deleted"),
     ] {
         let op = ops
             .iter()

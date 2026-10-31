@@ -80,8 +80,8 @@ under the single store mutex and delay mail and turns for everyone.
 - The projection trails the ledger by the kernel's ingest lag (seconds; check
   `kq.py status`).
 - Seat rows report `active`/`inactive`; busy/ready lives on `hrc.runtime` rows.
-- `seat.summon`, `seat.restart`, `seat.send`, `seat.annotation.put` and
-  `seat.annotation.act` are write ops on the same wire; `kq.py raw` reaches
+- `seat.summon`, `seat.restart`, `seat.send`, `seat.annotation.put`,
+  `seat.annotation.act` and `seat.annotation.delete` are write ops on the same wire; `kq.py raw` reaches
   them. Use them only when you mean to act. Annotation writes through the
   kernel record `updatedBy: system:hrc-kernel` (the wire names no caller).
 - Restarting rusthrc also rebuilds the embedded projection and blanks Loggia

@@ -442,7 +442,9 @@ mod tests {
     // operation) or rejected by registry.enable; a store refusal answered as
     // hrc_refused or a success; a write attributed `unknown`; a put that
     // appends no session.annotation.changed or an act no
-    // session.annotation.action; the put not reaching the hrc.annotation node.
+    // session.annotation.action; the put not reaching the hrc.annotation node;
+    // (T-12194) a delete not reaching the route, attributed unknown, or
+    // leaving the node behind.
     #[tokio::test(flavor = "multi_thread")]
     async fn annotation_ops_dispatch_in_process_to_the_store() -> anyhow::Result<()> {
         let (_scratch, mut server) = server("off", false)?;
@@ -562,6 +564,64 @@ mod tests {
             tokio::time::sleep(Duration::from_millis(25)).await;
         };
         assert_eq!(node["payload"]["updatedBy"], PRINCIPAL, "{node}");
+
+        // T-12194: seat.annotation.delete. A superseded updatedAt keeps the
+        // store's stale_annotation and appends nothing; the current one
+        // deletes, appends the op=delete row and removes the node.
+        let stale = op(
+            &socket,
+            annotation::DELETE,
+            with(json!({"expect":{"updatedAt":u1}})),
+        )
+        .await;
+        assert_eq!(
+            (&stale["ok"], &stale["error"]["code"]),
+            (&json!(false), &json!("stale_annotation")),
+            "{stale}"
+        );
+        let u2 = again["result"]["updated_at"].as_str().unwrap();
+        let deleted = op(
+            &socket,
+            annotation::DELETE,
+            with(json!({"expect":{"updatedAt":u2}})),
+        )
+        .await;
+        assert_eq!(deleted["result"], json!({"deleted":true}), "{deleted}");
+        let changed = ledger(&server, scope, "session.annotation.changed");
+        assert_eq!(
+            changed.len(),
+            3,
+            "the refused delete appends nothing: {changed:?}"
+        );
+        assert!(changed[2].0 > actions[0].0, "{changed:?}");
+        assert_eq!(
+            (
+                &changed[2].1["op"],
+                &changed[2].1["id"],
+                &changed[2].1["updatedBy"]
+            ),
+            (&json!("delete"), &json!("k1"), &json!(PRINCIPAL))
+        );
+        let deadline = Instant::now() + Duration::from_secs(5);
+        loop {
+            let reply = wire(
+                &socket,
+                "document.query",
+                json!({"document_id":"hrc","type":"hrc.annotation","limit":100}),
+            );
+            let rows = reply["result"]["rows"]
+                .as_array()
+                .cloned()
+                .unwrap_or_default();
+            if reply["ok"] == true && !rows.iter().any(|r| r["payload"]["id"] == "k1") {
+                break;
+            }
+            assert!(
+                Instant::now() < deadline,
+                "the delete removes the hrc.annotation node: {reply}"
+            );
+            tokio::time::sleep(Duration::from_millis(25)).await;
+        }
         kernel.stop().await?;
         Ok(())
     }

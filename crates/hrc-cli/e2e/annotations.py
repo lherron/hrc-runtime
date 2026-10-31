@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Seat annotations Gates 1, 2 and 3 (T-12186, T-12187, T-12188;
+"""Seat annotations Gates 1, 2 and 3 (T-12186, T-12187, T-12188, T-12194;
 seat-annotations r1.1 §4, §5, §7 claims 1 and 2).
 
 `rusthrc session annotation list|put|delete|act` against ONE isolated scratch
@@ -50,6 +50,12 @@ Gate 3, the kernel ops and CLI attribution (T-12188), after Gate 2:
   op-act         seat.annotation.act returns hrc_seq, which is the
                  session.annotation.action row in hrc_events with the op's
                  action and attributes; an absent id refuses unknown_annotation
+  op-delete      (T-12194) seat.annotation.put via op, its node seen in the
+                 kernel (control); seat.annotation.delete with a superseded
+                 updatedAt refuses stale_annotation and leaves the node; with
+                 the current updatedAt returns {deleted: true}, the node is
+                 gone, and session.annotation.changed gains exactly put then
+                 delete for it, the delete by system:hrc-kernel
   cli-as         `put --as agent:e2e-cli` reads back updatedBy agent:e2e-cli and
                  its session.annotation.changed row names it; `delete --as`
                  names it on the delete row; a blank --as records unknown
@@ -422,6 +428,25 @@ console.log(JSON.stringify({ put, listed, refusal, acted }))
                 and absent_op.get('ok') is False and absent_op['error']['code'] == 'unknown_annotation',
                 acted=acted_op, actionRows=op_actions, unknown=absent_op)
 
+        dkey = dict(okey, kind='opdel', id='od')
+        od1 = op('seat.annotation.put', **dkey, body={'n': 1}, expect={'updatedAt': None})
+        od2 = op('seat.annotation.put', **dkey, body={'n': 2}, expect={'updatedAt': od1['result']['updated_at']})
+        od_node = r.wait(lambda: node('hrc.annotation', sessionRef=ref, id='od', updatedAt=od2['result']['updated_at']),
+                         10, 'od in the kernel')
+        od_stale = op('seat.annotation.delete', **dkey, expect={'updatedAt': od1['result']['updated_at']})
+        od_kept = node('hrc.annotation', sessionRef=ref, id='od') is not None
+        od_deleted = op('seat.annotation.delete', **dkey, expect={'updatedAt': od2['result']['updated_at']})
+        od_gone = r.wait(lambda: node('hrc.annotation', sessionRef=ref, id='o1') is not None
+                         and node('hrc.annotation', sessionRef=ref, id='od') is None, 10, 'od removed from the kernel')
+        od_rows = [(e['payload']['op'], e['payload']['updatedBy'], e['hrc_seq'])
+                   for e in ledger(scope, ['session.annotation.changed']) if e['payload']['kind'] == 'opdel']
+        r.check('op-delete', od1.get('ok') is True and od2.get('ok') is True and od_node is not None
+                and od_stale.get('ok') is False and od_stale['error']['code'] == 'stale_annotation' and od_kept
+                and od_deleted.get('ok') is True and od_deleted['result'] == {'deleted': True} and od_gone
+                and [(o, by) for o, by, _ in od_rows] == [('put', 'system:hrc-kernel'), ('put', 'system:hrc-kernel'),
+                                                          ('delete', 'system:hrc-kernel')],
+                stale=od_stale, deleted=od_deleted, node=od_node, ledger=od_rows)
+
         as_put = cli('put', ref, '--ns', 'e2e', '--kind', 'as', '--id', 'a1', '--as', 'agent:e2e-cli', '--body-file', '-', stdin='{"by":"cli"}')
         blank_put = cli('put', ref, '--ns', 'e2e', '--kind', 'as', '--id', 'a2', '--as', ' ', '--body-file', '-', stdin='{}')
         as_delete = cli('delete', ref, '--ns', 'e2e', '--kind', 'as', '--id', 'a2', '--as', 'agent:e2e-cli')
@@ -433,6 +458,7 @@ console.log(JSON.stringify({ put, listed, refusal, acted }))
         (a.artifacts / 'kernel-ops.json').write_text(json.dumps({
             'opPut': o1, 'opNode': o1_node, 'opReplay': o1_replay, 'opGenerationNode': og_node,
             'opAct': acted_op, 'opActionRows': op_actions, 'opUnknown': absent_op,
+            'opDelete': od_deleted, 'opDeleteStale': od_stale, 'opDeleteLedger': od_rows,
             'cliAsPut': as_put[1], 'cliAsLedger': as_rows, 'opLedger': op_rows}, indent=1) + '\n')
         r.check('cli-as', as_put[0] == 0 and as_put[1]['annotation']['updatedBy'] == 'agent:e2e-cli'
                 and [x['updatedBy'] for x in as_listed[1]['annotations']] == ['agent:e2e-cli']

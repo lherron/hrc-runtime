@@ -1,4 +1,4 @@
-//! seat.annotation.put and seat.annotation.act (seat-annotations r1.1 §5):
+//! seat.annotation.put, .act and .delete (seat-annotations r1.1 §5):
 //! bindings over in-process owner dispatch, as seat.send. They call the same
 //! annotation routes the CLI does, so admission, the `expect` fences, the
 //! ledger rows and the refusal codes are hrc-store's. Cardo declares no fence:
@@ -14,6 +14,7 @@ use serde_json::{Map, Value, json};
 
 pub const PUT: &str = "seat.annotation.put";
 pub const ACT: &str = "seat.annotation.act";
+pub const DELETE: &str = "seat.annotation.delete";
 const ROUTE: &str = "/v1/sessions/annotations";
 
 fn key_fields() -> Map<String, Value> {
@@ -52,6 +53,15 @@ pub fn act_declaration() -> Value {
         "description":"Record an action on one existing annotation (session.annotation.action in the ledger) without changing it, as `hrc session annotation act`; an absent annotation refuses unknown_annotation.",
         "input":{"kind":"object","fields":fields,"required":required,"nullable":["attributes"]},
         "output":{"kind":"object","fields":{"hrc_seq":{"kind":"integer"}},"required":["hrc_seq"]}})
+}
+
+pub fn delete_declaration() -> Value {
+    let mut fields = key_fields();
+    fields.insert("expect".into(), json!({"kind":"json"}));
+    json!({"name":DELETE,"fences":"none","effect":"write",
+        "description":"Delete one seat or generation annotation, as `hrc session annotation delete`. HRC's expect {updatedAt} is the only fence (stale_annotation keeps the store's code); deleted false when it was already absent.",
+        "input":{"kind":"object","fields":fields,"required":KEY_REQUIRED.to_vec(),"nullable":["expect"]},
+        "output":{"kind":"object","fields":{"deleted":{"kind":"boolean"}},"required":["deleted"]}})
 }
 
 /// The annotation key every op names, as the route's scopeRef, laneRef,
@@ -173,5 +183,45 @@ impl AnnotationAct {
             .as_i64()
             .ok_or_else(|| response_invalid("hrcSeq"))?;
         Ok(json!({"hrc_seq":seq}))
+    }
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct AnnotationDelete {
+    session_ref: String,
+    subject: String,
+    #[serde(default)]
+    generation: Option<u64>,
+    ns: String,
+    kind: String,
+    id: String,
+    #[serde(default)]
+    expect: Option<Value>,
+}
+impl AnnotationDelete {
+    pub fn parse(args: Value) -> Result<Self, DispatchFailure> {
+        let delete: Self = parse(args)?;
+        delete.request()?;
+        Ok(delete)
+    }
+    pub fn request(&self) -> Result<Value, DispatchFailure> {
+        let mut body = key_body(
+            &self.session_ref,
+            &self.subject,
+            self.generation,
+            [&self.ns, &self.kind, &self.id],
+        )?;
+        if let Some(expect) = self.expect.as_ref().filter(|e| !e.is_null()) {
+            body["expect"] = expect.clone();
+        }
+        Ok(body)
+    }
+    pub fn run(self, owner: &dyn OwnerCall) -> Result<Value, DispatchFailure> {
+        let response = owner::call(owner, "POST", &format!("{ROUTE}/delete"), &self.request()?)?;
+        let deleted = response["deleted"]
+            .as_bool()
+            .ok_or_else(|| response_invalid("deleted"))?;
+        Ok(json!({"deleted":deleted}))
     }
 }
