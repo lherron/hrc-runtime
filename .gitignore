@@ -57,3 +57,6 @@ crates/target/
 
 # Python wire probe bytecode
 __pycache__/
+
+# Arris build output
+diagrams/*.preview/

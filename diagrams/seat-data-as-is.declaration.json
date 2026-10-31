@@ -1,0 +1,226 @@
+{
+  "package": "architecture",
+  "title": "Seat data lives in three stores, and the kernel flattens a seat to one row",
+  "subtitle": "HRC seat session data · as-is · 2026-10-31",
+  "stamp": "AS-IS · 2026-10-31",
+  "legend": {
+    "flow": "write",
+    "result": "read / ingest",
+    "control_flow": "human action",
+    "dependency": "reference by string"
+  },
+  "boundaries": [
+    {
+      "id": "clients",
+      "name": "Writers"
+    },
+    {
+      "id": "daemon",
+      "name": "HRC daemon (rusthrc, per node)"
+    },
+    {
+      "id": "store",
+      "name": "state.sqlite",
+      "parent": "daemon"
+    },
+    {
+      "id": "loggia",
+      "name": "Loggia (max3 only)"
+    }
+  ],
+  "nodes": [
+    {
+      "id": "jev",
+      "name": "Turn classifier",
+      "role": "architecture.component",
+      "kicker": "DAEMON · HRC-TURN-ATTENTION",
+      "body": "Follows turn.completed; asks hosted jev; appends turn.attention",
+      "meta": "launchd · attention-v3",
+      "boundary": "clients"
+    },
+    {
+      "id": "metacli",
+      "name": "hrc session meta",
+      "role": "architecture.client",
+      "kicker": "CLIENT · CLI",
+      "body": "Only writer of continuity scalars",
+      "boundary": "clients"
+    },
+    {
+      "id": "vesta",
+      "name": "Vesta",
+      "role": "architecture.agent",
+      "kicker": "AGENT · C2",
+      "body": "Writes vesta cards and asks through loggia call",
+      "boundary": "clients"
+    },
+    {
+      "id": "lance",
+      "name": "Lance",
+      "role": "architecture.actor",
+      "kicker": "ACTOR · OPERATOR",
+      "body": "Clicks card actions in the pane",
+      "boundary": "clients"
+    },
+    {
+      "id": "wrkq",
+      "name": "wrkq",
+      "role": "architecture.external",
+      "kicker": "SERVICE · WRKQ",
+      "body": "hcs tasks bound to seats by scope string",
+      "meta": "hcs bind <ref> <seat>",
+      "boundary": "clients"
+    },
+    {
+      "id": "ledger",
+      "name": "Event ledger",
+      "role": "architecture.datastore",
+      "kicker": "DATASTORE · HRC",
+      "bullets": [
+        "hrc_events, append-only",
+        "turn.attention: lit, state, excerpt",
+        "1,238 classifications on max3"
+      ],
+      "meta": "hrc_events",
+      "boundary": "store"
+    },
+    {
+      "id": "lineage",
+      "name": "Session tables",
+      "role": "architecture.datastore",
+      "kicker": "DATASTORE · HRC",
+      "bullets": [
+        "continuities: scope, lane, active session",
+        "sessions: one row per generation",
+        "runtimes: process per generation"
+      ],
+      "meta": "continuities · sessions · runtimes",
+      "boundary": "store"
+    },
+    {
+      "id": "meta",
+      "name": "Session metadata",
+      "role": "architecture.datastore",
+      "kicker": "DATASTORE · HRC",
+      "body": "Continuity-scoped scalars; 64 keys, 4 KB; title, colour",
+      "meta": "session_metadata",
+      "boundary": "store"
+    },
+    {
+      "id": "kernel",
+      "name": "hrc document",
+      "role": "architecture.datastore",
+      "kicker": "DOCUMENT · CARDO",
+      "emphasis": true,
+      "bullets": [
+        "Rebuildable observation doc, no hierarchies",
+        "seat row = latest gen ⊕ runtime ⊕ attention",
+        "hrc.runtime, hrc.project: flat roots"
+      ],
+      "meta": "hrc-kernel.sock · hrc:hrc",
+      "boundary": "daemon"
+    },
+    {
+      "id": "mount",
+      "name": "Mount hrc:hrc",
+      "role": "architecture.component",
+      "kicker": "COMPONENT · LOGGIA",
+      "body": "Live query + subscribe; rows for this node only",
+      "boundary": "loggia"
+    },
+    {
+      "id": "c2",
+      "name": "c2 plugin",
+      "role": "architecture.component",
+      "kicker": "PLUGIN · LOGGIA",
+      "bullets": [
+        "Makes classifier cards from attention",
+        "Fences card.put on the live row",
+        "Supersedes when attention moves"
+      ],
+      "boundary": "loggia"
+    },
+    {
+      "id": "storage",
+      "name": "Plugin storage",
+      "role": "architecture.datastore",
+      "kicker": "DATASTORE · LOGGIA",
+      "emphasis": true,
+      "bullets": [
+        "cards, actions, inflight (c2)",
+        "attention.asks (session-switcher)",
+        "One JSON file, one host, no fence"
+      ],
+      "meta": "~/Library/Application Support/Loggia/storage.json",
+      "boundary": "loggia"
+    }
+  ],
+  "relationships": [
+    {
+      "from": "jev",
+      "to": "ledger",
+      "label": "turn.attention"
+    },
+    {
+      "from": "metacli",
+      "to": "meta",
+      "label": "set"
+    },
+    {
+      "from": "ledger",
+      "to": "kernel",
+      "role": "architecture.result",
+      "label": "ingest, wake"
+    },
+    {
+      "from": "lineage",
+      "to": "kernel",
+      "role": "architecture.result",
+      "label": "ingest"
+    },
+    {
+      "from": "meta",
+      "to": "kernel",
+      "role": "architecture.result",
+      "label": "ingest"
+    },
+    {
+      "from": "kernel",
+      "to": "mount",
+      "role": "architecture.result",
+      "label": "query, subscribe"
+    },
+    {
+      "from": "mount",
+      "to": "c2",
+      "role": "architecture.result",
+      "label": "hrc.seat rows"
+    },
+    {
+      "from": "c2",
+      "to": "mount",
+      "label": "seat.send op"
+    },
+    {
+      "from": "c2",
+      "to": "storage",
+      "label": "cards, actions"
+    },
+    {
+      "from": "vesta",
+      "to": "c2",
+      "label": "card.put"
+    },
+    {
+      "from": "lance",
+      "to": "c2",
+      "role": "architecture.control_flow",
+      "label": "click action"
+    },
+    {
+      "from": "wrkq",
+      "to": "lineage",
+      "role": "architecture.dependency"
+    }
+  ]
+}

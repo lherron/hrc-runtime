@@ -1,0 +1,25 @@
+{
+  "format": "arris.board",
+  "format_version": 1,
+  "flow": {
+    "columns": 3,
+    "gap": 160
+  },
+  "frames": [
+    {
+      "id": "seat-data-as-is",
+      "src": "seat-data-as-is.arris.json",
+      "title": "seat-data-as-is"
+    },
+    {
+      "id": "seat-data-to-be",
+      "src": "seat-data-to-be.arris.json",
+      "title": "seat-data-to-be"
+    },
+    {
+      "id": "seat-data-document",
+      "src": "seat-data-document.arris.json",
+      "title": "seat-data-document"
+    }
+  ]
+}

@@ -1,0 +1,266 @@
+{
+ "package": "architecture",
+ "title": "HRC owns every seat fact; the kernel mirrors the seat lineage as a graph",
+ "subtitle": "HRC seat session data · to-be · proposal 2026-10-31",
+ "stamp": "TO-BE · DRAFT 2026-10-31",
+ "legend": {
+  "flow": "write",
+  "result": "read / ingest",
+  "control_flow": "human action",
+  "dependency": "reference by string"
+ },
+ "boundaries": [
+  {
+   "id": "clients",
+   "name": "Writers"
+  },
+  {
+   "id": "daemon",
+   "name": "HRC daemon (rusthrc, per node)"
+  },
+  {
+   "id": "store",
+   "name": "state.sqlite",
+   "parent": "daemon"
+  },
+  {
+   "id": "loggia",
+   "name": "Loggia (any node)"
+  }
+ ],
+ "nodes": [
+  {
+   "id": "jev",
+   "name": "Turn classifier",
+   "role": "architecture.component",
+   "kicker": "DAEMON · HRC-TURN-ATTENTION",
+   "body": "Unchanged: appends turn.attention per completed turn",
+   "meta": "launchd · attention-v3",
+   "boundary": "clients"
+  },
+  {
+   "id": "cli",
+   "name": "hrc session doc",
+   "role": "architecture.client",
+   "kicker": "CLIENT · CLI",
+   "body": "put, get, list; federated to the owning node; meta stays for scalars",
+   "boundary": "clients"
+  },
+  {
+   "id": "vesta",
+   "name": "Vesta",
+   "role": "architecture.agent",
+   "kicker": "AGENT · C2",
+   "body": "Writes cards and asks from any node through hrc",
+   "boundary": "clients"
+  },
+  {
+   "id": "lance",
+   "name": "Lance",
+   "role": "architecture.actor",
+   "kicker": "ACTOR · OPERATOR",
+   "body": "Clicks card actions in the pane",
+   "boundary": "clients"
+  },
+  {
+   "id": "wrkq",
+   "name": "wrkq",
+   "role": "architecture.external",
+   "kicker": "SERVICE · WRKQ",
+   "body": "hcs tasks bound to seats by scope string",
+   "meta": "hcs bind <ref> <seat>",
+   "boundary": "clients"
+  },
+  {
+   "id": "ledger",
+   "name": "Event ledger",
+   "role": "architecture.datastore",
+   "kicker": "DATASTORE · HRC",
+   "bullets": [
+    "hrc_events, append-only",
+    "turn.attention from jev",
+    "seat.document.action: every card click"
+   ],
+   "meta": "hrc_events",
+   "boundary": "store"
+  },
+  {
+   "id": "lineage",
+   "name": "Session tables",
+   "role": "architecture.datastore",
+   "kicker": "DATASTORE · HRC",
+   "bullets": [
+    "continuities: scope, lane, active session",
+    "sessions: one row per generation",
+    "runtimes: process per generation"
+   ],
+   "meta": "continuities · sessions · runtimes",
+   "boundary": "store"
+  },
+  {
+   "id": "meta",
+   "name": "Session metadata",
+   "role": "architecture.datastore",
+   "kicker": "DATASTORE · HRC",
+   "body": "Continuity scalars stay here: title, colour, hcs ref",
+   "meta": "session_metadata",
+   "boundary": "store"
+  },
+  {
+   "id": "docs",
+   "name": "Seat documents",
+   "role": "architecture.datastore",
+   "kicker": "DATASTORE · HRC",
+   "emphasis": true,
+   "bullets": [
+    "JSON ≤ 64 KB per (generation, ns, id)",
+    "put fenced on attention: stale_document",
+    "c2 cards, Vesta asks, any plugin's ns"
+   ],
+   "meta": "seat_documents (new)",
+   "boundary": "store"
+  },
+  {
+   "id": "kernel",
+   "name": "hrc document",
+   "role": "architecture.datastore",
+   "kicker": "DOCUMENT · CARDO",
+   "emphasis": true,
+   "bullets": [
+    "lineage: project › seat › generation › runtime",
+    "hrc.document under its generation",
+    "attention on the generation; 24 h window"
+   ],
+   "meta": "hrc:hrc · still rebuildable",
+   "boundary": "daemon"
+  },
+  {
+   "id": "ops",
+   "name": "Kernel ops",
+   "role": "architecture.control",
+   "kicker": "CONTROL · HRC",
+   "body": "seat.summon, restart, send, document.put; in-process dispatch",
+   "boundary": "daemon"
+  },
+  {
+   "id": "mount",
+   "name": "Mount hrc:hrc",
+   "role": "architecture.component",
+   "kicker": "COMPONENT · LOGGIA",
+   "body": "Live query + subscribe on the lineage",
+   "boundary": "loggia"
+  },
+  {
+   "id": "c2",
+   "name": "c2 plugin",
+   "role": "architecture.component",
+   "kicker": "PLUGIN · LOGGIA",
+   "bullets": [
+    "Projection of hrc.document rows",
+    "Actions are kernel ops",
+    "No durable state of its own"
+   ],
+   "boundary": "loggia"
+  },
+  {
+   "id": "storage",
+   "name": "Plugin storage",
+   "role": "architecture.datastore",
+   "kicker": "DATASTORE · LOGGIA",
+   "body": "UI preferences only: scope.allow, consumed asks",
+   "boundary": "loggia"
+  }
+ ],
+ "relationships": [
+  {
+   "from": "jev",
+   "to": "ledger",
+   "label": "turn.attention"
+  },
+  {
+   "from": "vesta",
+   "to": "cli",
+   "label": "card, ask"
+  },
+  {
+   "from": "cli",
+   "to": "docs",
+   "label": "put, fenced"
+  },
+  {
+   "from": "ledger",
+   "to": "kernel",
+   "role": "architecture.result",
+   "label": "ingest, wake"
+  },
+  {
+   "from": "lineage",
+   "to": "kernel",
+   "role": "architecture.result",
+   "label": "ingest"
+  },
+  {
+   "from": "meta",
+   "to": "kernel",
+   "role": "architecture.result",
+   "label": "ingest"
+  },
+  {
+   "from": "docs",
+   "to": "kernel",
+   "role": "architecture.result",
+   "label": "ingest"
+  },
+  {
+   "from": "kernel",
+   "to": "mount",
+   "role": "architecture.result",
+   "label": "query, subscribe"
+  },
+  {
+   "from": "mount",
+   "to": "c2",
+   "role": "architecture.result",
+   "label": "lineage rows"
+  },
+  {
+   "from": "lance",
+   "to": "c2",
+   "role": "architecture.control_flow",
+   "label": "click action"
+  },
+  {
+   "from": "c2",
+   "to": "ops",
+   "label": "document.put, send"
+  },
+  {
+   "from": "ops",
+   "to": "docs",
+   "label": "write"
+  },
+  {
+   "from": "ops",
+   "to": "ledger",
+   "label": "action event"
+  },
+  {
+   "from": "c2",
+   "to": "storage",
+   "label": "prefs"
+  },
+  {
+   "from": "wrkq",
+   "to": "lineage",
+   "role": "architecture.dependency"
+  }
+ ],
+ "direction": "TB",
+ "order": [
+  [
+   "clients",
+   "daemon",
+   "loggia"
+  ]
+ ]
+}

@@ -1,0 +1,6779 @@
+{
+  "cardo_doms": 1,
+  "format": "arris",
+  "format_version": 1,
+  "document_id": "seat-data-document",
+  "revision": 7,
+  "nodes": [
+    {
+      "id": "card",
+      "type": "architecture.artifact",
+      "schema_version": 1,
+      "provider": "arris.architecture",
+      "created_revision": 1,
+      "updated_revision": 1,
+      "hierarchies": {
+        "group": {
+          "parent": "card.group"
+        },
+        "owner": {
+          "parent": "page-1"
+        }
+      },
+      "domain_attributes": {
+        "display_name": "hrc.document",
+        "order": 37,
+        "order_authored": true,
+        "placement": {
+          "transform": {
+            "translate": [
+              0.0,
+              0.0
+            ]
+          }
+        },
+        "plane_index": 0,
+        "provider_version": "0.1.0"
+      },
+      "payload": {
+        "bullets": [
+          "ns + id, JSON ≤ 64 KB",
+          "c2 card keyed by attention.at",
+          "vesta_ask on Vesta's own generation"
+        ],
+        "emphasis": false,
+        "icon": "",
+        "kicker": "NODE · SEAT DOCUMENT",
+        "meta": "key: hostSessionId, ns, docId",
+        "name": "hrc.document",
+        "presentation": {
+          "caption": "card.caption",
+          "group": "card.group",
+          "mark": "card.mark",
+          "shadow": "card.shadow",
+          "shape": "card.shape"
+        }
+      }
+    },
+    {
+      "id": "card.caption",
+      "type": "arris.styled_text",
+      "schema_version": 1,
+      "provider": "arris.reference-core",
+      "created_revision": 1,
+      "updated_revision": 1,
+      "hierarchies": {
+        "group": {
+          "parent": "card.group"
+        },
+        "owner": {
+          "parent": "page-1"
+        }
+      },
+      "domain_attributes": {
+        "bindings": [
+          {
+            "input": "caption_region",
+            "output_port": "caption",
+            "producer": "card.shape"
+          }
+        ],
+        "display_name": "card.caption",
+        "order": 35,
+        "order_authored": true,
+        "placement": {
+          "transform": {
+            "translate": [
+              0.0,
+              0.0
+            ]
+          }
+        },
+        "plane_index": 0,
+        "provider_version": "0.6.0",
+        "style_bindings": [
+          {
+            "property": "fill",
+            "slot": "colour",
+            "style": "lead"
+          }
+        ]
+      },
+      "payload": {
+        "align": "left",
+        "face": "sans.regular",
+        "fill": "#171717",
+        "line_height": 1.391,
+        "max_height": 0.0,
+        "max_width": 0.0,
+        "padding": 8.0,
+        "runs": [
+          {
+            "end": 1,
+            "face": "mono.regular",
+            "fill": {
+              "token": "hue.viridian.ink"
+            },
+            "size": 10.0,
+            "start": 0,
+            "tracking": 6.0
+          },
+          {
+            "end": 21,
+            "face": "cond.semibold",
+            "fill": {
+              "token": "hue.viridian.ink"
+            },
+            "size": 9.5,
+            "start": 1,
+            "tracking": 0.9
+          },
+          {
+            "end": 22,
+            "start": 21
+          },
+          {
+            "end": 34,
+            "face": "sans.semibold",
+            "fill": {
+              "token": "graphite"
+            },
+            "size": 14.0,
+            "start": 22,
+            "tracking": 0.0
+          },
+          {
+            "end": 35,
+            "start": 34
+          },
+          {
+            "end": 36,
+            "face": "sans.regular",
+            "fill": {
+              "token": "lead"
+            },
+            "size": 11.5,
+            "start": 35,
+            "tracking": 0.0
+          },
+          {
+            "end": 37,
+            "face": "sans.regular",
+            "fill": {
+              "token": "lead"
+            },
+            "size": 11.5,
+            "start": 36,
+            "tracking": 3.286
+          },
+          {
+            "end": 58,
+            "face": "sans.regular",
+            "fill": {
+              "token": "lead"
+            },
+            "size": 11.5,
+            "start": 37,
+            "tracking": 0.0
+          },
+          {
+            "end": 59,
+            "start": 58
+          },
+          {
+            "end": 60,
+            "face": "sans.regular",
+            "fill": {
+              "token": "lead"
+            },
+            "size": 11.5,
+            "start": 59,
+            "tracking": 0.0
+          },
+          {
+            "end": 61,
+            "face": "sans.regular",
+            "fill": {
+              "token": "lead"
+            },
+            "size": 11.5,
+            "start": 60,
+            "tracking": 3.286
+          },
+          {
+            "end": 90,
+            "face": "sans.regular",
+            "fill": {
+              "token": "lead"
+            },
+            "size": 11.5,
+            "start": 61,
+            "tracking": 0.0
+          },
+          {
+            "end": 91,
+            "start": 90
+          },
+          {
+            "end": 92,
+            "face": "sans.regular",
+            "fill": {
+              "token": "lead"
+            },
+            "size": 11.5,
+            "start": 91,
+            "tracking": 0.0
+          },
+          {
+            "end": 93,
+            "face": "sans.regular",
+            "fill": {
+              "token": "lead"
+            },
+            "size": 11.5,
+            "start": 92,
+            "tracking": 3.286
+          },
+          {
+            "end": 128,
+            "face": "sans.regular",
+            "fill": {
+              "token": "lead"
+            },
+            "size": 11.5,
+            "start": 93,
+            "tracking": 0.0
+          },
+          {
+            "end": 129,
+            "start": 128
+          },
+          {
+            "end": 158,
+            "face": "mono.regular",
+            "fill": {
+              "token": "silver"
+            },
+            "size": 10.0,
+            "start": 129,
+            "tracking": 0.0
+          }
+        ],
+        "size": 11.5,
+        "text": " NODE · SEAT DOCUMENT\nhrc.document\n• ns + id, JSON ≤ 64 KB\n• c2 card keyed by attention.at\n• vesta_ask on Vesta's own generation\nkey: hostSessionId, ns, docId",
+        "tracking": 0.0,
+        "vertical_align": "center"
+      }
+    },
+    {
+      "id": "card.group",
+      "type": "arris.group",
+      "schema_version": 1,
+      "provider": "arris",
+      "created_revision": 1,
+      "updated_revision": 1,
+      "hierarchies": {
+        "group": {
+          "parent": "doc.group"
+        },
+        "owner": {
+          "parent": null
+        }
+      },
+      "domain_attributes": {
+        "display_name": "hrc.document",
+        "order": 0,
+        "plane_index": 0
+      },
+      "payload": {}
+    },
+    {
+      "id": "card.mark",
+      "type": "arris.scenario.kicker_mark",
+      "schema_version": 1,
+      "provider": "arris.scenario",
+      "created_revision": 1,
+      "updated_revision": 1,
+      "hierarchies": {
+        "group": {
+          "parent": "card.group"
+        },
+        "owner": {
+          "parent": "page-1"
+        }
+      },
+      "domain_attributes": {
+        "bindings": [
+          {
+            "input": "layout",
+            "output_port": "text_layout_v2",
+            "producer": "card.caption"
+          }
+        ],
+        "display_name": "card.mark",
+        "order": 36,
+        "order_authored": true,
+        "placement": {
+          "transform": {
+            "translate": [
+              0.0,
+              0.0
+            ]
+          }
+        },
+        "plane_index": 0,
+        "provider_version": "0.1.0",
+        "style_bindings": [
+          {
+            "property": "fill",
+            "slot": "colour",
+            "style": "hue.viridian.line"
+          }
+        ]
+      },
+      "payload": {
+        "caption": "card.caption",
+        "fill": "#2E9C84"
+      }
+    },
+    {
+      "id": "card.neutral",
+      "type": "arris.style",
+      "schema_version": 1,
+      "provider": "arris",
+      "created_revision": 1,
+      "updated_revision": 1,
+      "hierarchies": {
+        "group": {
+          "parent": null
+        },
+        "owner": {
+          "parent": "defs"
+        }
+      },
+      "domain_attributes": {
+        "display_name": "card.neutral",
+        "kind": "colour",
+        "order": 0,
+        "plane_index": 0,
+        "value": {
+          "colour": "#7D8898"
+        }
+      },
+      "payload": {}
+    },
+    {
+      "id": "card.shadow",
+      "type": "arris.exterior_shadow",
+      "schema_version": 1,
+      "provider": "arris.reference-core",
+      "created_revision": 1,
+      "updated_revision": 1,
+      "hierarchies": {
+        "group": {
+          "parent": "card.group"
+        },
+        "owner": {
+          "parent": "page-1"
+        }
+      },
+      "domain_attributes": {
+        "bindings": [
+          {
+            "input": "subject",
+            "output_port": "body",
+            "producer": "card.shape"
+          }
+        ],
+        "display_name": "shadow",
+        "order": 33,
+        "order_authored": true,
+        "placement": {
+          "transform": {
+            "translate": [
+              0.0,
+              0.0
+            ]
+          }
+        },
+        "plane_index": 0,
+        "provider_version": "0.6.0",
+        "style_bindings": [
+          {
+            "property": "colour",
+            "slot": "colour",
+            "style": "graphite"
+          }
+        ]
+      },
+      "payload": {
+        "bands": 8,
+        "colour": "#1A2330",
+        "falloff": 2.0,
+        "offset": [
+          0.0,
+          1.5
+        ],
+        "opacity": 0.1,
+        "spread": 4.4
+      }
+    },
+    {
+      "id": "card.shape",
+      "type": "arris.document",
+      "schema_version": 1,
+      "provider": "arris.reference-core",
+      "created_revision": 1,
+      "updated_revision": 1,
+      "hierarchies": {
+        "group": {
+          "parent": "card.group"
+        },
+        "owner": {
+          "parent": "page-1"
+        }
+      },
+      "domain_attributes": {
+        "attachments": {
+          "geometry": {
+            "parameters": {},
+            "schema_version": 1,
+            "type": "arris.attachment.box"
+          },
+          "ports": []
+        },
+        "display_name": "hrc.document",
+        "order": 34,
+        "order_authored": true,
+        "placement": {
+          "transform": {
+            "translate": [
+              352.0,
+              980.04
+            ]
+          }
+        },
+        "plane_index": 0,
+        "provider_version": "0.6.0",
+        "style_bindings": [
+          {
+            "property": "fill",
+            "slot": "colour",
+            "style": "paper"
+          },
+          {
+            "property": "stroke",
+            "slot": "colour",
+            "style": "hue.viridian.line"
+          }
+        ]
+      },
+      "payload": {
+        "fill": "#ffffff",
+        "height": 136.0,
+        "opacity": 1.0,
+        "sheets": 2,
+        "stroke": "#171717",
+        "stroke_width": 1.25,
+        "wave": 7.0,
+        "width": 232.0
+      }
+    },
+    {
+      "id": "cardprev",
+      "type": "architecture.artifact",
+      "schema_version": 1,
+      "provider": "arris.architecture",
+      "created_revision": 1,
+      "updated_revision": 1,
+      "hierarchies": {
+        "group": {
+          "parent": "cardprev.group"
+        },
+        "owner": {
+          "parent": "page-1"
+        }
+      },
+      "domain_attributes": {
+        "display_name": "hrc.document (superseded)",
+        "order": 42,
+        "order_authored": true,
+        "placement": {
+          "transform": {
+            "translate": [
+              0.0,
+              0.0
+            ]
+          }
+        },
+        "plane_index": 0,
+        "provider_version": "0.1.0"
+      },
+      "payload": {
+        "body": "Stays with its generation until it drops out",
+        "bullets": [],
+        "emphasis": false,
+        "icon": "",
+        "kicker": "NODE · SEAT DOCUMENT",
+        "meta": "",
+        "name": "hrc.document (superseded)",
+        "presentation": {
+          "caption": "cardprev.caption",
+          "group": "cardprev.group",
+          "mark": "cardprev.mark",
+          "shadow": "cardprev.shadow",
+          "shape": "cardprev.shape"
+        }
+      }
+    },
+    {
+      "id": "cardprev.caption",
+      "type": "arris.styled_text",
+      "schema_version": 1,
+      "provider": "arris.reference-core",
+      "created_revision": 1,
+      "updated_revision": 1,
+      "hierarchies": {
+        "group": {
+          "parent": "cardprev.group"
+        },
+        "owner": {
+          "parent": "page-1"
+        }
+      },
+      "domain_attributes": {
+        "bindings": [
+          {
+            "input": "caption_region",
+            "output_port": "caption",
+            "producer": "cardprev.shape"
+          }
+        ],
+        "display_name": "cardprev.caption",
+        "order": 40,
+        "order_authored": true,
+        "placement": {
+          "transform": {
+            "translate": [
+              0.0,
+              0.0
+            ]
+          }
+        },
+        "plane_index": 0,
+        "provider_version": "0.6.0",
+        "style_bindings": [
+          {
+            "property": "fill",
+            "slot": "colour",
+            "style": "lead"
+          }
+        ]
+      },
+      "payload": {
+        "align": "left",
+        "face": "sans.regular",
+        "fill": "#171717",
+        "line_height": 1.391,
+        "max_height": 0.0,
+        "max_width": 0.0,
+        "padding": 8.0,
+        "runs": [
+          {
+            "end": 1,
+            "face": "mono.regular",
+            "fill": {
+              "token": "hue.viridian.ink"
+            },
+            "size": 10.0,
+            "start": 0,
+            "tracking": 6.0
+          },
+          {
+            "end": 21,
+            "face": "cond.semibold",
+            "fill": {
+              "token": "hue.viridian.ink"
+            },
+            "size": 9.5,
+            "start": 1,
+            "tracking": 0.9
+          },
+          {
+            "end": 22,
+            "start": 21
+          },
+          {
+            "end": 47,
+            "face": "sans.semibold",
+            "fill": {
+              "token": "graphite"
+            },
+            "size": 14.0,
+            "start": 22,
+            "tracking": 0.0
+          },
+          {
+            "end": 48,
+            "start": 47
+          },
+          {
+            "end": 92,
+            "face": "sans.regular",
+            "fill": {
+              "token": "lead"
+            },
+            "size": 11.5,
+            "start": 48,
+            "tracking": 0.0
+          }
+        ],
+        "size": 11.5,
+        "text": " NODE · SEAT DOCUMENT\nhrc.document (superseded)\nStays with its generation until it drops out",
+        "tracking": 0.0,
+        "vertical_align": "center"
+      }
+    },
+    {
+      "id": "cardprev.group",
+      "type": "arris.group",
+      "schema_version": 1,
+      "provider": "arris",
+      "created_revision": 1,
+      "updated_revision": 1,
+      "hierarchies": {
+        "group": {
+          "parent": "doc.group"
+        },
+        "owner": {
+          "parent": null
+        }
+      },
+      "domain_attributes": {
+        "display_name": "hrc.document (superseded)",
+        "order": 0,
+        "plane_index": 0
+      },
+      "payload": {}
+    },
+    {
+      "id": "cardprev.mark",
+      "type": "arris.scenario.kicker_mark",
+      "schema_version": 1,
+      "provider": "arris.scenario",
+      "created_revision": 1,
+      "updated_revision": 1,
+      "hierarchies": {
+        "group": {
+          "parent": "cardprev.group"
+        },
+        "owner": {
+          "parent": "page-1"
+        }
+      },
+      "domain_attributes": {
+        "bindings": [
+          {
+            "input": "layout",
+            "output_port": "text_layout_v2",
+            "producer": "cardprev.caption"
+          }
+        ],
+        "display_name": "cardprev.mark",
+        "order": 41,
+        "order_authored": true,
+        "placement": {
+          "transform": {
+            "translate": [
+              0.0,
+              0.0
+            ]
+          }
+        },
+        "plane_index": 0,
+        "provider_version": "0.1.0",
+        "style_bindings": [
+          {
+            "property": "fill",
+            "slot": "colour",
+            "style": "hue.viridian.line"
+          }
+        ]
+      },
+      "payload": {
+        "caption": "cardprev.caption",
+        "fill": "#2E9C84"
+      }
+    },
+    {
+      "id": "cardprev.shadow",
+      "type": "arris.exterior_shadow",
+      "schema_version": 1,
+      "provider": "arris.reference-core",
+      "created_revision": 1,
+      "updated_revision": 1,
+      "hierarchies": {
+        "group": {
+          "parent": "cardprev.group"
+        },
+        "owner": {
+          "parent": "page-1"
+        }
+      },
+      "domain_attributes": {
+        "bindings": [
+          {
+            "input": "subject",
+            "output_port": "body",
+            "producer": "cardprev.shape"
+          }
+        ],
+        "display_name": "shadow",
+        "order": 38,
+        "order_authored": true,
+        "placement": {
+          "transform": {
+            "translate": [
+              0.0,
+              0.0
+            ]
+          }
+        },
+        "plane_index": 0,
+        "provider_version": "0.6.0",
+        "style_bindings": [
+          {
+            "property": "colour",
+            "slot": "colour",
+            "style": "graphite"
+          }
+        ]
+      },
+      "payload": {
+        "bands": 8,
+        "colour": "#1A2330",
+        "falloff": 2.0,
+        "offset": [
+          0.0,
+          1.5
+        ],
+        "opacity": 0.1,
+        "spread": 4.4
+      }
+    },
+    {
+      "id": "cardprev.shape",
+      "type": "arris.document",
+      "schema_version": 1,
+      "provider": "arris.reference-core",
+      "created_revision": 1,
+      "updated_revision": 1,
+      "hierarchies": {
+        "group": {
+          "parent": "cardprev.group"
+        },
+        "owner": {
+          "parent": "page-1"
+        }
+      },
+      "domain_attributes": {
+        "attachments": {
+          "geometry": {
+            "parameters": {},
+            "schema_version": 1,
+            "type": "arris.attachment.box"
+          },
+          "ports": []
+        },
+        "display_name": "hrc.document (superseded)",
+        "order": 39,
+        "order_authored": true,
+        "placement": {
+          "transform": {
+            "translate": [
+              608.0,
+              1004.04
+            ]
+          }
+        },
+        "plane_index": 0,
+        "provider_version": "0.6.0",
+        "style_bindings": [
+          {
+            "property": "fill",
+            "slot": "colour",
+            "style": "paper"
+          },
+          {
+            "property": "stroke",
+            "slot": "colour",
+            "style": "hue.viridian.line"
+          }
+        ]
+      },
+      "payload": {
+        "fill": "#ffffff",
+        "height": 88.0,
+        "opacity": 1.0,
+        "sheets": 2,
+        "stroke": "#171717",
+        "stroke_width": 1.25,
+        "wave": 7.0,
+        "width": 248.0
+      }
+    },
+    {
+      "id": "defs",
+      "type": "arris.defs",
+      "schema_version": 1,
+      "provider": "arris",
+      "created_revision": 0,
+      "updated_revision": 0,
+      "hierarchies": {
+        "group": {
+          "parent": null
+        },
+        "owner": {
+          "parent": null
+        }
+      },
+      "domain_attributes": {
+        "order": 0,
+        "plane_index": 0
+      },
+      "payload": {}
+    },
+    {
+      "id": "diagram",
+      "type": "architecture.diagram",
+      "schema_version": 1,
+      "provider": "arris.architecture",
+      "created_revision": 1,
+      "updated_revision": 2,
+      "hierarchies": {
+        "group": {
+          "parent": null
+        },
+        "owner": {
+          "parent": "page-1"
+        }
+      },
+      "domain_attributes": {
+        "display_name": "The hrc document is a lineage: project › seat › generation › runtime, with documents on the generation",
+        "order": 0,
+        "order_authored": true,
+        "placement": {
+          "transform": {
+            "translate": [
+              0.0,
+              0.0
+            ]
+          }
+        },
+        "plane_index": 0,
+        "provider_version": "0.1.0"
+      },
+      "payload": {
+        "aspect_check": {
+          "aspect": 1.33,
+          "content": {
+            "height": 1104.0,
+            "width": 1464.0
+          },
+          "open": "direction LR",
+          "reason": "folds: no fold: fewer than three top-level boundaries (or a band stack). direction: TB vs LR not weighed (the direction was declared)",
+          "structure": "290fbb638650360d"
+        },
+        "direction": "TB",
+        "legend_labels": [
+          {
+            "label": "mirrors a store row",
+            "role": "architecture.dependency"
+          },
+          {
+            "label": "lineage hierarchy (parent › child)",
+            "role": "architecture.flow"
+          },
+          {
+            "label": "folded from the ledger",
+            "role": "architecture.result"
+          }
+        ],
+        "presentation": {
+          "legend": [
+            "diagram.legend.0.sample",
+            "diagram.legend.0",
+            "diagram.legend.1.sample",
+            "diagram.legend.1",
+            "diagram.legend.2.sample",
+            "diagram.legend.2"
+          ],
+          "rule": "diagram.rule",
+          "stamp": "diagram.stamp",
+          "subtitle": "diagram.subtitle",
+          "title": "diagram.title"
+        },
+        "stamp": "TO-BE · DRAFT 2026-10-31",
+        "subtitle": "hrc:hrc node types · to-be · proposal 2026-10-31",
+        "theme": "transit",
+        "title": "The hrc document is a lineage: project › seat › generation › runtime, with documents on the generation"
+      }
+    },
+    {
+      "id": "diagram.legend.0",
+      "type": "arris.styled_text",
+      "schema_version": 1,
+      "provider": "arris.reference-core",
+      "created_revision": 1,
+      "updated_revision": 1,
+      "hierarchies": {
+        "group": {
+          "parent": null
+        },
+        "owner": {
+          "parent": "page-1"
+        }
+      },
+      "domain_attributes": {
+        "display_name": "diagram.legend.0",
+        "order": 73,
+        "order_authored": true,
+        "placement": {
+          "transform": {
+            "translate": [
+              1167.3185,
+              43.1685
+            ]
+          }
+        },
+        "plane_index": 0,
+        "provider_version": "0.6.0",
+        "style_bindings": [
+          {
+            "property": "fill",
+            "slot": "colour",
+            "style": "lead"
+          }
+        ]
+      },
+      "payload": {
+        "align": "left",
+        "face": "sans.regular",
+        "fill": "#171717",
+        "line_height": 1.25,
+        "max_height": 0.0,
+        "max_width": 0.0,
+        "size": 11.5,
+        "text": "lineage hierarchy (parent › child)",
+        "tracking": 0.0
+      }
+    },
+    {
+      "id": "diagram.legend.0.sample",
+      "type": "arris.scenario.line_sample",
+      "schema_version": 1,
+      "provider": "arris.scenario",
+      "created_revision": 1,
+      "updated_revision": 1,
+      "hierarchies": {
+        "group": {
+          "parent": null
+        },
+        "owner": {
+          "parent": "page-1"
+        }
+      },
+      "domain_attributes": {
+        "display_name": "diagram.legend.0.sample",
+        "order": 72,
+        "order_authored": true,
+        "placement": {
+          "transform": {
+            "translate": [
+              1133.3185,
+              51.0
+            ]
+          }
+        },
+        "plane_index": 0,
+        "provider_version": "0.1.0",
+        "style_bindings": [
+          {
+            "property": "stroke",
+            "slot": "colour",
+            "style": "hue.cobalt.line"
+          }
+        ]
+      },
+      "payload": {
+        "head": true,
+        "length": 24.0,
+        "stroke": "#5C7BD9",
+        "width": 1.5
+      }
+    },
+    {
+      "id": "diagram.legend.1",
+      "type": "arris.styled_text",
+      "schema_version": 1,
+      "provider": "arris.reference-core",
+      "created_revision": 1,
+      "updated_revision": 1,
+      "hierarchies": {
+        "group": {
+          "parent": null
+        },
+        "owner": {
+          "parent": "page-1"
+        }
+      },
+      "domain_attributes": {
+        "display_name": "diagram.legend.1",
+        "order": 75,
+        "order_authored": true,
+        "placement": {
+          "transform": {
+            "translate": [
+              1167.3185,
+              65.1685
+            ]
+          }
+        },
+        "plane_index": 0,
+        "provider_version": "0.6.0",
+        "style_bindings": [
+          {
+            "property": "fill",
+            "slot": "colour",
+            "style": "lead"
+          }
+        ]
+      },
+      "payload": {
+        "align": "left",
+        "face": "sans.regular",
+        "fill": "#171717",
+        "line_height": 1.25,
+        "max_height": 0.0,
+        "max_width": 0.0,
+        "size": 11.5,
+        "text": "folded from the ledger",
+        "tracking": 0.0
+      }
+    },
+    {
+      "id": "diagram.legend.1.sample",
+      "type": "arris.scenario.line_sample",
+      "schema_version": 1,
+      "provider": "arris.scenario",
+      "created_revision": 1,
+      "updated_revision": 1,
+      "hierarchies": {
+        "group": {
+          "parent": null
+        },
+        "owner": {
+          "parent": "page-1"
+        }
+      },
+      "domain_attributes": {
+        "display_name": "diagram.legend.1.sample",
+        "order": 74,
+        "order_authored": true,
+        "placement": {
+          "transform": {
+            "translate": [
+              1133.3185,
+              73.0
+            ]
+          }
+        },
+        "plane_index": 0,
+        "provider_version": "0.1.0",
+        "style_bindings": [
+          {
+            "property": "stroke",
+            "slot": "colour",
+            "style": "hue.viridian.line"
+          }
+        ]
+      },
+      "payload": {
+        "head": true,
+        "length": 24.0,
+        "stroke": "#2E9C84",
+        "width": 1.5
+      }
+    },
+    {
+      "id": "diagram.legend.2",
+      "type": "arris.styled_text",
+      "schema_version": 1,
+      "provider": "arris.reference-core",
+      "created_revision": 1,
+      "updated_revision": 1,
+      "hierarchies": {
+        "group": {
+          "parent": null
+        },
+        "owner": {
+          "parent": "page-1"
+        }
+      },
+      "domain_attributes": {
+        "display_name": "diagram.legend.2",
+        "order": 77,
+        "order_authored": true,
+        "placement": {
+          "transform": {
+            "translate": [
+              1167.3185,
+              87.8125
+            ]
+          }
+        },
+        "plane_index": 0,
+        "provider_version": "0.6.0",
+        "style_bindings": [
+          {
+            "property": "fill",
+            "slot": "colour",
+            "style": "lead"
+          }
+        ]
+      },
+      "payload": {
+        "align": "left",
+        "face": "sans.regular",
+        "fill": "#171717",
+        "line_height": 1.25,
+        "max_height": 0.0,
+        "max_width": 0.0,
+        "size": 11.5,
+        "text": "mirrors a store row",
+        "tracking": 0.0
+      }
+    },
+    {
+      "id": "diagram.legend.2.sample",
+      "type": "arris.scenario.line_sample",
+      "schema_version": 1,
+      "provider": "arris.scenario",
+      "created_revision": 1,
+      "updated_revision": 1,
+      "hierarchies": {
+        "group": {
+          "parent": null
+        },
+        "owner": {
+          "parent": "page-1"
+        }
+      },
+      "domain_attributes": {
+        "display_name": "diagram.legend.2.sample",
+        "order": 76,
+        "order_authored": true,
+        "placement": {
+          "transform": {
+            "translate": [
+              1133.3185,
+              95.0
+            ]
+          }
+        },
+        "plane_index": 0,
+        "provider_version": "0.1.0",
+        "style_bindings": [
+          {
+            "property": "stroke",
+            "slot": "colour",
+            "style": "hue.graphite.line"
+          }
+        ]
+      },
+      "payload": {
+        "dash": [
+          1.5,
+          3.0
+        ],
+        "head": false,
+        "length": 24.0,
+        "stroke": "#7D8898",
+        "width": 1.25
+      }
+    },
+    {
+      "id": "diagram.rule",
+      "type": "arris.scenario.line_sample",
+      "schema_version": 1,
+      "provider": "arris.scenario",
+      "created_revision": 1,
+      "updated_revision": 1,
+      "hierarchies": {
+        "group": {
+          "parent": null
+        },
+        "owner": {
+          "parent": "page-1"
+        }
+      },
+      "domain_attributes": {
+        "display_name": "diagram.rule",
+        "order": 71,
+        "order_authored": true,
+        "placement": {
+          "transform": {
+            "translate": [
+              40.0,
+              158.036
+            ]
+          }
+        },
+        "plane_index": 0,
+        "provider_version": "0.1.0",
+        "style_bindings": [
+          {
+            "property": "stroke",
+            "slot": "colour",
+            "style": "rule"
+          }
+        ]
+      },
+      "payload": {
+        "head": false,
+        "length": 1464.0,
+        "stroke": "#D8DEE5",
+        "width": 1.0
+      }
+    },
+    {
+      "id": "diagram.stamp",
+      "type": "arris.styled_text",
+      "schema_version": 1,
+      "provider": "arris.reference-core",
+      "created_revision": 1,
+      "updated_revision": 1,
+      "hierarchies": {
+        "group": {
+          "parent": null
+        },
+        "owner": {
+          "parent": "page-1"
+        }
+      },
+      "domain_attributes": {
+        "display_name": "stamp",
+        "order": 3,
+        "order_authored": true,
+        "placement": {
+          "transform": {
+            "translate": [
+              1373.689,
+              45.0625
+            ]
+          }
+        },
+        "plane_index": 0,
+        "provider_version": "0.6.0",
+        "style_bindings": [
+          {
+            "property": "fill",
+            "slot": "colour",
+            "style": "silver"
+          }
+        ]
+      },
+      "payload": {
+        "align": "left",
+        "face": "cond.semibold",
+        "fill": "#171717",
+        "line_height": 1.25,
+        "max_height": 0.0,
+        "max_width": 0.0,
+        "size": 9.5,
+        "text": "TO-BE · DRAFT 2026-10-31",
+        "tracking": 0.9
+      }
+    },
+    {
+      "id": "diagram.subtitle",
+      "type": "arris.styled_text",
+      "schema_version": 1,
+      "provider": "arris.reference-core",
+      "created_revision": 1,
+      "updated_revision": 7,
+      "hierarchies": {
+        "group": {
+          "parent": null
+        },
+        "owner": {
+          "parent": "page-1"
+        }
+      },
+      "domain_attributes": {
+        "display_name": "subtitle",
+        "order": 2,
+        "order_authored": true,
+        "placement": {
+          "transform": {
+            "translate": [
+              40.0,
+              119.136
+            ]
+          }
+        },
+        "plane_index": 0,
+        "provider_version": "0.6.0",
+        "style_bindings": [
+          {
+            "property": "fill",
+            "slot": "colour",
+            "style": "lead"
+          }
+        ]
+      },
+      "payload": {
+        "align": "left",
+        "face": "sans.regular",
+        "fill": "#171717",
+        "line_height": 1.25,
+        "max_height": 0.0,
+        "max_width": 0.0,
+        "size": 14.0,
+        "text": "hrc:hrc node types · to-be · proposal 2026-10-31",
+        "tracking": 0.0
+      }
+    },
+    {
+      "id": "diagram.title",
+      "type": "arris.styled_text",
+      "schema_version": 1,
+      "provider": "arris.reference-core",
+      "created_revision": 1,
+      "updated_revision": 7,
+      "hierarchies": {
+        "group": {
+          "parent": null
+        },
+        "owner": {
+          "parent": "page-1"
+        }
+      },
+      "domain_attributes": {
+        "display_name": "title",
+        "order": 1,
+        "order_authored": true,
+        "placement": {
+          "transform": {
+            "translate": [
+              40.0,
+              40.0
+            ]
+          }
+        },
+        "plane_index": 0,
+        "provider_version": "0.6.0",
+        "style_bindings": [
+          {
+            "property": "fill",
+            "slot": "colour",
+            "style": "graphite"
+          }
+        ]
+      },
+      "payload": {
+        "align": "left",
+        "face": "sans.semibold",
+        "fill": "#171717",
+        "line_height": 1.25,
+        "max_height": 0.0,
+        "max_width": 1053.32,
+        "size": 28.0,
+        "text": "The hrc document is a lineage: project › seat › generation › runtime, with documents on the generation",
+        "tracking": -0.4
+      }
+    },
+    {
+      "id": "doc",
+      "type": "architecture.boundary",
+      "schema_version": 1,
+      "provider": "arris.architecture",
+      "created_revision": 1,
+      "updated_revision": 1,
+      "hierarchies": {
+        "group": {
+          "parent": "doc.group"
+        },
+        "owner": {
+          "parent": "page-1"
+        }
+      },
+      "domain_attributes": {
+        "display_name": "hrc document (rebuildable, observation types only)",
+        "order": 5,
+        "order_authored": true,
+        "placement": {
+          "transform": {
+            "translate": [
+              0.0,
+              0.0
+            ]
+          }
+        },
+        "plane_index": 0,
+        "provider_version": "0.1.0"
+      },
+      "payload": {
+        "name": "hrc document (rebuildable, observation types only)",
+        "presentation": {
+          "caption": "doc.caption",
+          "group": "doc.group",
+          "shape": "doc.shape"
+        }
+      }
+    },
+    {
+      "id": "doc.caption",
+      "type": "arris.styled_text",
+      "schema_version": 1,
+      "provider": "arris.reference-core",
+      "created_revision": 1,
+      "updated_revision": 1,
+      "hierarchies": {
+        "group": {
+          "parent": "doc.group"
+        },
+        "owner": {
+          "parent": "page-1"
+        }
+      },
+      "domain_attributes": {
+        "bindings": [
+          {
+            "input": "caption_region",
+            "output_port": "caption",
+            "producer": "doc.shape"
+          }
+        ],
+        "display_name": "doc.caption",
+        "order": 4,
+        "order_authored": true,
+        "placement": {
+          "transform": {
+            "translate": [
+              0.0,
+              0.0
+            ]
+          }
+        },
+        "plane_index": 0,
+        "provider_version": "0.6.0",
+        "style_bindings": [
+          {
+            "property": "fill",
+            "slot": "colour",
+            "style": "lead"
+          }
+        ]
+      },
+      "payload": {
+        "align": "left",
+        "face": "sans.regular",
+        "fill": "#171717",
+        "line_height": 1.391,
+        "max_height": 0.0,
+        "max_width": 0.0,
+        "padding": 20.0,
+        "runs": [
+          {
+            "end": 50,
+            "face": "cond.semibold",
+            "fill": {
+              "token": "lead"
+            },
+            "size": 11.0,
+            "start": 0,
+            "tracking": 1.1
+          }
+        ],
+        "size": 11.5,
+        "text": "HRC DOCUMENT (REBUILDABLE, OBSERVATION TYPES ONLY)",
+        "tracking": 0.0,
+        "vertical_align": "top"
+      }
+    },
+    {
+      "id": "doc.group",
+      "type": "arris.group",
+      "schema_version": 1,
+      "provider": "arris",
+      "created_revision": 1,
+      "updated_revision": 1,
+      "hierarchies": {
+        "group": {
+          "parent": null
+        },
+        "owner": {
+          "parent": null
+        }
+      },
+      "domain_attributes": {
+        "display_name": "hrc document (rebuildable, observation types only)",
+        "order": 0,
+        "plane_index": 0
+      },
+      "payload": {}
+    },
+    {
+      "id": "doc.shape",
+      "type": "arris.box",
+      "schema_version": 1,
+      "provider": "arris.reference-core",
+      "created_revision": 1,
+      "updated_revision": 1,
+      "hierarchies": {
+        "group": {
+          "parent": "doc.group"
+        },
+        "owner": {
+          "parent": "page-1"
+        }
+      },
+      "domain_attributes": {
+        "display_name": "hrc document (rebuildable, observation types only)",
+        "order": -10,
+        "order_authored": true,
+        "placement": {
+          "transform": {
+            "translate": [
+              40.0,
+              190.04
+            ]
+          }
+        },
+        "plane_index": 0,
+        "provider_version": "0.6.0",
+        "style_bindings": [
+          {
+            "property": "fill",
+            "slot": "colour",
+            "style": "ground"
+          },
+          {
+            "property": "stroke",
+            "slot": "colour",
+            "style": "ground"
+          }
+        ]
+      },
+      "payload": {
+        "corner_radius": 10.0,
+        "fill": "#ffffff",
+        "height": 954.0,
+        "opacity": 1.0,
+        "stroke": "#171717",
+        "stroke_width": 0.0,
+        "width": 840.0
+      }
+    },
+    {
+      "id": "gen",
+      "type": "architecture.component",
+      "schema_version": 1,
+      "provider": "arris.architecture",
+      "created_revision": 1,
+      "updated_revision": 1,
+      "hierarchies": {
+        "group": {
+          "parent": "gen.group"
+        },
+        "owner": {
+          "parent": "page-1"
+        }
+      },
+      "domain_attributes": {
+        "display_name": "hrc.generation (N)",
+        "order": 22,
+        "order_authored": true,
+        "placement": {
+          "transform": {
+            "translate": [
+              0.0,
+              0.0
+            ]
+          }
+        },
+        "plane_index": 0,
+        "provider_version": "0.1.0"
+      },
+      "payload": {
+        "bullets": [
+          "status active; continuation state",
+          "attention: jev or tool, at",
+          "live until runtime gone + 24 h"
+        ],
+        "emphasis": true,
+        "icon": "",
+        "kicker": "NODE · SESSION",
+        "meta": "key: hostSessionId · order: generation",
+        "name": "hrc.generation (N)",
+        "presentation": {
+          "caption": "gen.caption",
+          "group": "gen.group",
+          "mark": "gen.mark",
+          "shadow": "gen.shadow",
+          "shape": "gen.shape"
+        }
+      }
+    },
+    {
+      "id": "gen.caption",
+      "type": "arris.styled_text",
+      "schema_version": 1,
+      "provider": "arris.reference-core",
+      "created_revision": 1,
+      "updated_revision": 1,
+      "hierarchies": {
+        "group": {
+          "parent": "gen.group"
+        },
+        "owner": {
+          "parent": "page-1"
+        }
+      },
+      "domain_attributes": {
+        "bindings": [
+          {
+            "input": "caption_region",
+            "output_port": "caption",
+            "producer": "gen.shape"
+          }
+        ],
+        "display_name": "gen.caption",
+        "order": 20,
+        "order_authored": true,
+        "placement": {
+          "transform": {
+            "translate": [
+              0.0,
+              0.0
+            ]
+          }
+        },
+        "plane_index": 0,
+        "provider_version": "0.6.0",
+        "style_bindings": [
+          {
+            "property": "fill",
+            "slot": "colour",
+            "style": "lead"
+          }
+        ]
+      },
+      "payload": {
+        "align": "left",
+        "face": "sans.regular",
+        "fill": "#171717",
+        "line_height": 1.391,
+        "max_height": 0.0,
+        "max_width": 0.0,
+        "padding": 14.0,
+        "runs": [
+          {
+            "end": 1,
+            "face": "mono.regular",
+            "fill": {
+              "token": "hue.graphite.ink"
+            },
+            "size": 10.0,
+            "start": 0,
+            "tracking": 6.0
+          },
+          {
+            "end": 15,
+            "face": "cond.semibold",
+            "fill": {
+              "token": "hue.graphite.ink"
+            },
+            "size": 9.5,
+            "start": 1,
+            "tracking": 0.9
+          },
+          {
+            "end": 16,
+            "start": 15
+          },
+          {
+            "end": 34,
+            "face": "sans.semibold",
+            "fill": {
+              "token": "graphite"
+            },
+            "size": 14.0,
+            "start": 16,
+            "tracking": 0.0
+          },
+          {
+            "end": 35,
+            "start": 34
+          },
+          {
+            "end": 36,
+            "face": "sans.regular",
+            "fill": {
+              "token": "lead"
+            },
+            "size": 11.5,
+            "start": 35,
+            "tracking": 0.0
+          },
+          {
+            "end": 37,
+            "face": "sans.regular",
+            "fill": {
+              "token": "lead"
+            },
+            "size": 11.5,
+            "start": 36,
+            "tracking": 3.286
+          },
+          {
+            "end": 70,
+            "face": "sans.regular",
+            "fill": {
+              "token": "lead"
+            },
+            "size": 11.5,
+            "start": 37,
+            "tracking": 0.0
+          },
+          {
+            "end": 71,
+            "start": 70
+          },
+          {
+            "end": 72,
+            "face": "sans.regular",
+            "fill": {
+              "token": "lead"
+            },
+            "size": 11.5,
+            "start": 71,
+            "tracking": 0.0
+          },
+          {
+            "end": 73,
+            "face": "sans.regular",
+            "fill": {
+              "token": "lead"
+            },
+            "size": 11.5,
+            "start": 72,
+            "tracking": 3.286
+          },
+          {
+            "end": 99,
+            "face": "sans.regular",
+            "fill": {
+              "token": "lead"
+            },
+            "size": 11.5,
+            "start": 73,
+            "tracking": 0.0
+          },
+          {
+            "end": 100,
+            "start": 99
+          },
+          {
+            "end": 101,
+            "face": "sans.regular",
+            "fill": {
+              "token": "lead"
+            },
+            "size": 11.5,
+            "start": 100,
+            "tracking": 0.0
+          },
+          {
+            "end": 102,
+            "face": "sans.regular",
+            "fill": {
+              "token": "lead"
+            },
+            "size": 11.5,
+            "start": 101,
+            "tracking": 3.286
+          },
+          {
+            "end": 132,
+            "face": "sans.regular",
+            "fill": {
+              "token": "lead"
+            },
+            "size": 11.5,
+            "start": 102,
+            "tracking": 0.0
+          },
+          {
+            "end": 133,
+            "start": 132
+          },
+          {
+            "end": 171,
+            "face": "mono.regular",
+            "fill": {
+              "token": "silver"
+            },
+            "size": 10.0,
+            "start": 133,
+            "tracking": 0.0
+          }
+        ],
+        "size": 11.5,
+        "text": " NODE · SESSION\nhrc.generation (N)\n• status active; continuation state\n• attention: jev or tool, at\n• live until runtime gone + 24 h\nkey: hostSessionId · order: generation",
+        "tracking": 0.0,
+        "vertical_align": "center"
+      }
+    },
+    {
+      "id": "gen.group",
+      "type": "arris.group",
+      "schema_version": 1,
+      "provider": "arris",
+      "created_revision": 1,
+      "updated_revision": 1,
+      "hierarchies": {
+        "group": {
+          "parent": "doc.group"
+        },
+        "owner": {
+          "parent": null
+        }
+      },
+      "domain_attributes": {
+        "display_name": "hrc.generation (N)",
+        "order": 0,
+        "plane_index": 0
+      },
+      "payload": {}
+    },
+    {
+      "id": "gen.mark",
+      "type": "arris.scenario.kicker_mark",
+      "schema_version": 1,
+      "provider": "arris.scenario",
+      "created_revision": 1,
+      "updated_revision": 1,
+      "hierarchies": {
+        "group": {
+          "parent": "gen.group"
+        },
+        "owner": {
+          "parent": "page-1"
+        }
+      },
+      "domain_attributes": {
+        "bindings": [
+          {
+            "input": "layout",
+            "output_port": "text_layout_v2",
+            "producer": "gen.caption"
+          }
+        ],
+        "display_name": "gen.mark",
+        "order": 21,
+        "order_authored": true,
+        "placement": {
+          "transform": {
+            "translate": [
+              0.0,
+              0.0
+            ]
+          }
+        },
+        "plane_index": 0,
+        "provider_version": "0.1.0",
+        "style_bindings": [
+          {
+            "property": "fill",
+            "slot": "colour",
+            "style": "hue.graphite.line"
+          }
+        ]
+      },
+      "payload": {
+        "caption": "gen.caption",
+        "fill": "#7D8898"
+      }
+    },
+    {
+      "id": "gen.shadow",
+      "type": "arris.exterior_shadow",
+      "schema_version": 1,
+      "provider": "arris.reference-core",
+      "created_revision": 1,
+      "updated_revision": 1,
+      "hierarchies": {
+        "group": {
+          "parent": "gen.group"
+        },
+        "owner": {
+          "parent": "page-1"
+        }
+      },
+      "domain_attributes": {
+        "bindings": [
+          {
+            "input": "subject",
+            "output_port": "body",
+            "producer": "gen.shape"
+          }
+        ],
+        "display_name": "shadow",
+        "order": 18,
+        "order_authored": true,
+        "placement": {
+          "transform": {
+            "translate": [
+              0.0,
+              0.0
+            ]
+          }
+        },
+        "plane_index": 0,
+        "provider_version": "0.6.0",
+        "style_bindings": [
+          {
+            "property": "colour",
+            "slot": "colour",
+            "style": "graphite"
+          }
+        ]
+      },
+      "payload": {
+        "bands": 8,
+        "colour": "#1A2330",
+        "falloff": 2.0,
+        "offset": [
+          0.0,
+          1.5
+        ],
+        "opacity": 0.1,
+        "spread": 4.4
+      }
+    },
+    {
+      "id": "gen.shape",
+      "type": "arris.box",
+      "schema_version": 1,
+      "provider": "arris.reference-core",
+      "created_revision": 1,
+      "updated_revision": 1,
+      "hierarchies": {
+        "group": {
+          "parent": "gen.group"
+        },
+        "owner": {
+          "parent": "page-1"
+        }
+      },
+      "domain_attributes": {
+        "attachments": {
+          "geometry": {
+            "parameters": {},
+            "schema_version": 1,
+            "type": "arris.attachment.box"
+          },
+          "ports": []
+        },
+        "display_name": "hrc.generation (N)",
+        "order": 19,
+        "order_authored": true,
+        "placement": {
+          "transform": {
+            "translate": [
+              223.76,
+              742.04
+            ]
+          }
+        },
+        "plane_index": 0,
+        "provider_version": "0.6.0",
+        "style_bindings": [
+          {
+            "property": "fill",
+            "slot": "colour",
+            "style": "paper"
+          },
+          {
+            "property": "stroke",
+            "slot": "colour",
+            "style": "card.neutral"
+          }
+        ]
+      },
+      "payload": {
+        "corner_radius": 6.0,
+        "fill": "#ffffff",
+        "height": 128.0,
+        "opacity": 1.0,
+        "stroke": "#171717",
+        "stroke_width": 2.0,
+        "width": 256.0
+      }
+    },
+    {
+      "id": "gen__card",
+      "type": "architecture.flow",
+      "schema_version": 1,
+      "provider": "arris.architecture",
+      "created_revision": 1,
+      "updated_revision": 1,
+      "hierarchies": {
+        "group": {
+          "parent": null
+        },
+        "owner": {
+          "parent": "page-1"
+        }
+      },
+      "domain_attributes": {
+        "display_name": "gen__card",
+        "order": 62,
+        "order_authored": true,
+        "placement": {
+          "transform": {
+            "translate": [
+              0.0,
+              0.0
+            ]
+          }
+        },
+        "plane_index": 0,
+        "provider_version": "0.1.0"
+      },
+      "payload": {
+        "from": "gen",
+        "label": "lineage",
+        "presentation": {
+          "edge": "gen__card.edge",
+          "label": "label"
+        },
+        "to": "card"
+      }
+    },
+    {
+      "id": "gen__card.edge",
+      "type": "arris.edge",
+      "schema_version": 1,
+      "provider": "arris",
+      "created_revision": 1,
+      "updated_revision": 7,
+      "hierarchies": {
+        "group": {
+          "parent": null
+        },
+        "owner": {
+          "parent": "page-1"
+        }
+      },
+      "domain_attributes": {
+        "display_name": "lineage",
+        "edge_order": 61,
+        "end": {
+          "parameters": {
+            "length": 8.4,
+            "width": 7.05
+          },
+          "schema_version": 1,
+          "type": "arris.filled"
+        },
+        "labels": [
+          {
+            "clearance": 0.0,
+            "label_id": "label",
+            "parameters": {
+              "face": "sans.medium",
+              "fill": {
+                "token": "hue.cobalt.ink"
+              },
+              "height": 18.0,
+              "padding": 8.0,
+              "paint": true,
+              "radius": 9.0,
+              "size": 10.5,
+              "tag_fill": {
+                "token": "paper"
+              },
+              "tag_stroke": {
+                "token": "hue.cobalt.line"
+              },
+              "tag_stroke_width": 1.0,
+              "text": "lineage"
+            },
+            "placement": {
+              "anchor": "center",
+              "distance": 142.66,
+              "kind": "route-distance",
+              "offset": [
+                0.0,
+                0.0
+              ],
+              "orientation": "route",
+              "rotation": 0.0
+            },
+            "schema_version": 1,
+            "type": "arris.tag"
+          }
+        ],
+        "order": 61,
+        "plane_index": 0,
+        "route": {
+          "corner_radius": 8.0,
+          "obstacles": {
+            "mode": "none"
+          },
+          "strategy": {
+            "parameters": {},
+            "schema_version": 1,
+            "type": "arris.polyline"
+          },
+          "waypoints": [
+            {
+              "point": [
+                394.43,
+                886.04
+              ],
+              "space": "page"
+            },
+            {
+              "point": [
+                336.0,
+                886.04
+              ],
+              "space": "page"
+            },
+            {
+              "point": [
+                336.0,
+                1048.04
+              ],
+              "space": "page"
+            }
+          ]
+        },
+        "shaft": {
+          "dash_offset": 0.0,
+          "stroke": {
+            "token": "hue.cobalt.line"
+          },
+          "width": 1.5
+        },
+        "source": {
+          "ref": "gen.shape"
+        },
+        "source_detail": {
+          "attachment": {
+            "approach": {
+              "min_straight": 0.0,
+              "mode": "normal"
+            },
+            "clearance": 0.0,
+            "fraction": 0.6666796875000001,
+            "kind": "side",
+            "offset": 0.0,
+            "side": "bottom"
+          }
+        },
+        "target": {
+          "ref": "card.shape"
+        },
+        "target_detail": {
+          "attachment": {
+            "approach": {
+              "min_straight": 0.0,
+              "mode": "normal"
+            },
+            "clearance": 0.0,
+            "fraction": 0.5,
+            "kind": "side",
+            "offset": 0.0,
+            "side": "left"
+          }
+        }
+      },
+      "payload": {}
+    },
+    {
+      "id": "gen__runtime",
+      "type": "architecture.flow",
+      "schema_version": 1,
+      "provider": "arris.architecture",
+      "created_revision": 1,
+      "updated_revision": 1,
+      "hierarchies": {
+        "group": {
+          "parent": null
+        },
+        "owner": {
+          "parent": "page-1"
+        }
+      },
+      "domain_attributes": {
+        "display_name": "gen__runtime",
+        "order": 60,
+        "order_authored": true,
+        "placement": {
+          "transform": {
+            "translate": [
+              0.0,
+              0.0
+            ]
+          }
+        },
+        "plane_index": 0,
+        "provider_version": "0.1.0"
+      },
+      "payload": {
+        "from": "gen",
+        "label": "lineage",
+        "presentation": {
+          "edge": "gen__runtime.edge",
+          "label": "label"
+        },
+        "to": "runtime"
+      }
+    },
+    {
+      "id": "gen__runtime.edge",
+      "type": "arris.edge",
+      "schema_version": 1,
+      "provider": "arris",
+      "created_revision": 1,
+      "updated_revision": 7,
+      "hierarchies": {
+        "group": {
+          "parent": null
+        },
+        "owner": {
+          "parent": "page-1"
+        }
+      },
+      "domain_attributes": {
+        "display_name": "lineage",
+        "edge_order": 59,
+        "end": {
+          "parameters": {
+            "length": 8.4,
+            "width": 7.05
+          },
+          "schema_version": 1,
+          "type": "arris.filled"
+        },
+        "labels": [
+          {
+            "clearance": 0.0,
+            "label_id": "label",
+            "parameters": {
+              "face": "sans.medium",
+              "fill": {
+                "token": "hue.cobalt.ink"
+              },
+              "height": 18.0,
+              "padding": 8.0,
+              "paint": true,
+              "radius": 9.0,
+              "size": 10.5,
+              "tag_fill": {
+                "token": "paper"
+              },
+              "tag_stroke": {
+                "token": "hue.cobalt.line"
+              },
+              "tag_stroke_width": 1.0,
+              "text": "lineage"
+            },
+            "placement": {
+              "anchor": "center",
+              "distance": 131.11,
+              "kind": "route-distance",
+              "offset": [
+                0.0,
+                0.0
+              ],
+              "orientation": "route",
+              "rotation": 0.0
+            },
+            "schema_version": 1,
+            "type": "arris.tag"
+          }
+        ],
+        "order": 59,
+        "plane_index": 0,
+        "route": {
+          "corner_radius": 8.0,
+          "obstacles": {
+            "mode": "none"
+          },
+          "strategy": {
+            "parameters": {},
+            "schema_version": 1,
+            "type": "arris.polyline"
+          },
+          "waypoints": [
+            {
+              "point": [
+                309.09,
+                948.04
+              ],
+              "space": "page"
+            },
+            {
+              "point": [
+                196.0,
+                948.04
+              ],
+              "space": "page"
+            }
+          ]
+        },
+        "shaft": {
+          "dash_offset": 0.0,
+          "stroke": {
+            "token": "hue.cobalt.line"
+          },
+          "width": 1.5
+        },
+        "source": {
+          "ref": "gen.shape"
+        },
+        "source_detail": {
+          "attachment": {
+            "approach": {
+              "min_straight": 0.0,
+              "mode": "normal"
+            },
+            "clearance": 0.0,
+            "fraction": 0.33332031249999994,
+            "kind": "side",
+            "offset": 0.0,
+            "side": "bottom"
+          }
+        },
+        "target": {
+          "ref": "runtime.shape"
+        },
+        "target_detail": {
+          "attachment": {
+            "approach": {
+              "min_straight": 0.0,
+              "mode": "normal"
+            },
+            "clearance": 0.0,
+            "fraction": 0.5,
+            "kind": "side",
+            "offset": 0.0,
+            "side": "top"
+          }
+        }
+      },
+      "payload": {}
+    },
+    {
+      "id": "genprev",
+      "type": "architecture.component",
+      "schema_version": 1,
+      "provider": "arris.architecture",
+      "created_revision": 1,
+      "updated_revision": 1,
+      "hierarchies": {
+        "group": {
+          "parent": "genprev.group"
+        },
+        "owner": {
+          "parent": "page-1"
+        }
+      },
+      "domain_attributes": {
+        "display_name": "hrc.generation (N−1)",
+        "order": 27,
+        "order_authored": true,
+        "placement": {
+          "transform": {
+            "translate": [
+              0.0,
+              0.0
+            ]
+          }
+        },
+        "plane_index": 0,
+        "provider_version": "0.1.0"
+      },
+      "payload": {
+        "body": "Archived; its documents superseded; drops out after 24 h",
+        "bullets": [],
+        "emphasis": false,
+        "icon": "",
+        "kicker": "NODE · SESSION",
+        "meta": "key: hostSessionId",
+        "name": "hrc.generation (N−1)",
+        "presentation": {
+          "caption": "genprev.caption",
+          "group": "genprev.group",
+          "mark": "genprev.mark",
+          "shadow": "genprev.shadow",
+          "shape": "genprev.shape"
+        }
+      }
+    },
+    {
+      "id": "genprev.caption",
+      "type": "arris.styled_text",
+      "schema_version": 1,
+      "provider": "arris.reference-core",
+      "created_revision": 1,
+      "updated_revision": 1,
+      "hierarchies": {
+        "group": {
+          "parent": "genprev.group"
+        },
+        "owner": {
+          "parent": "page-1"
+        }
+      },
+      "domain_attributes": {
+        "bindings": [
+          {
+            "input": "caption_region",
+            "output_port": "caption",
+            "producer": "genprev.shape"
+          }
+        ],
+        "display_name": "genprev.caption",
+        "order": 25,
+        "order_authored": true,
+        "placement": {
+          "transform": {
+            "translate": [
+              0.0,
+              0.0
+            ]
+          }
+        },
+        "plane_index": 0,
+        "provider_version": "0.6.0",
+        "style_bindings": [
+          {
+            "property": "fill",
+            "slot": "colour",
+            "style": "lead"
+          }
+        ]
+      },
+      "payload": {
+        "align": "left",
+        "face": "sans.regular",
+        "fill": "#171717",
+        "line_height": 1.391,
+        "max_height": 0.0,
+        "max_width": 0.0,
+        "padding": 14.0,
+        "runs": [
+          {
+            "end": 1,
+            "face": "mono.regular",
+            "fill": {
+              "token": "hue.graphite.ink"
+            },
+            "size": 10.0,
+            "start": 0,
+            "tracking": 6.0
+          },
+          {
+            "end": 15,
+            "face": "cond.semibold",
+            "fill": {
+              "token": "hue.graphite.ink"
+            },
+            "size": 9.5,
+            "start": 1,
+            "tracking": 0.9
+          },
+          {
+            "end": 16,
+            "start": 15
+          },
+          {
+            "end": 36,
+            "face": "sans.semibold",
+            "fill": {
+              "token": "graphite"
+            },
+            "size": 14.0,
+            "start": 16,
+            "tracking": 0.0
+          },
+          {
+            "end": 37,
+            "start": 36
+          },
+          {
+            "end": 93,
+            "face": "sans.regular",
+            "fill": {
+              "token": "lead"
+            },
+            "size": 11.5,
+            "start": 37,
+            "tracking": 0.0
+          },
+          {
+            "end": 94,
+            "start": 93
+          },
+          {
+            "end": 112,
+            "face": "mono.regular",
+            "fill": {
+              "token": "silver"
+            },
+            "size": 10.0,
+            "start": 94,
+            "tracking": 0.0
+          }
+        ],
+        "size": 11.5,
+        "text": " NODE · SESSION\nhrc.generation (N−1)\nArchived; its documents superseded; drops out after 24 h\nkey: hostSessionId",
+        "tracking": 0.0,
+        "vertical_align": "center"
+      }
+    },
+    {
+      "id": "genprev.group",
+      "type": "arris.group",
+      "schema_version": 1,
+      "provider": "arris",
+      "created_revision": 1,
+      "updated_revision": 1,
+      "hierarchies": {
+        "group": {
+          "parent": "doc.group"
+        },
+        "owner": {
+          "parent": null
+        }
+      },
+      "domain_attributes": {
+        "display_name": "hrc.generation (N−1)",
+        "order": 0,
+        "plane_index": 0
+      },
+      "payload": {}
+    },
+    {
+      "id": "genprev.mark",
+      "type": "arris.scenario.kicker_mark",
+      "schema_version": 1,
+      "provider": "arris.scenario",
+      "created_revision": 1,
+      "updated_revision": 1,
+      "hierarchies": {
+        "group": {
+          "parent": "genprev.group"
+        },
+        "owner": {
+          "parent": "page-1"
+        }
+      },
+      "domain_attributes": {
+        "bindings": [
+          {
+            "input": "layout",
+            "output_port": "text_layout_v2",
+            "producer": "genprev.caption"
+          }
+        ],
+        "display_name": "genprev.mark",
+        "order": 26,
+        "order_authored": true,
+        "placement": {
+          "transform": {
+            "translate": [
+              0.0,
+              0.0
+            ]
+          }
+        },
+        "plane_index": 0,
+        "provider_version": "0.1.0",
+        "style_bindings": [
+          {
+            "property": "fill",
+            "slot": "colour",
+            "style": "hue.graphite.line"
+          }
+        ]
+      },
+      "payload": {
+        "caption": "genprev.caption",
+        "fill": "#7D8898"
+      }
+    },
+    {
+      "id": "genprev.shadow",
+      "type": "arris.exterior_shadow",
+      "schema_version": 1,
+      "provider": "arris.reference-core",
+      "created_revision": 1,
+      "updated_revision": 1,
+      "hierarchies": {
+        "group": {
+          "parent": "genprev.group"
+        },
+        "owner": {
+          "parent": "page-1"
+        }
+      },
+      "domain_attributes": {
+        "bindings": [
+          {
+            "input": "subject",
+            "output_port": "body",
+            "producer": "genprev.shape"
+          }
+        ],
+        "display_name": "shadow",
+        "order": 23,
+        "order_authored": true,
+        "placement": {
+          "transform": {
+            "translate": [
+              0.0,
+              0.0
+            ]
+          }
+        },
+        "plane_index": 0,
+        "provider_version": "0.6.0",
+        "style_bindings": [
+          {
+            "property": "colour",
+            "slot": "colour",
+            "style": "graphite"
+          }
+        ]
+      },
+      "payload": {
+        "bands": 8,
+        "colour": "#1A2330",
+        "falloff": 2.0,
+        "offset": [
+          0.0,
+          1.5
+        ],
+        "opacity": 0.1,
+        "spread": 4.4
+      }
+    },
+    {
+      "id": "genprev.shape",
+      "type": "arris.box",
+      "schema_version": 1,
+      "provider": "arris.reference-core",
+      "created_revision": 1,
+      "updated_revision": 1,
+      "hierarchies": {
+        "group": {
+          "parent": "genprev.group"
+        },
+        "owner": {
+          "parent": "page-1"
+        }
+      },
+      "domain_attributes": {
+        "attachments": {
+          "geometry": {
+            "parameters": {},
+            "schema_version": 1,
+            "type": "arris.attachment.box"
+          },
+          "ports": []
+        },
+        "display_name": "hrc.generation (N−1)",
+        "order": 24,
+        "order_authored": true,
+        "placement": {
+          "transform": {
+            "translate": [
+              503.76,
+              750.04
+            ]
+          }
+        },
+        "plane_index": 0,
+        "provider_version": "0.6.0",
+        "style_bindings": [
+          {
+            "property": "fill",
+            "slot": "colour",
+            "style": "paper"
+          },
+          {
+            "property": "stroke",
+            "slot": "colour",
+            "style": "card.neutral"
+          }
+        ]
+      },
+      "payload": {
+        "corner_radius": 6.0,
+        "fill": "#ffffff",
+        "height": 112.0,
+        "opacity": 1.0,
+        "stroke": "#171717",
+        "stroke_width": 1.25,
+        "width": 264.0
+      }
+    },
+    {
+      "id": "genprev__cardprev",
+      "type": "architecture.flow",
+      "schema_version": 1,
+      "provider": "arris.architecture",
+      "created_revision": 1,
+      "updated_revision": 1,
+      "hierarchies": {
+        "group": {
+          "parent": null
+        },
+        "owner": {
+          "parent": "page-1"
+        }
+      },
+      "domain_attributes": {
+        "display_name": "genprev__cardprev",
+        "order": 64,
+        "order_authored": true,
+        "placement": {
+          "transform": {
+            "translate": [
+              0.0,
+              0.0
+            ]
+          }
+        },
+        "plane_index": 0,
+        "provider_version": "0.1.0"
+      },
+      "payload": {
+        "from": "genprev",
+        "label": "lineage",
+        "presentation": {
+          "edge": "genprev__cardprev.edge",
+          "label": "label"
+        },
+        "to": "cardprev"
+      }
+    },
+    {
+      "id": "genprev__cardprev.edge",
+      "type": "arris.edge",
+      "schema_version": 1,
+      "provider": "arris",
+      "created_revision": 1,
+      "updated_revision": 1,
+      "hierarchies": {
+        "group": {
+          "parent": null
+        },
+        "owner": {
+          "parent": "page-1"
+        }
+      },
+      "domain_attributes": {
+        "display_name": "lineage",
+        "edge_order": 63,
+        "end": {
+          "parameters": {
+            "length": 8.4,
+            "width": 7.05
+          },
+          "schema_version": 1,
+          "type": "arris.filled"
+        },
+        "labels": [
+          {
+            "clearance": 0.0,
+            "label_id": "label",
+            "parameters": {
+              "face": "sans.medium",
+              "fill": {
+                "token": "hue.cobalt.ink"
+              },
+              "height": 18.0,
+              "padding": 8.0,
+              "paint": true,
+              "radius": 9.0,
+              "size": 10.5,
+              "tag_fill": {
+                "token": "paper"
+              },
+              "tag_stroke": {
+                "token": "hue.cobalt.line"
+              },
+              "tag_stroke_width": 1.0,
+              "text": "lineage"
+            },
+            "placement": {
+              "anchor": "center",
+              "distance": 66.8,
+              "kind": "route-distance",
+              "offset": [
+                0.0,
+                0.0
+              ],
+              "orientation": "route",
+              "rotation": 0.0
+            },
+            "schema_version": 1,
+            "type": "arris.tag"
+          }
+        ],
+        "order": 63,
+        "plane_index": 0,
+        "route": {
+          "corner_radius": 8.0,
+          "obstacles": {
+            "mode": "none"
+          },
+          "strategy": {
+            "parameters": {},
+            "schema_version": 1,
+            "type": "arris.polyline"
+          },
+          "waypoints": []
+        },
+        "shaft": {
+          "dash_offset": 0.0,
+          "stroke": {
+            "token": "hue.cobalt.line"
+          },
+          "width": 1.5
+        },
+        "source": {
+          "ref": "genprev.shape"
+        },
+        "source_detail": {
+          "attachment": {
+            "approach": {
+              "min_straight": 0.0,
+              "mode": "normal"
+            },
+            "clearance": 0.0,
+            "fraction": 0.8645454545454546,
+            "kind": "side",
+            "offset": 0.0,
+            "side": "bottom"
+          }
+        },
+        "target": {
+          "ref": "cardprev.shape"
+        },
+        "target_detail": {
+          "attachment": {
+            "approach": {
+              "min_straight": 0.0,
+              "mode": "normal"
+            },
+            "clearance": 0.0,
+            "fraction": 0.5,
+            "kind": "side",
+            "offset": 0.0,
+            "side": "top"
+          }
+        }
+      },
+      "payload": {}
+    },
+    {
+      "id": "graphite",
+      "type": "arris.style",
+      "schema_version": 1,
+      "provider": "arris",
+      "created_revision": 1,
+      "updated_revision": 1,
+      "hierarchies": {
+        "group": {
+          "parent": null
+        },
+        "owner": {
+          "parent": "defs"
+        }
+      },
+      "domain_attributes": {
+        "display_name": "graphite",
+        "kind": "colour",
+        "order": 0,
+        "plane_index": 0,
+        "value": {
+          "colour": "#1A2330"
+        }
+      },
+      "payload": {}
+    },
+    {
+      "id": "ground",
+      "type": "arris.style",
+      "schema_version": 1,
+      "provider": "arris",
+      "created_revision": 1,
+      "updated_revision": 1,
+      "hierarchies": {
+        "group": {
+          "parent": null
+        },
+        "owner": {
+          "parent": "defs"
+        }
+      },
+      "domain_attributes": {
+        "display_name": "ground",
+        "kind": "colour",
+        "order": 0,
+        "plane_index": 0,
+        "value": {
+          "colour": "#F3F5F8"
+        }
+      },
+      "payload": {}
+    },
+    {
+      "id": "ground.deep",
+      "type": "arris.style",
+      "schema_version": 1,
+      "provider": "arris",
+      "created_revision": 1,
+      "updated_revision": 1,
+      "hierarchies": {
+        "group": {
+          "parent": null
+        },
+        "owner": {
+          "parent": "defs"
+        }
+      },
+      "domain_attributes": {
+        "display_name": "ground.deep",
+        "kind": "colour",
+        "order": 0,
+        "plane_index": 0,
+        "value": {
+          "colour": "#D0D8E3"
+        }
+      },
+      "payload": {}
+    },
+    {
+      "id": "ground.nested",
+      "type": "arris.style",
+      "schema_version": 1,
+      "provider": "arris",
+      "created_revision": 1,
+      "updated_revision": 1,
+      "hierarchies": {
+        "group": {
+          "parent": null
+        },
+        "owner": {
+          "parent": "defs"
+        }
+      },
+      "domain_attributes": {
+        "display_name": "ground.nested",
+        "kind": "colour",
+        "order": 0,
+        "plane_index": 0,
+        "value": {
+          "colour": "#E2E7EE"
+        }
+      },
+      "payload": {}
+    },
+    {
+      "id": "ground.waiting",
+      "type": "arris.style",
+      "schema_version": 1,
+      "provider": "arris",
+      "created_revision": 1,
+      "updated_revision": 1,
+      "hierarchies": {
+        "group": {
+          "parent": null
+        },
+        "owner": {
+          "parent": "defs"
+        }
+      },
+      "domain_attributes": {
+        "display_name": "ground.waiting",
+        "kind": "colour",
+        "order": 0,
+        "plane_index": 0,
+        "value": {
+          "colour": "#F6F7F9"
+        }
+      },
+      "payload": {}
+    },
+    {
+      "id": "hue.cobalt.ink",
+      "type": "arris.style",
+      "schema_version": 1,
+      "provider": "arris",
+      "created_revision": 1,
+      "updated_revision": 1,
+      "hierarchies": {
+        "group": {
+          "parent": null
+        },
+        "owner": {
+          "parent": "defs"
+        }
+      },
+      "domain_attributes": {
+        "display_name": "hue.cobalt.ink",
+        "kind": "colour",
+        "order": 0,
+        "plane_index": 0,
+        "value": {
+          "colour": "#2449B8"
+        }
+      },
+      "payload": {}
+    },
+    {
+      "id": "hue.cobalt.line",
+      "type": "arris.style",
+      "schema_version": 1,
+      "provider": "arris",
+      "created_revision": 1,
+      "updated_revision": 1,
+      "hierarchies": {
+        "group": {
+          "parent": null
+        },
+        "owner": {
+          "parent": "defs"
+        }
+      },
+      "domain_attributes": {
+        "display_name": "hue.cobalt.line",
+        "kind": "colour",
+        "order": 0,
+        "plane_index": 0,
+        "value": {
+          "colour": "#5C7BD9"
+        }
+      },
+      "payload": {}
+    },
+    {
+      "id": "hue.cobalt.tint",
+      "type": "arris.style",
+      "schema_version": 1,
+      "provider": "arris",
+      "created_revision": 1,
+      "updated_revision": 1,
+      "hierarchies": {
+        "group": {
+          "parent": null
+        },
+        "owner": {
+          "parent": "defs"
+        }
+      },
+      "domain_attributes": {
+        "display_name": "hue.cobalt.tint",
+        "kind": "colour",
+        "order": 0,
+        "plane_index": 0,
+        "value": {
+          "colour": "#EEF2FD"
+        }
+      },
+      "payload": {}
+    },
+    {
+      "id": "hue.graphite.ink",
+      "type": "arris.style",
+      "schema_version": 1,
+      "provider": "arris",
+      "created_revision": 1,
+      "updated_revision": 1,
+      "hierarchies": {
+        "group": {
+          "parent": null
+        },
+        "owner": {
+          "parent": "defs"
+        }
+      },
+      "domain_attributes": {
+        "display_name": "hue.graphite.ink",
+        "kind": "colour",
+        "order": 0,
+        "plane_index": 0,
+        "value": {
+          "colour": "#1A2330"
+        }
+      },
+      "payload": {}
+    },
+    {
+      "id": "hue.graphite.line",
+      "type": "arris.style",
+      "schema_version": 1,
+      "provider": "arris",
+      "created_revision": 1,
+      "updated_revision": 1,
+      "hierarchies": {
+        "group": {
+          "parent": null
+        },
+        "owner": {
+          "parent": "defs"
+        }
+      },
+      "domain_attributes": {
+        "display_name": "hue.graphite.line",
+        "kind": "colour",
+        "order": 0,
+        "plane_index": 0,
+        "value": {
+          "colour": "#7D8898"
+        }
+      },
+      "payload": {}
+    },
+    {
+      "id": "hue.graphite.tint",
+      "type": "arris.style",
+      "schema_version": 1,
+      "provider": "arris",
+      "created_revision": 1,
+      "updated_revision": 1,
+      "hierarchies": {
+        "group": {
+          "parent": null
+        },
+        "owner": {
+          "parent": "defs"
+        }
+      },
+      "domain_attributes": {
+        "display_name": "hue.graphite.tint",
+        "kind": "colour",
+        "order": 0,
+        "plane_index": 0,
+        "value": {
+          "colour": "#F6F7F9"
+        }
+      },
+      "payload": {}
+    },
+    {
+      "id": "hue.ochre.ink",
+      "type": "arris.style",
+      "schema_version": 1,
+      "provider": "arris",
+      "created_revision": 1,
+      "updated_revision": 1,
+      "hierarchies": {
+        "group": {
+          "parent": null
+        },
+        "owner": {
+          "parent": "defs"
+        }
+      },
+      "domain_attributes": {
+        "display_name": "hue.ochre.ink",
+        "kind": "colour",
+        "order": 0,
+        "plane_index": 0,
+        "value": {
+          "colour": "#8F5F00"
+        }
+      },
+      "payload": {}
+    },
+    {
+      "id": "hue.ochre.line",
+      "type": "arris.style",
+      "schema_version": 1,
+      "provider": "arris",
+      "created_revision": 1,
+      "updated_revision": 1,
+      "hierarchies": {
+        "group": {
+          "parent": null
+        },
+        "owner": {
+          "parent": "defs"
+        }
+      },
+      "domain_attributes": {
+        "display_name": "hue.ochre.line",
+        "kind": "colour",
+        "order": 0,
+        "plane_index": 0,
+        "value": {
+          "colour": "#CF9A2E"
+        }
+      },
+      "payload": {}
+    },
+    {
+      "id": "hue.ochre.tint",
+      "type": "arris.style",
+      "schema_version": 1,
+      "provider": "arris",
+      "created_revision": 1,
+      "updated_revision": 1,
+      "hierarchies": {
+        "group": {
+          "parent": null
+        },
+        "owner": {
+          "parent": "defs"
+        }
+      },
+      "domain_attributes": {
+        "display_name": "hue.ochre.tint",
+        "kind": "colour",
+        "order": 0,
+        "plane_index": 0,
+        "value": {
+          "colour": "#FBF3E1"
+        }
+      },
+      "payload": {}
+    },
+    {
+      "id": "hue.plum.ink",
+      "type": "arris.style",
+      "schema_version": 1,
+      "provider": "arris",
+      "created_revision": 1,
+      "updated_revision": 1,
+      "hierarchies": {
+        "group": {
+          "parent": null
+        },
+        "owner": {
+          "parent": "defs"
+        }
+      },
+      "domain_attributes": {
+        "display_name": "hue.plum.ink",
+        "kind": "colour",
+        "order": 0,
+        "plane_index": 0,
+        "value": {
+          "colour": "#6A3C9E"
+        }
+      },
+      "payload": {}
+    },
+    {
+      "id": "hue.plum.line",
+      "type": "arris.style",
+      "schema_version": 1,
+      "provider": "arris",
+      "created_revision": 1,
+      "updated_revision": 1,
+      "hierarchies": {
+        "group": {
+          "parent": null
+        },
+        "owner": {
+          "parent": "defs"
+        }
+      },
+      "domain_attributes": {
+        "display_name": "hue.plum.line",
+        "kind": "colour",
+        "order": 0,
+        "plane_index": 0,
+        "value": {
+          "colour": "#9877C9"
+        }
+      },
+      "payload": {}
+    },
+    {
+      "id": "hue.plum.tint",
+      "type": "arris.style",
+      "schema_version": 1,
+      "provider": "arris",
+      "created_revision": 1,
+      "updated_revision": 1,
+      "hierarchies": {
+        "group": {
+          "parent": null
+        },
+        "owner": {
+          "parent": "defs"
+        }
+      },
+      "domain_attributes": {
+        "display_name": "hue.plum.tint",
+        "kind": "colour",
+        "order": 0,
+        "plane_index": 0,
+        "value": {
+          "colour": "#F3EEFA"
+        }
+      },
+      "payload": {}
+    },
+    {
+      "id": "hue.vermilion.ink",
+      "type": "arris.style",
+      "schema_version": 1,
+      "provider": "arris",
+      "created_revision": 1,
+      "updated_revision": 1,
+      "hierarchies": {
+        "group": {
+          "parent": null
+        },
+        "owner": {
+          "parent": "defs"
+        }
+      },
+      "domain_attributes": {
+        "display_name": "hue.vermilion.ink",
+        "kind": "colour",
+        "order": 0,
+        "plane_index": 0,
+        "value": {
+          "colour": "#B4401A"
+        }
+      },
+      "payload": {}
+    },
+    {
+      "id": "hue.vermilion.line",
+      "type": "arris.style",
+      "schema_version": 1,
+      "provider": "arris",
+      "created_revision": 1,
+      "updated_revision": 1,
+      "hierarchies": {
+        "group": {
+          "parent": null
+        },
+        "owner": {
+          "parent": "defs"
+        }
+      },
+      "domain_attributes": {
+        "display_name": "hue.vermilion.line",
+        "kind": "colour",
+        "order": 0,
+        "plane_index": 0,
+        "value": {
+          "colour": "#E0754C"
+        }
+      },
+      "payload": {}
+    },
+    {
+      "id": "hue.vermilion.tint",
+      "type": "arris.style",
+      "schema_version": 1,
+      "provider": "arris",
+      "created_revision": 1,
+      "updated_revision": 1,
+      "hierarchies": {
+        "group": {
+          "parent": null
+        },
+        "owner": {
+          "parent": "defs"
+        }
+      },
+      "domain_attributes": {
+        "display_name": "hue.vermilion.tint",
+        "kind": "colour",
+        "order": 0,
+        "plane_index": 0,
+        "value": {
+          "colour": "#FCEFE9"
+        }
+      },
+      "payload": {}
+    },
+    {
+      "id": "hue.viridian.ink",
+      "type": "arris.style",
+      "schema_version": 1,
+      "provider": "arris",
+      "created_revision": 1,
+      "updated_revision": 1,
+      "hierarchies": {
+        "group": {
+          "parent": null
+        },
+        "owner": {
+          "parent": "defs"
+        }
+      },
+      "domain_attributes": {
+        "display_name": "hue.viridian.ink",
+        "kind": "colour",
+        "order": 0,
+        "plane_index": 0,
+        "value": {
+          "colour": "#0B6E5B"
+        }
+      },
+      "payload": {}
+    },
+    {
+      "id": "hue.viridian.line",
+      "type": "arris.style",
+      "schema_version": 1,
+      "provider": "arris",
+      "created_revision": 1,
+      "updated_revision": 1,
+      "hierarchies": {
+        "group": {
+          "parent": null
+        },
+        "owner": {
+          "parent": "defs"
+        }
+      },
+      "domain_attributes": {
+        "display_name": "hue.viridian.line",
+        "kind": "colour",
+        "order": 0,
+        "plane_index": 0,
+        "value": {
+          "colour": "#2E9C84"
+        }
+      },
+      "payload": {}
+    },
+    {
+      "id": "hue.viridian.tint",
+      "type": "arris.style",
+      "schema_version": 1,
+      "provider": "arris",
+      "created_revision": 1,
+      "updated_revision": 1,
+      "hierarchies": {
+        "group": {
+          "parent": null
+        },
+        "owner": {
+          "parent": "defs"
+        }
+      },
+      "domain_attributes": {
+        "display_name": "hue.viridian.tint",
+        "kind": "colour",
+        "order": 0,
+        "plane_index": 0,
+        "value": {
+          "colour": "#E8F5F1"
+        }
+      },
+      "payload": {}
+    },
+    {
+      "id": "lead",
+      "type": "arris.style",
+      "schema_version": 1,
+      "provider": "arris",
+      "created_revision": 1,
+      "updated_revision": 1,
+      "hierarchies": {
+        "group": {
+          "parent": null
+        },
+        "owner": {
+          "parent": "defs"
+        }
+      },
+      "domain_attributes": {
+        "display_name": "lead",
+        "kind": "colour",
+        "order": 0,
+        "plane_index": 0,
+        "value": {
+          "colour": "#4A5565"
+        }
+      },
+      "payload": {}
+    },
+    {
+      "id": "ledger",
+      "type": "architecture.datastore",
+      "schema_version": 1,
+      "provider": "arris.architecture",
+      "created_revision": 1,
+      "updated_revision": 1,
+      "hierarchies": {
+        "group": {
+          "parent": "ledger.group"
+        },
+        "owner": {
+          "parent": "page-1"
+        }
+      },
+      "domain_attributes": {
+        "display_name": "Event ledger",
+        "order": 47,
+        "order_authored": true,
+        "placement": {
+          "transform": {
+            "translate": [
+              0.0,
+              0.0
+            ]
+          }
+        },
+        "plane_index": 0,
+        "provider_version": "0.1.0"
+      },
+      "payload": {
+        "body": "turn.attention and seat.document.action stay events, never nodes",
+        "bullets": [],
+        "emphasis": false,
+        "icon": "",
+        "kicker": "DATASTORE · HRC",
+        "meta": "hrc_events",
+        "name": "Event ledger",
+        "presentation": {
+          "caption": "ledger.caption",
+          "group": "ledger.group",
+          "mark": "ledger.mark",
+          "shadow": "ledger.shadow",
+          "shape": "ledger.shape"
+        }
+      }
+    },
+    {
+      "id": "ledger.caption",
+      "type": "arris.styled_text",
+      "schema_version": 1,
+      "provider": "arris.reference-core",
+      "created_revision": 1,
+      "updated_revision": 1,
+      "hierarchies": {
+        "group": {
+          "parent": "ledger.group"
+        },
+        "owner": {
+          "parent": "page-1"
+        }
+      },
+      "domain_attributes": {
+        "bindings": [
+          {
+            "input": "caption_region",
+            "output_port": "caption",
+            "producer": "ledger.shape"
+          }
+        ],
+        "display_name": "ledger.caption",
+        "order": 45,
+        "order_authored": true,
+        "placement": {
+          "transform": {
+            "translate": [
+              0.0,
+              0.0
+            ]
+          }
+        },
+        "plane_index": 0,
+        "provider_version": "0.6.0",
+        "style_bindings": [
+          {
+            "property": "fill",
+            "slot": "colour",
+            "style": "lead"
+          }
+        ]
+      },
+      "payload": {
+        "align": "left",
+        "face": "sans.regular",
+        "fill": "#171717",
+        "line_height": 1.391,
+        "max_height": 0.0,
+        "max_width": 0.0,
+        "padding": 8.0,
+        "runs": [
+          {
+            "end": 1,
+            "face": "mono.regular",
+            "fill": {
+              "token": "hue.graphite.ink"
+            },
+            "size": 10.0,
+            "start": 0,
+            "tracking": 6.0
+          },
+          {
+            "end": 16,
+            "face": "cond.semibold",
+            "fill": {
+              "token": "hue.graphite.ink"
+            },
+            "size": 9.5,
+            "start": 1,
+            "tracking": 0.9
+          },
+          {
+            "end": 17,
+            "start": 16
+          },
+          {
+            "end": 29,
+            "face": "sans.semibold",
+            "fill": {
+              "token": "graphite"
+            },
+            "size": 14.0,
+            "start": 17,
+            "tracking": 0.0
+          },
+          {
+            "end": 30,
+            "start": 29
+          },
+          {
+            "end": 94,
+            "face": "sans.regular",
+            "fill": {
+              "token": "lead"
+            },
+            "size": 11.5,
+            "start": 30,
+            "tracking": 0.0
+          },
+          {
+            "end": 95,
+            "start": 94
+          },
+          {
+            "end": 105,
+            "face": "mono.regular",
+            "fill": {
+              "token": "silver"
+            },
+            "size": 10.0,
+            "start": 95,
+            "tracking": 0.0
+          }
+        ],
+        "size": 11.5,
+        "text": " DATASTORE · HRC\nEvent ledger\nturn.attention and seat.document.action stay events, never nodes\nhrc_events",
+        "tracking": 0.0,
+        "vertical_align": "center"
+      }
+    },
+    {
+      "id": "ledger.group",
+      "type": "arris.group",
+      "schema_version": 1,
+      "provider": "arris",
+      "created_revision": 1,
+      "updated_revision": 1,
+      "hierarchies": {
+        "group": {
+          "parent": "outside.group"
+        },
+        "owner": {
+          "parent": null
+        }
+      },
+      "domain_attributes": {
+        "display_name": "Event ledger",
+        "order": 0,
+        "plane_index": 0
+      },
+      "payload": {}
+    },
+    {
+      "id": "ledger.mark",
+      "type": "arris.scenario.kicker_mark",
+      "schema_version": 1,
+      "provider": "arris.scenario",
+      "created_revision": 1,
+      "updated_revision": 1,
+      "hierarchies": {
+        "group": {
+          "parent": "ledger.group"
+        },
+        "owner": {
+          "parent": "page-1"
+        }
+      },
+      "domain_attributes": {
+        "bindings": [
+          {
+            "input": "layout",
+            "output_port": "text_layout_v2",
+            "producer": "ledger.caption"
+          }
+        ],
+        "display_name": "ledger.mark",
+        "order": 46,
+        "order_authored": true,
+        "placement": {
+          "transform": {
+            "translate": [
+              0.0,
+              0.0
+            ]
+          }
+        },
+        "plane_index": 0,
+        "provider_version": "0.1.0",
+        "style_bindings": [
+          {
+            "property": "fill",
+            "slot": "colour",
+            "style": "hue.graphite.line"
+          }
+        ]
+      },
+      "payload": {
+        "caption": "ledger.caption",
+        "fill": "#7D8898"
+      }
+    },
+    {
+      "id": "ledger.shadow",
+      "type": "arris.exterior_shadow",
+      "schema_version": 1,
+      "provider": "arris.reference-core",
+      "created_revision": 1,
+      "updated_revision": 1,
+      "hierarchies": {
+        "group": {
+          "parent": "ledger.group"
+        },
+        "owner": {
+          "parent": "page-1"
+        }
+      },
+      "domain_attributes": {
+        "bindings": [
+          {
+            "input": "subject",
+            "output_port": "body",
+            "producer": "ledger.shape"
+          }
+        ],
+        "display_name": "shadow",
+        "order": 43,
+        "order_authored": true,
+        "placement": {
+          "transform": {
+            "translate": [
+              0.0,
+              0.0
+            ]
+          }
+        },
+        "plane_index": 0,
+        "provider_version": "0.6.0",
+        "style_bindings": [
+          {
+            "property": "colour",
+            "slot": "colour",
+            "style": "graphite"
+          }
+        ]
+      },
+      "payload": {
+        "bands": 8,
+        "colour": "#1A2330",
+        "falloff": 2.0,
+        "offset": [
+          0.0,
+          1.5
+        ],
+        "opacity": 0.1,
+        "spread": 4.4
+      }
+    },
+    {
+      "id": "ledger.shape",
+      "type": "arris.cylinder",
+      "schema_version": 1,
+      "provider": "arris.reference-core",
+      "created_revision": 1,
+      "updated_revision": 1,
+      "hierarchies": {
+        "group": {
+          "parent": "ledger.group"
+        },
+        "owner": {
+          "parent": "page-1"
+        }
+      },
+      "domain_attributes": {
+        "attachments": {
+          "geometry": {
+            "parameters": {},
+            "schema_version": 1,
+            "type": "arris.attachment.box"
+          },
+          "ports": []
+        },
+        "display_name": "Event ledger",
+        "order": 44,
+        "order_authored": true,
+        "placement": {
+          "transform": {
+            "translate": [
+              928.0,
+              476.04
+            ]
+          }
+        },
+        "plane_index": 0,
+        "provider_version": "0.6.0",
+        "style_bindings": [
+          {
+            "property": "fill",
+            "slot": "colour",
+            "style": "paper"
+          },
+          {
+            "property": "stroke",
+            "slot": "colour",
+            "style": "card.neutral"
+          }
+        ]
+      },
+      "payload": {
+        "cap": 9.0,
+        "fill": "#ffffff",
+        "height": 128.0,
+        "lid": "start",
+        "opacity": 1.0,
+        "orientation": "vertical",
+        "stroke": "#171717",
+        "stroke_width": 1.25,
+        "width": 264.0
+      }
+    },
+    {
+      "id": "ledger__gen",
+      "type": "architecture.result",
+      "schema_version": 1,
+      "provider": "arris.architecture",
+      "created_revision": 1,
+      "updated_revision": 1,
+      "hierarchies": {
+        "group": {
+          "parent": null
+        },
+        "owner": {
+          "parent": "page-1"
+        }
+      },
+      "domain_attributes": {
+        "display_name": "ledger__gen",
+        "order": 66,
+        "order_authored": true,
+        "placement": {
+          "transform": {
+            "translate": [
+              0.0,
+              0.0
+            ]
+          }
+        },
+        "plane_index": 0,
+        "provider_version": "0.1.0"
+      },
+      "payload": {
+        "from": "ledger",
+        "label": "selected event → attention",
+        "presentation": {
+          "edge": "ledger__gen.edge",
+          "label": "label"
+        },
+        "to": "gen"
+      }
+    },
+    {
+      "id": "ledger__gen.edge",
+      "type": "arris.edge",
+      "schema_version": 1,
+      "provider": "arris",
+      "created_revision": 1,
+      "updated_revision": 7,
+      "hierarchies": {
+        "group": {
+          "parent": null
+        },
+        "owner": {
+          "parent": "page-1"
+        }
+      },
+      "domain_attributes": {
+        "display_name": "selected event → attention",
+        "edge_order": 65,
+        "end": {
+          "parameters": {
+            "length": 8.4,
+            "width": 7.05
+          },
+          "schema_version": 1,
+          "type": "arris.filled"
+        },
+        "labels": [
+          {
+            "clearance": 0.0,
+            "label_id": "label",
+            "parameters": {
+              "face": "sans.medium",
+              "fill": {
+                "token": "hue.viridian.ink"
+              },
+              "height": 18.0,
+              "padding": 8.0,
+              "paint": true,
+              "radius": 9.0,
+              "size": 10.5,
+              "tag_fill": {
+                "token": "paper"
+              },
+              "tag_stroke": {
+                "token": "hue.viridian.line"
+              },
+              "tag_stroke_width": 1.0,
+              "text": "selected event → attention"
+            },
+            "placement": {
+              "anchor": "center",
+              "distance": 466.79,
+              "kind": "route-distance",
+              "offset": [
+                0.0,
+                0.0
+              ],
+              "orientation": "route",
+              "rotation": 0.0
+            },
+            "schema_version": 1,
+            "type": "arris.tag"
+          }
+        ],
+        "order": 65,
+        "plane_index": 0,
+        "route": {
+          "corner_radius": 8.0,
+          "obstacles": {
+            "mode": "none"
+          },
+          "strategy": {
+            "parameters": {},
+            "schema_version": 1,
+            "type": "arris.polyline"
+          },
+          "waypoints": [
+            {
+              "point": [
+                1060.0,
+                726.04
+              ],
+              "space": "page"
+            },
+            {
+              "point": [
+                351.76,
+                726.04
+              ],
+              "space": "page"
+            }
+          ]
+        },
+        "shaft": {
+          "dash_offset": 0.0,
+          "stroke": {
+            "token": "hue.viridian.line"
+          },
+          "width": 1.5
+        },
+        "source": {
+          "ref": "ledger.shape"
+        },
+        "source_detail": {
+          "attachment": {
+            "approach": {
+              "min_straight": 0.0,
+              "mode": "normal"
+            },
+            "clearance": 0.0,
+            "fraction": 0.5,
+            "kind": "side",
+            "offset": 0.0,
+            "side": "bottom"
+          }
+        },
+        "target": {
+          "ref": "gen.shape"
+        },
+        "target_detail": {
+          "attachment": {
+            "approach": {
+              "min_straight": 0.0,
+              "mode": "normal"
+            },
+            "clearance": 0.0,
+            "fraction": 0.5,
+            "kind": "side",
+            "offset": 0.0,
+            "side": "top"
+          }
+        }
+      },
+      "payload": {}
+    },
+    {
+      "id": "line.main",
+      "type": "arris.style",
+      "schema_version": 1,
+      "provider": "arris",
+      "created_revision": 1,
+      "updated_revision": 1,
+      "hierarchies": {
+        "group": {
+          "parent": null
+        },
+        "owner": {
+          "parent": "defs"
+        }
+      },
+      "domain_attributes": {
+        "display_name": "line.main",
+        "kind": "colour",
+        "order": 0,
+        "plane_index": 0,
+        "value": {
+          "colour": "#2A3442"
+        }
+      },
+      "payload": {}
+    },
+    {
+      "id": "outside",
+      "type": "architecture.boundary",
+      "schema_version": 1,
+      "provider": "arris.architecture",
+      "created_revision": 1,
+      "updated_revision": 1,
+      "hierarchies": {
+        "group": {
+          "parent": "outside.group"
+        },
+        "owner": {
+          "parent": "page-1"
+        }
+      },
+      "domain_attributes": {
+        "display_name": "Outside doms: the time series",
+        "order": 7,
+        "order_authored": true,
+        "placement": {
+          "transform": {
+            "translate": [
+              0.0,
+              0.0
+            ]
+          }
+        },
+        "plane_index": 0,
+        "provider_version": "0.1.0"
+      },
+      "payload": {
+        "name": "Outside doms: the time series",
+        "presentation": {
+          "caption": "outside.caption",
+          "group": "outside.group",
+          "shape": "outside.shape"
+        }
+      }
+    },
+    {
+      "id": "outside.caption",
+      "type": "arris.styled_text",
+      "schema_version": 1,
+      "provider": "arris.reference-core",
+      "created_revision": 1,
+      "updated_revision": 1,
+      "hierarchies": {
+        "group": {
+          "parent": "outside.group"
+        },
+        "owner": {
+          "parent": "page-1"
+        }
+      },
+      "domain_attributes": {
+        "bindings": [
+          {
+            "input": "caption_region",
+            "output_port": "caption",
+            "producer": "outside.shape"
+          }
+        ],
+        "display_name": "outside.caption",
+        "order": 6,
+        "order_authored": true,
+        "placement": {
+          "transform": {
+            "translate": [
+              0.0,
+              0.0
+            ]
+          }
+        },
+        "plane_index": 0,
+        "provider_version": "0.6.0",
+        "style_bindings": [
+          {
+            "property": "fill",
+            "slot": "colour",
+            "style": "lead"
+          }
+        ]
+      },
+      "payload": {
+        "align": "left",
+        "face": "sans.regular",
+        "fill": "#171717",
+        "line_height": 1.391,
+        "max_height": 0.0,
+        "max_width": 0.0,
+        "padding": 20.0,
+        "runs": [
+          {
+            "end": 29,
+            "face": "cond.semibold",
+            "fill": {
+              "token": "lead"
+            },
+            "size": 11.0,
+            "start": 0,
+            "tracking": 1.1
+          }
+        ],
+        "size": 11.5,
+        "text": "OUTSIDE DOMS: THE TIME SERIES",
+        "tracking": 0.0,
+        "vertical_align": "top"
+      }
+    },
+    {
+      "id": "outside.group",
+      "type": "arris.group",
+      "schema_version": 1,
+      "provider": "arris",
+      "created_revision": 1,
+      "updated_revision": 1,
+      "hierarchies": {
+        "group": {
+          "parent": null
+        },
+        "owner": {
+          "parent": null
+        }
+      },
+      "domain_attributes": {
+        "display_name": "Outside doms: the time series",
+        "order": 0,
+        "plane_index": 0
+      },
+      "payload": {}
+    },
+    {
+      "id": "outside.shape",
+      "type": "arris.box",
+      "schema_version": 1,
+      "provider": "arris.reference-core",
+      "created_revision": 1,
+      "updated_revision": 1,
+      "hierarchies": {
+        "group": {
+          "parent": "outside.group"
+        },
+        "owner": {
+          "parent": "page-1"
+        }
+      },
+      "domain_attributes": {
+        "display_name": "Outside doms: the time series",
+        "order": -20,
+        "order_authored": true,
+        "placement": {
+          "transform": {
+            "translate": [
+              904.0,
+              412.04
+            ]
+          }
+        },
+        "plane_index": 0,
+        "provider_version": "0.6.0",
+        "style_bindings": [
+          {
+            "property": "fill",
+            "slot": "colour",
+            "style": "ground"
+          },
+          {
+            "property": "stroke",
+            "slot": "colour",
+            "style": "ground"
+          }
+        ]
+      },
+      "payload": {
+        "corner_radius": 10.0,
+        "fill": "#ffffff",
+        "height": 224.0,
+        "opacity": 1.0,
+        "stroke": "#171717",
+        "stroke_width": 0.0,
+        "width": 600.0
+      }
+    },
+    {
+      "id": "page",
+      "type": "arris.style",
+      "schema_version": 1,
+      "provider": "arris",
+      "created_revision": 1,
+      "updated_revision": 1,
+      "hierarchies": {
+        "group": {
+          "parent": null
+        },
+        "owner": {
+          "parent": "defs"
+        }
+      },
+      "domain_attributes": {
+        "display_name": "page",
+        "kind": "colour",
+        "order": 0,
+        "plane_index": 0,
+        "value": {
+          "colour": "#FFFFFF"
+        }
+      },
+      "payload": {}
+    },
+    {
+      "id": "page-1",
+      "type": "arris.page",
+      "schema_version": 1,
+      "provider": "arris",
+      "created_revision": 0,
+      "updated_revision": 1,
+      "hierarchies": {
+        "group": {
+          "parent": null
+        },
+        "owner": {
+          "parent": null
+        }
+      },
+      "domain_attributes": {
+        "fill": {
+          "token": "page"
+        },
+        "height": 1192.0,
+        "order": 0,
+        "plane_index": 0,
+        "width": 1552.0
+      },
+      "payload": {}
+    },
+    {
+      "id": "paper",
+      "type": "arris.style",
+      "schema_version": 1,
+      "provider": "arris",
+      "created_revision": 1,
+      "updated_revision": 1,
+      "hierarchies": {
+        "group": {
+          "parent": null
+        },
+        "owner": {
+          "parent": "defs"
+        }
+      },
+      "domain_attributes": {
+        "display_name": "paper",
+        "kind": "colour",
+        "order": 0,
+        "plane_index": 0,
+        "value": {
+          "colour": "#FFFFFF"
+        }
+      },
+      "payload": {}
+    },
+    {
+      "id": "project",
+      "type": "architecture.component",
+      "schema_version": 1,
+      "provider": "arris.architecture",
+      "created_revision": 1,
+      "updated_revision": 1,
+      "hierarchies": {
+        "group": {
+          "parent": "project.group"
+        },
+        "owner": {
+          "parent": "page-1"
+        }
+      },
+      "domain_attributes": {
+        "display_name": "hrc.project",
+        "order": 12,
+        "order_authored": true,
+        "placement": {
+          "transform": {
+            "translate": [
+              0.0,
+              0.0
+            ]
+          }
+        },
+        "plane_index": 0,
+        "provider_version": "0.1.0"
+      },
+      "payload": {
+        "body": "One per project with a seat on this node",
+        "bullets": [],
+        "emphasis": false,
+        "icon": "",
+        "kicker": "NODE · ROOT",
+        "meta": "key: projectId",
+        "name": "hrc.project",
+        "presentation": {
+          "caption": "project.caption",
+          "group": "project.group",
+          "mark": "project.mark",
+          "shadow": "project.shadow",
+          "shape": "project.shape"
+        }
+      }
+    },
+    {
+      "id": "project.caption",
+      "type": "arris.styled_text",
+      "schema_version": 1,
+      "provider": "arris.reference-core",
+      "created_revision": 1,
+      "updated_revision": 1,
+      "hierarchies": {
+        "group": {
+          "parent": "project.group"
+        },
+        "owner": {
+          "parent": "page-1"
+        }
+      },
+      "domain_attributes": {
+        "bindings": [
+          {
+            "input": "caption_region",
+            "output_port": "caption",
+            "producer": "project.shape"
+          }
+        ],
+        "display_name": "project.caption",
+        "order": 10,
+        "order_authored": true,
+        "placement": {
+          "transform": {
+            "translate": [
+              0.0,
+              0.0
+            ]
+          }
+        },
+        "plane_index": 0,
+        "provider_version": "0.6.0",
+        "style_bindings": [
+          {
+            "property": "fill",
+            "slot": "colour",
+            "style": "lead"
+          }
+        ]
+      },
+      "payload": {
+        "align": "left",
+        "face": "sans.regular",
+        "fill": "#171717",
+        "line_height": 1.391,
+        "max_height": 0.0,
+        "max_width": 0.0,
+        "padding": 14.0,
+        "runs": [
+          {
+            "end": 1,
+            "face": "mono.regular",
+            "fill": {
+              "token": "hue.graphite.ink"
+            },
+            "size": 10.0,
+            "start": 0,
+            "tracking": 6.0
+          },
+          {
+            "end": 12,
+            "face": "cond.semibold",
+            "fill": {
+              "token": "hue.graphite.ink"
+            },
+            "size": 9.5,
+            "start": 1,
+            "tracking": 0.9
+          },
+          {
+            "end": 13,
+            "start": 12
+          },
+          {
+            "end": 24,
+            "face": "sans.semibold",
+            "fill": {
+              "token": "graphite"
+            },
+            "size": 14.0,
+            "start": 13,
+            "tracking": 0.0
+          },
+          {
+            "end": 25,
+            "start": 24
+          },
+          {
+            "end": 65,
+            "face": "sans.regular",
+            "fill": {
+              "token": "lead"
+            },
+            "size": 11.5,
+            "start": 25,
+            "tracking": 0.0
+          },
+          {
+            "end": 66,
+            "start": 65
+          },
+          {
+            "end": 80,
+            "face": "mono.regular",
+            "fill": {
+              "token": "silver"
+            },
+            "size": 10.0,
+            "start": 66,
+            "tracking": 0.0
+          }
+        ],
+        "size": 11.5,
+        "text": " NODE · ROOT\nhrc.project\nOne per project with a seat on this node\nkey: projectId",
+        "tracking": 0.0,
+        "vertical_align": "center"
+      }
+    },
+    {
+      "id": "project.group",
+      "type": "arris.group",
+      "schema_version": 1,
+      "provider": "arris",
+      "created_revision": 1,
+      "updated_revision": 1,
+      "hierarchies": {
+        "group": {
+          "parent": "doc.group"
+        },
+        "owner": {
+          "parent": null
+        }
+      },
+      "domain_attributes": {
+        "display_name": "hrc.project",
+        "order": 0,
+        "plane_index": 0
+      },
+      "payload": {}
+    },
+    {
+      "id": "project.mark",
+      "type": "arris.scenario.kicker_mark",
+      "schema_version": 1,
+      "provider": "arris.scenario",
+      "created_revision": 1,
+      "updated_revision": 1,
+      "hierarchies": {
+        "group": {
+          "parent": "project.group"
+        },
+        "owner": {
+          "parent": "page-1"
+        }
+      },
+      "domain_attributes": {
+        "bindings": [
+          {
+            "input": "layout",
+            "output_port": "text_layout_v2",
+            "producer": "project.caption"
+          }
+        ],
+        "display_name": "project.mark",
+        "order": 11,
+        "order_authored": true,
+        "placement": {
+          "transform": {
+            "translate": [
+              0.0,
+              0.0
+            ]
+          }
+        },
+        "plane_index": 0,
+        "provider_version": "0.1.0",
+        "style_bindings": [
+          {
+            "property": "fill",
+            "slot": "colour",
+            "style": "hue.graphite.line"
+          }
+        ]
+      },
+      "payload": {
+        "caption": "project.caption",
+        "fill": "#7D8898"
+      }
+    },
+    {
+      "id": "project.shadow",
+      "type": "arris.exterior_shadow",
+      "schema_version": 1,
+      "provider": "arris.reference-core",
+      "created_revision": 1,
+      "updated_revision": 1,
+      "hierarchies": {
+        "group": {
+          "parent": "project.group"
+        },
+        "owner": {
+          "parent": "page-1"
+        }
+      },
+      "domain_attributes": {
+        "bindings": [
+          {
+            "input": "subject",
+            "output_port": "body",
+            "producer": "project.shape"
+          }
+        ],
+        "display_name": "shadow",
+        "order": 8,
+        "order_authored": true,
+        "placement": {
+          "transform": {
+            "translate": [
+              0.0,
+              0.0
+            ]
+          }
+        },
+        "plane_index": 0,
+        "provider_version": "0.6.0",
+        "style_bindings": [
+          {
+            "property": "colour",
+            "slot": "colour",
+            "style": "graphite"
+          }
+        ]
+      },
+      "payload": {
+        "bands": 8,
+        "colour": "#1A2330",
+        "falloff": 2.0,
+        "offset": [
+          0.0,
+          1.5
+        ],
+        "opacity": 0.1,
+        "spread": 4.4
+      }
+    },
+    {
+      "id": "project.shape",
+      "type": "arris.box",
+      "schema_version": 1,
+      "provider": "arris.reference-core",
+      "created_revision": 1,
+      "updated_revision": 1,
+      "hierarchies": {
+        "group": {
+          "parent": "project.group"
+        },
+        "owner": {
+          "parent": "page-1"
+        }
+      },
+      "domain_attributes": {
+        "attachments": {
+          "geometry": {
+            "parameters": {},
+            "schema_version": 1,
+            "type": "arris.attachment.box"
+          },
+          "ports": []
+        },
+        "display_name": "hrc.project",
+        "order": 9,
+        "order_authored": true,
+        "placement": {
+          "transform": {
+            "translate": [
+              355.64,
+              246.04
+            ]
+          }
+        },
+        "plane_index": 0,
+        "provider_version": "0.6.0",
+        "style_bindings": [
+          {
+            "property": "fill",
+            "slot": "colour",
+            "style": "paper"
+          },
+          {
+            "property": "stroke",
+            "slot": "colour",
+            "style": "card.neutral"
+          }
+        ]
+      },
+      "payload": {
+        "corner_radius": 6.0,
+        "fill": "#ffffff",
+        "height": 96.0,
+        "opacity": 1.0,
+        "stroke": "#171717",
+        "stroke_width": 1.25,
+        "width": 240.0
+      }
+    },
+    {
+      "id": "project__seat",
+      "type": "architecture.flow",
+      "schema_version": 1,
+      "provider": "arris.architecture",
+      "created_revision": 1,
+      "updated_revision": 1,
+      "hierarchies": {
+        "group": {
+          "parent": null
+        },
+        "owner": {
+          "parent": "page-1"
+        }
+      },
+      "domain_attributes": {
+        "display_name": "project__seat",
+        "order": 54,
+        "order_authored": true,
+        "placement": {
+          "transform": {
+            "translate": [
+              0.0,
+              0.0
+            ]
+          }
+        },
+        "plane_index": 0,
+        "provider_version": "0.1.0"
+      },
+      "payload": {
+        "from": "project",
+        "label": "lineage",
+        "presentation": {
+          "edge": "project__seat.edge",
+          "label": "label"
+        },
+        "to": "seat"
+      }
+    },
+    {
+      "id": "project__seat.edge",
+      "type": "arris.edge",
+      "schema_version": 1,
+      "provider": "arris",
+      "created_revision": 1,
+      "updated_revision": 1,
+      "hierarchies": {
+        "group": {
+          "parent": null
+        },
+        "owner": {
+          "parent": "page-1"
+        }
+      },
+      "domain_attributes": {
+        "display_name": "lineage",
+        "edge_order": 53,
+        "end": {
+          "parameters": {
+            "length": 8.4,
+            "width": 7.05
+          },
+          "schema_version": 1,
+          "type": "arris.filled"
+        },
+        "labels": [
+          {
+            "clearance": 0.0,
+            "label_id": "label",
+            "parameters": {
+              "face": "sans.medium",
+              "fill": {
+                "token": "hue.cobalt.ink"
+              },
+              "height": 18.0,
+              "padding": 8.0,
+              "paint": true,
+              "radius": 9.0,
+              "size": 10.5,
+              "tag_fill": {
+                "token": "paper"
+              },
+              "tag_stroke": {
+                "token": "hue.cobalt.line"
+              },
+              "tag_stroke_width": 1.0,
+              "text": "lineage"
+            },
+            "placement": {
+              "anchor": "center",
+              "distance": 62.8,
+              "kind": "route-distance",
+              "offset": [
+                0.0,
+                0.0
+              ],
+              "orientation": "route",
+              "rotation": 0.0
+            },
+            "schema_version": 1,
+            "type": "arris.tag"
+          }
+        ],
+        "order": 53,
+        "plane_index": 0,
+        "route": {
+          "corner_radius": 8.0,
+          "obstacles": {
+            "mode": "none"
+          },
+          "strategy": {
+            "parameters": {},
+            "schema_version": 1,
+            "type": "arris.polyline"
+          },
+          "waypoints": []
+        },
+        "shaft": {
+          "dash_offset": 0.0,
+          "stroke": {
+            "token": "hue.cobalt.line"
+          },
+          "width": 1.5
+        },
+        "source": {
+          "ref": "project.shape"
+        },
+        "source_detail": {
+          "attachment": {
+            "approach": {
+              "min_straight": 0.0,
+              "mode": "normal"
+            },
+            "clearance": 0.0,
+            "fraction": 0.7435000000000003,
+            "kind": "side",
+            "offset": 0.0,
+            "side": "bottom"
+          }
+        },
+        "target": {
+          "ref": "seat.shape"
+        },
+        "target_detail": {
+          "attachment": {
+            "approach": {
+              "min_straight": 0.0,
+              "mode": "normal"
+            },
+            "clearance": 0.0,
+            "fraction": 0.22944444444444473,
+            "kind": "side",
+            "offset": 0.0,
+            "side": "top"
+          }
+        }
+      },
+      "payload": {}
+    },
+    {
+      "id": "rule",
+      "type": "arris.style",
+      "schema_version": 1,
+      "provider": "arris",
+      "created_revision": 1,
+      "updated_revision": 1,
+      "hierarchies": {
+        "group": {
+          "parent": null
+        },
+        "owner": {
+          "parent": "defs"
+        }
+      },
+      "domain_attributes": {
+        "display_name": "rule",
+        "kind": "colour",
+        "order": 0,
+        "plane_index": 0,
+        "value": {
+          "colour": "#D8DEE5"
+        }
+      },
+      "payload": {}
+    },
+    {
+      "id": "runtime",
+      "type": "architecture.component",
+      "schema_version": 1,
+      "provider": "arris.architecture",
+      "created_revision": 1,
+      "updated_revision": 1,
+      "hierarchies": {
+        "group": {
+          "parent": "runtime.group"
+        },
+        "owner": {
+          "parent": "page-1"
+        }
+      },
+      "domain_attributes": {
+        "display_name": "hrc.runtime",
+        "order": 32,
+        "order_authored": true,
+        "placement": {
+          "transform": {
+            "translate": [
+              0.0,
+              0.0
+            ]
+          }
+        },
+        "plane_index": 0,
+        "provider_version": "0.1.0"
+      },
+      "payload": {
+        "bullets": [
+          "transport, harness, status",
+          "tmux, hrcpty attach surface",
+          "contextReading"
+        ],
+        "emphasis": false,
+        "icon": "",
+        "kicker": "NODE · PROCESS",
+        "meta": "key: runtimeId · attachable: tmux-attach",
+        "name": "hrc.runtime",
+        "presentation": {
+          "caption": "runtime.caption",
+          "group": "runtime.group",
+          "mark": "runtime.mark",
+          "shadow": "runtime.shadow",
+          "shape": "runtime.shape"
+        }
+      }
+    },
+    {
+      "id": "runtime.caption",
+      "type": "arris.styled_text",
+      "schema_version": 1,
+      "provider": "arris.reference-core",
+      "created_revision": 1,
+      "updated_revision": 1,
+      "hierarchies": {
+        "group": {
+          "parent": "runtime.group"
+        },
+        "owner": {
+          "parent": "page-1"
+        }
+      },
+      "domain_attributes": {
+        "bindings": [
+          {
+            "input": "caption_region",
+            "output_port": "caption",
+            "producer": "runtime.shape"
+          }
+        ],
+        "display_name": "runtime.caption",
+        "order": 30,
+        "order_authored": true,
+        "placement": {
+          "transform": {
+            "translate": [
+              0.0,
+              0.0
+            ]
+          }
+        },
+        "plane_index": 0,
+        "provider_version": "0.6.0",
+        "style_bindings": [
+          {
+            "property": "fill",
+            "slot": "colour",
+            "style": "lead"
+          }
+        ]
+      },
+      "payload": {
+        "align": "left",
+        "face": "sans.regular",
+        "fill": "#171717",
+        "line_height": 1.391,
+        "max_height": 0.0,
+        "max_width": 0.0,
+        "padding": 14.0,
+        "runs": [
+          {
+            "end": 1,
+            "face": "mono.regular",
+            "fill": {
+              "token": "hue.graphite.ink"
+            },
+            "size": 10.0,
+            "start": 0,
+            "tracking": 6.0
+          },
+          {
+            "end": 15,
+            "face": "cond.semibold",
+            "fill": {
+              "token": "hue.graphite.ink"
+            },
+            "size": 9.5,
+            "start": 1,
+            "tracking": 0.9
+          },
+          {
+            "end": 16,
+            "start": 15
+          },
+          {
+            "end": 27,
+            "face": "sans.semibold",
+            "fill": {
+              "token": "graphite"
+            },
+            "size": 14.0,
+            "start": 16,
+            "tracking": 0.0
+          },
+          {
+            "end": 28,
+            "start": 27
+          },
+          {
+            "end": 29,
+            "face": "sans.regular",
+            "fill": {
+              "token": "lead"
+            },
+            "size": 11.5,
+            "start": 28,
+            "tracking": 0.0
+          },
+          {
+            "end": 30,
+            "face": "sans.regular",
+            "fill": {
+              "token": "lead"
+            },
+            "size": 11.5,
+            "start": 29,
+            "tracking": 3.286
+          },
+          {
+            "end": 56,
+            "face": "sans.regular",
+            "fill": {
+              "token": "lead"
+            },
+            "size": 11.5,
+            "start": 30,
+            "tracking": 0.0
+          },
+          {
+            "end": 57,
+            "start": 56
+          },
+          {
+            "end": 58,
+            "face": "sans.regular",
+            "fill": {
+              "token": "lead"
+            },
+            "size": 11.5,
+            "start": 57,
+            "tracking": 0.0
+          },
+          {
+            "end": 59,
+            "face": "sans.regular",
+            "fill": {
+              "token": "lead"
+            },
+            "size": 11.5,
+            "start": 58,
+            "tracking": 3.286
+          },
+          {
+            "end": 86,
+            "face": "sans.regular",
+            "fill": {
+              "token": "lead"
+            },
+            "size": 11.5,
+            "start": 59,
+            "tracking": 0.0
+          },
+          {
+            "end": 87,
+            "start": 86
+          },
+          {
+            "end": 88,
+            "face": "sans.regular",
+            "fill": {
+              "token": "lead"
+            },
+            "size": 11.5,
+            "start": 87,
+            "tracking": 0.0
+          },
+          {
+            "end": 89,
+            "face": "sans.regular",
+            "fill": {
+              "token": "lead"
+            },
+            "size": 11.5,
+            "start": 88,
+            "tracking": 3.286
+          },
+          {
+            "end": 103,
+            "face": "sans.regular",
+            "fill": {
+              "token": "lead"
+            },
+            "size": 11.5,
+            "start": 89,
+            "tracking": 0.0
+          },
+          {
+            "end": 104,
+            "start": 103
+          },
+          {
+            "end": 144,
+            "face": "mono.regular",
+            "fill": {
+              "token": "silver"
+            },
+            "size": 10.0,
+            "start": 104,
+            "tracking": 0.0
+          }
+        ],
+        "size": 11.5,
+        "text": " NODE · PROCESS\nhrc.runtime\n• transport, harness, status\n• tmux, hrcpty attach surface\n• contextReading\nkey: runtimeId · attachable: tmux-attach",
+        "tracking": 0.0,
+        "vertical_align": "center"
+      }
+    },
+    {
+      "id": "runtime.group",
+      "type": "arris.group",
+      "schema_version": 1,
+      "provider": "arris",
+      "created_revision": 1,
+      "updated_revision": 1,
+      "hierarchies": {
+        "group": {
+          "parent": "doc.group"
+        },
+        "owner": {
+          "parent": null
+        }
+      },
+      "domain_attributes": {
+        "display_name": "hrc.runtime",
+        "order": 0,
+        "plane_index": 0
+      },
+      "payload": {}
+    },
+    {
+      "id": "runtime.mark",
+      "type": "arris.scenario.kicker_mark",
+      "schema_version": 1,
+      "provider": "arris.scenario",
+      "created_revision": 1,
+      "updated_revision": 1,
+      "hierarchies": {
+        "group": {
+          "parent": "runtime.group"
+        },
+        "owner": {
+          "parent": "page-1"
+        }
+      },
+      "domain_attributes": {
+        "bindings": [
+          {
+            "input": "layout",
+            "output_port": "text_layout_v2",
+            "producer": "runtime.caption"
+          }
+        ],
+        "display_name": "runtime.mark",
+        "order": 31,
+        "order_authored": true,
+        "placement": {
+          "transform": {
+            "translate": [
+              0.0,
+              0.0
+            ]
+          }
+        },
+        "plane_index": 0,
+        "provider_version": "0.1.0",
+        "style_bindings": [
+          {
+            "property": "fill",
+            "slot": "colour",
+            "style": "hue.graphite.line"
+          }
+        ]
+      },
+      "payload": {
+        "caption": "runtime.caption",
+        "fill": "#7D8898"
+      }
+    },
+    {
+      "id": "runtime.shadow",
+      "type": "arris.exterior_shadow",
+      "schema_version": 1,
+      "provider": "arris.reference-core",
+      "created_revision": 1,
+      "updated_revision": 1,
+      "hierarchies": {
+        "group": {
+          "parent": "runtime.group"
+        },
+        "owner": {
+          "parent": "page-1"
+        }
+      },
+      "domain_attributes": {
+        "bindings": [
+          {
+            "input": "subject",
+            "output_port": "body",
+            "producer": "runtime.shape"
+          }
+        ],
+        "display_name": "shadow",
+        "order": 28,
+        "order_authored": true,
+        "placement": {
+          "transform": {
+            "translate": [
+              0.0,
+              0.0
+            ]
+          }
+        },
+        "plane_index": 0,
+        "provider_version": "0.6.0",
+        "style_bindings": [
+          {
+            "property": "colour",
+            "slot": "colour",
+            "style": "graphite"
+          }
+        ]
+      },
+      "payload": {
+        "bands": 8,
+        "colour": "#1A2330",
+        "falloff": 2.0,
+        "offset": [
+          0.0,
+          1.5
+        ],
+        "opacity": 0.1,
+        "spread": 4.4
+      }
+    },
+    {
+      "id": "runtime.shape",
+      "type": "arris.box",
+      "schema_version": 1,
+      "provider": "arris.reference-core",
+      "created_revision": 1,
+      "updated_revision": 1,
+      "hierarchies": {
+        "group": {
+          "parent": "runtime.group"
+        },
+        "owner": {
+          "parent": "page-1"
+        }
+      },
+      "domain_attributes": {
+        "attachments": {
+          "geometry": {
+            "parameters": {},
+            "schema_version": 1,
+            "type": "arris.attachment.box"
+          },
+          "ports": []
+        },
+        "display_name": "hrc.runtime",
+        "order": 29,
+        "order_authored": true,
+        "placement": {
+          "transform": {
+            "translate": [
+              64.0,
+              976.04
+            ]
+          }
+        },
+        "plane_index": 0,
+        "provider_version": "0.6.0",
+        "style_bindings": [
+          {
+            "property": "fill",
+            "slot": "colour",
+            "style": "paper"
+          },
+          {
+            "property": "stroke",
+            "slot": "colour",
+            "style": "card.neutral"
+          }
+        ]
+      },
+      "payload": {
+        "corner_radius": 6.0,
+        "fill": "#ffffff",
+        "height": 144.0,
+        "opacity": 1.0,
+        "stroke": "#171717",
+        "stroke_width": 1.25,
+        "width": 264.0
+      }
+    },
+    {
+      "id": "seat",
+      "type": "architecture.component",
+      "schema_version": 1,
+      "provider": "arris.architecture",
+      "created_revision": 1,
+      "updated_revision": 1,
+      "hierarchies": {
+        "group": {
+          "parent": "seat.group"
+        },
+        "owner": {
+          "parent": "page-1"
+        }
+      },
+      "domain_attributes": {
+        "display_name": "hrc.seat",
+        "order": 17,
+        "order_authored": true,
+        "placement": {
+          "transform": {
+            "translate": [
+              0.0,
+              0.0
+            ]
+          }
+        },
+        "plane_index": 0,
+        "provider_version": "0.1.0"
+      },
+      "payload": {
+        "bullets": [
+          "identity: agent, project, task, role",
+          "metadata: title, colour, hcs ref",
+          "activeGeneration, status summary"
+        ],
+        "emphasis": true,
+        "icon": "",
+        "kicker": "NODE · CONTINUITY",
+        "meta": "key: sessionRef = scope/lane",
+        "name": "hrc.seat",
+        "presentation": {
+          "caption": "seat.caption",
+          "group": "seat.group",
+          "mark": "seat.mark",
+          "shadow": "seat.shadow",
+          "shape": "seat.shape"
+        }
+      }
+    },
+    {
+      "id": "seat.caption",
+      "type": "arris.styled_text",
+      "schema_version": 1,
+      "provider": "arris.reference-core",
+      "created_revision": 1,
+      "updated_revision": 1,
+      "hierarchies": {
+        "group": {
+          "parent": "seat.group"
+        },
+        "owner": {
+          "parent": "page-1"
+        }
+      },
+      "domain_attributes": {
+        "bindings": [
+          {
+            "input": "caption_region",
+            "output_port": "caption",
+            "producer": "seat.shape"
+          }
+        ],
+        "display_name": "seat.caption",
+        "order": 15,
+        "order_authored": true,
+        "placement": {
+          "transform": {
+            "translate": [
+              0.0,
+              0.0
+            ]
+          }
+        },
+        "plane_index": 0,
+        "provider_version": "0.6.0",
+        "style_bindings": [
+          {
+            "property": "fill",
+            "slot": "colour",
+            "style": "lead"
+          }
+        ]
+      },
+      "payload": {
+        "align": "left",
+        "face": "sans.regular",
+        "fill": "#171717",
+        "line_height": 1.391,
+        "max_height": 0.0,
+        "max_width": 0.0,
+        "padding": 14.0,
+        "runs": [
+          {
+            "end": 1,
+            "face": "mono.regular",
+            "fill": {
+              "token": "hue.graphite.ink"
+            },
+            "size": 10.0,
+            "start": 0,
+            "tracking": 6.0
+          },
+          {
+            "end": 18,
+            "face": "cond.semibold",
+            "fill": {
+              "token": "hue.graphite.ink"
+            },
+            "size": 9.5,
+            "start": 1,
+            "tracking": 0.9
+          },
+          {
+            "end": 19,
+            "start": 18
+          },
+          {
+            "end": 27,
+            "face": "sans.semibold",
+            "fill": {
+              "token": "graphite"
+            },
+            "size": 14.0,
+            "start": 19,
+            "tracking": 0.0
+          },
+          {
+            "end": 28,
+            "start": 27
+          },
+          {
+            "end": 29,
+            "face": "sans.regular",
+            "fill": {
+              "token": "lead"
+            },
+            "size": 11.5,
+            "start": 28,
+            "tracking": 0.0
+          },
+          {
+            "end": 30,
+            "face": "sans.regular",
+            "fill": {
+              "token": "lead"
+            },
+            "size": 11.5,
+            "start": 29,
+            "tracking": 3.286
+          },
+          {
+            "end": 66,
+            "face": "sans.regular",
+            "fill": {
+              "token": "lead"
+            },
+            "size": 11.5,
+            "start": 30,
+            "tracking": 0.0
+          },
+          {
+            "end": 67,
+            "start": 66
+          },
+          {
+            "end": 68,
+            "face": "sans.regular",
+            "fill": {
+              "token": "lead"
+            },
+            "size": 11.5,
+            "start": 67,
+            "tracking": 0.0
+          },
+          {
+            "end": 69,
+            "face": "sans.regular",
+            "fill": {
+              "token": "lead"
+            },
+            "size": 11.5,
+            "start": 68,
+            "tracking": 3.286
+          },
+          {
+            "end": 101,
+            "face": "sans.regular",
+            "fill": {
+              "token": "lead"
+            },
+            "size": 11.5,
+            "start": 69,
+            "tracking": 0.0
+          },
+          {
+            "end": 102,
+            "start": 101
+          },
+          {
+            "end": 103,
+            "face": "sans.regular",
+            "fill": {
+              "token": "lead"
+            },
+            "size": 11.5,
+            "start": 102,
+            "tracking": 0.0
+          },
+          {
+            "end": 104,
+            "face": "sans.regular",
+            "fill": {
+              "token": "lead"
+            },
+            "size": 11.5,
+            "start": 103,
+            "tracking": 3.286
+          },
+          {
+            "end": 136,
+            "face": "sans.regular",
+            "fill": {
+              "token": "lead"
+            },
+            "size": 11.5,
+            "start": 104,
+            "tracking": 0.0
+          },
+          {
+            "end": 137,
+            "start": 136
+          },
+          {
+            "end": 165,
+            "face": "mono.regular",
+            "fill": {
+              "token": "silver"
+            },
+            "size": 10.0,
+            "start": 137,
+            "tracking": 0.0
+          }
+        ],
+        "size": 11.5,
+        "text": " NODE · CONTINUITY\nhrc.seat\n• identity: agent, project, task, role\n• metadata: title, colour, hcs ref\n• activeGeneration, status summary\nkey: sessionRef = scope/lane",
+        "tracking": 0.0,
+        "vertical_align": "center"
+      }
+    },
+    {
+      "id": "seat.group",
+      "type": "arris.group",
+      "schema_version": 1,
+      "provider": "arris",
+      "created_revision": 1,
+      "updated_revision": 1,
+      "hierarchies": {
+        "group": {
+          "parent": "doc.group"
+        },
+        "owner": {
+          "parent": null
+        }
+      },
+      "domain_attributes": {
+        "display_name": "hrc.seat",
+        "order": 0,
+        "plane_index": 0
+      },
+      "payload": {}
+    },
+    {
+      "id": "seat.mark",
+      "type": "arris.scenario.kicker_mark",
+      "schema_version": 1,
+      "provider": "arris.scenario",
+      "created_revision": 1,
+      "updated_revision": 1,
+      "hierarchies": {
+        "group": {
+          "parent": "seat.group"
+        },
+        "owner": {
+          "parent": "page-1"
+        }
+      },
+      "domain_attributes": {
+        "bindings": [
+          {
+            "input": "layout",
+            "output_port": "text_layout_v2",
+            "producer": "seat.caption"
+          }
+        ],
+        "display_name": "seat.mark",
+        "order": 16,
+        "order_authored": true,
+        "placement": {
+          "transform": {
+            "translate": [
+              0.0,
+              0.0
+            ]
+          }
+        },
+        "plane_index": 0,
+        "provider_version": "0.1.0",
+        "style_bindings": [
+          {
+            "property": "fill",
+            "slot": "colour",
+            "style": "hue.graphite.line"
+          }
+        ]
+      },
+      "payload": {
+        "caption": "seat.caption",
+        "fill": "#7D8898"
+      }
+    },
+    {
+      "id": "seat.shadow",
+      "type": "arris.exterior_shadow",
+      "schema_version": 1,
+      "provider": "arris.reference-core",
+      "created_revision": 1,
+      "updated_revision": 1,
+      "hierarchies": {
+        "group": {
+          "parent": "seat.group"
+        },
+        "owner": {
+          "parent": "page-1"
+        }
+      },
+      "domain_attributes": {
+        "bindings": [
+          {
+            "input": "subject",
+            "output_port": "body",
+            "producer": "seat.shape"
+          }
+        ],
+        "display_name": "shadow",
+        "order": 13,
+        "order_authored": true,
+        "placement": {
+          "transform": {
+            "translate": [
+              0.0,
+              0.0
+            ]
+          }
+        },
+        "plane_index": 0,
+        "provider_version": "0.6.0",
+        "style_bindings": [
+          {
+            "property": "colour",
+            "slot": "colour",
+            "style": "graphite"
+          }
+        ]
+      },
+      "payload": {
+        "bands": 8,
+        "colour": "#1A2330",
+        "falloff": 2.0,
+        "offset": [
+          0.0,
+          1.5
+        ],
+        "opacity": 0.1,
+        "spread": 4.4
+      }
+    },
+    {
+      "id": "seat.shape",
+      "type": "arris.box",
+      "schema_version": 1,
+      "provider": "arris.reference-core",
+      "created_revision": 1,
+      "updated_revision": 1,
+      "hierarchies": {
+        "group": {
+          "parent": "seat.group"
+        },
+        "owner": {
+          "parent": "page-1"
+        }
+      },
+      "domain_attributes": {
+        "attachments": {
+          "geometry": {
+            "parameters": {},
+            "schema_version": 1,
+            "type": "arris.attachment.box"
+          },
+          "ports": []
+        },
+        "display_name": "hrc.seat",
+        "order": 14,
+        "order_authored": true,
+        "placement": {
+          "transform": {
+            "translate": [
+              484.52,
+              476.04
+            ]
+          }
+        },
+        "plane_index": 0,
+        "provider_version": "0.6.0",
+        "style_bindings": [
+          {
+            "property": "fill",
+            "slot": "colour",
+            "style": "paper"
+          },
+          {
+            "property": "stroke",
+            "slot": "colour",
+            "style": "card.neutral"
+          }
+        ]
+      },
+      "payload": {
+        "corner_radius": 6.0,
+        "fill": "#ffffff",
+        "height": 128.0,
+        "opacity": 1.0,
+        "stroke": "#171717",
+        "stroke_width": 2.0,
+        "width": 216.0
+      }
+    },
+    {
+      "id": "seat__gen",
+      "type": "architecture.flow",
+      "schema_version": 1,
+      "provider": "arris.architecture",
+      "created_revision": 1,
+      "updated_revision": 1,
+      "hierarchies": {
+        "group": {
+          "parent": null
+        },
+        "owner": {
+          "parent": "page-1"
+        }
+      },
+      "domain_attributes": {
+        "display_name": "seat__gen",
+        "order": 56,
+        "order_authored": true,
+        "placement": {
+          "transform": {
+            "translate": [
+              0.0,
+              0.0
+            ]
+          }
+        },
+        "plane_index": 0,
+        "provider_version": "0.1.0"
+      },
+      "payload": {
+        "from": "seat",
+        "label": "lineage",
+        "presentation": {
+          "edge": "seat__gen.edge",
+          "label": "label"
+        },
+        "to": "gen"
+      }
+    },
+    {
+      "id": "seat__gen.edge",
+      "type": "arris.edge",
+      "schema_version": 1,
+      "provider": "arris",
+      "created_revision": 1,
+      "updated_revision": 7,
+      "hierarchies": {
+        "group": {
+          "parent": null
+        },
+        "owner": {
+          "parent": "page-1"
+        }
+      },
+      "domain_attributes": {
+        "display_name": "lineage",
+        "edge_order": 55,
+        "end": {
+          "parameters": {
+            "length": 8.4,
+            "width": 7.05
+          },
+          "schema_version": 1,
+          "type": "arris.filled"
+        },
+        "labels": [
+          {
+            "clearance": 0.0,
+            "label_id": "label",
+            "parameters": {
+              "face": "sans.medium",
+              "fill": {
+                "token": "hue.cobalt.ink"
+              },
+              "height": 18.0,
+              "padding": 8.0,
+              "paint": true,
+              "radius": 9.0,
+              "size": 10.5,
+              "tag_fill": {
+                "token": "paper"
+              },
+              "tag_stroke": {
+                "token": "hue.cobalt.line"
+              },
+              "tag_stroke_width": 1.0,
+              "text": "lineage"
+            },
+            "placement": {
+              "anchor": "center",
+              "distance": 206.28,
+              "kind": "route-distance",
+              "offset": [
+                0.0,
+                0.0
+              ],
+              "orientation": "route",
+              "rotation": 0.0
+            },
+            "schema_version": 1,
+            "type": "arris.tag"
+          }
+        ],
+        "order": 55,
+        "plane_index": 0,
+        "route": {
+          "corner_radius": 8.0,
+          "obstacles": {
+            "mode": "none"
+          },
+          "strategy": {
+            "parameters": {},
+            "schema_version": 1,
+            "type": "arris.polyline"
+          },
+          "waypoints": [
+            {
+              "point": [
+                556.52,
+                690.04
+              ],
+              "space": "page"
+            },
+            {
+              "point": [
+                309.09,
+                690.04
+              ],
+              "space": "page"
+            }
+          ]
+        },
+        "shaft": {
+          "dash_offset": 0.0,
+          "stroke": {
+            "token": "hue.cobalt.line"
+          },
+          "width": 1.5
+        },
+        "source": {
+          "ref": "seat.shape"
+        },
+        "source_detail": {
+          "attachment": {
+            "approach": {
+              "min_straight": 0.0,
+              "mode": "normal"
+            },
+            "clearance": 0.0,
+            "fraction": 0.3333333333333333,
+            "kind": "side",
+            "offset": 0.0,
+            "side": "bottom"
+          }
+        },
+        "target": {
+          "ref": "gen.shape"
+        },
+        "target_detail": {
+          "attachment": {
+            "approach": {
+              "min_straight": 0.0,
+              "mode": "normal"
+            },
+            "clearance": 0.0,
+            "fraction": 0.33332031249999994,
+            "kind": "side",
+            "offset": 0.0,
+            "side": "top"
+          }
+        }
+      },
+      "payload": {}
+    },
+    {
+      "id": "seat__genprev",
+      "type": "architecture.flow",
+      "schema_version": 1,
+      "provider": "arris.architecture",
+      "created_revision": 1,
+      "updated_revision": 1,
+      "hierarchies": {
+        "group": {
+          "parent": null
+        },
+        "owner": {
+          "parent": "page-1"
+        }
+      },
+      "domain_attributes": {
+        "display_name": "seat__genprev",
+        "order": 58,
+        "order_authored": true,
+        "placement": {
+          "transform": {
+            "translate": [
+              0.0,
+              0.0
+            ]
+          }
+        },
+        "plane_index": 0,
+        "provider_version": "0.1.0"
+      },
+      "payload": {
+        "from": "seat",
+        "label": "lineage",
+        "presentation": {
+          "edge": "seat__genprev.edge",
+          "label": "label"
+        },
+        "to": "genprev"
+      }
+    },
+    {
+      "id": "seat__genprev.edge",
+      "type": "arris.edge",
+      "schema_version": 1,
+      "provider": "arris",
+      "created_revision": 1,
+      "updated_revision": 7,
+      "hierarchies": {
+        "group": {
+          "parent": null
+        },
+        "owner": {
+          "parent": "page-1"
+        }
+      },
+      "domain_attributes": {
+        "display_name": "lineage",
+        "edge_order": 57,
+        "end": {
+          "parameters": {
+            "length": 8.4,
+            "width": 7.05
+          },
+          "schema_version": 1,
+          "type": "arris.filled"
+        },
+        "labels": [
+          {
+            "clearance": 0.0,
+            "label_id": "label",
+            "parameters": {
+              "face": "sans.medium",
+              "fill": {
+                "token": "hue.cobalt.ink"
+              },
+              "height": 18.0,
+              "padding": 8.0,
+              "paint": true,
+              "radius": 9.0,
+              "size": 10.5,
+              "tag_fill": {
+                "token": "paper"
+              },
+              "tag_stroke": {
+                "token": "hue.cobalt.line"
+              },
+              "tag_stroke_width": 1.0,
+              "text": "lineage"
+            },
+            "placement": {
+              "anchor": "center",
+              "distance": 61.0,
+              "kind": "route-distance",
+              "offset": [
+                0.0,
+                0.0
+              ],
+              "orientation": "route",
+              "rotation": 0.0
+            },
+            "schema_version": 1,
+            "type": "arris.tag"
+          }
+        ],
+        "order": 57,
+        "plane_index": 0,
+        "route": {
+          "corner_radius": 8.0,
+          "obstacles": {
+            "mode": "none"
+          },
+          "strategy": {
+            "parameters": {},
+            "schema_version": 1,
+            "type": "arris.polyline"
+          },
+          "waypoints": [
+            {
+              "point": [
+                635.76,
+                726.04
+              ],
+              "space": "page"
+            }
+          ]
+        },
+        "shaft": {
+          "dash_offset": 0.0,
+          "stroke": {
+            "token": "hue.cobalt.line"
+          },
+          "width": 1.5
+        },
+        "source": {
+          "ref": "seat.shape"
+        },
+        "source_detail": {
+          "attachment": {
+            "approach": {
+              "min_straight": 0.0,
+              "mode": "normal"
+            },
+            "clearance": 0.0,
+            "fraction": 0.7001851851851852,
+            "kind": "side",
+            "offset": 0.0,
+            "side": "bottom"
+          }
+        },
+        "target": {
+          "ref": "genprev.shape"
+        },
+        "target_detail": {
+          "attachment": {
+            "approach": {
+              "min_straight": 0.0,
+              "mode": "normal"
+            },
+            "clearance": 0.0,
+            "fraction": 0.5,
+            "kind": "side",
+            "offset": 0.0,
+            "side": "top"
+          }
+        }
+      },
+      "payload": {}
+    },
+    {
+      "id": "silver",
+      "type": "arris.style",
+      "schema_version": 1,
+      "provider": "arris",
+      "created_revision": 1,
+      "updated_revision": 1,
+      "hierarchies": {
+        "group": {
+          "parent": null
+        },
+        "owner": {
+          "parent": "defs"
+        }
+      },
+      "domain_attributes": {
+        "display_name": "silver",
+        "kind": "colour",
+        "order": 0,
+        "plane_index": 0,
+        "value": {
+          "colour": "#8792A2"
+        }
+      },
+      "payload": {}
+    },
+    {
+      "id": "tables",
+      "type": "architecture.datastore",
+      "schema_version": 1,
+      "provider": "arris.architecture",
+      "created_revision": 1,
+      "updated_revision": 1,
+      "hierarchies": {
+        "group": {
+          "parent": "tables.group"
+        },
+        "owner": {
+          "parent": "page-1"
+        }
+      },
+      "domain_attributes": {
+        "display_name": "Store rows",
+        "order": 52,
+        "order_authored": true,
+        "placement": {
+          "transform": {
+            "translate": [
+              0.0,
+              0.0
+            ]
+          }
+        },
+        "plane_index": 0,
+        "provider_version": "0.1.0"
+      },
+      "payload": {
+        "body": "Every node mirrors one row; a client changes the row, never the node",
+        "bullets": [],
+        "emphasis": false,
+        "icon": "",
+        "kicker": "DATASTORE · HRC",
+        "meta": "continuities · sessions · runtimes · session_metadata · seat_documents",
+        "name": "Store rows",
+        "presentation": {
+          "caption": "tables.caption",
+          "group": "tables.group",
+          "mark": "tables.mark",
+          "shadow": "tables.shadow",
+          "shape": "tables.shape"
+        }
+      }
+    },
+    {
+      "id": "tables.caption",
+      "type": "arris.styled_text",
+      "schema_version": 1,
+      "provider": "arris.reference-core",
+      "created_revision": 1,
+      "updated_revision": 1,
+      "hierarchies": {
+        "group": {
+          "parent": "tables.group"
+        },
+        "owner": {
+          "parent": "page-1"
+        }
+      },
+      "domain_attributes": {
+        "bindings": [
+          {
+            "input": "caption_region",
+            "output_port": "caption",
+            "producer": "tables.shape"
+          }
+        ],
+        "display_name": "tables.caption",
+        "order": 50,
+        "order_authored": true,
+        "placement": {
+          "transform": {
+            "translate": [
+              0.0,
+              0.0
+            ]
+          }
+        },
+        "plane_index": 0,
+        "provider_version": "0.6.0",
+        "style_bindings": [
+          {
+            "property": "fill",
+            "slot": "colour",
+            "style": "lead"
+          }
+        ]
+      },
+      "payload": {
+        "align": "left",
+        "face": "sans.regular",
+        "fill": "#171717",
+        "line_height": 1.391,
+        "max_height": 0.0,
+        "max_width": 0.0,
+        "padding": 8.0,
+        "runs": [
+          {
+            "end": 1,
+            "face": "mono.regular",
+            "fill": {
+              "token": "hue.graphite.ink"
+            },
+            "size": 10.0,
+            "start": 0,
+            "tracking": 6.0
+          },
+          {
+            "end": 16,
+            "face": "cond.semibold",
+            "fill": {
+              "token": "hue.graphite.ink"
+            },
+            "size": 9.5,
+            "start": 1,
+            "tracking": 0.9
+          },
+          {
+            "end": 17,
+            "start": 16
+          },
+          {
+            "end": 27,
+            "face": "sans.semibold",
+            "fill": {
+              "token": "graphite"
+            },
+            "size": 14.0,
+            "start": 17,
+            "tracking": 0.0
+          },
+          {
+            "end": 28,
+            "start": 27
+          },
+          {
+            "end": 96,
+            "face": "sans.regular",
+            "fill": {
+              "token": "lead"
+            },
+            "size": 11.5,
+            "start": 28,
+            "tracking": 0.0
+          },
+          {
+            "end": 97,
+            "start": 96
+          },
+          {
+            "end": 167,
+            "face": "mono.regular",
+            "fill": {
+              "token": "silver"
+            },
+            "size": 10.0,
+            "start": 97,
+            "tracking": 0.0
+          }
+        ],
+        "size": 11.5,
+        "text": " DATASTORE · HRC\nStore rows\nEvery node mirrors one row; a client changes the row, never the node\ncontinuities · sessions · runtimes · session_metadata · seat_documents",
+        "tracking": 0.0,
+        "vertical_align": "center"
+      }
+    },
+    {
+      "id": "tables.group",
+      "type": "arris.group",
+      "schema_version": 1,
+      "provider": "arris",
+      "created_revision": 1,
+      "updated_revision": 1,
+      "hierarchies": {
+        "group": {
+          "parent": "outside.group"
+        },
+        "owner": {
+          "parent": null
+        }
+      },
+      "domain_attributes": {
+        "display_name": "Store rows",
+        "order": 0,
+        "plane_index": 0
+      },
+      "payload": {}
+    },
+    {
+      "id": "tables.mark",
+      "type": "arris.scenario.kicker_mark",
+      "schema_version": 1,
+      "provider": "arris.scenario",
+      "created_revision": 1,
+      "updated_revision": 1,
+      "hierarchies": {
+        "group": {
+          "parent": "tables.group"
+        },
+        "owner": {
+          "parent": "page-1"
+        }
+      },
+      "domain_attributes": {
+        "bindings": [
+          {
+            "input": "layout",
+            "output_port": "text_layout_v2",
+            "producer": "tables.caption"
+          }
+        ],
+        "display_name": "tables.mark",
+        "order": 51,
+        "order_authored": true,
+        "placement": {
+          "transform": {
+            "translate": [
+              0.0,
+              0.0
+            ]
+          }
+        },
+        "plane_index": 0,
+        "provider_version": "0.1.0",
+        "style_bindings": [
+          {
+            "property": "fill",
+            "slot": "colour",
+            "style": "hue.graphite.line"
+          }
+        ]
+      },
+      "payload": {
+        "caption": "tables.caption",
+        "fill": "#7D8898"
+      }
+    },
+    {
+      "id": "tables.shadow",
+      "type": "arris.exterior_shadow",
+      "schema_version": 1,
+      "provider": "arris.reference-core",
+      "created_revision": 1,
+      "updated_revision": 1,
+      "hierarchies": {
+        "group": {
+          "parent": "tables.group"
+        },
+        "owner": {
+          "parent": "page-1"
+        }
+      },
+      "domain_attributes": {
+        "bindings": [
+          {
+            "input": "subject",
+            "output_port": "body",
+            "producer": "tables.shape"
+          }
+        ],
+        "display_name": "shadow",
+        "order": 48,
+        "order_authored": true,
+        "placement": {
+          "transform": {
+            "translate": [
+              0.0,
+              0.0
+            ]
+          }
+        },
+        "plane_index": 0,
+        "provider_version": "0.6.0",
+        "style_bindings": [
+          {
+            "property": "colour",
+            "slot": "colour",
+            "style": "graphite"
+          }
+        ]
+      },
+      "payload": {
+        "bands": 8,
+        "colour": "#1A2330",
+        "falloff": 2.0,
+        "offset": [
+          0.0,
+          1.5
+        ],
+        "opacity": 0.1,
+        "spread": 4.4
+      }
+    },
+    {
+      "id": "tables.shape",
+      "type": "arris.cylinder",
+      "schema_version": 1,
+      "provider": "arris.reference-core",
+      "created_revision": 1,
+      "updated_revision": 1,
+      "hierarchies": {
+        "group": {
+          "parent": "tables.group"
+        },
+        "owner": {
+          "parent": "page-1"
+        }
+      },
+      "domain_attributes": {
+        "attachments": {
+          "geometry": {
+            "parameters": {},
+            "schema_version": 1,
+            "type": "arris.attachment.box"
+          },
+          "ports": []
+        },
+        "display_name": "Store rows",
+        "order": 49,
+        "order_authored": true,
+        "placement": {
+          "transform": {
+            "translate": [
+              1216.0,
+              468.04
+            ]
+          }
+        },
+        "plane_index": 0,
+        "provider_version": "0.6.0",
+        "style_bindings": [
+          {
+            "property": "fill",
+            "slot": "colour",
+            "style": "paper"
+          },
+          {
+            "property": "stroke",
+            "slot": "colour",
+            "style": "card.neutral"
+          }
+        ]
+      },
+      "payload": {
+        "cap": 9.0,
+        "fill": "#ffffff",
+        "height": 144.0,
+        "lid": "start",
+        "opacity": 1.0,
+        "orientation": "vertical",
+        "stroke": "#171717",
+        "stroke_width": 1.25,
+        "width": 264.0
+      }
+    },
+    {
+      "id": "tables__card",
+      "type": "architecture.dependency",
+      "schema_version": 1,
+      "provider": "arris.architecture",
+      "created_revision": 1,
+      "updated_revision": 1,
+      "hierarchies": {
+        "group": {
+          "parent": null
+        },
+        "owner": {
+          "parent": "page-1"
+        }
+      },
+      "domain_attributes": {
+        "display_name": "tables__card",
+        "order": 70,
+        "order_authored": true,
+        "placement": {
+          "transform": {
+            "translate": [
+              0.0,
+              0.0
+            ]
+          }
+        },
+        "plane_index": 0,
+        "provider_version": "0.1.0"
+      },
+      "payload": {
+        "from": "tables",
+        "presentation": {
+          "edge": "tables__card.edge"
+        },
+        "to": "card"
+      }
+    },
+    {
+      "id": "tables__card.edge",
+      "type": "arris.edge",
+      "schema_version": 1,
+      "provider": "arris",
+      "created_revision": 1,
+      "updated_revision": 7,
+      "hierarchies": {
+        "group": {
+          "parent": null
+        },
+        "owner": {
+          "parent": "page-1"
+        }
+      },
+      "domain_attributes": {
+        "display_name": "tables__card",
+        "edge_order": 69,
+        "labels": [],
+        "order": 69,
+        "plane_index": 0,
+        "route": {
+          "corner_radius": 8.0,
+          "obstacles": {
+            "mode": "none"
+          },
+          "strategy": {
+            "parameters": {},
+            "schema_version": 1,
+            "type": "arris.polyline"
+          },
+          "waypoints": [
+            {
+              "point": [
+                1348.0,
+                1132.04
+              ],
+              "space": "page"
+            },
+            {
+              "point": [
+                468.0,
+                1132.04
+              ],
+              "space": "page"
+            }
+          ]
+        },
+        "shaft": {
+          "dash": [
+            1.5,
+            3.0
+          ],
+          "dash_offset": 0.0,
+          "stroke": {
+            "token": "hue.graphite.line"
+          },
+          "width": 1.25
+        },
+        "source": {
+          "ref": "tables.shape"
+        },
+        "source_detail": {
+          "attachment": {
+            "approach": {
+              "min_straight": 0.0,
+              "mode": "normal"
+            },
+            "clearance": 0.0,
+            "fraction": 0.5,
+            "kind": "side",
+            "offset": 0.0,
+            "side": "bottom"
+          }
+        },
+        "target": {
+          "ref": "card.shape"
+        },
+        "target_detail": {
+          "attachment": {
+            "approach": {
+              "min_straight": 0.0,
+              "mode": "normal"
+            },
+            "clearance": 0.0,
+            "fraction": 0.5,
+            "kind": "side",
+            "offset": 0.0,
+            "side": "bottom"
+          }
+        }
+      },
+      "payload": {}
+    },
+    {
+      "id": "tables__seat",
+      "type": "architecture.dependency",
+      "schema_version": 1,
+      "provider": "arris.architecture",
+      "created_revision": 1,
+      "updated_revision": 7,
+      "hierarchies": {
+        "group": {
+          "parent": null
+        },
+        "owner": {
+          "parent": "page-1"
+        }
+      },
+      "domain_attributes": {
+        "display_name": "tables__seat",
+        "order": 68,
+        "order_authored": true,
+        "placement": {
+          "transform": {
+            "translate": [
+              0.0,
+              0.0
+            ]
+          }
+        },
+        "plane_index": 0,
+        "provider_version": "0.1.0"
+      },
+      "payload": {
+        "from": "tables",
+        "hints": {
+          "route": {
+            "along": "outside",
+            "enter": "top",
+            "leave": "top",
+            "side": "top"
+          }
+        },
+        "presentation": {
+          "edge": "tables__seat.edge"
+        },
+        "to": "seat"
+      }
+    },
+    {
+      "id": "tables__seat.edge",
+      "type": "arris.edge",
+      "schema_version": 1,
+      "provider": "arris",
+      "created_revision": 1,
+      "updated_revision": 7,
+      "hierarchies": {
+        "group": {
+          "parent": null
+        },
+        "owner": {
+          "parent": "page-1"
+        }
+      },
+      "domain_attributes": {
+        "display_name": "tables__seat",
+        "edge_order": 67,
+        "labels": [],
+        "order": 67,
+        "plane_index": 0,
+        "route": {
+          "corner_radius": 8.0,
+          "obstacles": {
+            "mode": "none"
+          },
+          "strategy": {
+            "parameters": {},
+            "schema_version": 1,
+            "type": "arris.polyline"
+          },
+          "waypoints": [
+            {
+              "point": [
+                1348.0,
+                400.04
+              ],
+              "space": "page"
+            },
+            {
+              "point": [
+                592.52,
+                400.04
+              ],
+              "space": "page"
+            }
+          ]
+        },
+        "shaft": {
+          "dash": [
+            1.5,
+            3.0
+          ],
+          "dash_offset": 0.0,
+          "stroke": {
+            "token": "hue.graphite.line"
+          },
+          "width": 1.25
+        },
+        "source": {
+          "ref": "tables.shape"
+        },
+        "source_detail": {
+          "attachment": {
+            "approach": {
+              "min_straight": 0.0,
+              "mode": "normal"
+            },
+            "clearance": 0.0,
+            "fraction": 0.5,
+            "kind": "side",
+            "offset": 0.0,
+            "side": "top"
+          }
+        },
+        "target": {
+          "ref": "seat.shape"
+        },
+        "target_detail": {
+          "attachment": {
+            "approach": {
+              "min_straight": 0.0,
+              "mode": "normal"
+            },
+            "clearance": 0.0,
+            "fraction": 0.5,
+            "kind": "side",
+            "offset": 0.0,
+            "side": "top"
+          }
+        }
+      },
+      "payload": {}
+    }
+  ]
+}

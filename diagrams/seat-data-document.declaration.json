@@ -1,0 +1,52 @@
+{
+  "package": "architecture",
+  "title": "The hrc document is a lineage: project › seat › generation › runtime, with documents on the generation",
+  "subtitle": "hrc:hrc node types · to-be · proposal 2026-10-31",
+  "stamp": "TO-BE · DRAFT 2026-10-31",
+  "direction": "TB",
+  "legend": {"flow": "lineage hierarchy (parent › child)", "result": "folded from the ledger", "dependency": "mirrors a store row"},
+  "boundaries": [
+    {"id": "doc", "name": "hrc document (rebuildable, observation types only)"},
+    {"id": "outside", "name": "Outside doms: the time series"}
+  ],
+  "nodes": [
+    {"id": "project", "name": "hrc.project", "role": "architecture.component", "kicker": "NODE · ROOT",
+     "body": "One per project with a seat on this node", "meta": "key: projectId", "boundary": "doc"},
+    {"id": "seat", "name": "hrc.seat", "role": "architecture.component", "kicker": "NODE · CONTINUITY",
+     "emphasis": true,
+     "bullets": ["identity: agent, project, task, role", "metadata: title, colour, hcs ref", "activeGeneration, status summary"],
+     "meta": "key: sessionRef = scope/lane", "boundary": "doc"},
+    {"id": "gen", "name": "hrc.generation (N)", "role": "architecture.component", "kicker": "NODE · SESSION",
+     "emphasis": true,
+     "bullets": ["status active; continuation state", "attention: jev or tool, at", "live until runtime gone + 24 h"],
+     "meta": "key: hostSessionId · order: generation", "boundary": "doc"},
+    {"id": "genprev", "name": "hrc.generation (N−1)", "role": "architecture.component", "kicker": "NODE · SESSION",
+     "body": "Archived; its documents superseded; drops out after 24 h",
+     "meta": "key: hostSessionId", "boundary": "doc"},
+    {"id": "runtime", "name": "hrc.runtime", "role": "architecture.component", "kicker": "NODE · PROCESS",
+     "bullets": ["transport, harness, status", "tmux, hrcpty attach surface", "contextReading"],
+     "meta": "key: runtimeId · attachable: tmux-attach", "boundary": "doc"},
+    {"id": "card", "name": "hrc.document", "role": "architecture.artifact", "kicker": "NODE · SEAT DOCUMENT",
+     "bullets": ["ns + id, JSON ≤ 64 KB", "c2 card keyed by attention.at", "vesta_ask on Vesta's own generation"],
+     "meta": "key: hostSessionId, ns, docId", "boundary": "doc"},
+    {"id": "cardprev", "name": "hrc.document (superseded)", "role": "architecture.artifact", "kicker": "NODE · SEAT DOCUMENT",
+     "body": "Stays with its generation until it drops out", "boundary": "doc"},
+    {"id": "ledger", "name": "Event ledger", "role": "architecture.datastore", "kicker": "DATASTORE · HRC",
+     "body": "turn.attention and seat.document.action stay events, never nodes",
+     "meta": "hrc_events", "boundary": "outside"},
+    {"id": "tables", "name": "Store rows", "role": "architecture.datastore", "kicker": "DATASTORE · HRC",
+     "body": "Every node mirrors one row; a client changes the row, never the node",
+     "meta": "continuities · sessions · runtimes · session_metadata · seat_documents", "boundary": "outside"}
+  ],
+  "relationships": [
+    {"from": "project", "to": "seat", "label": "lineage"},
+    {"from": "seat", "to": "gen", "label": "lineage"},
+    {"from": "seat", "to": "genprev", "label": "lineage"},
+    {"from": "gen", "to": "runtime", "label": "lineage"},
+    {"from": "gen", "to": "card", "label": "lineage"},
+    {"from": "genprev", "to": "cardprev", "label": "lineage"},
+    {"from": "ledger", "to": "gen", "role": "architecture.result", "label": "selected event → attention"},
+    {"from": "tables", "to": "seat", "role": "architecture.dependency"},
+    {"from": "tables", "to": "card", "role": "architecture.dependency"}
+  ]
+}
