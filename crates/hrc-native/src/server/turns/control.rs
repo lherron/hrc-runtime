@@ -211,6 +211,13 @@ pub async fn interrupt(server: &Shared, body: Value) -> Result<Response, ApiErro
         .into();
         return Ok(Json(out).into_response());
     }
+    // A harness-broker seat is interrupted through its driver (codex
+    // `turn/interrupt`, claude's own pane handling), never by ^C into the
+    // lease: a codex seat's pty has no child, so the pty write fails
+    // `no_child: no pty` and the turn runs on (T-12177).
+    if rt.controller_kind.as_deref() == Some("harness-broker") {
+        return interrupt_headless(server, &rt).await;
+    }
     if let Some((socket, _)) = hrcpty::substrate(&rt) {
         {
             let db = server.store.lock().unwrap();

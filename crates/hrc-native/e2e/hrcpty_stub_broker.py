@@ -22,6 +22,9 @@ group (never a pty child), writes its pid to <ipcDir>/appserver.pid, and on
 an hrcpty lease only says `hello` and reads `status`: no TUI at birth. Its
 turns, initial and `submission.*`, complete at once as RPC evidence.
 
+A codex turn whose prompt contains `HOLD` stays open until
+`invocation.interrupt`, then ends `turn.interrupted` (T-12177).
+
 `stub.localTurn` emits a turn no HRC input started (a prompt typed in a TUI).
 `stub.usage` {turnId, usedTokens, windowTokens}, sent on its own connection,
 emits one usage.updated for that turn (kernel_fold.py --serve's turnContext).
@@ -53,7 +56,8 @@ DRIVERS = RELEASE['hostedDrivers']
 
 lock = threading.RLock()
 state = {'invocation': None, 'events': [], 'acked': 0, 'controller': None, 'lease': None,
-         'child': None, 'state': 'ready', 'start': None, 'snapshotSeen': threading.Event(), 'driver': None}
+         'child': None, 'state': 'ready', 'start': None, 'snapshotSeen': threading.Event(), 'driver': None,
+         'held': None}
 
 
 def now():
@@ -168,6 +172,18 @@ def run_turn(input_id, prompt):
     with lock:
         state['state'] = 'running'
     lease = state['lease']
+    if state['driver'] == 'codex-app-server' and 'HOLD' in prompt:
+        # T-12177: a codex turn that runs until invocation.interrupt, as a long
+        # tool call does; it ends turn.interrupted, never completed.
+        held = threading.Event()
+        with lock:
+            state['held'] = held
+        held.wait(120)
+        with lock:
+            state['held'] = None
+            state['state'] = 'ready'
+        emit('turn.interrupted', {'reason': 'interrupt'}, input_id)
+        return
     if not lease or lease['kind'] != 'hrcpty' or state['driver'] == 'codex-app-server':
         emit('assistant.message.completed', {'content': [{'type': 'text', 'text': 'stub ok'}], 'final': True}, input_id)
         emit('turn.completed', {}, input_id)
@@ -259,6 +275,11 @@ def handle(conn, method, params):
         threading.Thread(target=run_turn, args=(submission, text), daemon=True).start()
         return {'submissionId': submission, 'admission': 'admitted', 'inputId': submission}
     if method == 'invocation.interrupt':
+        with lock:
+            held = state['held']
+        if held is not None:
+            held.set()
+            return {'accepted': True, 'effect': 'turn_interrupted'}
         return {'ok': True}
     if method == 'invocation.stop':
         with lock:

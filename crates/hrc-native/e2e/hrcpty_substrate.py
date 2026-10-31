@@ -22,7 +22,8 @@ Checks (spec T-12046 §4.2, §4.6, §5):
     answer + \\r) and the literal door's empty Enter (POST
     /v1/literal-input/by-selector, text "" → b"\\r"); both captured through GET
     /v1/capture and POST /v1/capture/by-selector
-  3 interrupt route: ^C reaches the child, runtime.interrupted transport hrcpty
+  3 interrupt route on a broker seat never types ^C into the lease (T-12177):
+    with no active run it answers ok + warning and the child sees nothing
   4 daemon restart: supervisor and child pids unchanged, broker-attached,
     capture still served
   5 GET /v1/attach → hrc-pty attach argv
@@ -54,6 +55,10 @@ substituted; hosting, presentation and driver blocks are the producer's bytes.
      gone within 6 s (hrc-pty's group signal), the lease kept
   C6 codex (tmux) sibling: tui pane lease, tmux transport, observer socket
      argv, as before
+  C7 POST /v1/interrupt on a busy codex-hrcpty seat (no pty child) reaches
+     the broker as invocation.interrupt {scope turn, runId}, answers ok, and
+     the held turn ends cancelled (T-12177; the pre-fix binary answers
+     `no_child: no pty` and the turn runs on)
 Run on the pre-change binary, C1 records the admit refusal (discriminator).
 
 Never touches the live daemon (its socket is refused), the live aspd, or any
@@ -424,13 +429,14 @@ class CodexLeg:
     def born(self, claude_broker_pid):
         r = self.r
         for name, extra in (('true', {'presentation': {'operator': 'tmux-tui'}}), ('false', {})):
-            ref, host, status, out = self.try_birth('codex-' + uuid.uuid4().hex[:8], f'codex-hrcpty {name} first turn', extra)
+            task = 'codex-' + uuid.uuid4().hex[:8]
+            ref, host, status, out = self.try_birth(task, f'codex-hrcpty {name} first turn', extra)
             ok = r.check(f'C1.{name}.admitted', status in (200, 202) and out.get('status') == 'accepted', status=status, response=out)
             if not ok:
                 continue
             rid, run = out['runtimeId'], out['runId']
             s = self.seat_info(name, rid)
-            s.update(ref=ref, host=host, run=run)
+            s.update(ref=ref, host=host, run=run, task=task, extra=extra)
             self.seats[name] = s
             row, sub, sock = s['row'], s['sub'], s['sock']
             r.check(f'C1.{name}.transport-hrcpty-leased-hrcpty', row['transport'] == 'hrcpty' and sub.get('kind') == 'leased-hrcpty'
@@ -484,6 +490,29 @@ class CodexLeg:
             r.check(f'C2.{name}.attach-descriptor', status == 200 and att.get('transport') == 'hrcpty'
                     and argv == [str(self.binary.parent / 'hrc-pty'), 'attach', '--socket', str(sock)]
                     and att.get('bindingFence', {}).get('supervisorPid') == s['pid'], status=status, response=att)
+
+    def interrupt(self):
+        r, s = self.r, self.seats.get('false')
+        if not r.check('C7.seat-available', s is not None):
+            return
+        _, _, status, out = self.try_birth(s['task'], 'codex-hrcpty HOLD until interrupted', s['extra'])
+        if not r.check('C7.hold-turn-admitted', status in (200, 202) and out.get('runId'), status=status, response=out):
+            return
+        run = out['runId']
+        r.wait(lambda: r.runtime(s['rt'])['active_run_id'] == run, 30, 'held codex turn active')
+        before = len(self.stub_log(s['sock']))
+        status, intr = r.http('POST', '/v1/interrupt', {'runtimeId': s['rt']})
+        reqs = [e for e in self.stub_log(s['sock'])[before:] if e['kind'] == 'request' and e['method'] == 'invocation.interrupt']
+        r.check('C7.interrupt-ok', status == 200 and intr.get('ok') is True and 'warning' not in intr,
+                status=status, response=intr)
+        r.check('C7.interrupt-reaches-broker', len(reqs) == 1 and reqs[0]['params'].get('scope') == 'turn'
+                and reqs[0]['params'].get('runId') == run, requests=reqs)
+        ended = r.wait(lambda: r.rows("SELECT status FROM runs WHERE run_id=? AND status NOT IN ('accepted','started','running')",
+                                      (run,)), 30, 'held codex turn ended')
+        ev = [e['payload'] for e in r.events(s['rt'], 'runtime.interrupted')]
+        r.check('C7.turn-ended-cancelled', ended[0]['status'] == 'cancelled' and ev
+                and ev[-1].get('runId') == run and ev[-1].get('controllerKind') == 'harness-broker',
+                status=ended[0]['status'], events=ev)
 
     def tmux_sibling(self):
         r = self.r
@@ -759,14 +788,17 @@ def main():
                 response=buffered, text=cap3['text'])
 
         # == 3. interrupt ======================================================
+        # A broker seat is interrupted through its driver (C7), never by ^C
+        # into the lease (T-12177). The ask turn is over, so there is no run.
+        r.wait(lambda: r.runtime(pty_rt)['active_run_id'] is None, 30, 'pty seat idle')
         status, intr = r.http('POST', '/v1/interrupt', {'runtimeId': pty_rt})
-        cap4 = r.wait(lambda: (lambda c: c if 'INTERRUPTED' in c.get('text', '') else None)(
-            r.http('GET', f'/v1/capture?runtimeId={pty_rt}')[1]), 20, 'interrupt in capture')
-        intr_ev = r.events(pty_rt, 'runtime.interrupted')
-        r.check('3.interrupt-reaches-child', status == 200 and intr.get('ok') is True and 'INTERRUPTED' in cap4['text'] and alive(child_pid),
-                status=status, response=intr, text=cap4['text'])
-        r.check('3.runtime-interrupted-event-hrcpty', intr_ev and intr_ev[-1]['payload'].get('transport') == 'hrcpty'
-                and intr_ev[-1]['payload'].get('socketPath') == str(pty_sock), events=intr_ev)
+        time.sleep(1)
+        cap4 = r.http('GET', f'/v1/capture?runtimeId={pty_rt}')[1]
+        r.check('3.interrupt-idle-broker-seat-warns', status == 200 and intr.get('ok') is True
+                and intr.get('warning') == 'no active run to interrupt', status=status, response=intr)
+        r.check('3.interrupt-never-types-into-lease', 'INTERRUPTED' not in cap4.get('text', '') and alive(child_pid),
+                text=cap4.get('text'))
+        codex.interrupt()
 
         # == 5 (pre-restart). attach descriptor ================================
         status, att = r.http('GET', f'/v1/attach?runtimeId={pty_rt}')
@@ -843,7 +875,7 @@ def main():
                 newDaemonPid=daemon.pid)
         cap5 = r.http('GET', f'/v1/capture?runtimeId={pty_rt}')
         r.check('4.capture-after-restart', cap5[0] == 200 and f'GOT#1[{answer}] paste' in cap5[1].get('text', '')
-                and 'INTERRUPTED' in cap5[1].get('text', ''), status=cap5[0], text=cap5[1].get('text') if isinstance(cap5[1], dict) else cap5[1])
+                and 'GOT#2[]' in cap5[1].get('text', ''), status=cap5[0], text=cap5[1].get('text') if isinstance(cap5[1], dict) else cap5[1])
         status, lit2 = r.http('POST', '/v1/literal-input/by-selector', {'selector': {'sessionRef': pty_ref}, 'text': '', 'enter': True})
         cap6 = r.wait(lambda: (lambda c: c if 'GOT#3[NOT-TYPED]' in c.get('text', '') or 'GOT#3[]' in c.get('text', '') else None)(
             r.http('GET', f'/v1/capture?runtimeId={pty_rt}')[1]), 20, 'post-restart enter')
