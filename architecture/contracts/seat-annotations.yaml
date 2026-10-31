@@ -1,0 +1,87 @@
+id: hrc-runtime.seat-annotations
+kind: contract
+status: active
+owner_project: hrc-runtime
+scope: home-node seat and generation annotations and their rebuildable kernel projection
+predicate: >
+  HRC owns annotation storage and admission. An annotation is a namespaced,
+  kinded opaque JSON object attached either to a continuity or to one of its
+  generations. The stored key is scope_ref, lane_ref, host_session_id, ns,
+  kind and id; seat subjects use an empty host_session_id and no generation.
+  Generation subjects name an existing session in the same scope and lane.
+  Seat subjects require an existing continuity and survive rotation.
+  HRC validates common key grammar and object shape, not writer body schemas.
+  The serialized body limit is 65,536 bytes and the quota is 256 annotations
+  per subject, with one constant for each in hrc-store. Both subjects remain
+  stored until explicitly deleted; no age-based retention delete is approved.
+  Optional expect.generation, expect.attentionAt and expect.updatedAt fences
+  are checked in the write transaction. They compare respectively with the
+  continuity's active generation, its live attention at, and the annotation's
+  updated_at, refusing stale_generation, stale_attention and stale_annotation.
+  An absent annotation cannot satisfy an expected existing updatedAt.
+  hrc-store owns the shared live_attention reader's display selection and
+  attention fold; the fence and projector consume the same rule under
+  hrc-runtime.turn-attention. This moves ownership without changing the
+  selected-event, generation or live-runtime attention predicate.
+  Admitted puts and deletes append session.annotation.changed in the same
+  transaction, naming the subject, key, operation and writer without the body.
+  The action route appends session.annotation.action with writer-owned action
+  attributes and does not otherwise mutate the annotation. There is no body
+  history. Attribution uses the request principal.
+  Rust serves GET and PUT /v1/sessions/annotations and POST
+  /v1/sessions/annotations/delete and /v1/sessions/annotations/act.
+  Scope-home routing precedes local access, following the session metadata
+  routing mechanism, with principal forwarding on writes and peer allowlist
+  admission. Bun supplies schema migration, SDK and CLI, not annotation
+  handlers. The Bun migration and Rust MIGRATIONS entry land together.
+  The embedded kernel projects hrc.generation keyed by hostSessionId and
+  hrc.annotation keyed by sessionRef, hostSessionId, ns, kind and id alongside
+  existing observation types. Relations are payload keys; no lineage
+  hierarchy is declared in this revision. Generation nodes retain archived
+  generations inside the live-runtime-or-24-hour-activity window. Annotation
+  live_until follows its seat or generation subject; deletion and subject
+  disappearance remove the keyed annotation. Reads share the projector's own
+  read-only connection and read transaction with sessions and runtimes.
+  hrc.seat keeps its folded fields and gains activeGeneration equal to
+  generation; runtime and project payload contracts remain unchanged.
+  seat.annotation.put and seat.annotation.act use in-process owner dispatch.
+  Their declared cardo fences are none; HRC owns the semantic expect fences.
+  Existing card migration, remote seat rows, body schema validation,
+  per-kind configuration or retention, body history, folded-field removal
+  and feature flags are outside this revision. c2 adoption is separate work.
+authority: >
+  Daedalus approval of T-12183 seat-annotations-lineage r1.1 at e2f87751,
+  submitted on the EN-39516 review thread, 2026-10-31. HRC storage ownership,
+  annotation naming and the 64 KB body limit follow Lance's rulings recorded
+  in the submitted specification.
+source:
+  - wrkq:T-12183
+  - docs/proposals/seat-annotations.md
+  - architecture/contracts/turn-attention.yaml
+  - architecture/contracts/hrc-rust-migration.yaml
+  - architecture/records/invariants/hrc-runtime.federated-session-read.yaml
+  - architecture/records/invariants/hrc-runtime.rust-crate-edges.yaml
+  - crates/hrc-store/src/metadata.rs
+  - crates/hrc-domain/src/projection.rs
+  - crates/hrc-domain/src/projector.rs
+  - crates/hrc-native/src/server/placement/federation/routing.rs
+  - crates/hrc-native/src/server/placement/federation/peer_listener.rs
+validation_scope: >
+  Requester owns the five claims in specification section 7: scratch-daemon
+  round trip and refusals; live kernel put and rotation with injected-clock
+  projector expiry coverage; svc-to-max3 home-node persistence and projection;
+  installed Loggia guards and seat-row compatibility; and the separate c2
+  adoption task's durable card/action/remount readback. This ruling adds no gate.
+last_verified: >
+  2026-10-31 design read of r1.1 against active producer contracts, store
+  metadata transactions and schema ownership, projector selection and reads,
+  cardo keyed upsert placement and ring limits, federation routing and peer
+  forwarding, native session sweeps and c2 action delivery. Read-only live
+  store inspection confirmed annotations are not yet implemented. No build,
+  test, install, service operation or product acceptance was run; implementation
+  and deployment remain unverified.
+reopen_when: >
+  Storage or write authority, subject identity, key grammar, body or subject
+  caps, semantic fence meaning or transaction boundary, event meaning,
+  home routing, migration ownership, retention, projection lifetime or
+  relations, operation dispatch, or folded-seat compatibility changes.

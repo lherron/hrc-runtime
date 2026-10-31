@@ -45,11 +45,17 @@ predicate: >
   change. Empty bootstrap and keyed refresh reconstruct the same predicate.
   turn.attention preview uses its excerpt. Loggia consumes this producer
   field for Needs input, with needs-input urgency 5 above busy urgency 4.
+  T-12183 r1.1 moves display-event selection and the attention fold into
+  hrc-store's shared live_attention reader, consumed by annotation admission
+  and the projector. The existing selected-event, generation and live-runtime
+  predicate above remains unchanged; this does not change append authority.
 authority: >
   Daedalus approval of T-12015 turn-attention-jev specification etag 6,
   resubmitted in EN-38019, 2026-10-28. Hosted egress, unredacted text,
   foundry inclusion and ask semantics follow Lance's rulings carried in
   that specification.
+  Shared-reader ownership amendment approved under T-12183 r1.1 at e2f87751
+  on the EN-39516 review thread, 2026-10-31.
 source:
   - wrkq:T-12015
   - architecture/contracts/hrc-rust-migration.yaml
@@ -58,6 +64,7 @@ source:
   - crates/hrc-domain/src/preview.rs
   - crates/hrc-store/src/presentation.rs
   - crates/hrc-store/src/lib.rs
+  - architecture/contracts/seat-annotations.yaml
 validation_scope: >
   Requester owns task gates G1 through G5: classifier quality using the
   subscriber request builder and real gold fixture; live max3 ask, clear,
@@ -72,6 +79,10 @@ last_verified: >
   from EN-38018 resolve in specification etag 6. No implementation tests,
   builds, installs, service operations or live acceptance were run by the
   reviewer; implementation and deployment remain unverified.
+design_review: >
+  2026-10-31 T-12183 r1.1 shared-reader amendment reviewed against the
+  projector's display selection and runtime-presence guard. No implementation
+  or acceptance gate was run; prior last_verified evidence is unchanged.
 reopen_when: >
   Append authority, completion identity, idempotency, transaction or freshness
   fence, egress authorization, classifier isolation or failure handling,

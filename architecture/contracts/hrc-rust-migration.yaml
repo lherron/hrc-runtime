@@ -92,8 +92,13 @@ predicate: >
   ledger through its own read-only state.sqlite connection and sends owner
   operations to the daemon over HTTP. It never reconciles substrate liveness
   or writes HRC state. Its single hrc document is rebuildable, durability none
-  and ingest_only, with seat, runtime and project observation nodes. Seats
-  are keyed by scope and lane, take the latest selected generation, and
+  and ingest_only, with seat, runtime and project observation nodes. T-12183
+  r1.1 adds generation and annotation observations under the producer contract
+  hrc-runtime.seat-annotations, preserving folded seat fields and adding only
+  activeGeneration to the seat payload. Keyed relations, archived-generation
+  membership, annotation subject lifetime and the annotation owner operations
+  are governed there. The existing runtime and project payloads are unchanged.
+  Seats are keyed by scope and lane, take the latest selected generation, and
   follow the live-runtime-or-24-hour-activity membership rule. Runtime fields
   in stage 1 are narrowed to the presentation read model as specified in
   section 4.3, including its additive persisted contextReading field.
@@ -391,6 +396,7 @@ source:
   - wrkq:T-11538
   - wrkc:EN-33147
   - architecture/contracts/runtime-context-reading.yaml
+  - architecture/contracts/seat-annotations.yaml
   - architecture/contracts/turn-attention.yaml
   - architecture/records/invariants/hrc-runtime.bounded-lifecycle-event-observation.yaml
   - architecture/records/invariants/hrc-runtime.viewer-presentation-sidecar.yaml
@@ -571,6 +577,13 @@ last_verified: >
   metric sampling. F1 and F2 from EN-35517 are closed in the design.
   No builds, tests, installs or service operations were run for the ruling;
   F and N6 implementation and installed acceptance remain unverified.
+annotation_design_review: >
+  2026-10-31 T-12183 seat-annotations-lineage r1.1 at e2f87751 approved on
+  the EN-39516 review thread by source and active-contract reading. Adds the
+  annotation producer contract and generation observations without changing
+  embedded-kernel ownership, read-connection or lock-order boundaries.
+  Implementation and installed acceptance remain unverified; no build,
+  test, install or service operation was run for this ruling.
 reopen_when: >
   Migration authority, repository or release boundaries, execution ownership or
   rollback completeness, schema ownership, stage prerequisites, page coverage
