@@ -75,6 +75,17 @@ impl Daemon {
     ) -> Result<(Value, Option<String>)> {
         self.request_with_timeout(method, path, query, body, None, &[])
     }
+    /// A request naming extra headers, such as `x-hrc-principal-ref`.
+    pub fn request_headers(
+        &self,
+        method: &str,
+        path: &str,
+        body: Value,
+        headers: &[(String, String)],
+    ) -> Result<Value> {
+        self.request_with_timeout(method, path, &[], Some(body), None, headers)
+            .map(|r| r.0)
+    }
     pub fn post_headers(
         &self,
         path: &str,

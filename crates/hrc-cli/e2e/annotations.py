@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
-"""Seat annotations Gates 1 and 2 (T-12186, T-12187; seat-annotations r1.1
-§4, §5, §7 claims 1 and 2).
+"""Seat annotations Gates 1, 2 and 3 (T-12186, T-12187, T-12188;
+seat-annotations r1.1 §4, §5, §7 claims 1 and 2).
 
 `rusthrc session annotation list|put|delete|act` against ONE isolated scratch
 rusthrc: a Bun-created schema, a fake aspd and the stub broker release
@@ -40,6 +40,19 @@ Gate 2, the embedded kernel (T-12187), on the same daemon after Gate 1:
                  annotations stay under generation 1's hostSessionId and live
                  exactly as long as it; seat-scoped ones stay under the seat;
                  no annotation names generation 2
+
+Gate 3, the kernel ops and CLI attribution (T-12188), after Gate 2:
+  op-put         seat.annotation.put dispatched on the kernel wire is admitted
+                 (created), appears as an hrc.annotation node with its body and
+                 updatedBy system:hrc-kernel, and a generation-scoped op put
+                 lands under generation 2; a replay of the absent fence refuses
+                 stale_annotation with the store's code
+  op-act         seat.annotation.act returns hrc_seq, which is the
+                 session.annotation.action row in hrc_events with the op's
+                 action and attributes; an absent id refuses unknown_annotation
+  cli-as         `put --as agent:e2e-cli` reads back updatedBy agent:e2e-cli and
+                 its session.annotation.changed row names it; `delete --as`
+                 names it on the delete row; a blank --as records unknown
 
 Failure modes guarded: a vacuous stale_attention (attention never moved, or
 refused for another reason) — the A1 control put must be admitted first and
@@ -95,7 +108,7 @@ def main():
     assert not str(root).startswith(str(LIVE_STATE))
     a.artifacts.mkdir(parents=True, exist_ok=True)
     for stale in ('results.json', 'cli.ndjson', 'ledger.json', 'fake-aspd.ndjson', 'daemon-1.log', 'kernel-seat.json',
-                  'kernel-lineage.json'):
+                  'kernel-lineage.json', 'kernel-ops.json'):
         (a.artifacts / stale).unlink(missing_ok=True)
     r = Run(root, a.artifacts, binary)
     transcript = (a.artifacts / 'cli.ndjson').open('w')
@@ -377,6 +390,57 @@ console.log(JSON.stringify({ put, listed, refusal, acted }))
                 and not any(x['payload']['hostSessionId'] == new_host for x in annotations),
                 rotate=rotated, stderr=child.stderr, seat=seat1, archived=gen1, new=gen2,
                 annotations=sorted((x['payload']['id'], x['payload']['hostSessionId']) for x in annotations))
+
+        # == Gate 3: the kernel ops and CLI --as (T-12188) ==========================
+        def op(name, **args):
+            reply = wire(kernel, name, args)
+            transcript.write(compact({'wire': name, 'args': args, 'reply': reply}) + '\n')
+            transcript.flush()
+            return reply
+
+        okey = dict(session_ref=ref, subject='seat', ns='e2e', kind='op')
+        o1 = op('seat.annotation.put', **okey, id='o1', body={'via': 'op'}, expect={'updatedAt': None})
+        o1_node = r.wait(lambda: node('hrc.annotation', sessionRef=ref, id='o1'), 10, 'o1 in the kernel')
+        o1_replay = op('seat.annotation.put', **okey, id='o1', body={'via': 'lost'}, expect={'updatedAt': None})
+        og = op('seat.annotation.put', **{**okey, 'subject': 'generation'}, generation=2, id='og', body={'g': 2})
+        og_node = r.wait(lambda: node('hrc.annotation', sessionRef=ref, id='og'), 10, 'og in the kernel')
+        r.check('op-put', o1.get('ok') is True and o1['result']['created'] is True
+                and o1_node['payload']['body'] == {'via': 'op'} and o1_node['payload']['updatedAt'] == o1['result']['updated_at']
+                and o1_node['payload']['updatedBy'] == 'system:hrc-kernel'
+                and o1_replay.get('ok') is False and o1_replay['error']['code'] == 'stale_annotation'
+                and og.get('ok') is True and og_node['payload']['hostSessionId'] == new_host
+                and og_node['payload']['generation'] == 2,
+                put=o1, node=o1_node, replay=o1_replay, generationPut=og, generationNode=og_node)
+
+        acted_op = op('seat.annotation.act', **okey, id='o1', action='sent', attributes={'ok': True, 'runId': 'r-op'})
+        absent_op = op('seat.annotation.act', **okey, id='o-absent', action='sent')
+        op_actions = [e for e in ledger(scope, ['session.annotation.action']) if e['payload']['id'] == 'o1']
+        r.check('op-act', acted_op.get('ok') is True
+                and [e['hrc_seq'] for e in op_actions] == [acted_op['result']['hrc_seq']]
+                and op_actions[0]['payload']['action'] == 'sent'
+                and op_actions[0]['payload']['attributes'] == {'ok': True, 'runId': 'r-op'}
+                and absent_op.get('ok') is False and absent_op['error']['code'] == 'unknown_annotation',
+                acted=acted_op, actionRows=op_actions, unknown=absent_op)
+
+        as_put = cli('put', ref, '--ns', 'e2e', '--kind', 'as', '--id', 'a1', '--as', 'agent:e2e-cli', '--body-file', '-', stdin='{"by":"cli"}')
+        blank_put = cli('put', ref, '--ns', 'e2e', '--kind', 'as', '--id', 'a2', '--as', ' ', '--body-file', '-', stdin='{}')
+        as_delete = cli('delete', ref, '--ns', 'e2e', '--kind', 'as', '--id', 'a2', '--as', 'agent:e2e-cli')
+        as_listed = cli('list', ref, '--kind', 'as')
+        as_rows = [(e['payload']['id'], e['payload']['op'], e['payload']['updatedBy'])
+                   for e in ledger(scope, ['session.annotation.changed']) if e['payload']['kind'] == 'as']
+        op_rows = [(e['payload']['id'], e['payload']['updatedBy'])
+                   for e in ledger(scope, ['session.annotation.changed']) if e['payload']['kind'] == 'op']
+        (a.artifacts / 'kernel-ops.json').write_text(json.dumps({
+            'opPut': o1, 'opNode': o1_node, 'opReplay': o1_replay, 'opGenerationNode': og_node,
+            'opAct': acted_op, 'opActionRows': op_actions, 'opUnknown': absent_op,
+            'cliAsPut': as_put[1], 'cliAsLedger': as_rows, 'opLedger': op_rows}, indent=1) + '\n')
+        r.check('cli-as', as_put[0] == 0 and as_put[1]['annotation']['updatedBy'] == 'agent:e2e-cli'
+                and [x['updatedBy'] for x in as_listed[1]['annotations']] == ['agent:e2e-cli']
+                and blank_put[0] == 0 and blank_put[1]['annotation']['updatedBy'] == 'unknown'
+                and as_delete[1] == {'deleted': True}
+                and as_rows == [('a1', 'put', 'agent:e2e-cli'), ('a2', 'put', 'unknown'), ('a2', 'delete', 'agent:e2e-cli')]
+                and op_rows == [('o1', 'system:hrc-kernel'), ('og', 'system:hrc-kernel')],
+                put=as_put, blank=blank_put, delete=as_delete, ledger=as_rows, opLedger=op_rows)
     except Exception as e:  # recorded, then re-raised after cleanup
         failure = e
         r.check('no-exception', False, error=repr(e))

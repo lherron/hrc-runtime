@@ -56,6 +56,16 @@ fn expect(args: &Parsed<'_>) -> Result<Option<Value>> {
     Ok((!expect.is_empty()).then_some(Value::Object(expect)))
 }
 
+/// `--as <principal>` as the write's `x-hrc-principal-ref`, as `hrc turn --as`
+/// names a sender; omitted or blank sends none (the daemon records `unknown`).
+fn principal(args: &Parsed<'_>) -> Vec<(String, String)> {
+    args.value("as")
+        .map(str::trim)
+        .filter(|p| !p.is_empty())
+        .map(|p| vec![("x-hrc-principal-ref".to_owned(), p.to_owned())])
+        .unwrap_or_default()
+}
+
 pub(super) fn command(args: &Parsed<'_>) -> Result<()> {
     let client = Daemon::connect()?;
     let (scope, lane) = crate::selectors::continuity(&args.positionals[0], &client)?;
@@ -83,14 +93,14 @@ pub(super) fn command(args: &Parsed<'_>) -> Result<()> {
             if let Some(expect) = expect(args)? {
                 body["expect"] = expect;
             }
-            client.request("PUT", ROUTE, &[], Some(body))?.0
+            client.request_headers("PUT", ROUTE, body, &principal(args))?
         }
         "delete" => {
             let mut body = key(args, scope, lane)?;
             if let Some(expect) = expect(args)? {
                 body["expect"] = expect;
             }
-            client.post(&format!("{ROUTE}/delete"), body)?
+            client.post_headers(&format!("{ROUTE}/delete"), body, &principal(args), None)?
         }
         _ => {
             let mut body = key(args, scope, lane)?;
@@ -98,7 +108,7 @@ pub(super) fn command(args: &Parsed<'_>) -> Result<()> {
             if let Some(raw) = args.value("attributes") {
                 body["attributes"] = object(raw, "--attributes")?;
             }
-            client.post(&format!("{ROUTE}/act"), body)?
+            client.post_headers(&format!("{ROUTE}/act"), body, &principal(args), None)?
         }
     };
     print_json(&answer);

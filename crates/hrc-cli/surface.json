@@ -1629,8 +1629,8 @@
               "aliases": [],
               "usage": "[options] <target>",
               "allowExcessArguments": false,
-              "help": "Usage: hrc session annotation put [options] <target>\n\ncreate or replace one annotation\n\nOptions:\n  --ns <ns>                   annotation namespace\n  --kind <kind>               annotation kind\n  --id <id>                   annotation id\n  --subject <subject>         seat (default) or generation\n  --generation <n>            the generation, for --subject generation\n  --body-file <path>          JSON object body; - reads stdin\n  --expect-generation <n>     refuse stale_generation unless the active generation is n\n  --expect-attention-at <ts>  refuse stale_attention unless live attention is at ts\n  --expect-updated-at <ts>    refuse stale_annotation unless the annotation's updatedAt is ts (null: must not exist)\n  --json                      output as JSON\n  -h, --help                  display help for command\n",
-              "humanHelp": "Usage: hrc session annotation put [options] <target>\n\ncreate or replace one annotation\n\nOptions:\n  --ns <ns>                   annotation namespace\n  --kind <kind>               annotation kind\n  --id <id>                   annotation id\n  --subject <subject>         seat (default) or generation\n  --generation <n>            the generation, for --subject generation\n  --body-file <path>          JSON object body; - reads stdin\n  --expect-generation <n>     refuse stale_generation unless the active generation is n\n  --expect-attention-at <ts>  refuse stale_attention unless live attention is at ts\n  --expect-updated-at <ts>    refuse stale_annotation unless the annotation's updatedAt is ts (null: must not exist)\n  --json                      output as JSON\n  -h, --help                  display help for command\n",
+              "help": "Usage: hrc session annotation put [options] <target>\n\ncreate or replace one annotation\n\nOptions:\n  --ns <ns>                   annotation namespace\n  --kind <kind>               annotation kind\n  --id <id>                   annotation id\n  --subject <subject>         seat (default) or generation\n  --generation <n>            the generation, for --subject generation\n  --body-file <path>          JSON object body; - reads stdin\n  --expect-generation <n>     refuse stale_generation unless the active generation is n\n  --expect-attention-at <ts>  refuse stale_attention unless live attention is at ts\n  --expect-updated-at <ts>    refuse stale_annotation unless the annotation's updatedAt is ts (null: must not exist)\n  --as <principal>            the request principal, recorded as updatedBy (default unknown)\n  --json                      output as JSON\n  -h, --help                  display help for command\n",
+              "humanHelp": "Usage: hrc session annotation put [options] <target>\n\ncreate or replace one annotation\n\nOptions:\n  --ns <ns>                   annotation namespace\n  --kind <kind>               annotation kind\n  --id <id>                   annotation id\n  --subject <subject>         seat (default) or generation\n  --generation <n>            the generation, for --subject generation\n  --body-file <path>          JSON object body; - reads stdin\n  --expect-generation <n>     refuse stale_generation unless the active generation is n\n  --expect-attention-at <ts>  refuse stale_attention unless live attention is at ts\n  --expect-updated-at <ts>    refuse stale_annotation unless the annotation's updatedAt is ts (null: must not exist)\n  --as <principal>            the request principal, recorded as updatedBy (default unknown)\n  --json                      output as JSON\n  -h, --help                  display help for command\n",
               "arguments": [
                 {
                   "name": "target",
@@ -1716,6 +1716,14 @@
                   "negate": false
                 },
                 {
+                  "flags": "--as <principal>",
+                  "long": "--as",
+                  "required": true,
+                  "optional": false,
+                  "mandatory": false,
+                  "negate": false
+                },
+                {
                   "flags": "--json",
                   "long": "--json",
                   "required": false,
@@ -1767,8 +1775,8 @@
               "aliases": [],
               "usage": "[options] <target>",
               "allowExcessArguments": false,
-              "help": "Usage: hrc session annotation delete [options] <target>\n\ndelete one annotation\n\nOptions:\n  --ns <ns>                 annotation namespace\n  --kind <kind>             annotation kind\n  --id <id>                 annotation id\n  --subject <subject>       seat (default) or generation\n  --generation <n>          the generation, for --subject generation\n  --expect-updated-at <ts>  refuse stale_annotation unless the annotation's updatedAt is ts\n  --json                    output as JSON\n  -h, --help                display help for command\n",
-              "humanHelp": "Usage: hrc session annotation delete [options] <target>\n\ndelete one annotation\n\nOptions:\n  --ns <ns>                 annotation namespace\n  --kind <kind>             annotation kind\n  --id <id>                 annotation id\n  --subject <subject>       seat (default) or generation\n  --generation <n>          the generation, for --subject generation\n  --expect-updated-at <ts>  refuse stale_annotation unless the annotation's updatedAt is ts\n  --json                    output as JSON\n  -h, --help                display help for command\n",
+              "help": "Usage: hrc session annotation delete [options] <target>\n\ndelete one annotation\n\nOptions:\n  --ns <ns>                 annotation namespace\n  --kind <kind>             annotation kind\n  --id <id>                 annotation id\n  --subject <subject>       seat (default) or generation\n  --generation <n>          the generation, for --subject generation\n  --expect-updated-at <ts>  refuse stale_annotation unless the annotation's updatedAt is ts\n  --as <principal>          the request principal, recorded as updatedBy (default unknown)\n  --json                    output as JSON\n  -h, --help                display help for command\n",
+              "humanHelp": "Usage: hrc session annotation delete [options] <target>\n\ndelete one annotation\n\nOptions:\n  --ns <ns>                 annotation namespace\n  --kind <kind>             annotation kind\n  --id <id>                 annotation id\n  --subject <subject>       seat (default) or generation\n  --generation <n>          the generation, for --subject generation\n  --expect-updated-at <ts>  refuse stale_annotation unless the annotation's updatedAt is ts\n  --as <principal>          the request principal, recorded as updatedBy (default unknown)\n  --json                    output as JSON\n  -h, --help                display help for command\n",
               "arguments": [
                 {
                   "name": "target",
@@ -1830,6 +1838,14 @@
                   "negate": false
                 },
                 {
+                  "flags": "--as <principal>",
+                  "long": "--as",
+                  "required": true,
+                  "optional": false,
+                  "mandatory": false,
+                  "negate": false
+                },
+                {
                   "flags": "--json",
                   "long": "--json",
                   "required": false,
@@ -1881,8 +1897,8 @@
               "aliases": [],
               "usage": "[options] <target>",
               "allowExcessArguments": false,
-              "help": "Usage: hrc session annotation act [options] <target>\n\nrecord an action on an existing annotation\n\nOptions:\n  --ns <ns>            annotation namespace\n  --kind <kind>        annotation kind\n  --id <id>            annotation id\n  --subject <subject>  seat (default) or generation\n  --generation <n>     the generation, for --subject generation\n  --action <action>    the action taken\n  --attributes <json>  writer-owned JSON object attributes\n  --json               output as JSON\n  -h, --help           display help for command\n",
-              "humanHelp": "Usage: hrc session annotation act [options] <target>\n\nrecord an action on an existing annotation\n\nOptions:\n  --ns <ns>            annotation namespace\n  --kind <kind>        annotation kind\n  --id <id>            annotation id\n  --subject <subject>  seat (default) or generation\n  --generation <n>     the generation, for --subject generation\n  --action <action>    the action taken\n  --attributes <json>  writer-owned JSON object attributes\n  --json               output as JSON\n  -h, --help           display help for command\n",
+              "help": "Usage: hrc session annotation act [options] <target>\n\nrecord an action on an existing annotation\n\nOptions:\n  --ns <ns>            annotation namespace\n  --kind <kind>        annotation kind\n  --id <id>            annotation id\n  --subject <subject>  seat (default) or generation\n  --generation <n>     the generation, for --subject generation\n  --action <action>    the action taken\n  --attributes <json>  writer-owned JSON object attributes\n  --as <principal>     the request principal (the action row records none)\n  --json               output as JSON\n  -h, --help           display help for command\n",
+              "humanHelp": "Usage: hrc session annotation act [options] <target>\n\nrecord an action on an existing annotation\n\nOptions:\n  --ns <ns>            annotation namespace\n  --kind <kind>        annotation kind\n  --id <id>            annotation id\n  --subject <subject>  seat (default) or generation\n  --generation <n>     the generation, for --subject generation\n  --action <action>    the action taken\n  --attributes <json>  writer-owned JSON object attributes\n  --as <principal>     the request principal (the action row records none)\n  --json               output as JSON\n  -h, --help           display help for command\n",
               "arguments": [
                 {
                   "name": "target",
@@ -1946,6 +1962,14 @@
                 {
                   "flags": "--attributes <json>",
                   "long": "--attributes",
+                  "required": true,
+                  "optional": false,
+                  "mandatory": false,
+                  "negate": false
+                },
+                {
+                  "flags": "--as <principal>",
+                  "long": "--as",
                   "required": true,
                   "optional": false,
                   "mandatory": false,
