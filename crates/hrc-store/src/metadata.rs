@@ -9,7 +9,7 @@ use std::collections::BTreeSet;
 fn registered(key: &str) -> bool {
     matches!(key, "title" | "appearance.color" | "appearance.terminalBg")
 }
-fn key_reason(key: &str) -> Option<String> {
+pub(crate) fn key_reason(key: &str) -> Option<String> {
     let segments = key.split('.').collect::<Vec<_>>();
     if key.len() > 128
         || segments.len() > 4
@@ -155,6 +155,21 @@ fn nest(target: &mut Value, parts: &[&str], value: Value) {
         nest(&mut target[parts[0]], &parts[1..], value);
     }
 }
+/// Attribution is stored as given, truncated to 256 bytes with an ellipsis.
+pub(crate) fn bounded_principal(updated_by: &str) -> String {
+    if updated_by.len() <= 256 {
+        return updated_by.to_owned();
+    }
+    let mut s = String::new();
+    for c in updated_by.chars() {
+        if s.len() + c.len_utf8() + 3 > 256 {
+            break;
+        }
+        s.push(c);
+    }
+    s.push('…');
+    s
+}
 pub struct MetadataWrite<'a> {
     pub scope: &'a str,
     pub lane: &'a str,
@@ -242,19 +257,7 @@ impl Store {
             json!(rejected)
         );
         let now = timestamp();
-        let updated_by = if updated_by.len() <= 256 {
-            updated_by.to_owned()
-        } else {
-            let mut s = String::new();
-            for c in updated_by.chars() {
-                if s.len() + c.len_utf8() + 3 > 256 {
-                    break;
-                }
-                s.push(c);
-            }
-            s.push('…');
-            s
-        };
+        let updated_by = bounded_principal(updated_by);
         let tx = self.sqlite.transaction()?;
         let mut before=tx.prepare("SELECT key,value_json FROM session_metadata WHERE scope_ref=? AND lane_ref=? AND source=? ORDER BY key")?.query_map(params![scope,lane,source],|r|Ok((r.get::<_,String>(0)?,json!(r.get::<_,String>(1)?))))?.collect::<rusqlite::Result<Map<String,Value>>>()?;
         let mut desired = if replace { Map::new() } else { before.clone() };

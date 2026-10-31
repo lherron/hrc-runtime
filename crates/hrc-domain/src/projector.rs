@@ -27,43 +27,14 @@ impl SeatProjector {
     pub fn new(read: HrcRead) -> Self {
         Self { read }
     }
-    /// Recover a display turn without treating category=turn as eventKind=turn.*,
-    /// paging back ten rows at a time through the seat generation's turn rows.
+    /// The store's display selection (hrc-runtime.turn-attention), with the
+    /// kernel's UTF-16 display recovery applied to the selected payload.
     fn latest_turn(db: &Store, raw: &Value) -> Result<Option<Value>, ProjectorError> {
-        if text(raw, "eventKind").starts_with("turn.") {
-            return Ok(Some(raw.clone()));
+        let mut turn = db.display_turn(raw).map_err(error)?;
+        if let Some(t) = turn.as_mut() {
+            display_payloads(db, std::slice::from_mut(t)).map_err(error)?;
         }
-        let upper = raw["hrcSeq"]
-            .as_i64()
-            .ok_or_else(|| error("latest event lacks hrcSeq"))?;
-        let host = text(raw, "hostSessionId");
-        let mut before = None;
-        loop {
-            let (events, truncated) =
-                tail(db, host, &raw["generation"], Some("turn"), before, 10).map_err(error)?;
-            let mut minimum = None;
-            for e in &events {
-                let seq = e["hrcSeq"]
-                    .as_i64()
-                    .filter(|seq| *seq > 0)
-                    .ok_or_else(|| error("tail event lacks positive hrcSeq"))?;
-                minimum = Some(minimum.map_or(seq, |old: i64| old.min(seq)));
-            }
-            if let Some(turn) = events
-                .iter()
-                .filter(|e| {
-                    text(e, "eventKind").starts_with("turn.")
-                        && e["hrcSeq"].as_i64().is_some_and(|seq| seq <= upper)
-                })
-                .max_by_key(|e| e["hrcSeq"].as_i64())
-            {
-                return Ok(Some(turn.clone()));
-            }
-            if !truncated {
-                return Ok(None);
-            }
-            before = Some(minimum.ok_or_else(|| error("truncated tail made no progress"))?);
-        }
+        Ok(turn)
     }
     fn project_state(
         db: &Store,

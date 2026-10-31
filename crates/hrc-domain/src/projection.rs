@@ -2,6 +2,7 @@
 //! the approved presentation read model. No phase or run-derived liveness.
 use cardo_runtime::ingest::ProjectorError;
 use chrono::{DateTime, Duration, NaiveDate, Utc};
+use hrc_store::attention;
 use serde_json::{Value, json};
 use std::collections::BTreeMap;
 
@@ -72,21 +73,6 @@ pub fn mobile_status(record: &Value, runtime: Option<&Value>) -> &'static str {
         Some("stale") => "stale",
         Some("idle" | "ready" | "starting" | "running" | "busy" | "awaiting_input") => "active",
         _ => "inactive",
-    }
-}
-/// hrc-runtime.turn-attention: a pure function of the selected display event.
-/// The append route's stale_turn fence keeps a classification from sitting
-/// above a newer turn event, so no fold state is needed to clear it.
-fn attention(display: &Value) -> Option<Value> {
-    let p = &display["payload"];
-    match text(display, "eventKind") {
-        "turn.attention" if p["lit"] == true => Some(
-            json!({"source":"jev","state":p["state"],"kind":p["kind"],"excerpt":p["excerpt"],"at":display["ts"]}),
-        ),
-        "turn.awaiting_input" => Some(
-            json!({"source":"tool","state":"blocking","kind":"information","at":display["ts"]}),
-        ),
-        _ => None,
     }
 }
 pub fn upsert(typ: &str, key: Value, payload: Value, until: Value) -> Value {
@@ -183,21 +169,16 @@ pub fn project_with_context(
                 seat[field] = v.clone();
             }
         }
-        let display = turns
-            .iter()
-            .filter(|e| {
-                e["hostSessionId"] == s["hostSessionId"]
-                    && e["generation"] == s["generation"]
-                    && text(e, "eventKind").starts_with("turn.")
-                    && event.is_some_and(|raw| e["hrcSeq"].as_i64() <= raw["hrcSeq"].as_i64())
-            })
-            .max_by_key(|e| e["hrcSeq"].as_i64());
+        // hrc-runtime.turn-attention: selection and fold live in hrc-store,
+        // shared with the annotation stale_attention fence.
+        let display =
+            attention::select_display(turns, &s["hostSessionId"], &s["generation"], event);
         if let Some(e) = display {
             seat["latestEvent"] = json!({"kind":e["eventKind"],"time":e["ts"]});
             if let Some(preview) = crate::preview::preview(e, context) {
                 seat["latestEvent"]["preview"] = json!(preview);
             }
-            if let Some(a) = rt.and(attention(e)) {
+            if let Some(a) = attention::fold_attention(e, rt.is_some()) {
                 seat["attention"] = a;
             }
         }
