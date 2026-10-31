@@ -1,6 +1,15 @@
 import { randomUUID } from 'node:crypto'
 import type {
+  ActOnSessionAnnotationRequest,
+  ActOnSessionAnnotationResponse,
+  DeleteSessionAnnotationRequest,
+  DeleteSessionAnnotationResponse,
+  ListSessionAnnotationsRequest,
+  ListSessionAnnotationsResponse,
   PatchSessionMetadataRequest,
+  PutSessionAnnotationRequest,
+  PutSessionAnnotationResponse,
+  SessionAnnotationWriteOptions,
   SessionGetResponse,
   SessionMetadataResponse,
   SessionMetadataTarget,
@@ -768,5 +777,51 @@ export class HrcClientRuntimeMethods extends HrcClientTransport {
     clear: string[]
   ): Promise<SessionMetadataResponse> {
     return this.patchSessionMetadata({ ...target, clear })
+  }
+
+  async listSessionAnnotations(
+    request: ListSessionAnnotationsRequest
+  ): Promise<ListSessionAnnotationsResponse> {
+    return this.getJson<ListSessionAnnotationsResponse>(
+      buildPath('/v1/sessions/annotations', request)
+    )
+  }
+
+  async putSessionAnnotation(
+    request: PutSessionAnnotationRequest,
+    options: SessionAnnotationWriteOptions = {}
+  ): Promise<PutSessionAnnotationResponse> {
+    return this.annotationWrite('PUT', '/v1/sessions/annotations', request, options)
+  }
+
+  async deleteSessionAnnotation(
+    request: DeleteSessionAnnotationRequest,
+    options: SessionAnnotationWriteOptions = {}
+  ): Promise<DeleteSessionAnnotationResponse> {
+    return this.annotationWrite('POST', '/v1/sessions/annotations/delete', request, options)
+  }
+
+  async actOnSessionAnnotation(
+    request: ActOnSessionAnnotationRequest,
+    options: SessionAnnotationWriteOptions = {}
+  ): Promise<ActOnSessionAnnotationResponse> {
+    return this.annotationWrite('POST', '/v1/sessions/annotations/act', request, options)
+  }
+
+  private async annotationWrite<T>(
+    method: 'PUT' | 'POST',
+    path: string,
+    request: object,
+    options: SessionAnnotationWriteOptions
+  ): Promise<T> {
+    const headers: Record<string, string> = { 'Content-Type': 'application/json' }
+    if (options.principalRef) headers['x-hrc-principal-ref'] = options.principalRef
+    const response = await this.unixFetch(path, {
+      method,
+      headers,
+      body: JSON.stringify(request),
+    })
+    if (!response.ok) await this.throwTypedError(response)
+    return (await response.json()) as T
   }
 }

@@ -183,6 +183,22 @@
     },
     {
       "package": "hrc-core",
+      "symbol": "ActOnSessionAnnotationRequest",
+      "kind": "type",
+      "file": "packages/hrc-core/src/session-annotations.ts",
+      "hash": "hrc-core|ActOnSessionAnnotationRequest|type",
+      "count": 1
+    },
+    {
+      "package": "hrc-core",
+      "symbol": "ActOnSessionAnnotationResponse",
+      "kind": "type",
+      "file": "packages/hrc-core/src/session-annotations.ts",
+      "hash": "hrc-core|ActOnSessionAnnotationResponse|type",
+      "count": 1
+    },
+    {
+      "package": "hrc-core",
       "symbol": "agentHomeRelativeSibling",
       "kind": "value",
       "file": "packages/hrc-core/src/placement-policy.ts",
@@ -715,6 +731,22 @@
       "kind": "value",
       "file": "packages/hrc-core/src/placement-policy.ts",
       "hash": "hrc-core|defaultProjectSearchRoots|value",
+      "count": 1
+    },
+    {
+      "package": "hrc-core",
+      "symbol": "DeleteSessionAnnotationRequest",
+      "kind": "type",
+      "file": "packages/hrc-core/src/session-annotations.ts",
+      "hash": "hrc-core|DeleteSessionAnnotationRequest|type",
+      "count": 1
+    },
+    {
+      "package": "hrc-core",
+      "symbol": "DeleteSessionAnnotationResponse",
+      "kind": "type",
+      "file": "packages/hrc-core/src/session-annotations.ts",
+      "hash": "hrc-core|DeleteSessionAnnotationResponse|type",
       "count": 1
     },
     {
@@ -3351,6 +3383,22 @@
     },
     {
       "package": "hrc-core",
+      "symbol": "ListSessionAnnotationsRequest",
+      "kind": "type",
+      "file": "packages/hrc-core/src/session-annotations.ts",
+      "hash": "hrc-core|ListSessionAnnotationsRequest|type",
+      "count": 1
+    },
+    {
+      "package": "hrc-core",
+      "symbol": "ListSessionAnnotationsResponse",
+      "kind": "type",
+      "file": "packages/hrc-core/src/session-annotations.ts",
+      "hash": "hrc-core|ListSessionAnnotationsResponse|type",
+      "count": 1
+    },
+    {
+      "package": "hrc-core",
       "symbol": "ListTargetsRequest",
       "kind": "type",
       "file": "packages/hrc-core/src/hrcchat-contracts.ts",
@@ -3875,6 +3923,22 @@
       "kind": "type",
       "file": "packages/hrc-core/src/http-contracts-runtime.ts",
       "hash": "hrc-core|PruneRuntimesSummary|type",
+      "count": 1
+    },
+    {
+      "package": "hrc-core",
+      "symbol": "PutSessionAnnotationRequest",
+      "kind": "type",
+      "file": "packages/hrc-core/src/session-annotations.ts",
+      "hash": "hrc-core|PutSessionAnnotationRequest|type",
+      "count": 1
+    },
+    {
+      "package": "hrc-core",
+      "symbol": "PutSessionAnnotationResponse",
+      "kind": "type",
+      "file": "packages/hrc-core/src/session-annotations.ts",
+      "hash": "hrc-core|PutSessionAnnotationResponse|type",
       "count": 1
     },
     {
@@ -4411,6 +4475,54 @@
       "kind": "value",
       "file": "packages/hrc-core/src/session-metadata.ts",
       "hash": "hrc-core|SESSION_TITLE_MAX_LENGTH|value",
+      "count": 1
+    },
+    {
+      "package": "hrc-core",
+      "symbol": "SessionAnnotation",
+      "kind": "type",
+      "file": "packages/hrc-core/src/session-annotations.ts",
+      "hash": "hrc-core|SessionAnnotation|type",
+      "count": 1
+    },
+    {
+      "package": "hrc-core",
+      "symbol": "SessionAnnotationExpect",
+      "kind": "type",
+      "file": "packages/hrc-core/src/session-annotations.ts",
+      "hash": "hrc-core|SessionAnnotationExpect|type",
+      "count": 1
+    },
+    {
+      "package": "hrc-core",
+      "symbol": "SessionAnnotationKey",
+      "kind": "type",
+      "file": "packages/hrc-core/src/session-annotations.ts",
+      "hash": "hrc-core|SessionAnnotationKey|type",
+      "count": 1
+    },
+    {
+      "package": "hrc-core",
+      "symbol": "SessionAnnotationRefusalCode",
+      "kind": "type",
+      "file": "packages/hrc-core/src/session-annotations.ts",
+      "hash": "hrc-core|SessionAnnotationRefusalCode|type",
+      "count": 1
+    },
+    {
+      "package": "hrc-core",
+      "symbol": "SessionAnnotationSubject",
+      "kind": "type",
+      "file": "packages/hrc-core/src/session-annotations.ts",
+      "hash": "hrc-core|SessionAnnotationSubject|type",
+      "count": 1
+    },
+    {
+      "package": "hrc-core",
+      "symbol": "SessionAnnotationWriteOptions",
+      "kind": "type",
+      "file": "packages/hrc-core/src/session-annotations.ts",
+      "hash": "hrc-core|SessionAnnotationWriteOptions|type",
       "count": 1
     },
     {
@@ -5199,6 +5311,22 @@
     },
     {
       "package": "hrc-sdk",
+      "symbol": "ActOnSessionAnnotationRequest",
+      "kind": "type",
+      "file": "packages/hrc-core/src/session-annotations.ts",
+      "hash": "hrc-sdk|ActOnSessionAnnotationRequest|type",
+      "count": 1
+    },
+    {
+      "package": "hrc-sdk",
+      "symbol": "ActOnSessionAnnotationResponse",
+      "kind": "type",
+      "file": "packages/hrc-core/src/session-annotations.ts",
+      "hash": "hrc-sdk|ActOnSessionAnnotationResponse|type",
+      "count": 1
+    },
+    {
+      "package": "hrc-sdk",
       "symbol": "AdoptRuntimeRequest",
       "kind": "type",
       "file": "packages/hrc-sdk/src/types.ts",
@@ -5331,6 +5459,22 @@
       "kind": "type",
       "file": "packages/hrc-core/src/http-contracts-runtime.ts",
       "hash": "hrc-sdk|ClearContextResponse|type",
+      "count": 1
+    },
+    {
+      "package": "hrc-sdk",
+      "symbol": "DeleteSessionAnnotationRequest",
+      "kind": "type",
+      "file": "packages/hrc-core/src/session-annotations.ts",
+      "hash": "hrc-sdk|DeleteSessionAnnotationRequest|type",
+      "count": 1
+    },
+    {
+      "package": "hrc-sdk",
+      "symbol": "DeleteSessionAnnotationResponse",
+      "kind": "type",
+      "file": "packages/hrc-core/src/session-annotations.ts",
+      "hash": "hrc-sdk|DeleteSessionAnnotationResponse|type",
       "count": 1
     },
     {
@@ -5551,6 +5695,22 @@
     },
     {
       "package": "hrc-sdk",
+      "symbol": "ListSessionAnnotationsRequest",
+      "kind": "type",
+      "file": "packages/hrc-core/src/session-annotations.ts",
+      "hash": "hrc-sdk|ListSessionAnnotationsRequest|type",
+      "count": 1
+    },
+    {
+      "package": "hrc-sdk",
+      "symbol": "ListSessionAnnotationsResponse",
+      "kind": "type",
+      "file": "packages/hrc-core/src/session-annotations.ts",
+      "hash": "hrc-sdk|ListSessionAnnotationsResponse|type",
+      "count": 1
+    },
+    {
+      "package": "hrc-sdk",
       "symbol": "loadDotEnvLocal",
       "kind": "value",
       "file": "packages/hrc-sdk/src/dotenv-local.ts",
@@ -5635,6 +5795,22 @@
       "kind": "type",
       "file": "packages/hrc-sdk/src/project-placement.ts",
       "hash": "hrc-sdk|ProjectRegistryEntry|type",
+      "count": 1
+    },
+    {
+      "package": "hrc-sdk",
+      "symbol": "PutSessionAnnotationRequest",
+      "kind": "type",
+      "file": "packages/hrc-core/src/session-annotations.ts",
+      "hash": "hrc-sdk|PutSessionAnnotationRequest|type",
+      "count": 1
+    },
+    {
+      "package": "hrc-sdk",
+      "symbol": "PutSessionAnnotationResponse",
+      "kind": "type",
+      "file": "packages/hrc-core/src/session-annotations.ts",
+      "hash": "hrc-sdk|PutSessionAnnotationResponse|type",
       "count": 1
     },
     {
@@ -5795,6 +5971,54 @@
       "kind": "type",
       "file": "packages/hrc-sdk/src/types.ts",
       "hash": "hrc-sdk|SendInFlightInputResponse|type",
+      "count": 1
+    },
+    {
+      "package": "hrc-sdk",
+      "symbol": "SessionAnnotation",
+      "kind": "type",
+      "file": "packages/hrc-core/src/session-annotations.ts",
+      "hash": "hrc-sdk|SessionAnnotation|type",
+      "count": 1
+    },
+    {
+      "package": "hrc-sdk",
+      "symbol": "SessionAnnotationExpect",
+      "kind": "type",
+      "file": "packages/hrc-core/src/session-annotations.ts",
+      "hash": "hrc-sdk|SessionAnnotationExpect|type",
+      "count": 1
+    },
+    {
+      "package": "hrc-sdk",
+      "symbol": "SessionAnnotationKey",
+      "kind": "type",
+      "file": "packages/hrc-core/src/session-annotations.ts",
+      "hash": "hrc-sdk|SessionAnnotationKey|type",
+      "count": 1
+    },
+    {
+      "package": "hrc-sdk",
+      "symbol": "SessionAnnotationRefusalCode",
+      "kind": "type",
+      "file": "packages/hrc-core/src/session-annotations.ts",
+      "hash": "hrc-sdk|SessionAnnotationRefusalCode|type",
+      "count": 1
+    },
+    {
+      "package": "hrc-sdk",
+      "symbol": "SessionAnnotationSubject",
+      "kind": "type",
+      "file": "packages/hrc-core/src/session-annotations.ts",
+      "hash": "hrc-sdk|SessionAnnotationSubject|type",
+      "count": 1
+    },
+    {
+      "package": "hrc-sdk",
+      "symbol": "SessionAnnotationWriteOptions",
+      "kind": "type",
+      "file": "packages/hrc-core/src/session-annotations.ts",
+      "hash": "hrc-sdk|SessionAnnotationWriteOptions|type",
       "count": 1
     },
     {
