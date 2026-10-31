@@ -103,5 +103,6 @@
   "0124_dead_table_removal",
   "0125_legacy_events_removal",
   "0126_plan_policy_table_removal",
-  "0127_permission_audit_removal"
+  "0127_permission_audit_removal",
+  "0128_seat_annotations"
 ]
