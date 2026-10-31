@@ -237,7 +237,10 @@ e2e:
 # Seat annotations Gate 1 (T-12186): the rusthrc `session annotation` CLI and
 # routes on a private scratch rusthrc with a stub-broker hrcpty seat — put/list,
 # stale_annotation, the 64 KiB body cap, stale_attention across a real turn,
-# delete, act, the SDK, and the session.annotation.* ledger rows.
+# delete, act, the SDK, and the session.annotation.* ledger rows. Then Gate 2
+# (T-12187) on the same daemon: hrc.annotation in the kernel per put and
+# revision, and `session rotate --relaunch` archiving hrc.generation 1 with its
+# annotations while hrc.seat.activeGeneration moves to 2.
 
 # Run the seat-annotations e2e on a scratch rusthrc
 e2e-annotations:
