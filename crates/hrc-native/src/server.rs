@@ -414,7 +414,8 @@ async fn dispatch_local(server: &Shared, request: Request) -> Response {
 /// `dispatch`, the function the listener calls, so the route table, accounting,
 /// federation forwarding and the ledger wake treat it as an HTTP request from
 /// the historical client name `hrc-kernel`. No socket and no framing; the reply
-/// is its status and JSON.
+/// is its status and JSON. The cardo wire names no caller principal, so writes
+/// that record one (`updatedBy`) name the kernel, `kernel::PRINCIPAL`.
 async fn call_local(
     server: &Shared,
     method: &str,
@@ -425,6 +426,7 @@ async fn call_local(
         .method(method)
         .uri(route)
         .header("user-agent", kernel::CLIENT)
+        .header("x-hrc-principal-ref", kernel::PRINCIPAL)
         .header("content-type", "application/json")
         .body(body.map_or_else(axum::body::Body::empty, |b| b.to_string().into()))?;
     let response = dispatch(State(server.clone()), request).await;

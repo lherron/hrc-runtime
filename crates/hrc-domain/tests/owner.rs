@@ -1,6 +1,7 @@
 use cardo_core::doms::Node;
 use hrc_domain::{
     HrcError,
+    annotation::{self, AnnotationAct, AnnotationPut},
     attach::attach,
     owner::{OwnerCall, OwnerReply},
     restart::Restart,
@@ -139,6 +140,174 @@ fn unvalidated_scope_is_refused_before_hrc() {
         ))
     );
     assert!(owner.calls().is_empty());
+}
+
+fn refused(status: u16, code: &str) -> Result<OwnerReply, HrcError> {
+    Ok(OwnerReply {
+        status,
+        body: json!({"error":{"code":code,"message":code}}),
+    })
+}
+
+// Failure cases (T-12188 F4-F10): put sent as POST or to a forbidden route;
+// session_ref not split into scopeRef/laneRef; generation or a null
+// updatedAt fence lost on the way; a typo'd field dropping the fence
+// silently; a store refusal read as hrc_refused; a 2xx without readback
+// fields fabricating a receipt.
+#[test]
+fn annotation_put_enters_the_put_route_with_the_key_body_and_expect() {
+    let owner = Scripted::new(vec![ok(
+        json!({"annotation":{"updatedAt":"2026-10-31T00:00:00.000Z","body":{"v":1}},"created":true}),
+    )]);
+    let put = AnnotationPut::parse(json!({"session_ref":SEAT,"subject":"generation","generation":3,
+        "ns":"c2","kind":"card","id":"k1","body":{"v":1},"expect":{"updatedAt":null,"attentionAt":"a1"}}))
+    .unwrap();
+    assert_eq!(
+        put.run(&owner).unwrap(),
+        json!({"updated_at":"2026-10-31T00:00:00.000Z","created":true})
+    );
+    let calls = owner.calls();
+    assert_eq!(
+        (calls[0].0.as_str(), calls[0].1.as_str()),
+        ("PUT", "/v1/sessions/annotations")
+    );
+    assert_eq!(
+        calls[0].2,
+        Some(
+            json!({"scopeRef":"agent:a:project:p:task:t","laneRef":"main","subject":"generation",
+            "generation":3,"ns":"c2","kind":"card","id":"k1","body":{"v":1},
+            "expect":{"updatedAt":null,"attentionAt":"a1"}})
+        )
+    );
+}
+
+#[test]
+fn annotation_refusals_keep_the_store_code() {
+    for (status, code) in [
+        (409, "stale_attention"),
+        (409, "stale_annotation"),
+        (404, "unknown_annotation"),
+    ] {
+        let owner = Scripted::new(vec![refused(status, code)]);
+        let put = AnnotationPut::parse(
+            json!({"session_ref":SEAT,"subject":"seat","ns":"c2","kind":"card","id":"k","body":{}}),
+        )
+        .unwrap();
+        let failure = put.run(&owner).unwrap_err();
+        assert_eq!(
+            (failure.code.as_str(), &failure.details["hrc_code"]),
+            (code, &json!(code))
+        );
+        let owner = Scripted::new(vec![refused(status, code)]);
+        let act = AnnotationAct::parse(
+            json!({"session_ref":SEAT,"subject":"seat","ns":"c2","kind":"card","id":"k","action":"sent"}),
+        )
+        .unwrap();
+        assert_eq!(act.run(&owner).unwrap_err().code, code);
+        assert_eq!(
+            (owner.calls()[0].0.as_str(), owner.calls()[0].1.as_str()),
+            ("POST", "/v1/sessions/annotations/act")
+        );
+    }
+}
+
+#[test]
+fn annotation_act_passes_attributes_and_reads_back_the_seq() {
+    let owner = Scripted::new(vec![ok(json!({"hrcSeq":42}))]);
+    let act = AnnotationAct::parse(
+        json!({"session_ref":"agent:a:project:p/lane:repl","subject":"seat",
+        "ns":"c2","kind":"card","id":"k","action":"sent","attributes":{"ok":true}}),
+    )
+    .unwrap();
+    assert_eq!(act.run(&owner).unwrap(), json!({"hrc_seq":42}));
+    assert_eq!(
+        owner.calls()[0].2,
+        Some(
+            json!({"scopeRef":"agent:a:project:p","laneRef":"repl","subject":"seat","ns":"c2",
+            "kind":"card","id":"k","action":"sent","attributes":{"ok":true}})
+        )
+    );
+}
+
+#[test]
+fn annotation_ops_refuse_before_hrc_and_never_fabricate_a_receipt() {
+    for args in [
+        // no lane in the ref
+        json!({"session_ref":"agent:a:project:p","subject":"seat","ns":"n","kind":"k","id":"i","body":{}}),
+        // a typo'd fence is refused, not dropped
+        json!({"session_ref":SEAT,"subject":"seat","ns":"n","kind":"k","id":"i","body":{},"expect_updated_at":"x"}),
+        // body is required
+        json!({"session_ref":SEAT,"subject":"seat","ns":"n","kind":"k","id":"i"}),
+        // generation is an integer
+        json!({"session_ref":SEAT,"subject":"generation","generation":"1","ns":"n","kind":"k","id":"i","body":{}}),
+    ] {
+        assert_eq!(
+            AnnotationPut::parse(args.clone()).err().map(|e| e.code),
+            Some("invalid_input".into()),
+            "{args}"
+        );
+    }
+    assert_eq!(
+        AnnotationAct::parse(
+            json!({"session_ref":SEAT,"subject":"seat","ns":"n","kind":"k","id":"i"})
+        )
+        .err()
+        .map(|e| e.code),
+        Some("invalid_input".into())
+    );
+    let owner = Scripted::new(vec![
+        ok(json!({"annotation":{},"created":true})),
+        ok(json!({})),
+    ]);
+    let put = AnnotationPut::parse(
+        json!({"session_ref":SEAT,"subject":"seat","ns":"n","kind":"k","id":"i","body":{}}),
+    )
+    .unwrap();
+    assert_eq!(put.run(&owner).unwrap_err().code, "hrc_response_invalid");
+    let act = AnnotationAct::parse(
+        json!({"session_ref":SEAT,"subject":"seat","ns":"n","kind":"k","id":"i","action":"a"}),
+    )
+    .unwrap();
+    assert_eq!(act.run(&owner).unwrap_err().code, "hrc_response_invalid");
+}
+
+// Failure cases (F1-F3): the ops undeclared, declared with a cardo fence, or
+// read-effect; the declared input not naming the fields the binding accepts.
+#[test]
+fn annotation_ops_are_declared_unfenced_writes() {
+    let declarations = hrc_domain::declarations::declarations();
+    let ops = declarations["operations"].as_array().unwrap();
+    for (name, input, output) in [
+        (annotation::PUT, "body", "updated_at"),
+        (annotation::ACT, "action", "hrc_seq"),
+    ] {
+        let op = ops
+            .iter()
+            .find(|o| o["name"] == name)
+            .unwrap_or_else(|| panic!("{name} undeclared"));
+        assert_eq!(
+            (&op["fences"], &op["effect"]),
+            (&json!("none"), &json!("write"))
+        );
+        assert!(op.get("idempotency").is_none(), "{op}");
+        for field in [
+            "session_ref",
+            "subject",
+            "generation",
+            "ns",
+            "kind",
+            "id",
+            input,
+        ] {
+            assert!(op["input"]["fields"].get(field).is_some(), "{name} {field}");
+        }
+        assert!(
+            op["output"]["required"]
+                .as_array()
+                .unwrap()
+                .contains(&json!(output))
+        );
+    }
 }
 
 fn hrcpty_seat(runtime: &str) -> Node {

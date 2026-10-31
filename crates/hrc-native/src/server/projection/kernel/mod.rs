@@ -24,6 +24,9 @@ use tokio::task::JoinHandle;
 /// User-Agent of every kernel request, so accounting meters it (T-11541).
 // Historical client identity retained for accounting continuity across the fold.
 pub(super) const CLIENT: &str = concat!("hrc-kernel/", env!("CARGO_PKG_VERSION"));
+/// The principal of every kernel request: a kernel op's caller is not named
+/// on the cardo wire, so its annotation writes record the kernel itself.
+pub(super) const PRINCIPAL: &str = "system:hrc-kernel";
 /// The ledger watch wakes ingest; the interval is only a backstop.
 const INGEST_INTERVAL_MS: u64 = 10_000;
 const RESYNC_EVERY_MS: u64 = 600_000;
@@ -226,6 +229,7 @@ async fn watch_errors(client: KernelClient) {
 mod tests {
     use super::*;
     use crate::server::turns::admission::tests::{binding, server};
+    use hrc_domain::annotation;
     use serde_json::json;
     use std::{
         io::{BufRead, BufReader, Write},
@@ -407,6 +411,158 @@ mod tests {
             UnixStream::connect(&socket).is_err(),
             "stopped kernel is gone"
         );
+        Ok(())
+    }
+
+    /// A wire call off the test's tokio worker: an owner op's work blocks
+    /// on the server's runtime until HRC answers.
+    async fn op(socket: &std::path::Path, name: &'static str, args: Value) -> Value {
+        let socket = socket.to_owned();
+        tokio::task::spawn_blocking(move || wire(&socket, name, args))
+            .await
+            .unwrap()
+    }
+    fn ledger(server: &Shared, scope: &str, kind: &str) -> Vec<(i64, Value)> {
+        let db = rusqlite::Connection::open(server.state.join("state.sqlite")).unwrap();
+        let mut rows = db
+            .prepare("SELECT hrc_seq, payload_json FROM hrc_events WHERE scope_ref=? AND event_kind=? ORDER BY hrc_seq")
+            .unwrap();
+        rows.query_map(rusqlite::params![scope, kind], |r| {
+            Ok((r.get::<_, i64>(0)?, r.get::<_, String>(1)?))
+        })
+        .unwrap()
+        .map(|r| {
+            let (seq, payload) = r.unwrap();
+            (seq, serde_json::from_str(&payload).unwrap())
+        })
+        .collect()
+    }
+
+    // Failure cases (T-12188): the ops unregistered with the kernel (unknown
+    // operation) or rejected by registry.enable; a store refusal answered as
+    // hrc_refused or a success; a write attributed `unknown`; a put that
+    // appends no session.annotation.changed or an act no
+    // session.annotation.action; the put not reaching the hrc.annotation node.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn annotation_ops_dispatch_in_process_to_the_store() -> anyhow::Result<()> {
+        let (_scratch, mut server) = server("off", false)?;
+        let _root = short_root(&mut server);
+        let socket = server.runtime.join("hrc-kernel.sock");
+        let kernel = start(&server).await.expect("kernel starts");
+        let scope = "agent:kq:project:fold:task:annotated";
+        let seat = format!("{scope}/lane:main");
+        let (status, _) = call_local(
+            &server,
+            "POST",
+            "/v1/sessions/resolve",
+            Some(&json!({"sessionRef":seat,"create":true})),
+        )
+        .await?;
+        assert_eq!(status, 200);
+        let key = json!({"session_ref":seat,"subject":"seat","ns":"c2","kind":"card","id":"k1"});
+        let with = |extra: Value| {
+            let mut args = key.clone();
+            args.as_object_mut()
+                .unwrap()
+                .extend(extra.as_object().unwrap().clone());
+            args
+        };
+
+        let put = op(
+            &socket,
+            annotation::PUT,
+            with(json!({"body":{"v":1},"expect":{"updatedAt":null}})),
+        )
+        .await;
+        assert_eq!(
+            (&put["ok"], &put["result"]["created"]),
+            (&json!(true), &json!(true)),
+            "{put}"
+        );
+        let u1 = put["result"]["updated_at"].as_str().unwrap().to_owned();
+        let again = op(
+            &socket,
+            annotation::PUT,
+            with(json!({"body":{"v":2},"expect":{"updatedAt":u1}})),
+        )
+        .await;
+        assert_eq!(again["result"]["created"], false, "{again}");
+        for (args, code) in [
+            (
+                with(json!({"body":{"v":3},"expect":{"updatedAt":u1}})),
+                "stale_annotation",
+            ),
+            // No turn has lit the seat: any attentionAt is stale.
+            (
+                with(json!({"body":{"v":3},"expect":{"attentionAt":"2026-10-31T00:00:00.000Z"}})),
+                "stale_attention",
+            ),
+        ] {
+            let reply = op(&socket, annotation::PUT, args).await;
+            assert_eq!(
+                (&reply["ok"], &reply["error"]["code"]),
+                (&json!(false), &json!(code)),
+                "{reply}"
+            );
+        }
+        let unknown = op(
+            &socket,
+            annotation::ACT,
+            json!({"session_ref":seat,"subject":"seat","ns":"c2",
+            "kind":"card","id":"absent","action":"sent"}),
+        )
+        .await;
+        assert_eq!(unknown["error"]["code"], "unknown_annotation", "{unknown}");
+        let acted = op(
+            &socket,
+            annotation::ACT,
+            with(json!({"action":"sent","attributes":{"ok":true}})),
+        )
+        .await;
+        assert_eq!(acted["ok"], true, "{acted}");
+
+        let changed = ledger(&server, scope, "session.annotation.changed");
+        assert_eq!(
+            changed.len(),
+            2,
+            "two admitted puts, refusals append nothing: {changed:?}"
+        );
+        assert!(
+            changed
+                .iter()
+                .all(|(_, p)| p["op"] == "put" && p["updatedBy"] == PRINCIPAL)
+        );
+        let actions = ledger(&server, scope, "session.annotation.action");
+        assert_eq!(actions.len(), 1, "{actions:?}");
+        assert_eq!(acted["result"]["hrc_seq"], actions[0].0);
+        assert_eq!(
+            (&actions[0].1["action"], &actions[0].1["attributes"]),
+            (&json!("sent"), &json!({"ok":true}))
+        );
+
+        let deadline = Instant::now() + Duration::from_secs(5);
+        let node = loop {
+            let reply = wire(
+                &socket,
+                "document.query",
+                json!({"document_id":"hrc","type":"hrc.annotation","limit":100}),
+            );
+            let found = reply["result"]["rows"].as_array().and_then(|rows| {
+                rows.iter()
+                    .find(|r| r["payload"]["id"] == "k1" && r["payload"]["body"] == json!({"v":2}))
+                    .cloned()
+            });
+            if let Some(node) = found {
+                break node;
+            }
+            assert!(
+                Instant::now() < deadline,
+                "the put projects as hrc.annotation: {reply}"
+            );
+            tokio::time::sleep(Duration::from_millis(25)).await;
+        };
+        assert_eq!(node["payload"]["updatedBy"], PRINCIPAL, "{node}");
+        kernel.stop().await?;
         Ok(())
     }
 

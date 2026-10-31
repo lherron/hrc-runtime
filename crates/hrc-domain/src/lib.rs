@@ -1,4 +1,5 @@
 //! HRC native-ledger observation domain and owner-operation facades.
+pub mod annotation;
 pub mod attach;
 pub mod declarations;
 pub mod document;

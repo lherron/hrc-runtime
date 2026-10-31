@@ -4,6 +4,7 @@
 use cardo_runtime::service::*;
 use crossbeam_channel::Sender;
 use hrc_domain::{
+    annotation::{self, AnnotationAct, AnnotationPut},
     document::HrcCore,
     owner::OwnerCall,
     restart::{self, Restart},
@@ -16,7 +17,11 @@ use std::{collections::BTreeSet, sync::Arc};
 fn owner_operation(operation: &str) -> bool {
     matches!(
         operation,
-        summon::OPERATION | restart::OPERATION | send::OPERATION
+        summon::OPERATION
+            | restart::OPERATION
+            | send::OPERATION
+            | annotation::PUT
+            | annotation::ACT
     )
 }
 
@@ -81,6 +86,12 @@ impl DispatchAdapter for HrcAdapter {
             send::OPERATION => {
                 SeatSend::parse(command.arguments.clone())?;
             }
+            annotation::PUT => {
+                AnnotationPut::parse(command.arguments.clone())?;
+            }
+            annotation::ACT => {
+                AnnotationAct::parse(command.arguments.clone())?;
+            }
             _ => {
                 Summon::parse(command.arguments.clone())?;
             }
@@ -132,6 +143,12 @@ impl DispatchAdapter for HrcAdapter {
                 Box::new(move || args.run(owner.as_ref()))
             } else if work.kind == send::OPERATION {
                 let args = SeatSend::parse(work.input).map_err(refused)?;
+                Box::new(move || args.run(owner.as_ref()))
+            } else if work.kind == annotation::PUT {
+                let args = AnnotationPut::parse(work.input).map_err(refused)?;
+                Box::new(move || args.run(owner.as_ref()))
+            } else if work.kind == annotation::ACT {
+                let args = AnnotationAct::parse(work.input).map_err(refused)?;
                 Box::new(move || args.run(owner.as_ref()))
             } else {
                 let args = Summon::parse(work.input).map_err(refused)?;

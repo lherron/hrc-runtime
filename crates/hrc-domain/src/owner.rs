@@ -16,12 +16,14 @@ pub trait OwnerCall: Send + Sync {
     -> Result<OwnerReply, HrcError>;
 }
 
-/// The existing owner routes the stage-1b ops call. Never retried.
-const OWNER_ROUTES: &[&str] = &[
-    "/v1/declarations/resolve",
-    "/v1/literal-input/by-selector",
-    "/v1/runtimes/start",
-    "/v1/sessions/restart",
+/// The owner routes the ops call, as `METHOD path`. Never retried.
+const OWNER_ROUTES: &[(&str, &str)] = &[
+    ("POST", "/v1/declarations/resolve"),
+    ("POST", "/v1/literal-input/by-selector"),
+    ("POST", "/v1/runtimes/start"),
+    ("POST", "/v1/sessions/restart"),
+    ("PUT", "/v1/sessions/annotations"),
+    ("POST", "/v1/sessions/annotations/act"),
 ];
 
 fn reply(reply: OwnerReply, fallback: &str) -> Result<Value, HrcError> {
@@ -36,11 +38,24 @@ fn reply(reply: OwnerReply, fallback: &str) -> Result<Value, HrcError> {
 }
 
 pub fn post(owner: &dyn OwnerCall, route: &str, body: &Value) -> Result<Value, HrcError> {
-    if !OWNER_ROUTES.contains(&route) {
-        return Err(HrcError::new("hrc_route_forbidden", route));
+    call(owner, "POST", route, body)
+}
+
+/// One allowlisted owner route with a JSON body; a non-2xx is its HRC code.
+pub fn call(
+    owner: &dyn OwnerCall,
+    method: &str,
+    route: &str,
+    body: &Value,
+) -> Result<Value, HrcError> {
+    if !OWNER_ROUTES.contains(&(method, route)) {
+        return Err(HrcError::new(
+            "hrc_route_forbidden",
+            format!("{method} {route}"),
+        ));
     }
     reply(
-        owner.call("POST", route, Some(body))?,
+        owner.call(method, route, Some(body))?,
         "HRC refused the request",
     )
 }
