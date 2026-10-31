@@ -1,0 +1,49 @@
+id: hrc-runtime.federated-input-interrupt
+kind: contract
+status: active
+owner_project: hrc-runtime
+scope: explicit-node HRC interrupt forwarding and broker execution-input guard
+predicate: >
+  POST /v1/interrupt accepts runtimeId and optional ownerRunId, node and inputId.
+  An absent node or this node executes locally. A configured peer node forwards
+  once, using HRC-owned peer credentials and federation user agent, to POST
+  /v1/federation/interrupt. The peer executes locally without forwarding; its
+  response is relayed unchanged. An unknown node returns 404 unknown_node;
+  an unreachable peer returns 503 runtime_unavailable with targetNode and
+  retryable true. This adds no placement registry or peer credentials to ACP.
+  On the owning node, inputId takes precedence over ownerRunId. HRC probes the
+  broker seat, requires turn-active and turnId, and reads that turn's manifest.
+  Only membership of inputId in manifest.submissionIds permits the interrupt.
+  Idle, missing membership, or probe or manifest failure returns ok with a
+  warning and skips the interrupt. Admission run identities, dispatched input
+  run lookup and coalesced auxiliary run rows are not guard authority.
+  Without inputId, the existing ownerRunId and interrupt behavior remains.
+  The SDK exposes these optional fields without relocating control authority.
+  Probe and manifest observation do not guarantee atomicity with a subsequent
+  interrupt; a completion race outside this guard is explicitly unsupported.
+  This explicit-node route does not enable remote control through the mobile
+  session lookup or the federatedSessionRead capability.
+authority: Daedalus APPROVE EN-39461 on T-12177 specification rev 2, 2026-10-31
+source:
+  - wrkq:T-12177
+  - architecture/records/invariants/hrc-runtime.federated-session-read.yaml
+  - architecture/records/invariants/hrc-runtime.harness-broker-committed-observation-control.yaml
+  - crates/hrc-native/src/server/turns/control.rs
+  - crates/hrc-native/src/server/turns/turns/admission.rs
+  - crates/hrc-native/src/server/placement/federation/peer_listener.rs
+  - crates/hrc-native/src/server/lifecycle/lifecycle/peer.rs
+  - packages/hrc-sdk/src/client-runtime.ts
+validation_scope: >
+  T-12177 rev 2 product gates remain the requester's: live Discord cancellation
+  stops svc and max3 turns, a late cancellation leaves the next turn running,
+  pending withdrawal is observed, failure is visible, and existing ACP-run
+  cancellation checks remain green. This contract adds no mechanism gate.
+last_verified: >
+  2026-10-31 design reviewed against the local interrupt, preempt ownership
+  probe, peer authentication and forwarding, SDK option serialization, and
+  ASP broker manifest membership writers. No implementation, build, test,
+  install, restart or live acceptance is established by this review.
+reopen_when: >
+  Peer forwarding authority or hop count, node addressing, input versus run
+  ownership, manifest membership, guard failure behavior, inputId precedence,
+  mobile control admission, or interruption atomicity guarantees change.

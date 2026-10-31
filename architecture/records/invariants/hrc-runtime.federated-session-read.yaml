@@ -31,19 +31,23 @@ predicate: >
   and lane on a local miss and checks the returned hostSessionId against the
   requested generation's host identity. It does not depend on runtime presence.
   This remote lookup is confined to timeline and history; input and interrupt
-  retain their local-only lookup regardless of caller sourceKind. Remote
+  retain their local-only session lookup regardless of caller sourceKind. The
+  separate explicit-node POST /v1/interrupt forwarding door is governed by
+  producer contract hrc-runtime.federated-input-interrupt and gains no authority
+  from federatedSessionRead or this remote session lookup. Remote
   snapshot last-event and latest-run reads use the exact scope, lane, host and
   generation filters on the home. All timeline event pages and follows include
   scope and lane. ACP exposes home_unreachable as a retryable timeline error
   and preserves ledger_replaced handling. Updated iOS gates timeline and history
   on their declared capabilities and sends sessionRef for remote reads; older
-  clients remain safely refusing. Remote input, literal input, interrupt,
-  answerPrompt and diagnostics remain disabled. Federation observation carries
+  clients remain safely refusing. Mobile remote input, literal input,
+  interrupt, answerPrompt and diagnostics remain disabled. Federation observation carries
   lifecycle facts only; agent-message delivery remains on the shared wrkq ledger.
-authority: Daedalus approval of wrkq:T-10418 Spec rev 3, task etag 5, 2026-10-06; closes the federation cross-node streaming consult
+authority: Daedalus approval of wrkq:T-10418 Spec rev 3, task etag 5, 2026-10-06; explicit-node interrupt separation clarified by T-12177 rev 2 APPROVE EN-39461, 2026-10-31
 source:
   - wrkq:T-10418
   - wrkq:T-06801
+  - architecture/contracts/federated-input-interrupt.yaml
   - architecture/records/invariants/hrc-runtime.bounded-lifecycle-event-observation.yaml
   - architecture/records/invariants/hrc-runtime.session-identity-metadata.yaml
   - architecture/records/invariants/hrc-runtime.mobile-session-index.yaml
@@ -65,5 +69,9 @@ required_tests:
   - T-10418 new hrc-ios build on Lance's device opens remote timeline and history through declared capabilities
 last_verified: 2026-10-06 Spec rev 3 reviewed against source and active records; implementation, build, installation and live acceptance pending
 reopen_when: Home authority routing, retirement or unknown-authority treatment, peer route admission, forwarding filters, home provenance, capability meaning, remote lookup completeness, observation versus control isolation, or consumer cursor behavior changes.
+design_review: >
+  2026-10-31 T-12177 rev 2 APPROVE EN-39461 clarifies the separation of mobile
+  session lookup from the explicit-node interrupt producer contract. Existing
+  last_verified evidence is unchanged; no implementation or live gate was run.
 supersedes: []
 superseded_by: []
