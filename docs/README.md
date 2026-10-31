@@ -42,6 +42,7 @@ Current reference for the HRC runtime. Design records live in
 
 ## Approved designs
 
+- [proposals/seat-annotations.md](proposals/seat-annotations.md) — draft r1 for Daedalus review, not shipped: namespaced annotations on a seat or generation (`seat_annotations`, `hrc.annotation`, `hrc.generation`), replacing Loggia-side card storage (T-12183).
 - [proposals/install-publish-split.md](proposals/install-publish-split.md) — implemented design splitting local install selection from publication (T-08559).
 - [proposals/hrc-rust-parity.md](proposals/hrc-rust-parity.md) — native Rust parity r2: whole-node owner transfer, packages N0–N6 against current main, product-claim gates and explicitly unsupported cases (P-00866).
 - [proposals/hrc-rust-migration.md](proposals/hrc-rust-migration.md) — proposal: port HRC to Rust embedding cardo-runtime (delivered kernel/facades, isolated native parity, cohesive owner transfer; retirement separately gated); consolidation deferred (P-00862).
