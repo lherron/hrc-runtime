@@ -60,3 +60,4 @@ __pycache__/
 
 # Arris build output
 diagrams/*.preview/
+diagrams/drafts/
