@@ -23,7 +23,9 @@ an hrcpty lease only says `hello` and reads `status`: no TUI at birth. Its
 turns, initial and `submission.*`, complete at once as RPC evidence.
 
 A codex turn whose prompt contains `HOLD` stays open until
-`invocation.interrupt`, then ends `turn.interrupted` (T-12177).
+`invocation.interrupt`, then ends `turn.interrupted` (T-12177). While it is
+held, `seat.probe` answers turn-active (turnId `turn-held`) and
+`turn.manifest` lists the held input as that turn's only submission.
 
 `stub.localTurn` emits a turn no HRC input started (a prompt typed in a TUI).
 `stub.usage` {turnId, usedTokens, windowTokens}, sent on its own connection,
@@ -178,9 +180,11 @@ def run_turn(input_id, prompt):
         held = threading.Event()
         with lock:
             state['held'] = held
+            state['heldInput'] = input_id
         held.wait(120)
         with lock:
             state['held'] = None
+            state['heldInput'] = None
             state['state'] = 'ready'
         emit('turn.interrupted', {'reason': 'interrupt'}, input_id)
         return
@@ -274,6 +278,13 @@ def handle(conn, method, params):
         text = json.dumps(body)[:200]
         threading.Thread(target=run_turn, args=(submission, text), daemon=True).start()
         return {'submissionId': submission, 'admission': 'admitted', 'inputId': submission}
+    if method == 'seat.probe' and state.get('heldInput'):
+        # T-12177: only a held turn answers; otherwise the probe stays the
+        # unknown method it always was, so the rest of the run is unchanged.
+        return {'seat': {'state': 'turn-active', 'turnId': 'turn-held'}}
+    if method == 'turn.manifest' and state.get('heldInput'):
+        held = params.get('turnId') == 'turn-held'
+        return {'turnId': params.get('turnId'), 'submissionIds': [state['heldInput']] if held else []}
     if method == 'invocation.interrupt':
         with lock:
             held = state['held']

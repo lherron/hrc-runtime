@@ -2,9 +2,9 @@
 //! handleInterrupt/handleTerminate, runtime-control-handlers/interrupt-terminate.ts,
 //! broker-dispose.ts, bc-rpc.ts dispose).
 use super::{
-    ApiError, Shared, controller, hrcpty, lease,
+    ApiError, Shared, controller, federation, hrcpty, lease,
     projection::{db, events},
-    turns::admission::unavailable,
+    turns::admission::{active_turn_submissions, unavailable},
 };
 use axum::{
     Json,
@@ -20,7 +20,14 @@ const DISPOSE_TIMEOUT: Duration = Duration::from_millis(15_000);
 struct Action {
     runtime_id: String,
     owner_run_id: Option<String>,
+    /// T-12177: the runtime's home node; another node forwards one hop.
+    node: Option<String>,
+    /// T-12177: interrupt only while the executing turn's manifest carries it.
+    input_id: Option<String>,
 }
+
+const INPUT_NOT_EXECUTING: &str = "input is not in the executing turn; interrupt skipped";
+const FORWARD_TIMEOUT: Duration = Duration::from_secs(30);
 #[derive(Default)]
 struct Terminate {
     drop_continuation: Option<bool>,
@@ -52,19 +59,23 @@ fn action(body: &Value) -> Result<Action, ApiError> {
         .map(str::trim)
         .filter(|s| !s.is_empty())
         .ok_or_else(|| bad("runtimeId is required".into(), "runtimeId"))?;
-    let owner_run_id = match input.get("ownerRunId") {
-        None => None,
-        Some(v) => Some(
-            v.as_str()
-                .map(str::trim)
-                .filter(|s| !s.is_empty())
-                .ok_or_else(|| bad("ownerRunId must be a string".into(), "ownerRunId"))?
-                .to_owned(),
-        ),
+    let optional = |field: &str| -> Result<Option<String>, ApiError> {
+        match input.get(field) {
+            None => Ok(None),
+            Some(v) => Ok(Some(
+                v.as_str()
+                    .map(str::trim)
+                    .filter(|s| !s.is_empty())
+                    .ok_or_else(|| bad(format!("{field} must be a string"), field))?
+                    .to_owned(),
+            )),
+        }
     };
     Ok(Action {
         runtime_id: runtime_id.to_owned(),
-        owner_run_id,
+        owner_run_id: optional("ownerRunId")?,
+        node: optional("node")?,
+        input_id: optional("inputId")?,
     })
 }
 /// parseTerminateRuntimeRequest
@@ -196,10 +207,86 @@ fn touch(db: &Connection, runtime_id: &str, now: &str) -> anyhow::Result<()> {
     )
 }
 
-pub async fn interrupt(server: &Shared, body: Value) -> Result<Response, ApiError> {
-    let body = action(&body)?;
+/// Relay an interrupt to the runtime's home node over the peer protocol, one
+/// hop: the peer runs it locally and its response returns unchanged.
+async fn forward_interrupt(
+    server: &Shared,
+    node: &str,
+    body: &Value,
+) -> Result<Response, ApiError> {
+    let peer = server.federation.peer(node).ok_or_else(|| {
+        ApiError::domain(
+            StatusCode::NOT_FOUND,
+            "unknown_node",
+            format!("{node} is not a configured federation peer"),
+            Some(json!({"targetNode":node})),
+        )
+    })?;
+    let mut forwarded = object(body)?;
+    forwarded.remove("node");
+    let url = reqwest::Url::parse(&peer.endpoint)
+        .and_then(|base| base.join("/v1/federation/interrupt"))
+        .map_err(|e| anyhow::anyhow!("peer {node} endpoint: {e}"))?;
+    let unreachable = |message: String| {
+        ApiError::domain(
+            StatusCode::SERVICE_UNAVAILABLE,
+            "runtime_unavailable",
+            message,
+            Some(json!({"targetNode":node,"retryable":true})),
+        )
+    };
+    let response = server
+        .federation
+        .http_client()
+        .post(url)
+        .bearer_auth(&peer.token)
+        .header("user-agent", federation::user_agent())
+        .json(&forwarded)
+        .timeout(FORWARD_TIMEOUT)
+        .send()
+        .await
+        .map_err(|error| {
+            unreachable(format!(
+                "could not reach {node} over federation: {}",
+                federation::transport_text(&error)
+            ))
+        })?;
+    let status =
+        StatusCode::from_u16(response.status().as_u16()).unwrap_or(StatusCode::BAD_GATEWAY);
+    let bytes = response.bytes().await.map_err(|error| {
+        unreachable(format!(
+            "{node} interrupt response was cut off: {}",
+            federation::transport_text(&error)
+        ))
+    })?;
+    let mut relayed = (status, bytes).into_response();
+    relayed.headers_mut().insert(
+        "content-type",
+        axum::http::HeaderValue::from_static("application/json; charset=utf-8"),
+    );
+    Ok(relayed)
+}
+
+pub async fn interrupt(server: &Shared, raw: Value) -> Result<Response, ApiError> {
+    let body = action(&raw)?;
+    if let Some(node) = body.node.as_deref()
+        && node != server.federation.node_id()
+    {
+        return forward_interrupt(server, node, &raw).await;
+    }
     let rt = available(known(server, &body.runtime_id)?)?;
-    if let Some(owner) = &body.owner_run_id
+    if let Some(input) = &body.input_id {
+        // Execution ownership: only the broker's manifest for the executing
+        // turn says whether this input is what is running (T-12177).
+        let carried = active_turn_submissions(server, &rt.runtime_id)
+            .await
+            .is_some_and(|ids| ids.iter().any(|id| id == input));
+        if !carried {
+            let mut out = action_response(&rt);
+            out["warning"] = INPUT_NOT_EXECUTING.into();
+            return Ok(Json(out).into_response());
+        }
+    } else if let Some(owner) = &body.owner_run_id
         && rt.active_run_id.as_ref() != Some(owner)
     {
         let mut out = action_response(&rt);

@@ -16,7 +16,7 @@ use axum::{
 use hrc_store::timestamp;
 use serde_json::{Map, Value, json};
 
-pub const ROUTE_KEYS: [&str; 18] = [
+pub const ROUTE_KEYS: [&str; 19] = [
     "GET /v1/federation/health",
     "GET /v1/sessions/metadata",
     "PATCH /v1/sessions/metadata",
@@ -32,6 +32,7 @@ pub const ROUTE_KEYS: [&str; 18] = [
     "POST /v1/federation/exact-start",
     "POST /v1/federation/establish",
     "POST /v1/federation/server-lifecycle",
+    "POST /v1/federation/interrupt",
     "POST /v1/federation/history/replicate",
     "POST /v1/federation/history/query",
     "POST /v1/federation/history/checkpoint",
@@ -312,6 +313,22 @@ async fn route_request(server: &Shared, peer: &str, request: Request) -> Result<
             }
             let (status, value) = crate::server::lifecycle::route::peer(server, peer, &body).await;
             Ok(reply(value, status))
+        }
+        ("POST", "/v1/federation/interrupt") => {
+            // T-12177: the home node of an explicit-node interrupt. Runs it
+            // here and never forwards again: `node` is dropped before dispatch.
+            let mut body = record(&body)?;
+            required(&body, "runtimeId")?;
+            body.remove("node");
+            let bytes = serde_json::to_vec(&body).map_err(|_| Invalid)?;
+            Ok(local(
+                server,
+                Method::POST,
+                Uri::from_static("/v1/interrupt"),
+                &headers,
+                Body::from(bytes),
+            )
+            .await)
         }
         ("POST", "/v1/federation/roster-start" | "/v1/federation/exact-start") => {
             let body = record(&body)?;

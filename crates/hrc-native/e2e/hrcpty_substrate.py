@@ -59,6 +59,15 @@ substituted; hosting, presentation and driver blocks are the producer's bytes.
      the broker as invocation.interrupt {scope turn, runId}, answers ok, and
      the held turn ends cancelled (T-12177; the pre-fix binary answers
      `no_child: no pty` and the turn runs on)
+  C8 explicit-node, input-guarded interrupt (T-12177 A2, contract
+     hrc-runtime.federated-input-interrupt): an inputId the executing turn's
+     broker manifest does not carry skips with a warning and the turn runs on;
+     an unknown node is 404 unknown_node; an unreachable peer is 503
+     runtime_unavailable {targetNode, retryable}; a configured peer (`loop`,
+     this daemon's own peer listener on the tailnet address) receives the
+     forward on POST /v1/federation/interrupt, runs it locally and the relayed
+     answer interrupts the held turn. Needs the tailnet address
+     (--federation-host) for the peer listener bind.
 Run on the pre-change binary, C1 records the admit refusal (discriminator).
 
 Never touches the live daemon (its socket is refused), the live aspd, or any
@@ -70,6 +79,7 @@ import hashlib
 import json
 import os
 from pathlib import Path
+import secrets
 import shutil
 import signal
 import socket
@@ -85,6 +95,7 @@ from n2_scratch import UnixHTTP
 HERE = Path(__file__).resolve().parent
 REPO = HERE.parents[2]
 LIVE_HRC_SOCKET = Path.home() / 'praesidium/var/run/hrc/hrc.sock'
+NODE_ID = 'h12049'
 LEAK = ('GIT_', 'HRC_', 'ASP_', 'AGENT_', 'AGENTCHAT_', 'WRKQ', 'CLAUDE', 'CODEX', 'ACP_', 'HARNESS_', 'TMUX')
 PROJECT = 't12049'
 T12163 = Path.home() / 'praesidium/var/wrkq-artifacts/T-12163'
@@ -500,11 +511,38 @@ class CodexLeg:
             return
         run = out['runId']
         r.wait(lambda: r.runtime(s['rt'])['active_run_id'] == run, 30, 'held codex turn active')
+        rows = r.wait(lambda: r.rows('SELECT broker_submission_id FROM runs WHERE run_id=? AND broker_submission_id IS NOT NULL',
+                                     (run,)), 30, 'held submission id')
+        held_input = rows[0]['broker_submission_id']
+        interrupts = lambda since: [e for e in self.stub_log(s['sock'])[since:]
+                                    if e['kind'] == 'request' and e['method'] == 'invocation.interrupt']
+        # -- C8 guard: an input the executing turn does not carry ----------
         before = len(self.stub_log(s['sock']))
-        status, intr = r.http('POST', '/v1/interrupt', {'runtimeId': s['rt']})
-        reqs = [e for e in self.stub_log(s['sock'])[before:] if e['kind'] == 'request' and e['method'] == 'invocation.interrupt']
+        status, skip = r.http('POST', '/v1/interrupt', {'runtimeId': s['rt'], 'inputId': 'sub-not-this-turn',
+                                                         'node': NODE_ID})
+        time.sleep(.5)
+        r.check('C8.foreign-input-skips', status == 200 and skip.get('ok') is True
+                and skip.get('warning') == 'input is not in the executing turn; interrupt skipped'
+                and not interrupts(before) and r.runtime(s['rt'])['active_run_id'] == run,
+                status=status, response=skip, requests=interrupts(before))
+        # -- C8 addressing failures ------------------------------------------
+        status, unknown = r.http('POST', '/v1/interrupt', {'runtimeId': s['rt'], 'inputId': held_input, 'node': 'nowhere'})
+        r.check('C8.unknown-node-404', status == 404 and (unknown.get('error') or {}).get('code') == 'unknown_node',
+                status=status, response=unknown)
+        status, ghost = r.http('POST', '/v1/interrupt', {'runtimeId': s['rt'], 'inputId': held_input, 'node': 'ghost'})
+        err = ghost.get('error') or {}
+        r.check('C8.unreachable-peer-503', status == 503 and err.get('code') == 'runtime_unavailable'
+                and (err.get('detail') or {}).get('targetNode') == 'ghost' and (err.get('detail') or {}).get('retryable') is True
+                and r.runtime(s['rt'])['active_run_id'] == run, status=status, response=ghost)
+        # -- C8 forward: one hop to the `loop` peer, which runs it locally ---
+        before = len(self.stub_log(s['sock']))
+        status, intr = r.http('POST', '/v1/interrupt', {'runtimeId': s['rt'], 'inputId': held_input, 'node': 'loop'})
+        reqs = interrupts(before)
         r.check('C7.interrupt-ok', status == 200 and intr.get('ok') is True and 'warning' not in intr,
                 status=status, response=intr)
+        # Only the peer route can have run it: `loop` is not this node, so the
+        # local handler forwarded, and the peer dropped `node` (no second hop).
+        r.check('C8.forwarded-once-and-relayed', status == 200 and len(reqs) == 1, status=status, response=intr)
         r.check('C7.interrupt-reaches-broker', len(reqs) == 1 and reqs[0]['params'].get('scope') == 'turn'
                 and reqs[0]['params'].get('runId') == run, requests=reqs)
         ended = r.wait(lambda: r.rows("SELECT status FROM runs WHERE run_id=? AND status NOT IN ('accepted','started','running')",
@@ -635,6 +673,8 @@ def main():
     p.add_argument('--root', type=Path, default=Path(f'/tmp/h12049-{os.getpid()}'))
     p.add_argument('--artifacts', type=Path, default=Path.home() / 'praesidium/var/wrkq-artifacts/T-12049/e2e')
     p.add_argument('--keep', action='store_true', help='leave the root (processes are still stopped)')
+    p.add_argument('--federation-host', default='100.73.60.81',
+                   help="this machine's tailnet address; the C8 peer listener must bind a tailnet host")
     args = p.parse_args()
     binary = args.binary.resolve()
     assert (binary.parent / 'hrc-pty').is_file(), 'build hrc-pty beside rusthrc: cargo build -p hrc-native -p hrc-pty'
@@ -669,7 +709,20 @@ def main():
                     'openHrcDatabase(process.argv[1]).close()', str(r.db_path)],
                    cwd=REPO, check=True, capture_output=True, env={k: v for k, v in os.environ.items() if not k.startswith(LEAK)})
     config = root / 'federation.json'
-    config.write_text(json.dumps({'nodeId': 'h12049', 'peers': {}}))
+    def free_port():
+        with socket.socket() as probe:
+            probe.bind((args.federation_host, 0))
+            return probe.getsockname()[1]
+    listen_port, dead_port = free_port(), free_port()
+    loop_token = secrets.token_hex(24)
+    config.write_text(json.dumps({
+        'nodeId': NODE_ID,
+        # C8 (T-12177): `loop` is this daemon's own peer listener; `ghost`
+        # points at a port nothing listens on.
+        'peers': {'loop': {'endpoint': f'http://{args.federation_host}:{listen_port}', 'token': loop_token},
+                  'ghost': {'endpoint': f'http://{args.federation_host}:{dead_port}', 'token': secrets.token_hex(24)}},
+        'peerListener': {'bind': f'http://{args.federation_host}:{listen_port}'},
+        'gate': {'mode': 'off'}}))
     config.chmod(0o600)
     aspd_socket = root / 'aspd.sock'
     aspd = FakeAspd(aspd_socket, release, args.artifacts / 'fake-aspd.ndjson')

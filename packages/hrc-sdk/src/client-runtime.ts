@@ -611,9 +611,19 @@ export class HrcClientRuntimeMethods extends HrcClientTransport {
     return this.postJson<AttachRuntimeResponse>('/v1/runtimes/attach', request)
   }
 
+  /**
+   * `node` sends the interrupt to the runtime's home node (one peer hop);
+   * `inputId` interrupts only while the executing turn's broker manifest
+   * carries that input, and takes precedence over `ownerRunId`
+   * (hrc-runtime.federated-input-interrupt, T-12177).
+   */
   async interrupt(
     runtimeId: string,
-    options: { ownerRunId?: string | undefined } = {}
+    options: {
+      ownerRunId?: string | undefined
+      node?: string | undefined
+      inputId?: string | undefined
+    } = {}
   ): Promise<RuntimeActionResponse> {
     return this.postJson<RuntimeActionResponse>('/v1/interrupt', { runtimeId, ...options })
   }

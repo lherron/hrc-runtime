@@ -637,24 +637,20 @@ pub async fn preempt_admission(
     )
 }
 
-/// preemptOriginOwnsActiveTurn: an admission.requested row of this principal,
-/// carrying an envelope, among the active turn's manifest submissions.
-async fn origin_owns_active_turn(
-    server: &Shared,
-    runtime_id: &str,
-    invocation: &str,
-    principal: &str,
-) -> Result<bool, ApiError> {
-    let Ok(probe) =
-        crate::server::controller::seat::probe(server, runtime_id, "explicit-probe").await
-    else {
-        return Ok(false);
-    };
-    if probe["seat"]["state"] != "turn-active" {
-        return Ok(false);
+/// The submission ids the broker says the seat's EXECUTING turn carries: a
+/// `seat.probe` that must answer turn-active with a turnId, then that turn's
+/// `turn.manifest`. A steered submission absorbed into a carrier is in the
+/// carrier's manifest, so this is execution ownership, not admission run
+/// identity. `None` when the seat is not turn-active or either read fails.
+pub async fn active_turn_submissions(server: &Shared, runtime_id: &str) -> Option<Vec<String>> {
+    let probe = crate::server::controller::seat::probe(server, runtime_id, "explicit-probe")
+        .await
+        .ok()?;
+    if probe["seat"]["state"] != "turn-active" || !probe["seat"]["turnId"].is_string() {
+        return None;
     }
     let turn = probe["seat"]["turnId"].clone();
-    let Ok((_, manifest)) = crate::server::controller::submit::with_active(
+    let (_, manifest) = crate::server::controller::submit::with_active(
         server,
         runtime_id,
         "turn.manifest",
@@ -666,13 +662,31 @@ async fn origin_owns_active_turn(
         false,
     )
     .await
-    else {
+    .ok()?;
+    Some(
+        manifest["submissionIds"]
+            .as_array()
+            .map(|a| {
+                a.iter()
+                    .filter_map(Value::as_str)
+                    .map(str::to_owned)
+                    .collect()
+            })
+            .unwrap_or_default(),
+    )
+}
+
+/// preemptOriginOwnsActiveTurn: an admission.requested row of this principal,
+/// carrying an envelope, among the active turn's manifest submissions.
+async fn origin_owns_active_turn(
+    server: &Shared,
+    runtime_id: &str,
+    invocation: &str,
+    principal: &str,
+) -> Result<bool, ApiError> {
+    let Some(ids) = active_turn_submissions(server, runtime_id).await else {
         return Ok(false);
     };
-    let ids: Vec<&str> = manifest["submissionIds"]
-        .as_array()
-        .map(|a| a.iter().filter_map(Value::as_str).collect())
-        .unwrap_or_default();
     let db = server.store.lock().unwrap();
     let mut stmt = db
         .sqlite
@@ -685,7 +699,9 @@ async fn origin_owns_active_turn(
         .map_err(anyhow::Error::from)?;
     Ok(rows.iter().any(|raw| {
         let p: Value = serde_json::from_str(raw).unwrap_or(Value::Null);
-        p["submissionId"].as_str().is_some_and(|s| ids.contains(&s))
+        p["submissionId"]
+            .as_str()
+            .is_some_and(|s| ids.iter().any(|id| id == s))
             && p["origin"]["principalRef"] == principal
             && p["origin"]["envelopeId"].is_string()
     }))
