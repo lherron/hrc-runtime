@@ -1,6 +1,6 @@
 # Seat annotations and the kernel seat lineage
 
-Status: r1, 2026-10-31, draft for Daedalus review (T-12183). Owner mable@c2:primary. Diagrams: `diagrams/seat-data.arris-board.json` (frames `seat-data-as-is`, `seat-data-to-be`, `seat-data-document`, `seat-data-model`). Rulings by Lance on 2026-10-31 are marked **RULED**.
+Status: r1.1, 2026-10-31, draft for Daedalus review (T-12183); r1.1 takes four readback points from mable@hrc-runtime (EN-39517): no retention delete, Gate 2 without a clock seam, one attention function, delete as POST. Owner mable@c2:primary. Diagrams: `diagrams/seat-data.arris-board.json` (frames `seat-data-as-is`, `seat-data-to-be`, `seat-data-document`, `seat-data-model`). Rulings by Lance on 2026-10-31 are marked **RULED**.
 
 ## 0. Claim
 
@@ -64,10 +64,10 @@ Validation (`crates/hrc-store/src/annotations.rs`, before the transaction, same 
 - A put that would make a subject's 257th annotation → `annotation_quota`.
 - **Fences**, all optional, all checked in the write transaction:
   - `expect.generation`: must equal the continuity's active generation → else `stale_generation`.
-  - `expect.attentionAt`: must equal the live attention `at` of the active generation → else `stale_attention`. Live attention is computed in `hrc-store` from the latest `turn.*` event of `(host_session_id, generation)` by the turn-attention rule (lit `turn.attention` or `turn.awaiting_input` → its `ts`; anything else → none). `hrc-domain`'s projector calls this same function, so there is one rule, in the crate both can reach (`hrc-domain → hrc-store` is an existing edge).
+  - `expect.attentionAt`: must equal the live attention `at` of the active generation → else `stale_attention`. Live attention is one function in `hrc-store`, `live_attention(host_session_id, generation)`, that owns **both** the display-event selection (today the projector's `turns` slice: the latest turn-family event at or below the generation's latest raw event) **and** the fold (lit `turn.attention` or `turn.awaiting_input` → its `ts`; anything else → none). The projector consumes that function instead of `projection.rs::attention`, so the fence and the `hrc.seat` row c2 reads can never disagree (`hrc-domain → hrc-store` is an existing edge).
   - `expect.updatedAt`: must equal the row's `updated_at` (absent row: must be absent) → else `stale_annotation`. This is the optimistic lock two Loggia windows need so only one moves a card to `sent`; it replaces c2's `inflight`.
 - Every admitted put or delete appends `session.annotation.changed {scopeRef, laneRef, subject, generation, ns, kind, id, op: put|delete, updatedBy}` through `append_session_event`, which is what wakes the kernel's ledger watch. The body is not in the event.
-- Retention: generation-scoped rows are deleted 30 days after their session's `updated_at` once the session is archived, in the daemon's existing sweep; seat-scoped rows live until deleted. One constant.
+- Retention: none. Rows of both subjects live until deleted. Nothing in the daemon deletes session-family rows today (`sweeps.rs` archives, never deletes), rows are 1–2 KB, and generation-scoped ones already leave the *document* through `live_until`; a second lifecycle is not worth its clock test until a table size says so (§8).
 
 ## 4. API, federation, SDK, CLI
 
@@ -77,10 +77,10 @@ Routes in `hrc-native` (`server/projection/sessions.rs` beside metadata):
 |---|---|---|---|
 | `GET /v1/sessions/annotations` | `scopeRef, laneRef?, subject?, generation?, ns?, kind?` | `{annotations: [row…]}` | `unknown_host_session` |
 | `PUT /v1/sessions/annotations` | `{scopeRef, laneRef?, subject, generation?, ns, kind, id, body, expect?}` | `{annotation: row, created: bool}` | §3 |
-| `DELETE /v1/sessions/annotations` | `{scopeRef, laneRef?, subject, generation?, ns, kind, id, expect?: {updatedAt}}` | `{deleted: bool}` | `stale_annotation` |
+| `POST /v1/sessions/annotations/delete` | `{scopeRef, laneRef?, subject, generation?, ns, kind, id, expect?: {updatedAt}}` | `{deleted: bool}` | `stale_annotation` |
 | `POST /v1/sessions/annotations/act` | `{scopeRef, laneRef?, subject, generation?, ns, kind, id, action, attributes?}` | `{hrcSeq}` | `unknown_annotation` |
 
-`act` appends `session.annotation.action {…key, action, attributes}` and writes nothing else; `attributes` is writer-owned (c2: `{recommended, edited, ok, runId?, error?}`). `updated_by` is the request principal, as metadata records `updatedBy`.
+Delete is a POST, not an HTTP DELETE, because it carries a body through the federation forwarder like `act` does. `act` appends `session.annotation.action {…key, action, attributes}` and writes nothing else; `attributes` is writer-owned (c2: `{recommended, edited, ok, runId?, error?}`). `updated_by` is the request principal, as metadata records `updatedBy`.
 
 Federation: the four method/path pairs join `routing.rs` (scoped by `scopeRef`; `principal: true` on the three writes, as `PATCH /v1/sessions/metadata`) and the peer listener's allowlist, so a put from any node lands in the home node's store and the home node's ledger.
 
@@ -110,7 +110,7 @@ Ops (bindings over in-process dispatch, as `seat.send`): `seat.annotation.put {s
 ## 7. Gates (product claims, graded from durable readback)
 
 1. **Round trip on a scratch daemon.** `hrc session annotation put` then `list` returns the body; a second put with the stale `--expect-updated-at` refuses `stale_annotation`; a 65,537-byte body refuses `annotation_invalid`; after a real turn moves the seat's attention, a put with the old `--expect-attention-at` refuses `stale_attention`. Readback: the CLI e2e artifacts and the ledger's `session.annotation.changed` rows.
-2. **The kernel shows it.** `loggia query hrc:hrc --type hrc.annotation` (or `kq.py`) shows the put within one ingest wake; `hrc session rotate` the seat: the annotation stays under its now-archived `hrc.generation` node and the new generation has none; the archived generation and its annotations leave the document after the live window (tested with a clock-advanced scratch store). Readback: query output with revisions.
+2. **The kernel shows it.** `loggia query hrc:hrc --type hrc.annotation` (or `kq.py`) shows the put within one ingest wake; `hrc session rotate` the seat: the annotation stays under its now-archived `hrc.generation` node and the new generation has none. Readback: query output with revisions. The 24 h expiry of an archived generation and its annotations is a cargo test at the projector unit with an injected `now` (`project()` already takes one); eviction on `live_until` is the kernel's existing behaviour, and no daemon-level clock seam is built.
 3. **Federated write.** From svc, put an annotation on a max3-homed seat; it is in max3's `seat_annotations` and in max3's kernel. Readback: `sqlite3` row on max3 and `loggia query` on max3.
 4. **Nothing else moved.** On the installed max3 build, session-switcher, ui-concierge and session-inspector guards (`loggia/scripts/*-guard.py`) are green; `hrc.seat` rows carry every field they carried before plus `activeGeneration`. Readback: guard output and a `loggia query --type hrc.seat` diff against the pre-install capture.
 5. **The motivating defect class is closed** (c2 task): a real blocker card written through HRC, acted on from the pane, the action in the ledger, then `loggia mount rm/add hrc` — the card is still open. Readback: ledger rows, `cards.list`, screenshots.
@@ -122,6 +122,7 @@ Ops (bindings over in-process dispatch, as `seat.send`): `seat.annotation.put {s
 - The `lineage` hierarchy declaration in this task (D5; cardo keyed-parent upsert first).
 - Bodies over 64 KB, body schema validation by HRC, per-kind configuration, per-kind retention.
 - Annotation body history. The ledger records that a key changed and who changed it, not what it said.
+- Retention or deletion by age. Rows live until deleted; a prune lands the day a table size asks for one.
 - Migrating existing Loggia cards (D8).
 - Removing the folded fields from `hrc.seat` (D7; a later task).
 - Feature flags.
