@@ -1,3 +1,4 @@
+mod annotations;
 mod messaging;
 mod sessions;
 use messaging::{restart, send, summon};
@@ -159,6 +160,10 @@ pub(crate) fn execute(args: &Parsed<'_>) -> Result<()> {
             )?);
             Ok(())
         }
+        "session annotation list"
+        | "session annotation put"
+        | "session annotation delete"
+        | "session annotation act" => annotations::command(args),
         "admin status" => admin_status(args),
         "session resolve" => {
             let scope = args

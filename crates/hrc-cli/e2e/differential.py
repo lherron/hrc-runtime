@@ -51,8 +51,15 @@ def main():
         env['HRC_RUNTIME_DIR'] = str(args.runtime_root.resolve())
         env['HRC_STATE_DIR'] = str(args.state_root.resolve())
     surface = json.loads((ROOT / 'crates/hrc-cli/surface.json').read_text())
-    cases = []
+    # Native-only commands (surface-native.json) have no Bun oracle: their help
+    # must be the declared text and their grammar refusal native, and the
+    # parent's grafted Commands row is the only difference from Bun's help.
+    grafts = json.loads((ROOT / 'crates/hrc-cli/surface-native.json').read_text())['grafts']
+    grafted_rows = {' '.join(g['parent']): g['commandLine'][0] for g in grafts}
+    cases, native_only = [], {}
     for node in nodes(surface):
+        if node.get('nativeOnly'):
+            native_only[' '.join(node['path'])] = node
         for view in ('agent', 'human'):
             cases.append((f"help:{' '.join(node['path'])}:{view}", [f'--{view}', *node['path'], '--help']))
         if any(a['required'] for a in node['arguments']):
@@ -68,6 +75,21 @@ def main():
     results = []
     rust_server_help = (ROOT / 'crates/hrc-cli/server-help.txt').read_text()
     for name, argv in cases:
+        kind, path = name.split(':')[0], name.split(':')[1] if ':' in name else ''
+        if path in native_only and kind in ('help', 'missing'):
+            node = native_only[path]
+            child = subprocess.run([str(args.binary.resolve())] + argv, cwd=ROOT, env=env, text=True, capture_output=True, timeout=20)
+            subject = {'exit': child.returncode, 'stdout': child.stdout, 'stderr': child.stderr}
+            if kind == 'help':
+                expected = {'exit': 0, 'stdout': node['humanHelp' if name.endswith(':human') else 'help'], 'stderr': ''}
+                good = subject == expected
+            else:
+                # The native usage-error shape every N5 command shares: exit 2.
+                expected = {'exit': 2, 'stderrStartsWith': 'hrc: error: ', 'stderrContains': f'\ncommand: hrc {path}\nusage: {node["usage"]}\n'}
+                good = (child.returncode == 2 and child.stdout == '' and child.stderr.startswith(expected['stderrStartsWith'])
+                        and child.stderr.endswith(expected['stderrContains']))
+            results.append({'case': name, 'argv': argv, 'pass': good, 'nativeOnly': expected, 'subject': subject})
+            continue
         observed = []
         for command in (['bun', str(args.oracle)], [str(args.binary.resolve())]):
             child = subprocess.run(command + argv, cwd=ROOT, env=env, text=True, capture_output=True, timeout=20)
@@ -78,6 +100,9 @@ def main():
         expected = dict(observed[0])
         if name in {f'help:{path}:{view}' for path in ('server', 'server serve') for view in ('agent', 'human')}:
             expected['stdout'] += rust_server_help
+        if kind == 'help' and path in grafted_rows:
+            row = grafted_rows[path]
+            observed[1] = dict(observed[1], stdout=''.join(line for line in observed[1]['stdout'].splitlines(True) if not line.startswith(f'  {row} ')))
         results.append({'case': name, 'argv': argv, 'pass': normalize(expected) == normalize(observed[1]), 'oracle': observed[0], 'subject': observed[1]})
     if args.inventory:
         coverage = json.loads(args.inventory.read_text())
@@ -95,6 +120,7 @@ def main():
         'launch.py': 'start|run|attach',
         'restart.py': 'restart', 'restartme.py': 'restartme',
         'resume.py': 'resume', 'send.py': 'send', 'summon.py': 'summon',
+        'annotations.py': 'session annotation|session annotation list|session annotation put|session annotation delete|session annotation act',
         'controls.py': 'runtime capture|runtime interrupt|runtime terminate|capture status|session drop-continuation|session rotate|admin surface bind',
         'server_lifecycle.py': 'server stop|server restart',
         'server_start.py': 'server start', 'daemon_entrypoints.py': 'server serve',

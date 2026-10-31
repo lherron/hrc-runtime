@@ -70,7 +70,42 @@ const info = {
   agent: buildInfoText(root, undefined, 'agent'),
   human: buildInfoText(root, undefined, 'human'),
 }
-const output = `${JSON.stringify({ ...(surface(root, []) as object), info }, null, 2)}\n`
+type SurfaceNode = {
+  path: string[]
+  help: string
+  humanHelp: string
+  children: SurfaceNode[]
+}
+type Graft = { parent: string[]; commandLine: [string, string]; node: SurfaceNode }
+// Commands only rusthrc implements have no Commander owner: graft them from
+// surface-native.json under their parent and list them in its Commands block,
+// aligned to the parent's own `help [command]` row.
+function graftNative(tree: SurfaceNode, grafts: Graft[]): SurfaceNode {
+  for (const { parent, commandLine, node } of grafts) {
+    let target = tree
+    for (const name of parent) {
+      const child = target.children.find((c) => c.path[c.path.length - 1] === name)
+      if (!child) throw new Error(`surface-native.json: no parent ${parent.join(' ')}`)
+      target = child
+    }
+    target.children.push(node)
+    for (const key of ['help', 'humanHelp'] as const) {
+      const lines = target[key].split('\n')
+      const at = lines.findIndex((line) => /^ {2}help \[command\] +display help/.test(line))
+      const column = lines[at]?.indexOf('display help') ?? -1
+      if (at < 0 || commandLine[0].length + 4 > column)
+        throw new Error(`surface-native.json: cannot list ${commandLine[0]} in ${parent.join(' ')}`)
+      lines.splice(at, 0, `  ${commandLine[0].padEnd(column - 2)}${commandLine[1]}`)
+      target[key] = lines.join('\n')
+    }
+  }
+  return tree
+}
+const native = JSON.parse(
+  await Bun.file(new URL('./surface-native.json', import.meta.url)).text()
+) as { grafts: Graft[] }
+const tree = graftNative(surface(root, []) as SurfaceNode, native.grafts)
+const output = `${JSON.stringify({ ...tree, info }, null, 2)}\n`
 const target = new URL('./surface.json', import.meta.url)
 if (process.argv.includes('--check')) {
   if ((await Bun.file(target).text()) !== output)

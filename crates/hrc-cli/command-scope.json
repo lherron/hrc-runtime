@@ -388,6 +388,31 @@
       "implementation": "bun"
     },
     {
+      "command": "session annotation",
+      "disposition": "IMPLEMENT",
+      "implementation": "native"
+    },
+    {
+      "command": "session annotation act",
+      "disposition": "IMPLEMENT",
+      "implementation": "native"
+    },
+    {
+      "command": "session annotation delete",
+      "disposition": "IMPLEMENT",
+      "implementation": "native"
+    },
+    {
+      "command": "session annotation list",
+      "disposition": "IMPLEMENT",
+      "implementation": "native"
+    },
+    {
+      "command": "session annotation put",
+      "disposition": "IMPLEMENT",
+      "implementation": "native"
+    },
+    {
       "command": "session drop-continuation",
       "disposition": "IMPLEMENT",
       "implementation": "native"

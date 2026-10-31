@@ -17,6 +17,7 @@ T-11945 comment C-32046 records the pre-deletion triage and its evidence.
 
 | Script | Product claim / reason | Verdict |
 | --- | --- | --- |
+| `annotations.py` | Seat annotations Gate 1 (T-12186): `session annotation` CLI, routes, SDK and ledger rows on a private scratch rusthrc with a stub-broker hrcpty seat. No model, no live roots. | `just e2e-annotations` (in `just e2e`) |
 | `continuity.py` | Bun creates real continuity and metadata via public APIs. Both CLI binaries (requires explicit scratch/capture inputs; retained qualification) | keep-manual |
 | `controls.py` | Real owned-seat control commands. No production roots or foreign mutations. (requires explicit scratch/capture inputs; retained qualification) | keep-manual |
 | `launch.py` | Managed launch grammar and previews against an explicit scratch daemon. (requires explicit scratch/capture inputs; retained qualification) | keep-manual |

@@ -231,7 +231,18 @@ e2e:
     echo "[e2e] daemon ${HRC_RUNTIME_DIR}/hrc.sock, agents ${ASP_AGENTS_ROOT}"
     bun run test
     just test-federation-loopback
+    just e2e-annotations
     just e2e-hrc-pty
+
+# Seat annotations Gate 1 (T-12186): the rusthrc `session annotation` CLI and
+# routes on a private scratch rusthrc with a stub-broker hrcpty seat — put/list,
+# stale_annotation, the 64 KiB body cap, stale_attention across a real turn,
+# delete, act, the SDK, and the session.annotation.* ledger rows.
+
+# Run the seat-annotations e2e on a scratch rusthrc
+e2e-annotations:
+    cargo build --manifest-path crates/Cargo.toml --locked -p hrc-native -p hrc-pty
+    python3 crates/hrc-cli/e2e/annotations.py --binary crates/target/debug/rusthrc --artifacts "${HRC_ANNOTATIONS_E2E_ARTIFACTS:-/tmp/hrc-annotations-e2e-$(date +%s)-$$}"
 
 # hrc-pty's spike e2e (T-12047): Claude Code under a bare `hrc-pty serve`,
 # attached from real Ghostty windows through ghostmux. Needs a logged-in
