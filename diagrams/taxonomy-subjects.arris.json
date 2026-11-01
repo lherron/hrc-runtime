@@ -3,7 +3,7 @@
   "format": "arris",
   "format_version": 1,
   "document_id": "taxonomy-subjects",
-  "revision": 3,
+  "revision": 10,
   "nodes": [
     {
       "id": "agent",
@@ -11,7 +11,7 @@
       "schema_version": 1,
       "provider": "arris.graph",
       "created_revision": 1,
-      "updated_revision": 1,
+      "updated_revision": 8,
       "hierarchies": {
         "group": {
           "parent": "agent.group"
@@ -21,19 +21,19 @@
         }
       },
       "domain_attributes": {
-        "display_name": "agent",
+        "plane_index": 0,
         "order": 12,
-        "order_authored": true,
+        "display_name": "agent",
+        "provider_version": "0.1.0",
         "placement": {
           "transform": {
             "translate": [
-              0.0,
-              0.0
+              -554.2400996984383,
+              51.0
             ]
           }
         },
-        "plane_index": 0,
-        "provider_version": "0.1.0"
+        "order_authored": true
       },
       "payload": {
         "body": "agent-profile.toml: identity, provisioning, spaces, placement",
@@ -46,6 +46,7 @@
         "kicker": "",
         "meta": "agent:<id>",
         "name": "agent",
+        "pinned": true,
         "presentation": {
           "caption": "agent.caption",
           "group": "agent.group",
@@ -59,7 +60,7 @@
       "schema_version": 1,
       "provider": "arris.reference-core",
       "created_revision": 1,
-      "updated_revision": 3,
+      "updated_revision": 9,
       "hierarchies": {
         "group": {
           "parent": "agent.group"
@@ -76,15 +77,15 @@
         "placement": {
           "transform": {
             "translate": [
-              271.9235785447604,
-              291.6302807668384
+              109.472,
+              251.888
             ]
           }
         },
         "order_authored": true
       },
       "payload": {
-        "align": "left",
+        "align": "right",
         "face": "sans.regular",
         "fill": "#4A5565",
         "line_height": 1.3,
@@ -146,7 +147,7 @@
       "schema_version": 1,
       "provider": "arris.reference-core",
       "created_revision": 1,
-      "updated_revision": 3,
+      "updated_revision": 9,
       "hierarchies": {
         "group": {
           "parent": "agent.group"
@@ -163,8 +164,8 @@
         "placement": {
           "transform": {
             "translate": [
-              222.3995785447604,
-              298.7422807668384
+              379.0,
+              259.0
             ]
           }
         },
@@ -246,7 +247,7 @@
       "schema_version": 1,
       "provider": "arris",
       "created_revision": 1,
-      "updated_revision": 3,
+      "updated_revision": 9,
       "hierarchies": {
         "group": {
           "parent": null
@@ -305,10 +306,10 @@
             },
             "placement": {
               "kind": "route-fraction",
-              "fraction": 0.1508959901803943,
+              "fraction": 0.15037895386888098,
               "offset": [
-                -27.92125992645336,
-                15.9911909371271
+                -12.562303250460957,
+                24.032232305229627
               ],
               "anchor": "center"
             },
@@ -323,12 +324,12 @@
           "attachment": {
             "kind": "point",
             "point": [
-              31.43671591675792,
-              39.22292404837634
+              39.610734323198585,
+              30.728338396217453
             ],
             "outward": [
-              95.72698962172376,
-              167.1431583622399
+              402.77853135360283,
+              210.5433232075651
             ],
             "clearance": 0.0,
             "approach": {
@@ -341,12 +342,170 @@
           "attachment": {
             "kind": "point",
             "point": [
-              10.563284083242081,
-              2.777075951623715
+              2.389265676801415,
+              11.271661603782547
             ],
             "outward": [
-              -95.72698962172376,
-              -167.1431583622399
+              -402.77853135360283,
+              -210.5433232075651
+            ],
+            "clearance": 0.0,
+            "approach": {
+              "mode": "normal",
+              "min_straight": 0.0
+            }
+          }
+        }
+      },
+      "payload": {}
+    },
+    {
+      "id": "agent__workstream",
+      "type": "graph.hierarchy",
+      "schema_version": 1,
+      "provider": "arris.graph",
+      "created_revision": 5,
+      "updated_revision": 5,
+      "hierarchies": {
+        "group": {
+          "parent": null
+        },
+        "owner": {
+          "parent": "page-1"
+        }
+      },
+      "domain_attributes": {
+        "plane_index": 0,
+        "order": 75,
+        "display_name": "agent__workstream",
+        "provider_version": "0.1.0",
+        "placement": {
+          "transform": {
+            "translate": [
+              0.0,
+              0.0
+            ]
+          }
+        },
+        "order_authored": true
+      },
+      "payload": {
+        "from": "agent",
+        "label": "owns",
+        "presentation": {
+          "edge": "agent__workstream.edge",
+          "label": "label"
+        },
+        "to": "workstream"
+      }
+    },
+    {
+      "id": "agent__workstream.edge",
+      "type": "arris.edge",
+      "schema_version": 1,
+      "provider": "arris",
+      "created_revision": 5,
+      "updated_revision": 9,
+      "hierarchies": {
+        "group": {
+          "parent": null
+        },
+        "owner": {
+          "parent": "page-1"
+        }
+      },
+      "domain_attributes": {
+        "end": {
+          "type": "arris.filled",
+          "schema_version": 1,
+          "parameters": {
+            "length": 8.86,
+            "width": 7.44
+          }
+        },
+        "display_name": "owns",
+        "order": 74,
+        "source": {
+          "ref": "agent.shape"
+        },
+        "target": {
+          "ref": "workstream.shape"
+        },
+        "route": {
+          "strategy": {
+            "type": "arris.polyline",
+            "schema_version": 1,
+            "parameters": {}
+          },
+          "waypoints": [],
+          "corner_radius": 0.0,
+          "obstacles": {
+            "mode": "none"
+          }
+        },
+        "shaft": {
+          "stroke": {
+            "token": "lead"
+          },
+          "width": 1.6,
+          "dash_offset": 0.0
+        },
+        "labels": [
+          {
+            "label_id": "label",
+            "type": "arris.label",
+            "schema_version": 1,
+            "parameters": {
+              "align": "left",
+              "face": "sans.regular",
+              "fill": "#4A5565",
+              "line_height": 1.25,
+              "size": 11.0,
+              "text": "owns"
+            },
+            "placement": {
+              "kind": "route-fraction",
+              "fraction": 0.5,
+              "offset": [
+                -19.0,
+                0.0
+              ],
+              "anchor": "center"
+            },
+            "clearance": 0.0,
+            "shaft_gap": "none"
+          }
+        ],
+        "plane_index": 0,
+        "edge_order": 74,
+        "source_detail": {
+          "attachment": {
+            "kind": "point",
+            "point": [
+              21.0,
+              42.0
+            ],
+            "outward": [
+              0.0,
+              188.0
+            ],
+            "clearance": 0.0,
+            "approach": {
+              "mode": "normal",
+              "min_straight": 0.0
+            }
+          }
+        },
+        "target_detail": {
+          "attachment": {
+            "kind": "point",
+            "point": [
+              21.0,
+              0.0
+            ],
+            "outward": [
+              0.0,
+              -188.0
             ],
             "clearance": 0.0,
             "approach": {
@@ -403,7 +562,7 @@
       "schema_version": 1,
       "provider": "arris.reference-core",
       "created_revision": 1,
-      "updated_revision": 3,
+      "updated_revision": 10,
       "hierarchies": {
         "group": {
           "parent": "asp.group"
@@ -420,8 +579,8 @@
         "placement": {
           "transform": {
             "translate": [
-              77.9915785447604,
-              257.9302807668384
+              303.592,
+              218.188
             ]
           }
         },
@@ -430,7 +589,7 @@
       "payload": {
         "align": "left",
         "face": "sans.bold",
-        "fill": "#2449B8",
+        "fill": "#FFFFFF00",
         "line_height": 1.25,
         "max_height": 0.0,
         "max_width": 0.0,
@@ -468,7 +627,7 @@
       "schema_version": 1,
       "provider": "arris.reference-core",
       "created_revision": 1,
-      "updated_revision": 3,
+      "updated_revision": 9,
       "hierarchies": {
         "group": {
           "parent": "asp.group"
@@ -485,8 +644,8 @@
         "placement": {
           "transform": {
             "translate": [
-              210.3995785447604,
-              270.7422807668384
+              98.0,
+              231.0
             ]
           }
         },
@@ -563,7 +722,7 @@
       "schema_version": 1,
       "provider": "arris.graph",
       "created_revision": 1,
-      "updated_revision": 3,
+      "updated_revision": 9,
       "hierarchies": {
         "group": {
           "parent": null
@@ -636,7 +795,7 @@
         "stamp": "TO-BE · DRAFT · 2026-11-01",
         "subtitle": "Praesidium data taxonomy · subjects and relationships · DRAFT 2026-11-01 · registers (identity, state, obligation, ledger, extension) are the next frame",
         "theme": "transit",
-        "title": "To-be taxonomy: eight subjects, three minting systems, and how they relate"
+        "title": "To-be taxonomy: nine subjects, three minting systems, and how they relate"
       }
     },
     {
@@ -644,8 +803,8 @@
       "type": "arris.styled_text",
       "schema_version": 1,
       "provider": "arris.reference-core",
-      "created_revision": 3,
-      "updated_revision": 3,
+      "created_revision": 9,
+      "updated_revision": 9,
       "hierarchies": {
         "group": {
           "parent": null
@@ -656,14 +815,14 @@
       },
       "domain_attributes": {
         "plane_index": 0,
-        "order": 62,
+        "order": 87,
         "display_name": "diagram.legend.0",
         "provider_version": "0.6.0",
         "placement": {
           "transform": {
             "translate": [
               76.0,
-              1070.32
+              1072.43
             ]
           }
         },
@@ -694,8 +853,8 @@
       "type": "arris.scenario.line_sample",
       "schema_version": 1,
       "provider": "arris.scenario",
-      "created_revision": 3,
-      "updated_revision": 3,
+      "created_revision": 9,
+      "updated_revision": 9,
       "hierarchies": {
         "group": {
           "parent": null
@@ -706,14 +865,14 @@
       },
       "domain_attributes": {
         "plane_index": 0,
-        "order": 61,
+        "order": 86,
         "display_name": "diagram.legend.0.sample",
         "provider_version": "0.1.0",
         "placement": {
           "transform": {
             "translate": [
               40.0,
-              1079.8899999999999
+              1082.0
             ]
           }
         },
@@ -738,8 +897,8 @@
       "type": "arris.styled_text",
       "schema_version": 1,
       "provider": "arris.reference-core",
-      "created_revision": 3,
-      "updated_revision": 3,
+      "created_revision": 9,
+      "updated_revision": 9,
       "hierarchies": {
         "group": {
           "parent": null
@@ -750,14 +909,14 @@
       },
       "domain_attributes": {
         "plane_index": 0,
-        "order": 64,
+        "order": 89,
         "display_name": "diagram.legend.1",
         "provider_version": "0.6.0",
         "placement": {
           "transform": {
             "translate": [
               376.0,
-              1070.2099999999998
+              1072.32
             ]
           }
         },
@@ -788,8 +947,8 @@
       "type": "arris.scenario.line_sample",
       "schema_version": 1,
       "provider": "arris.scenario",
-      "created_revision": 3,
-      "updated_revision": 3,
+      "created_revision": 9,
+      "updated_revision": 9,
       "hierarchies": {
         "group": {
           "parent": null
@@ -800,14 +959,14 @@
       },
       "domain_attributes": {
         "plane_index": 0,
-        "order": 63,
+        "order": 88,
         "display_name": "diagram.legend.1.sample",
         "provider_version": "0.1.0",
         "placement": {
           "transform": {
             "translate": [
               340.0,
-              1079.8899999999999
+              1082.0
             ]
           }
         },
@@ -836,8 +995,8 @@
       "type": "arris.styled_text",
       "schema_version": 1,
       "provider": "arris.reference-core",
-      "created_revision": 3,
-      "updated_revision": 3,
+      "created_revision": 9,
+      "updated_revision": 9,
       "hierarchies": {
         "group": {
           "parent": null
@@ -848,14 +1007,14 @@
       },
       "domain_attributes": {
         "plane_index": 0,
-        "order": 66,
+        "order": 91,
         "display_name": "diagram.legend.2",
         "provider_version": "0.6.0",
         "placement": {
           "transform": {
             "translate": [
               676.0,
-              1070.1439999999998
+              1072.254
             ]
           }
         },
@@ -886,8 +1045,8 @@
       "type": "arris.scenario.line_sample",
       "schema_version": 1,
       "provider": "arris.scenario",
-      "created_revision": 3,
-      "updated_revision": 3,
+      "created_revision": 9,
+      "updated_revision": 9,
       "hierarchies": {
         "group": {
           "parent": null
@@ -898,14 +1057,14 @@
       },
       "domain_attributes": {
         "plane_index": 0,
-        "order": 65,
+        "order": 90,
         "display_name": "diagram.legend.2.sample",
         "provider_version": "0.1.0",
         "placement": {
           "transform": {
             "translate": [
               640.0,
-              1079.8899999999999
+              1082.0
             ]
           }
         },
@@ -935,7 +1094,7 @@
       "schema_version": 1,
       "provider": "arris.scenario",
       "created_revision": 1,
-      "updated_revision": 3,
+      "updated_revision": 9,
       "hierarchies": {
         "group": {
           "parent": null
@@ -953,7 +1112,7 @@
           "transform": {
             "translate": [
               40.0,
-              175.704
+              128.0
             ]
           }
         },
@@ -968,7 +1127,7 @@
       },
       "payload": {
         "head": false,
-        "length": 1175.76,
+        "length": 1972.0,
         "stroke": "#D8DEE5",
         "width": 1.0
       }
@@ -979,7 +1138,7 @@
       "schema_version": 1,
       "provider": "arris.reference-core",
       "created_revision": 1,
-      "updated_revision": 3,
+      "updated_revision": 9,
       "hierarchies": {
         "group": {
           "parent": null
@@ -996,7 +1155,7 @@
         "placement": {
           "transform": {
             "translate": [
-              1060.534,
+              1856.774,
               44.125
             ]
           }
@@ -1021,7 +1180,7 @@
       "schema_version": 1,
       "provider": "arris.reference-core",
       "created_revision": 1,
-      "updated_revision": 3,
+      "updated_revision": 9,
       "hierarchies": {
         "group": {
           "parent": null
@@ -1039,7 +1198,7 @@
           "transform": {
             "translate": [
               40.0,
-              119.136
+              84.136
             ]
           }
         },
@@ -1058,7 +1217,7 @@
         "fill": "#171717",
         "line_height": 1.25,
         "max_height": 0.0,
-        "max_width": 714.99,
+        "max_width": 0.0,
         "size": 14.0,
         "text": "Praesidium data taxonomy · subjects and relationships · DRAFT 2026-11-01 · registers (identity, state, obligation, ledger, extension) are the next frame",
         "tracking": 0.0
@@ -1070,7 +1229,7 @@
       "schema_version": 1,
       "provider": "arris.reference-core",
       "created_revision": 1,
-      "updated_revision": 3,
+      "updated_revision": 9,
       "hierarchies": {
         "group": {
           "parent": null
@@ -1107,9 +1266,9 @@
         "fill": "#171717",
         "line_height": 1.25,
         "max_height": 0.0,
-        "max_width": 714.99,
+        "max_width": 0.0,
         "size": 28.0,
-        "text": "To-be taxonomy: eight subjects, three minting systems, and how they relate",
+        "text": "To-be taxonomy: nine subjects, three minting systems, and how they relate",
         "tracking": -0.4
       }
     },
@@ -1119,7 +1278,7 @@
       "schema_version": 1,
       "provider": "arris.graph",
       "created_revision": 1,
-      "updated_revision": 2,
+      "updated_revision": 8,
       "hierarchies": {
         "group": {
           "parent": "generation.group"
@@ -1136,8 +1295,8 @@
         "placement": {
           "transform": {
             "translate": [
-              0.0,
-              0.0
+              -789.5558038373279,
+              -294.7934599440641
             ]
           }
         },
@@ -1155,6 +1314,7 @@
         "kicker": "",
         "meta": "hostSessionId · N of a seat",
         "name": "generation",
+        "pinned": true,
         "presentation": {
           "caption": "generation.caption",
           "group": "generation.group",
@@ -1168,7 +1328,7 @@
       "schema_version": 1,
       "provider": "arris.reference-core",
       "created_revision": 1,
-      "updated_revision": 3,
+      "updated_revision": 9,
       "hierarchies": {
         "group": {
           "parent": "generation.group"
@@ -1185,15 +1345,15 @@
         "placement": {
           "transform": {
             "translate": [
-              151.15608251930271,
-              719.2570243648265
+              428.692,
+              725.2360000000001
             ]
           }
         },
         "order_authored": true
       },
       "payload": {
-        "align": "right",
+        "align": "left",
         "face": "sans.regular",
         "fill": "#4A5565",
         "line_height": 1.3,
@@ -1255,7 +1415,7 @@
       "schema_version": 1,
       "provider": "arris.reference-core",
       "created_revision": 1,
-      "updated_revision": 3,
+      "updated_revision": 9,
       "hierarchies": {
         "group": {
           "parent": "generation.group"
@@ -1272,8 +1432,8 @@
         "placement": {
           "transform": {
             "translate": [
-              348.6840825193027,
-              725.2210243648265
+              379.0,
+              719.0
             ]
           }
         },
@@ -1355,7 +1515,7 @@
       "schema_version": 1,
       "provider": "arris",
       "created_revision": 1,
-      "updated_revision": 3,
+      "updated_revision": 9,
       "hierarchies": {
         "group": {
           "parent": null
@@ -1414,10 +1574,10 @@
             },
             "placement": {
               "kind": "route-fraction",
-              "fraction": 0.5007161394881884,
+              "fraction": 0.5006648936170213,
               "offset": [
-                -31.32433156712966,
-                0.7243728994518506
+                -31.176000000000045,
+                0.0
               ],
               "anchor": "center"
             },
@@ -1432,12 +1592,12 @@
           "attachment": {
             "kind": "point",
             "point": [
-              21.48549368499107,
-              41.99438724711524
+              21.0,
+              42.0
             ],
             "outward": [
-              4.155134884395579,
-              179.68207110378444
+              0.0,
+              188.0
             ],
             "clearance": 0.0,
             "approach": {
@@ -1450,12 +1610,12 @@
           "attachment": {
             "kind": "point",
             "point": [
-              20.51450631500893,
-              0.005612752884758265
+              21.0,
+              0.0
             ],
             "outward": [
-              -4.155134884395579,
-              -179.68207110378444
+              0.0,
+              -188.0
             ],
             "clearance": 0.0,
             "approach": {
@@ -1472,8 +1632,8 @@
       "type": "arris.styled_text",
       "schema_version": 1,
       "provider": "arris.reference-core",
-      "created_revision": 3,
-      "updated_revision": 3,
+      "created_revision": 9,
+      "updated_revision": 9,
       "hierarchies": {
         "group": {
           "parent": null
@@ -1484,14 +1644,14 @@
       },
       "domain_attributes": {
         "plane_index": 0,
-        "order": 67,
+        "order": 92,
         "display_name": "graph.key",
         "provider_version": "0.6.0",
         "placement": {
           "transform": {
             "translate": [
               40.0,
-              1051.8899999999999
+              1054.0
             ]
           }
         },
@@ -1513,8 +1673,8 @@
       "type": "arris.styled_text",
       "schema_version": 1,
       "provider": "arris.reference-core",
-      "created_revision": 3,
-      "updated_revision": 3,
+      "created_revision": 9,
+      "updated_revision": 9,
       "hierarchies": {
         "group": {
           "parent": null
@@ -1525,14 +1685,14 @@
       },
       "domain_attributes": {
         "plane_index": 0,
-        "order": 68,
+        "order": 93,
         "display_name": "graph.key.group.0",
         "provider_version": "0.6.0",
         "placement": {
           "transform": {
             "translate": [
               76.0,
-              1109.8899999999999
+              1112.0
             ]
           }
         },
@@ -1554,8 +1714,8 @@
       "type": "arris.styled_text",
       "schema_version": 1,
       "provider": "arris.reference-core",
-      "created_revision": 3,
-      "updated_revision": 3,
+      "created_revision": 9,
+      "updated_revision": 9,
       "hierarchies": {
         "group": {
           "parent": null
@@ -1566,14 +1726,14 @@
       },
       "domain_attributes": {
         "plane_index": 0,
-        "order": 69,
+        "order": 94,
         "display_name": "graph.key.group.1",
         "provider_version": "0.6.0",
         "placement": {
           "transform": {
             "translate": [
               376.0,
-              1109.8899999999999
+              1112.0
             ]
           }
         },
@@ -1595,8 +1755,8 @@
       "type": "arris.styled_text",
       "schema_version": 1,
       "provider": "arris.reference-core",
-      "created_revision": 3,
-      "updated_revision": 3,
+      "created_revision": 9,
+      "updated_revision": 9,
       "hierarchies": {
         "group": {
           "parent": null
@@ -1607,14 +1767,14 @@
       },
       "domain_attributes": {
         "plane_index": 0,
-        "order": 70,
+        "order": 95,
         "display_name": "graph.key.group.2",
         "provider_version": "0.6.0",
         "placement": {
           "transform": {
             "translate": [
               676.0,
-              1109.8899999999999
+              1112.0
             ]
           }
         },
@@ -1767,7 +1927,7 @@
       "schema_version": 1,
       "provider": "arris.graph",
       "created_revision": 1,
-      "updated_revision": 1,
+      "updated_revision": 8,
       "hierarchies": {
         "group": {
           "parent": "group.group"
@@ -1777,19 +1937,19 @@
         }
       },
       "domain_attributes": {
-        "display_name": "work group",
+        "plane_index": 0,
         "order": 18,
-        "order_authored": true,
+        "display_name": "work group",
+        "provider_version": "0.1.0",
         "placement": {
           "transform": {
             "translate": [
-              0.0,
-              0.0
+              855.8187316225964,
+              -157.92521875
             ]
           }
         },
-        "plane_index": 0,
-        "provider_version": "0.1.0"
+        "order_authored": true
       },
       "payload": {
         "body": "a campaign is a feature + its room",
@@ -1802,6 +1962,7 @@
         "kicker": "",
         "meta": "P- / A- · directory | feature | area",
         "name": "work group",
+        "pinned": true,
         "presentation": {
           "caption": "group.caption",
           "group": "group.group",
@@ -1815,7 +1976,7 @@
       "schema_version": 1,
       "provider": "arris.reference-core",
       "created_revision": 1,
-      "updated_revision": 3,
+      "updated_revision": 9,
       "hierarchies": {
         "group": {
           "parent": "group.group"
@@ -1832,8 +1993,8 @@
         "placement": {
           "transform": {
             "translate": [
-              966.4883059883939,
-              565.2152786733874
+              1308.734,
+              494.91
             ]
           }
         },
@@ -1902,7 +2063,7 @@
       "schema_version": 1,
       "provider": "arris.reference-core",
       "created_revision": 1,
-      "updated_revision": 3,
+      "updated_revision": 9,
       "hierarchies": {
         "group": {
           "parent": "group.group"
@@ -1919,8 +2080,8 @@
         "placement": {
           "transform": {
             "translate": [
-              916.7543059883939,
-              571.3052786733874
+              1259.0,
+              489.0
             ]
           }
         },
@@ -2005,7 +2166,7 @@
       "schema_version": 1,
       "provider": "arris",
       "created_revision": 1,
-      "updated_revision": 3,
+      "updated_revision": 9,
       "hierarchies": {
         "group": {
           "parent": null
@@ -2029,10 +2190,10 @@
             },
             "placement": {
               "kind": "route-fraction",
-              "fraction": 0.5000000000000002,
+              "fraction": 0.5006648936170213,
               "offset": [
-                -1.529934077524672,
-                -18.938302503614977
+                -50.07099999999991,
+                0.0
               ],
               "anchor": "center"
             },
@@ -2076,12 +2237,12 @@
           "attachment": {
             "kind": "point",
             "point": [
-              0.06819196968876895,
-              22.690979769895762
+              21.0,
+              42.0
             ],
             "outward": [
-              -377.7520055534758,
-              30.516761786821007
+              0.0,
+              188.0
             ],
             "clearance": 0.0,
             "approach": {
@@ -2094,12 +2255,12 @@
           "attachment": {
             "kind": "point",
             "point": [
-              41.93180803031123,
-              19.309020230104238
+              21.0,
+              0.0
             ],
             "outward": [
-              377.7520055534758,
-              -30.516761786821007
+              0.0,
+              -188.0
             ],
             "clearance": 0.0,
             "approach": {
@@ -2157,7 +2318,7 @@
       "schema_version": 1,
       "provider": "arris",
       "created_revision": 1,
-      "updated_revision": 3,
+      "updated_revision": 9,
       "hierarchies": {
         "group": {
           "parent": null
@@ -2216,10 +2377,10 @@
             },
             "placement": {
               "kind": "route-fraction",
-              "fraction": 0.500118190237728,
+              "fraction": 0.5000000000000001,
               "offset": [
-                -16.16064244016627,
-                -24.343084715091436
+                17.60365995506004,
+                33.67656687054978
               ],
               "anchor": "center"
             },
@@ -2234,12 +2395,12 @@
           "attachment": {
             "kind": "point",
             "point": [
-              3.5043934633986282,
-              32.61480744207279
+              2.389265676801415,
+              30.728338396217396
             ],
             "outward": [
-              -384.5663774590122,
-              255.30206189408136
+              -402.77853135360283,
+              210.5433232075652
             ],
             "clearance": 0.0,
             "approach": {
@@ -2252,12 +2413,12 @@
           "attachment": {
             "kind": "point",
             "point": [
-              38.49560653660137,
-              9.385192557927212
+              39.610734323198585,
+              11.271661603782604
             ],
             "outward": [
-              384.5663774590122,
-              -255.30206189408136
+              402.77853135360283,
+              -210.5433232075652
             ],
             "clearance": 0.0,
             "approach": {
@@ -2314,7 +2475,7 @@
       "schema_version": 1,
       "provider": "arris.reference-core",
       "created_revision": 1,
-      "updated_revision": 3,
+      "updated_revision": 10,
       "hierarchies": {
         "group": {
           "parent": "hrc.group"
@@ -2331,8 +2492,8 @@
         "placement": {
           "transform": {
             "translate": [
-              219.7600825193027,
-              780.4090243648265
+              498.076,
+              786.388
             ]
           }
         },
@@ -2341,7 +2502,7 @@
       "payload": {
         "align": "left",
         "face": "sans.bold",
-        "fill": "#0B6A58",
+        "fill": "#FFFFFF00",
         "line_height": 1.25,
         "max_height": 0.0,
         "max_width": 0.0,
@@ -2379,7 +2540,7 @@
       "schema_version": 1,
       "provider": "arris.reference-core",
       "created_revision": 1,
-      "updated_revision": 3,
+      "updated_revision": 9,
       "hierarchies": {
         "group": {
           "parent": "hrc.group"
@@ -2396,8 +2557,8 @@
         "placement": {
           "transform": {
             "translate": [
-              52.0,
-              474.33128722583086
+              367.0,
+              461.0
             ]
           }
         },
@@ -2414,11 +2575,11 @@
         "corner_radius": 0.0,
         "fill": "#ffffff",
         "fill_opacity": 0.0,
-        "height": 529.5605827370105,
+        "height": 545.0,
         "opacity": 1.0,
         "stroke": "#171717",
         "stroke_width": 0.0,
-        "width": 547.8102047736804
+        "width": 790.0
       }
     },
     {
@@ -2656,6 +2817,84 @@
       "payload": {}
     },
     {
+      "id": "hue.pink.ink",
+      "type": "arris.style",
+      "schema_version": 1,
+      "provider": "arris",
+      "created_revision": 5,
+      "updated_revision": 5,
+      "hierarchies": {
+        "group": {
+          "parent": null
+        },
+        "owner": {
+          "parent": "defs"
+        }
+      },
+      "domain_attributes": {
+        "value": {
+          "colour": "#A52B70"
+        },
+        "display_name": "hue.pink.ink",
+        "kind": "colour",
+        "plane_index": 0,
+        "order": 0
+      },
+      "payload": {}
+    },
+    {
+      "id": "hue.pink.line",
+      "type": "arris.style",
+      "schema_version": 1,
+      "provider": "arris",
+      "created_revision": 5,
+      "updated_revision": 5,
+      "hierarchies": {
+        "group": {
+          "parent": null
+        },
+        "owner": {
+          "parent": "defs"
+        }
+      },
+      "domain_attributes": {
+        "value": {
+          "colour": "#C34E91"
+        },
+        "display_name": "hue.pink.line",
+        "kind": "colour",
+        "plane_index": 0,
+        "order": 0
+      },
+      "payload": {}
+    },
+    {
+      "id": "hue.pink.tint",
+      "type": "arris.style",
+      "schema_version": 1,
+      "provider": "arris",
+      "created_revision": 5,
+      "updated_revision": 5,
+      "hierarchies": {
+        "group": {
+          "parent": null
+        },
+        "owner": {
+          "parent": "defs"
+        }
+      },
+      "domain_attributes": {
+        "value": {
+          "colour": "#FBE0EF"
+        },
+        "display_name": "hue.pink.tint",
+        "kind": "colour",
+        "plane_index": 0,
+        "order": 0
+      },
+      "payload": {}
+    },
+    {
       "id": "hue.plum.ink",
       "type": "arris.style",
       "schema_version": 1,
@@ -2730,6 +2969,84 @@
         "value": {
           "colour": "#F3EEFA"
         }
+      },
+      "payload": {}
+    },
+    {
+      "id": "hue.tan.ink",
+      "type": "arris.style",
+      "schema_version": 1,
+      "provider": "arris",
+      "created_revision": 5,
+      "updated_revision": 5,
+      "hierarchies": {
+        "group": {
+          "parent": null
+        },
+        "owner": {
+          "parent": "defs"
+        }
+      },
+      "domain_attributes": {
+        "value": {
+          "colour": "#78573C"
+        },
+        "display_name": "hue.tan.ink",
+        "kind": "colour",
+        "plane_index": 0,
+        "order": 0
+      },
+      "payload": {}
+    },
+    {
+      "id": "hue.tan.line",
+      "type": "arris.style",
+      "schema_version": 1,
+      "provider": "arris",
+      "created_revision": 5,
+      "updated_revision": 5,
+      "hierarchies": {
+        "group": {
+          "parent": null
+        },
+        "owner": {
+          "parent": "defs"
+        }
+      },
+      "domain_attributes": {
+        "value": {
+          "colour": "#98704B"
+        },
+        "display_name": "hue.tan.line",
+        "kind": "colour",
+        "plane_index": 0,
+        "order": 0
+      },
+      "payload": {}
+    },
+    {
+      "id": "hue.tan.tint",
+      "type": "arris.style",
+      "schema_version": 1,
+      "provider": "arris",
+      "created_revision": 5,
+      "updated_revision": 5,
+      "hierarchies": {
+        "group": {
+          "parent": null
+        },
+        "owner": {
+          "parent": "defs"
+        }
+      },
+      "domain_attributes": {
+        "value": {
+          "colour": "#EFE2D1"
+        },
+        "display_name": "hue.tan.tint",
+        "kind": "colour",
+        "plane_index": 0,
+        "order": 0
       },
       "payload": {}
     },
@@ -2973,7 +3290,7 @@
       "schema_version": 1,
       "provider": "arris",
       "created_revision": 0,
-      "updated_revision": 3,
+      "updated_revision": 9,
       "hierarchies": {
         "group": {
           "parent": null
@@ -2985,8 +3302,8 @@
       "domain_attributes": {
         "plane_index": 0,
         "order": 0,
-        "width": 1256.0,
-        "height": 1165.0,
+        "width": 2052.0,
+        "height": 1167.0,
         "fill": {
           "token": "page"
         }
@@ -3025,7 +3342,7 @@
       "schema_version": 1,
       "provider": "arris.graph",
       "created_revision": 1,
-      "updated_revision": 1,
+      "updated_revision": 8,
       "hierarchies": {
         "group": {
           "parent": "project.group"
@@ -3035,19 +3352,19 @@
         }
       },
       "domain_attributes": {
-        "display_name": "project",
+        "plane_index": 0,
         "order": 15,
-        "order_authored": true,
+        "display_name": "project",
+        "provider_version": "0.1.0",
         "placement": {
           "transform": {
             "translate": [
-              0.0,
-              0.0
+              1376.0,
+              -244.56521874999999
             ]
           }
         },
-        "plane_index": 0,
-        "provider_version": "0.1.0"
+        "order_authored": true
       },
       "payload": {
         "body": "container kind=project; mirrored as hrc.project",
@@ -3060,6 +3377,7 @@
         "kicker": "",
         "meta": "projectId · P-",
         "name": "project",
+        "pinned": true,
         "presentation": {
           "caption": "project.caption",
           "group": "project.group",
@@ -3073,7 +3391,7 @@
       "schema_version": 1,
       "provider": "arris.reference-core",
       "created_revision": 1,
-      "updated_revision": 3,
+      "updated_revision": 9,
       "hierarchies": {
         "group": {
           "parent": "project.group"
@@ -3090,8 +3408,8 @@
         "placement": {
           "transform": {
             "translate": [
-              679.7766480955985,
-              249.74
+              1748.436,
+              253.036
             ]
           }
         },
@@ -3160,7 +3478,7 @@
       "schema_version": 1,
       "provider": "arris.reference-core",
       "created_revision": 1,
-      "updated_revision": 3,
+      "updated_revision": 9,
       "hierarchies": {
         "group": {
           "parent": "project.group"
@@ -3177,8 +3495,8 @@
         "placement": {
           "transform": {
             "translate": [
-              630.3406480955985,
-              257.204
+              1699.0,
+              259.0
             ]
           }
         },
@@ -3260,7 +3578,7 @@
       "schema_version": 1,
       "provider": "arris",
       "created_revision": 1,
-      "updated_revision": 3,
+      "updated_revision": 9,
       "hierarchies": {
         "group": {
           "parent": null
@@ -3319,10 +3637,10 @@
             },
             "placement": {
               "kind": "route-fraction",
-              "fraction": 0.5002718935923293,
+              "fraction": 0.5000932870885272,
               "offset": [
-                -23.799310315927983,
-                21.7014319448175
+                -12.829429822469137,
+                -24.54325705168003
               ],
               "anchor": "center"
             },
@@ -3337,12 +3655,12 @@
           "attachment": {
             "kind": "point",
             "point": [
-              35.149564701664076,
-              36.51740373752722
+              2.389265676801415,
+              30.728338396217453
             ],
             "outward": [
-              258.11452848946726,
-              283.06647119833303
+              -402.77853135360283,
+              210.5433232075651
             ],
             "clearance": 0.0,
             "approach": {
@@ -3355,12 +3673,12 @@
           "attachment": {
             "kind": "point",
             "point": [
-              6.850435298335924,
-              5.482596262472839
+              39.610734323198585,
+              11.271661603782547
             ],
             "outward": [
-              -258.11452848946726,
-              -283.06647119833303
+              402.77853135360283,
+              -210.5433232075651
             ],
             "clearance": 0.0,
             "approach": {
@@ -3421,7 +3739,7 @@
       "schema_version": 1,
       "provider": "arris",
       "created_revision": 1,
-      "updated_revision": 3,
+      "updated_revision": 9,
       "hierarchies": {
         "group": {
           "parent": null
@@ -3447,8 +3765,8 @@
               "kind": "route-fraction",
               "fraction": 0.49999999999999994,
               "offset": [
-                35.489097946992274,
-                13.58395844033629
+                -27.460390571612606,
+                -26.266460546759845
               ],
               "anchor": "center"
             },
@@ -3492,12 +3810,12 @@
           "attachment": {
             "kind": "point",
             "point": [
-              13.493075598761493,
-              40.61239623386416
+              6.484324434685277,
+              36.17547900010169
             ],
             "outward": [
-              -118.18811491882582,
-              308.7752075322716
+              -410.96864886937055,
+              429.6490419997967
             ],
             "clearance": 0.0,
             "approach": {
@@ -3510,12 +3828,12 @@
           "attachment": {
             "kind": "point",
             "point": [
-              28.506924401238507,
-              1.3876037661358396
+              35.51567556531472,
+              5.824520999898368
             ],
             "outward": [
-              118.18811491882582,
-              -308.7752075322716
+              410.96864886937055,
+              -429.6490419997967
             ],
             "clearance": 0.0,
             "approach": {
@@ -3576,7 +3894,7 @@
       "schema_version": 1,
       "provider": "arris",
       "created_revision": 1,
-      "updated_revision": 3,
+      "updated_revision": 9,
       "hierarchies": {
         "group": {
           "parent": null
@@ -3600,10 +3918,10 @@
             },
             "placement": {
               "kind": "route-fraction",
-              "fraction": 0.15019126449113201,
+              "fraction": 0.1500000000000001,
               "offset": [
-                -20.774533469873745,
-                -24.69111502637685
+                -4.804519106406815,
+                -18.382507885383063
               ],
               "anchor": "center"
             },
@@ -3647,12 +3965,12 @@
           "attachment": {
             "kind": "point",
             "point": [
-              4.931099551345369,
-              34.520001419054154
+              0.6824912845765994,
+              26.310257959712942
             ],
             "outward": [
-              -259.2028471982892,
-              218.0872843877226
+              -839.3649825691532,
+              219.37948408057412
             ],
             "clearance": 0.0,
             "approach": {
@@ -3665,12 +3983,12 @@
           "attachment": {
             "kind": "point",
             "point": [
-              37.06890044865463,
-              7.479998580945846
+              41.3175087154234,
+              15.689742040287058
             ],
             "outward": [
-              259.2028471982892,
-              -218.0872843877226
+              839.3649825691532,
+              -219.37948408057412
             ],
             "clearance": 0.0,
             "approach": {
@@ -3688,7 +4006,7 @@
       "schema_version": 1,
       "provider": "arris.graph",
       "created_revision": 1,
-      "updated_revision": 2,
+      "updated_revision": 8,
       "hierarchies": {
         "group": {
           "parent": "room.group"
@@ -3705,8 +4023,8 @@
         "placement": {
           "transform": {
             "translate": [
-              0.0,
-              0.0
+              715.0402799427694,
+              -545.6252187500002
             ]
           }
         },
@@ -3724,6 +4042,7 @@
         "kicker": "",
         "meta": "R- · task | campaign | project | adhoc",
         "name": "room",
+        "pinned": true,
         "presentation": {
           "caption": "room.caption",
           "group": "room.group",
@@ -3737,7 +4056,7 @@
       "schema_version": 1,
       "provider": "arris.reference-core",
       "created_revision": 1,
-      "updated_revision": 3,
+      "updated_revision": 9,
       "hierarchies": {
         "group": {
           "parent": "room.group"
@@ -3754,8 +4073,8 @@
         "placement": {
           "transform": {
             "translate": [
-              546.5746843742957,
-              627.7719999999999
+              1308.436,
+              710.068
             ]
           }
         },
@@ -3824,7 +4143,7 @@
       "schema_version": 1,
       "provider": "arris.reference-core",
       "created_revision": 1,
-      "updated_revision": 3,
+      "updated_revision": 9,
       "hierarchies": {
         "group": {
           "parent": "room.group"
@@ -3841,8 +4160,8 @@
         "placement": {
           "transform": {
             "translate": [
-              497.1386843742956,
-              605.204
+              1259.0,
+              719.0
             ]
           }
         },
@@ -3927,7 +4246,7 @@
       "schema_version": 1,
       "provider": "arris",
       "created_revision": 1,
-      "updated_revision": 3,
+      "updated_revision": 9,
       "hierarchies": {
         "group": {
           "parent": null
@@ -3951,10 +4270,10 @@
             },
             "placement": {
               "kind": "route-fraction",
-              "fraction": 0.5,
+              "fraction": 0.24930808013626063,
               "offset": [
-                31.081871328115085,
-                -47.779883578159684
+                -24.082056191637548,
+                46.07002054052384
               ],
               "anchor": "center"
             },
@@ -3998,12 +4317,12 @@
           "attachment": {
             "kind": "point",
             "point": [
-              3.3968849975200897,
-              9.54878424753656
+              2.389265676801415,
+              11.271661603782604
             ],
             "outward": [
-              -122.9324543693358,
-              -79.97028126924215
+              -402.77853135360283,
+              -210.5433232075652
             ],
             "clearance": 0.0,
             "approach": {
@@ -4016,12 +4335,12 @@
           "attachment": {
             "kind": "point",
             "point": [
-              38.60311500247991,
-              32.45121575246344
+              39.610734323198585,
+              30.728338396217396
             ],
             "outward": [
-              122.9324543693358,
-              79.97028126924215
+              402.77853135360283,
+              210.5433232075652
             ],
             "clearance": 0.0,
             "approach": {
@@ -4065,7 +4384,7 @@
       "schema_version": 1,
       "provider": "arris.graph",
       "created_revision": 1,
-      "updated_revision": 1,
+      "updated_revision": 8,
       "hierarchies": {
         "group": {
           "parent": "runtime.group"
@@ -4075,19 +4394,19 @@
         }
       },
       "domain_attributes": {
-        "display_name": "runtime",
+        "plane_index": 0,
         "order": 33,
-        "order_authored": true,
+        "display_name": "runtime",
+        "provider_version": "0.1.0",
         "placement": {
           "transform": {
             "translate": [
-              0.0,
-              0.0
+              -789.5558038373279,
+              -416.1820680718215
             ]
           }
         },
-        "plane_index": 0,
-        "provider_version": "0.1.0"
+        "order_authored": true
       },
       "payload": {
         "body": "process: transport, hrcpty, context",
@@ -4100,6 +4419,7 @@
         "kicker": "",
         "meta": "runtimeId",
         "name": "runtime",
+        "pinned": true,
         "presentation": {
           "caption": "runtime.caption",
           "group": "runtime.group",
@@ -4113,7 +4433,7 @@
       "schema_version": 1,
       "provider": "arris.reference-core",
       "created_revision": 1,
-      "updated_revision": 3,
+      "updated_revision": 9,
       "hierarchies": {
         "group": {
           "parent": "runtime.group"
@@ -4130,8 +4450,8 @@
         "placement": {
           "transform": {
             "translate": [
-              402.96320477368045,
-              940.9278699628414
+              428.153,
+              943.0360000000001
             ]
           }
         },
@@ -4200,7 +4520,7 @@
       "schema_version": 1,
       "provider": "arris.reference-core",
       "created_revision": 1,
-      "updated_revision": 3,
+      "updated_revision": 9,
       "hierarchies": {
         "group": {
           "parent": "runtime.group"
@@ -4217,8 +4537,8 @@
         "placement": {
           "transform": {
             "translate": [
-              353.8102047736804,
-              946.8918699628414
+              379.0,
+              949.0
             ]
           }
         },
@@ -4260,7 +4580,7 @@
       "schema_version": 1,
       "provider": "arris.graph",
       "created_revision": 1,
-      "updated_revision": 1,
+      "updated_revision": 8,
       "hierarchies": {
         "group": {
           "parent": "seat.group"
@@ -4270,22 +4590,22 @@
         }
       },
       "domain_attributes": {
-        "display_name": "seat",
+        "plane_index": 0,
         "order": 27,
-        "order_authored": true,
+        "display_name": "seat",
+        "provider_version": "0.1.0",
         "placement": {
           "transform": {
             "translate": [
-              0.0,
-              0.0
+              -340.28190272028996,
+              -169.52171875
             ]
           }
         },
-        "plane_index": 0,
-        "provider_version": "0.1.0"
+        "order_authored": true
       },
       "payload": {
-        "body": "asks, handoff, binding, presentation; the join of all three systems",
+        "body": "asks, handoff, workstream, presentation; the join of all three systems",
         "bullets": [],
         "emphasis": true,
         "hints": {
@@ -4295,6 +4615,7 @@
         "kicker": "",
         "meta": "scope/lane = agent × project × task/role",
         "name": "seat",
+        "pinned": true,
         "presentation": {
           "caption": "seat.caption",
           "group": "seat.group",
@@ -4308,7 +4629,7 @@
       "schema_version": 1,
       "provider": "arris.reference-core",
       "created_revision": 1,
-      "updated_revision": 3,
+      "updated_revision": 9,
       "hierarchies": {
         "group": {
           "parent": "seat.group"
@@ -4325,15 +4646,15 @@
         "placement": {
           "transform": {
             "translate": [
-              63.472,
-              495.21928722583084
+              868.636,
+              481.888
             ]
           }
         },
         "order_authored": true
       },
       "payload": {
-        "align": "right",
+        "align": "left",
         "face": "sans.regular",
         "fill": "#4A5565",
         "line_height": 1.3,
@@ -4342,29 +4663,29 @@
         "padding": 0.0,
         "runs": [
           {
+            "start": 0,
             "end": 4,
             "face": "sans.bold",
-            "fill": "#4A5565",
             "size": 14.0,
-            "start": 0
+            "fill": "#4A5565"
           },
           {
+            "start": 5,
             "end": 45,
             "face": "mono.regular",
-            "fill": "#4A5565",
             "size": 11.0,
-            "start": 5
+            "fill": "#4A5565"
           },
           {
-            "end": 113,
+            "start": 46,
+            "end": 116,
             "face": "sans.regular",
-            "fill": "#4A5565",
             "size": 12.0,
-            "start": 46
+            "fill": "#4A5565"
           }
         ],
         "size": 12.0,
-        "text": "seat\nscope/lane = agent × project × task/role\nasks, handoff, binding, presentation; the join of all three systems"
+        "text": "seat\nscope/lane = agent × project × task/role\nasks, handoff, workstream, presentation; the join of all three systems"
       }
     },
     {
@@ -4373,7 +4694,7 @@
       "schema_version": 1,
       "provider": "arris",
       "created_revision": 1,
-      "updated_revision": 1,
+      "updated_revision": 5,
       "hierarchies": {
         "group": {
           "parent": "hrc.group"
@@ -4383,9 +4704,9 @@
         }
       },
       "domain_attributes": {
-        "display_name": "seat",
+        "plane_index": 0,
         "order": 0,
-        "plane_index": 0
+        "display_name": "seat"
       },
       "payload": {}
     },
@@ -4395,7 +4716,7 @@
       "schema_version": 1,
       "provider": "arris.reference-core",
       "created_revision": 1,
-      "updated_revision": 3,
+      "updated_revision": 9,
       "hierarchies": {
         "group": {
           "parent": "seat.group"
@@ -4412,8 +4733,8 @@
         "placement": {
           "transform": {
             "translate": [
-              339.0,
-              502.3312872258309
+              819.0,
+              489.0
             ]
           }
         },
@@ -4495,7 +4816,7 @@
       "schema_version": 1,
       "provider": "arris",
       "created_revision": 1,
-      "updated_revision": 3,
+      "updated_revision": 9,
       "hierarchies": {
         "group": {
           "parent": null
@@ -4554,10 +4875,10 @@
             },
             "placement": {
               "kind": "route-fraction",
-              "fraction": 0.4999999999999998,
+              "fraction": 0.8494556554354503,
               "offset": [
-                -37.96418408238162,
-                1.649462627355092
+                -14.513216435045138,
+                -27.764414049651577
               ],
               "anchor": "center"
             },
@@ -4572,12 +4893,12 @@
           "attachment": {
             "kind": "point",
             "point": [
-              21.911545136169934,
-              41.98020699289509
+              2.389265676801415,
+              30.728338396217396
             ],
             "outward": [
-              7.860992246962837,
-              180.92932315320536
+              -402.77853135360283,
+              210.5433232075652
             ],
             "clearance": 0.0,
             "approach": {
@@ -4590,12 +4911,12 @@
           "attachment": {
             "kind": "point",
             "point": [
-              20.088454863830066,
-              0.01979300710490861
+              39.610734323198585,
+              11.271661603782604
             ],
             "outward": [
-              -7.860992246962837,
-              -180.92932315320536
+              402.77853135360283,
+              -210.5433232075652
             ],
             "clearance": 0.0,
             "approach": {
@@ -4608,12 +4929,12 @@
       "payload": {}
     },
     {
-      "id": "seat__task",
+      "id": "seat__workstream",
       "type": "graph.directed_reference",
       "schema_version": 1,
       "provider": "arris.graph",
-      "created_revision": 1,
-      "updated_revision": 1,
+      "created_revision": 5,
+      "updated_revision": 6,
       "hierarchies": {
         "group": {
           "parent": null
@@ -4623,9 +4944,10 @@
         }
       },
       "domain_attributes": {
-        "display_name": "seat__task",
-        "order": 57,
-        "order_authored": true,
+        "plane_index": 0,
+        "order": 85,
+        "display_name": "seat__workstream",
+        "provider_version": "0.1.0",
         "placement": {
           "transform": {
             "translate": [
@@ -4634,29 +4956,28 @@
             ]
           }
         },
-        "plane_index": 0,
-        "provider_version": "0.1.0"
+        "order_authored": true
       },
       "payload": {
         "from": "seat",
-        "label": "binding: hcs",
+        "label": "on",
         "presentation": {
-          "edge": "seat__task.edge",
+          "edge": "seat__workstream.edge",
           "label": "label"
         },
         "style": {
           "stroke": "#0B6A58"
         },
-        "to": "task"
+        "to": "workstream"
       }
     },
     {
-      "id": "seat__task.edge",
+      "id": "seat__workstream.edge",
       "type": "arris.edge",
       "schema_version": 1,
       "provider": "arris",
-      "created_revision": 1,
-      "updated_revision": 3,
+      "created_revision": 5,
+      "updated_revision": 9,
       "hierarchies": {
         "group": {
           "parent": null
@@ -4667,20 +4988,20 @@
       },
       "domain_attributes": {
         "end": {
+          "type": "arris.filled",
+          "schema_version": 1,
           "parameters": {
             "length": 7.02,
             "width": 5.88
-          },
-          "schema_version": 1,
-          "type": "arris.filled"
+          }
         },
-        "display_name": "binding: hcs",
-        "order": 56,
+        "display_name": "on",
+        "order": 84,
         "source": {
           "ref": "seat.shape"
         },
         "target": {
-          "ref": "task.shape"
+          "ref": "workstream.shape"
         },
         "route": {
           "strategy": {
@@ -4695,52 +5016,52 @@
           }
         },
         "shaft": {
+          "stroke": "#0B6A58",
+          "width": 1.2,
+          "dash_offset": 0.0,
           "dash": [
             2.0,
             3.0
-          ],
-          "dash_offset": 0.0,
-          "stroke": "#0B6A58",
-          "width": 1.2
+          ]
         },
         "labels": [
           {
-            "clearance": 0.0,
             "label_id": "label",
+            "type": "arris.label",
+            "schema_version": 1,
             "parameters": {
               "align": "left",
               "face": "sans.regular",
               "fill": "#4A5565",
               "line_height": 1.25,
               "size": 11.0,
-              "text": "binding: hcs"
+              "text": "on"
             },
             "placement": {
               "kind": "route-fraction",
-              "fraction": 0.49999999999999994,
+              "fraction": 0.8492562814070352,
               "offset": [
-                34.584937734015,
-                -15.744271400554112
+                0.0,
+                -18.75
               ],
               "anchor": "center"
             },
-            "schema_version": 1,
-            "shaft_gap": "none",
-            "type": "arris.label"
+            "clearance": 0.0,
+            "shaft_gap": "none"
           }
         ],
         "plane_index": 0,
-        "edge_order": 56,
+        "edge_order": 84,
         "source_detail": {
           "attachment": {
             "kind": "point",
             "point": [
-              35.57408510944617,
-              36.1193929515249
+              0.0,
+              21.0
             ],
             "outward": [
-              141.79036440245,
-              311.4663612804243
+              -398.0,
+              0.0
             ],
             "clearance": 0.0,
             "approach": {
@@ -4753,12 +5074,12 @@
           "attachment": {
             "kind": "point",
             "point": [
-              19.167734055717233,
-              0.08008600616574313
+              42.0,
+              21.0
             ],
             "outward": [
-              -141.79036440245,
-              -311.4663612804243
+              398.0,
+              0.0
             ],
             "clearance": 0.0,
             "approach": {
@@ -4797,12 +5118,168 @@
       "payload": {}
     },
     {
+      "id": "statechart.breaks.fill",
+      "type": "arris.style",
+      "schema_version": 1,
+      "provider": "arris",
+      "created_revision": 5,
+      "updated_revision": 5,
+      "hierarchies": {
+        "group": {
+          "parent": null
+        },
+        "owner": {
+          "parent": "defs"
+        }
+      },
+      "domain_attributes": {
+        "value": {
+          "colour": "#FFECEE"
+        },
+        "display_name": "statechart.breaks.fill",
+        "kind": "colour",
+        "plane_index": 0,
+        "order": 0
+      },
+      "payload": {}
+    },
+    {
+      "id": "statechart.breaks.ink",
+      "type": "arris.style",
+      "schema_version": 1,
+      "provider": "arris",
+      "created_revision": 5,
+      "updated_revision": 5,
+      "hierarchies": {
+        "group": {
+          "parent": null
+        },
+        "owner": {
+          "parent": "defs"
+        }
+      },
+      "domain_attributes": {
+        "value": {
+          "colour": "#CD2834"
+        },
+        "display_name": "statechart.breaks.ink",
+        "kind": "colour",
+        "plane_index": 0,
+        "order": 0
+      },
+      "payload": {}
+    },
+    {
+      "id": "statechart.breaks.line",
+      "type": "arris.style",
+      "schema_version": 1,
+      "provider": "arris",
+      "created_revision": 5,
+      "updated_revision": 5,
+      "hierarchies": {
+        "group": {
+          "parent": null
+        },
+        "owner": {
+          "parent": "defs"
+        }
+      },
+      "domain_attributes": {
+        "value": {
+          "colour": "#E72E3B"
+        },
+        "display_name": "statechart.breaks.line",
+        "kind": "colour",
+        "plane_index": 0,
+        "order": 0
+      },
+      "payload": {}
+    },
+    {
+      "id": "statechart.mayBreak.fill",
+      "type": "arris.style",
+      "schema_version": 1,
+      "provider": "arris",
+      "created_revision": 5,
+      "updated_revision": 5,
+      "hierarchies": {
+        "group": {
+          "parent": null
+        },
+        "owner": {
+          "parent": "defs"
+        }
+      },
+      "domain_attributes": {
+        "value": {
+          "colour": "#FFF3E6"
+        },
+        "display_name": "statechart.mayBreak.fill",
+        "kind": "colour",
+        "plane_index": 0,
+        "order": 0
+      },
+      "payload": {}
+    },
+    {
+      "id": "statechart.mayBreak.ink",
+      "type": "arris.style",
+      "schema_version": 1,
+      "provider": "arris",
+      "created_revision": 5,
+      "updated_revision": 5,
+      "hierarchies": {
+        "group": {
+          "parent": null
+        },
+        "owner": {
+          "parent": "defs"
+        }
+      },
+      "domain_attributes": {
+        "value": {
+          "colour": "#B25706"
+        },
+        "display_name": "statechart.mayBreak.ink",
+        "kind": "colour",
+        "plane_index": 0,
+        "order": 0
+      },
+      "payload": {}
+    },
+    {
+      "id": "statechart.mayBreak.line",
+      "type": "arris.style",
+      "schema_version": 1,
+      "provider": "arris",
+      "created_revision": 5,
+      "updated_revision": 5,
+      "hierarchies": {
+        "group": {
+          "parent": null
+        },
+        "owner": {
+          "parent": "defs"
+        }
+      },
+      "domain_attributes": {
+        "value": {
+          "colour": "#BF5F0A"
+        },
+        "display_name": "statechart.mayBreak.line",
+        "kind": "colour",
+        "plane_index": 0,
+        "order": 0
+      },
+      "payload": {}
+    },
+    {
       "id": "task",
       "type": "graph.entity",
       "schema_version": 1,
       "provider": "arris.graph",
       "created_revision": 1,
-      "updated_revision": 1,
+      "updated_revision": 8,
       "hierarchies": {
         "group": {
           "parent": "task.group"
@@ -4812,19 +5289,19 @@
         }
       },
       "domain_attributes": {
-        "display_name": "task",
+        "plane_index": 0,
         "order": 21,
-        "order_authored": true,
+        "display_name": "task",
+        "provider_version": "0.1.0",
         "placement": {
           "transform": {
             "translate": [
-              0.0,
-              0.0
+              287.49306941567886,
+              -157.884234375
             ]
           }
         },
-        "plane_index": 0,
-        "provider_version": "0.1.0"
+        "order_authored": true
       },
       "payload": {
         "body": "comments, evidence, relations, workflow",
@@ -4837,6 +5314,7 @@
         "kicker": "",
         "meta": "T- · task | subtask | bug | chore | spike",
         "name": "task",
+        "pinned": true,
         "presentation": {
           "caption": "task.caption",
           "group": "task.group",
@@ -4850,7 +5328,7 @@
       "schema_version": 1,
       "provider": "arris.reference-core",
       "created_revision": 1,
-      "updated_revision": 3,
+      "updated_revision": 9,
       "hierarchies": {
         "group": {
           "parent": "task.group"
@@ -4867,8 +5345,8 @@
         "placement": {
           "transform": {
             "translate": [
-              546.921715456179,
-              855.9469554516144
+              868.725,
+              744.41
             ]
           }
         },
@@ -4937,7 +5415,7 @@
       "schema_version": 1,
       "provider": "arris.reference-core",
       "created_revision": 1,
-      "updated_revision": 3,
+      "updated_revision": 9,
       "hierarchies": {
         "group": {
           "parent": "task.group"
@@ -4954,8 +5432,8 @@
         "placement": {
           "transform": {
             "translate": [
-              497.19671545617894,
-              849.8369554516144
+              819.0,
+              719.0
             ]
           }
         },
@@ -5040,7 +5518,7 @@
       "schema_version": 1,
       "provider": "arris",
       "created_revision": 1,
-      "updated_revision": 3,
+      "updated_revision": 9,
       "hierarchies": {
         "group": {
           "parent": null
@@ -5064,10 +5542,10 @@
             },
             "placement": {
               "kind": "route-fraction",
-              "fraction": 0.4993827640567082,
+              "fraction": 0.40000000000000013,
               "offset": [
-                37.001599469847974,
-                -0.008777406317449277
+                0.0,
+                -19.0
               ],
               "anchor": "center"
             },
@@ -5111,12 +5589,12 @@
           "attachment": {
             "kind": "point",
             "point": [
-              20.995018444334278,
-              5.908547109356732e-07
+              42.0,
+              21.0
             ],
             "outward": [
-              -0.04806797055186962,
-              -202.63295663332383
+              398.0,
+              0.0
             ],
             "clearance": 0.0,
             "approach": {
@@ -5129,12 +5607,12 @@
           "attachment": {
             "kind": "point",
             "point": [
-              21.004981555665722,
-              41.99999940914529
+              0.0,
+              21.0
             ],
             "outward": [
-              0.04806797055186962,
-              202.63295663332383
+              -398.0,
+              0.0
             ],
             "clearance": 0.0,
             "approach": {
@@ -5195,7 +5673,7 @@
       "schema_version": 1,
       "provider": "arris",
       "created_revision": 1,
-      "updated_revision": 3,
+      "updated_revision": 9,
       "hierarchies": {
         "group": {
           "parent": null
@@ -5219,10 +5697,10 @@
             },
             "placement": {
               "kind": "route-fraction",
-              "fraction": 0.14943511426984923,
+              "fraction": 0.14933510638297898,
               "offset": [
-                -31.88066343839398,
-                14.513191304957331
+                34.5,
+                0.0
               ],
               "anchor": "center"
             },
@@ -5266,12 +5744,12 @@
           "attachment": {
             "kind": "point",
             "point": [
-              6.425914890553827,
-              5.880607048475099
+              21.0,
+              0.0
             ],
             "outward": [
-              -141.79036440245,
-              -311.4663612804243
+              0.0,
+              -188.0
             ],
             "clearance": 0.0,
             "approach": {
@@ -5284,12 +5762,363 @@
           "attachment": {
             "kind": "point",
             "point": [
-              22.832265944282767,
-              41.91991399383426
+              21.0,
+              42.0
             ],
             "outward": [
-              141.79036440245,
-              311.4663612804243
+              0.0,
+              188.0
+            ],
+            "clearance": 0.0,
+            "approach": {
+              "mode": "normal",
+              "min_straight": 0.0
+            }
+          }
+        }
+      },
+      "payload": {}
+    },
+    {
+      "id": "workstream",
+      "type": "graph.entity",
+      "schema_version": 1,
+      "provider": "arris.graph",
+      "created_revision": 5,
+      "updated_revision": 8,
+      "hierarchies": {
+        "group": {
+          "parent": "workstream.group"
+        },
+        "owner": {
+          "parent": "page-1"
+        }
+      },
+      "domain_attributes": {
+        "plane_index": 0,
+        "order": 73,
+        "display_name": "workstream",
+        "provider_version": "0.1.0",
+        "placement": {
+          "transform": {
+            "translate": [
+              -328.19829667658644,
+              -164.96521874999996
+            ]
+          }
+        },
+        "order_authored": true
+      },
+      "payload": {
+        "body": "a human attention thread; spans tasks and seats",
+        "bullets": [],
+        "emphasis": false,
+        "hints": {
+          "tier": 1
+        },
+        "icon": "",
+        "kicker": "",
+        "meta": "T- · kind=workstream (today: hcs task)",
+        "name": "workstream",
+        "pinned": true,
+        "presentation": {
+          "shape": "workstream.shape",
+          "caption": "workstream.caption",
+          "group": "workstream.group"
+        }
+      }
+    },
+    {
+      "id": "workstream.caption",
+      "type": "arris.styled_text",
+      "schema_version": 1,
+      "provider": "arris.reference-core",
+      "created_revision": 5,
+      "updated_revision": 9,
+      "hierarchies": {
+        "group": {
+          "parent": "workstream.group"
+        },
+        "owner": {
+          "parent": "page-1"
+        }
+      },
+      "domain_attributes": {
+        "plane_index": 0,
+        "order": 72,
+        "display_name": "workstream.caption",
+        "provider_version": "0.6.0",
+        "placement": {
+          "transform": {
+            "translate": [
+              110.472,
+              482.91
+            ]
+          }
+        },
+        "order_authored": true
+      },
+      "payload": {
+        "align": "right",
+        "face": "sans.regular",
+        "fill": "#4A5565",
+        "line_height": 1.3,
+        "max_height": 0.0,
+        "max_width": 280.0,
+        "padding": 0.0,
+        "runs": [
+          {
+            "start": 0,
+            "end": 10,
+            "face": "sans.bold",
+            "size": 14.0,
+            "fill": "#4A5565"
+          },
+          {
+            "start": 11,
+            "end": 49,
+            "face": "mono.regular",
+            "size": 11.0,
+            "fill": "#4A5565"
+          },
+          {
+            "start": 50,
+            "end": 97,
+            "face": "sans.regular",
+            "size": 12.0,
+            "fill": "#4A5565"
+          }
+        ],
+        "size": 12.0,
+        "text": "workstream\nT- · kind=workstream (today: hcs task)\na human attention thread; spans tasks and seats"
+      }
+    },
+    {
+      "id": "workstream.group",
+      "type": "arris.group",
+      "schema_version": 1,
+      "provider": "arris",
+      "created_revision": 5,
+      "updated_revision": 5,
+      "hierarchies": {
+        "group": {
+          "parent": "wrkq.group"
+        },
+        "owner": {
+          "parent": null
+        }
+      },
+      "domain_attributes": {
+        "plane_index": 0,
+        "order": 0,
+        "display_name": "workstream"
+      },
+      "payload": {}
+    },
+    {
+      "id": "workstream.shape",
+      "type": "arris.box",
+      "schema_version": 1,
+      "provider": "arris.reference-core",
+      "created_revision": 5,
+      "updated_revision": 9,
+      "hierarchies": {
+        "group": {
+          "parent": "workstream.group"
+        },
+        "owner": {
+          "parent": "page-1"
+        }
+      },
+      "domain_attributes": {
+        "plane_index": 0,
+        "order": 71,
+        "display_name": "workstream.shape",
+        "provider_version": "0.6.0",
+        "placement": {
+          "transform": {
+            "translate": [
+              379.0,
+              489.0
+            ]
+          }
+        },
+        "order_authored": true,
+        "attachments": {
+          "geometry": {
+            "type": "arris.attachment.box",
+            "schema_version": 1,
+            "parameters": {}
+          },
+          "ports": []
+        },
+        "style_bindings": [
+          {
+            "property": "fill",
+            "style": "hue.plum.tint",
+            "slot": "colour"
+          },
+          {
+            "property": "stroke",
+            "style": "hue.plum.ink",
+            "slot": "colour"
+          }
+        ]
+      },
+      "payload": {
+        "corner_radius": 21.0,
+        "fill": "#ffffff",
+        "height": 42.0,
+        "opacity": 1.0,
+        "stroke": "#171717",
+        "stroke_width": 2.0,
+        "width": 42.0
+      }
+    },
+    {
+      "id": "workstream__task",
+      "type": "graph.reference",
+      "schema_version": 1,
+      "provider": "arris.graph",
+      "created_revision": 5,
+      "updated_revision": 6,
+      "hierarchies": {
+        "group": {
+          "parent": null
+        },
+        "owner": {
+          "parent": "page-1"
+        }
+      },
+      "domain_attributes": {
+        "plane_index": 0,
+        "order": 83,
+        "display_name": "workstream__task",
+        "provider_version": "0.1.0",
+        "placement": {
+          "transform": {
+            "translate": [
+              0.0,
+              0.0
+            ]
+          }
+        },
+        "order_authored": true
+      },
+      "payload": {
+        "from": "workstream",
+        "label": "covers",
+        "presentation": {
+          "edge": "workstream__task.edge",
+          "label": "label"
+        },
+        "style": {
+          "stroke": "#6A3C9E"
+        },
+        "to": "task"
+      }
+    },
+    {
+      "id": "workstream__task.edge",
+      "type": "arris.edge",
+      "schema_version": 1,
+      "provider": "arris",
+      "created_revision": 5,
+      "updated_revision": 9,
+      "hierarchies": {
+        "group": {
+          "parent": null
+        },
+        "owner": {
+          "parent": "page-1"
+        }
+      },
+      "domain_attributes": {
+        "labels": [
+          {
+            "label_id": "label",
+            "type": "arris.label",
+            "schema_version": 1,
+            "parameters": {
+              "align": "left",
+              "face": "sans.regular",
+              "fill": "#4A5565",
+              "line_height": 1.25,
+              "size": 11.0,
+              "text": "covers"
+            },
+            "placement": {
+              "kind": "route-fraction",
+              "fraction": 0.30081379135706465,
+              "offset": [
+                -11.822776272773353,
+                22.617485043566376
+              ],
+              "anchor": "center"
+            },
+            "clearance": 0.0,
+            "shaft_gap": "none"
+          }
+        ],
+        "display_name": "covers",
+        "order": 82,
+        "source": {
+          "ref": "workstream.shape"
+        },
+        "target": {
+          "ref": "task.shape"
+        },
+        "route": {
+          "strategy": {
+            "type": "arris.polyline",
+            "schema_version": 1,
+            "parameters": {}
+          },
+          "waypoints": [],
+          "corner_radius": 0.0,
+          "obstacles": {
+            "mode": "none"
+          }
+        },
+        "shaft": {
+          "stroke": "#6A3C9E",
+          "width": 1.2,
+          "dash_offset": 0.0,
+          "dash": [
+            2.0,
+            3.0
+          ]
+        },
+        "plane_index": 0,
+        "edge_order": 82,
+        "source_detail": {
+          "attachment": {
+            "kind": "point",
+            "point": [
+              39.610734323198585,
+              30.728338396217396
+            ],
+            "outward": [
+              402.77853135360283,
+              210.5433232075652
+            ],
+            "clearance": 0.0,
+            "approach": {
+              "mode": "normal",
+              "min_straight": 0.0
+            }
+          }
+        },
+        "target_detail": {
+          "attachment": {
+            "kind": "point",
+            "point": [
+              2.389265676801415,
+              11.271661603782604
+            ],
+            "outward": [
+              -402.77853135360283,
+              -210.5433232075652
             ],
             "clearance": 0.0,
             "approach": {
@@ -5346,7 +6175,7 @@
       "schema_version": 1,
       "provider": "arris.reference-core",
       "created_revision": 1,
-      "updated_revision": 3,
+      "updated_revision": 10,
       "hierarchies": {
         "group": {
           "parent": "wrkq.group"
@@ -5363,8 +6192,8 @@
         "placement": {
           "transform": {
             "translate": [
-              896.5263059883939,
-              627.4932786733874
+              868.772,
+              805.688
             ]
           }
         },
@@ -5373,7 +6202,7 @@
       "payload": {
         "align": "left",
         "face": "sans.bold",
-        "fill": "#6A3C9E",
+        "fill": "#FFFFFF00",
         "line_height": 1.25,
         "max_height": 0.0,
         "max_width": 0.0,
@@ -5411,7 +6240,7 @@
       "schema_version": 1,
       "provider": "arris.reference-core",
       "created_revision": 1,
-      "updated_revision": 3,
+      "updated_revision": 9,
       "hierarchies": {
         "group": {
           "parent": "wrkq.group"
@@ -5428,8 +6257,8 @@
         "placement": {
           "transform": {
             "translate": [
-              485.1386843742956,
-              227.704
+              99.0,
+              231.0
             ]
           }
         },
@@ -5446,11 +6275,11 @@
         "corner_radius": 0.0,
         "fill": "#ffffff",
         "fill_opacity": 0.0,
-        "height": 690.3329554516145,
+        "height": 575.5,
         "opacity": 1.0,
         "stroke": "#171717",
         "stroke_width": 0.0,
-        "width": 730.6156216140981
+        "width": 1913.0
       }
     }
   ]
