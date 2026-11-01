@@ -166,8 +166,12 @@ A node's HRC owner is Bun (explicit
 owner (T-11893). Both run under the one label `com.praesidium.hrc-server`;
 `scripts/hrc-owner.sh kind` reads which from the installed plist and the
 `OWNER` column of `just fleet-status` reads it from the running binary. A
-rusthrc owner execs `~/praesidium/var/hrc-owner/hrc-runtime-current/bin/rusthrc`,
-a staged copy of an installed release that no prune touches.
+rusthrc owner execs `~/praesidium/var/hrc-owner/bin/rusthrc`, a fixed, real
+copy of a staged installed release, signed by the node identity when one is
+configured so that macOS TCC grants survive releases (T-12224;
+`crates/hrc-native/README.md`). A plist not yet moved there by
+`just refresh-owner-exe <node>` still execs the release link
+`~/praesidium/var/hrc-owner/hrc-runtime-current/bin/rusthrc`.
 
 - **Deploy.** The `deploy-*` recipes work on either owner. On a rusthrc owner,
   `just install` alone changes nothing that runs, so the lane stages the new

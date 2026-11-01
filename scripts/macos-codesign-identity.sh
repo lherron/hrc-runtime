@@ -74,7 +74,8 @@ create() {
   count="$(grep -c . <<<"$hashes" || true)"
   ((count <= 1)) || fail "$count certificates are named \"$NAME\" ($(paste -sd ' ' - <<<"$hashes")); codesign -s cannot choose. Delete the extras in Keychain Access first"
   work="$(mktemp -d "${TMPDIR:-/tmp}/codesign-identity.XXXXXX")"
-  trap 'rm -rf "$work"' EXIT
+  WORK="$work"
+  trap 'rm -rf "$WORK"' EXIT
   chmod 700 "$work"
 
   # 1. Certificate and key.
@@ -133,11 +134,11 @@ EOF
   codesign -f -s "$NAME" -i com.praesidium.codesign-probe --timestamp=none "$work/probe" 2>/dev/null ||
     fail "codesign could not use \"$NAME\" (keychain locked, or the key denies codesign)"
   codesign --verify --strict "$work/probe" || fail "the probe signature does not verify"
-  say "3/4 $(codesign -dr - "$work/probe" 2>/dev/null | sed -n 's/^designated => /designated requirement: /p')"
+  say "3/4 $(codesign -dr - "$work/probe" 2>/dev/null | sed -n 's/^#* *designated => /designated requirement: /p')"
 
   # 4. Read back.
-  say "4/4 code-signing identities in $KEYCHAIN:"
-  security find-identity -v -p codesigning "$KEYCHAIN" || true
+  say "4/4 code-signing identities in $KEYCHAIN (\"Valid identities only\" lists the trusted ones):"
+  security find-identity -p codesigning "$KEYCHAIN" || true
   [[ -n "$(identity_line)" ]] || fail "\"$NAME\" is not a code-signing identity after create"
   say "done. A node daemon opts in by naming the identity in its install config, for HRC: echo '$NAME' > $OWNER_ROOT/codesign.identity"
 }
@@ -171,7 +172,7 @@ status() {
     cp /usr/bin/true "$probe/probe"
     if codesign -f -s "$NAME" -i com.praesidium.codesign-probe --timestamp=none "$probe/probe" 2> "$probe/err" &&
       codesign --verify --strict "$probe/probe" 2>> "$probe/err"; then
-      dr="$(codesign -dr - "$probe/probe" 2>/dev/null | sed -n 's/^designated => //p')"
+      dr="$(codesign -dr - "$probe/probe" 2>/dev/null | sed -n 's/^#* *designated => //p')"
       echo "SIGN_PROBE=ok $dr"
       rm -rf "$probe"
     else

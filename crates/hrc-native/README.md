@@ -17,6 +17,110 @@ in its own tmux server, and persists the canonical start graph. Startup
 reattaches these durable brokers after checking their release and endpoint
 roots. Existing-seat turns name N2 in the unknown-route refusal.
 
+## Owner install and code identity (T-12224)
+
+A node's rusthrc owner runs from `~/praesidium/var/hrc-owner` (`OWNER_ROOT`),
+which neither `just install` nor a release prune touches:
+
+```
+var/hrc-owner/
+  bin/rusthrc                  the exe launchd runs: a real file, signed per node
+  codesign.identity            optional: one line, the signing identity's common name
+  hrc-runtime-current -> hrc-runtime-releases/release-<id>
+  hrc-runtime-releases/release-<id>/   staged copies of installed releases
+```
+
+`scripts/hrc-owner.sh stage` copies the installed release into
+`hrc-runtime-releases/`, then copies its `bin/rusthrc` to `bin/rusthrc` through
+a temp file and a rename. It never writes or signs the exe in place, so a running
+owner keeps the inode it started from. rusthrc finds its release from that fixed
+path through the sibling `hrc-runtime-current` link, once at start
+(`hrc_common::release`). The release capture, the lifecycle rows, `hrc-pty` and
+`--version` all come from that root, and the boot check that the manifest's
+sourceCommit equals the compiled one ties the exe to the link.
+
+Why a fixed, signed path: macOS TCC keys a non-bundled binary's privacy grants
+(for example removable volumes, which `var/wrkq-artifacts` →
+`/Volumes/Scratch` needs on mini) on its resolved path plus its designated
+requirement. An exe inside `release-<id>/` is a new path every release, and the
+linker's ad-hoc signature is a new cdhash every build, so each release raised a
+dialog that a launchd daemon cannot show. With a fixed path and a certificate
+signature, the designated requirement is `identifier "com.praesidium.rusthrc"
+and certificate leaf = H"<cert sha1>"`, the same for every build. The grant is
+made once.
+
+Signing: when `HRC_CODESIGN_IDENTITY` or `var/hrc-owner/codesign.identity` names
+an identity, stage runs `codesign -f -s "<identity>" -i com.praesidium.rusthrc
+--timestamp=none` on the temp file, then `codesign --verify --strict`, and prints
+the designated requirement. If signing fails, stage fails and replaces nothing.
+It never falls back to ad-hoc when an identity is configured. When no identity
+is configured, stage keeps the linker's ad-hoc signature and says so.
+
+Rollback stages the older release, which re-copies and re-signs it into the same
+`bin/rusthrc`. A release built before T-12224 cannot run from the fixed exe: it
+reports itself unmanaged and looks for `hrc-pty` beside it. Once the plist execs
+`bin/rusthrc`, stage refuses such a release before it moves anything. To roll
+back past T-12224, first restore `<plist>.pre-fixed-exe`, then stop and
+bootstrap the owner.
+
+### One-time setup per node
+
+1. Identity, at the node's console, as the login user:
+   `scripts/macos-codesign-identity.sh create`. It creates and imports
+   `Praesidium Local Code Signing` (self-signed, codeSigning, 10 years), trusts
+   it for code signing (macOS asks for the user's password), and proves that
+   codesign can use the key without a dialog. It is idempotent.
+   `scripts/macos-codesign-identity.sh status --sign-probe` is read-only and safe
+   over ssh. Run it there to confirm that a deploy, which signs over ssh, can use
+   the key.
+2. Opt the owner in:
+   `echo 'Praesidium Local Code Signing' > ~/praesidium/var/hrc-owner/codesign.identity`.
+3. Move the plist to the fixed exe:
+   `just refresh-owner-exe <node>` prints the stage dry run and the plist diff;
+   `just refresh-owner-exe <node> apply` stages and signs the installed
+   release, rewrites only the plist's exec path (the old plist is kept as
+   `<plist>.pre-fixed-exe`), runs `hrc server stop --node` (authorized
+   daemon-side), bootstraps the refreshed plist and runs the deploy readback.
+   A plain restart would respawn launchd's loaded definition. The refresh needs a
+   running release that ships T-12224; it refuses an older one.
+4. Approve the TCC dialog once for `var/hrc-owner/bin/rusthrc` when the owner
+   first touches the protected location.
+
+After that, every `deploy-*` stages and signs the new release into the same
+path, and the readback prints the exe's designated requirement.
+
+### Verify
+
+```bash
+exe=~/praesidium/var/hrc-owner/bin/rusthrc
+test -f "$exe" && ! test -L "$exe"
+codesign -dvv "$exe"     # Identifier=com.praesidium.rusthrc, Authority=Praesidium Local Code Signing
+codesign -dr - "$exe"    # designated => identifier "com.praesidium.rusthrc" and certificate leaf = H"..."
+hrc server status --json | jq '{binaryPath, mode: .release.mode, id: .release.releaseId, sha: .release.hrcBuild.sourceCommit}'
+```
+
+TCC readback (the TCC database is readable by the login user; writing it is
+macOS's job):
+
+```bash
+db=~/Library/Application\ Support/com.apple.TCC/TCC.db
+sqlite3 "$db" "select client, client_type, auth_value, hex(csreq) from access
+  where service='kTCCServiceSystemPolicyRemovableVolumes' and client like '%rusthrc'"
+# One row, client = the fixed path. Decode its csreq and check the current build:
+sqlite3 "$db" "select hex(csreq) from access where service='kTCCServiceSystemPolicyRemovableVolumes'
+  and client='$exe'" | xxd -r -p > /tmp/rusthrc.csreq
+csreq -r /tmp/rusthrc.csreq -t                 # prints the requirement text
+codesign --verify -R /tmp/rusthrc.csreq "$exe" # passes for every build signed by the identity
+```
+
+`scripts/hrc-owner-codesign-e2e.sh <old-release> <release-b> <release-c>` proves
+the mechanism headlessly on a temporary keychain: sign, designated requirement,
+the same requirement across builds, the ad-hoc fallback, refresh-plist, a scratch
+daemon reporting its release from the fixed exe, rollback, and the pre-T-12224
+refusal. Its transcript and `result.json` go to the task artifact dir. The
+per-node recipe for other daemons is
+`~/praesidium/var/agents/references/macos-code-signing.md`.
+
 ## Broker event path (N2)
 
 `server/controller.rs` owns the external brokers' event streams. Each

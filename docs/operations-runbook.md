@@ -22,7 +22,9 @@ Default roots on max3:
 - Socket: `~/praesidium/var/run/hrc/hrc.sock`
 - State DB: `~/praesidium/var/state/hrc/state.sqlite`
 - Installed supervisor: `~/Library/LaunchAgents/com.praesidium.hrc-server.plist`
-- Owner executable: `~/praesidium/var/hrc-owner/hrc-runtime-current/bin/rusthrc`
+- Owner executable: `~/praesidium/var/hrc-owner/bin/rusthrc` (fixed signed copy,
+  T-12224; a plist not yet refreshed by `just refresh-owner-exe` execs
+  `~/praesidium/var/hrc-owner/hrc-runtime-current/bin/rusthrc`)
 
 Read the installed plist and live status rather than assuming the checked-in
 Bun template describes the node:

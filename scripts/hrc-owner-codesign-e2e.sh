@@ -67,7 +67,7 @@ die() {
   exit 1
 }
 check() { local what="$1"; shift; if "$@"; then pass "$what"; else die "$what"; fi; }
-show() { printf '$ %s\n' "$*"; "$@"; }
+show() { printf '$ %s\n' "${*//$KC_PW/<keychain-password>}"; "$@"; }
 
 cleanup() {
   local rc=$?
@@ -101,7 +101,7 @@ owner() {
     OWNER_ROOT="$OWNER" HRC_OWNER_PLIST="$PLIST" INSTALLED_LINK="$scratch/installed" "$@"
 }
 select_release() { ln -sfh "$1" "$scratch/installed"; }
-dr_of() { codesign -dr - "$1" 2>/dev/null | sed -n 's/^designated => //p'; }
+dr_of() { codesign -dr - "$1" 2>/dev/null | sed -n 's/^#* *designated => //p'; }
 cdhash_of() { codesign -dvvv "$1" 2>&1 | sed -n 's/^CDHash=//p'; }
 plist_exe() { plutil -extract ProgramArguments.0 raw -o - "$PLIST"; }
 

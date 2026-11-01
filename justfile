@@ -1405,7 +1405,7 @@ _node-readback ssh-target expected-node target-sha aspd-sha aspd-release injecto
       case "$plist_exe" in
         "$owner_root/bin/rusthrc")
           [[ -f "$plist_exe" && ! -L "$plist_exe" ]] || fail "$plist_exe is not a regular file"
-          echo "[hrc] owner exe $plist_exe: $(codesign -dr - "$plist_exe" 2>/dev/null | sed -n 's/^designated => //p')"
+          echo "[hrc] owner exe $plist_exe: $(codesign -dr - "$plist_exe" 2>/dev/null | sed -n 's/^#* *designated => //p')"
           ;;
         "$owner_root/hrc-runtime-current/bin/rusthrc")
           echo "[hrc] NOTE: the owner plist still execs the release link $plist_exe; a new macOS TCC identity every release until: just refresh-owner-exe ${expected_node}"

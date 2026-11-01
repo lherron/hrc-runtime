@@ -274,10 +274,10 @@ prepare_owner_exe() {
     echo "[stage] signing as \"$identity\" with identifier $CODESIGN_ID"
     codesign -f -s "$identity" -i "$CODESIGN_ID" --timestamp=none "$OWNER_EXE_TMP" || {
       rm -f "$OWNER_EXE_TMP"
-      fail "codesign as \"$identity\" failed; nothing was replaced. Check: scripts/macos-codesign-identity.sh status --sign-probe (a locked keychain, or a key without the codesign partition list, fails here)"
+      fail "codesign as \"$identity\" failed; nothing was replaced. Check: scripts/macos-codesign-identity.sh status --sign-probe (a locked keychain, or a key that denies codesign, fails here)"
     }
     codesign --verify --strict "$OWNER_EXE_TMP" || { rm -f "$OWNER_EXE_TMP"; fail "signed copy does not verify"; }
-    echo "[stage] designated requirement: $(codesign -dr - "$OWNER_EXE_TMP" 2>/dev/null | sed -n 's/^designated => //p')"
+    echo "[stage] designated requirement: $(codesign -dr - "$OWNER_EXE_TMP" 2>/dev/null | sed -n 's/^#* *designated => //p')"
   else
     echo "[stage] no codesign identity ($OWNER_ROOT/codesign.identity or HRC_CODESIGN_IDENTITY); $OWNER_EXE keeps the linker's ad-hoc signature, a new macOS TCC identity every release"
   fi
@@ -429,12 +429,16 @@ refresh_plist() {
     echo "REFRESH_NEEDED=0"
     return
   fi
-  [[ -f "$OWNER_EXE" && ! -L "$OWNER_EXE" ]] || fail "no regular file at $OWNER_EXE; stage first"
   local current version
-  current="$(cd "$OWNER_ROOT/hrc-runtime-current" && pwd -P)" || fail "no $OWNER_ROOT/hrc-runtime-current"
-  version="$("$OWNER_EXE" --version 2>&1 || true)"
-  [[ "$version" == *"releaseId ${current##*/},"* ]] ||
-    fail "$OWNER_EXE does not resolve its release ${current##*/} ($version); stage a release that ships the fixed owner exe first"
+  if ((dry)) && [[ ! -f "$OWNER_EXE" ]]; then
+    echo "[refresh-plist] (dry run) $OWNER_EXE is not staged yet; apply stages it first"
+  else
+    [[ -f "$OWNER_EXE" && ! -L "$OWNER_EXE" ]] || fail "no regular file at $OWNER_EXE; stage first"
+    current="$(cd "$OWNER_ROOT/hrc-runtime-current" && pwd -P)" || fail "no $OWNER_ROOT/hrc-runtime-current"
+    version="$("$OWNER_EXE" --version 2>&1 || true)"
+    [[ "$version" == *"releaseId ${current##*/},"* ]] ||
+      fail "$OWNER_EXE does not resolve its release ${current##*/} ($version); stage a release that ships the fixed owner exe first"
+  fi
   tmp="$(mktemp "${TMPDIR:-/tmp}/rusthrc-owner-refresh.XXXXXX")"
   # Textual edit of the one <string>, then a semantic check that it is the only change.
   OLD="<string>$LEGACY_OWNER_EXE</string>" NEW="<string>$OWNER_EXE</string>" awk '
