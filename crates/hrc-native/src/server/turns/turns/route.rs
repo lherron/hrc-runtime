@@ -433,6 +433,9 @@ fn input_failure(
     error: controller::submit::BrokerError,
 ) -> ApiError {
     let message = error.message.clone();
+    if error.code == controller::submit::SUBMISSION_TIMEOUT {
+        return submission_timeout(server, rt, run_id, invocation, route, error);
+    }
     let timeout = error.code.ends_with("_timeout");
     let binding_missing = error.code == "broker_runtime_not_active";
     let result: anyhow::Result<bool> = (|| {
@@ -520,6 +523,75 @@ fn input_failure(
     )
 }
 
+/// A slow submission into a seat whose broker still answers (T-12228): this
+/// run fails, fenced so a late admission is never attributed to it; the
+/// runtime, its active run and its binding are left as they are.
+fn submission_timeout(
+    server: &Shared,
+    rt: &db::Rt,
+    run_id: &str,
+    invocation: &str,
+    route: &str,
+    error: controller::submit::BrokerError,
+) -> ApiError {
+    let result: anyhow::Result<()> = (|| {
+        let db = server.store.lock().unwrap();
+        let now = hrc_store::timestamp();
+        db.sqlite.execute("UPDATE runs SET broker_input_fenced_at=?, broker_input_fence_reason=?, updated_at=? WHERE run_id=?", params![now, error.code, now, run_id])?;
+        db::mark_run_completed(
+            &db.sqlite,
+            run_id,
+            db::Completion {
+                status: "failed",
+                completed_at: &now,
+                updated_at: &now,
+                error_code: Some("runtime_unavailable"),
+                error_message: Some(&error.message),
+            },
+        )?;
+        Ok(())
+    })();
+    server.ledger_committed();
+    if let Err(e) = result {
+        controller::log(
+            "warn",
+            "broker submission timeout bookkeeping failed",
+            json!({"runtimeId":rt.runtime_id,"runId":run_id,"error":e.to_string()}),
+        );
+    }
+    unavailable(
+        "broker submission timed out; the seat is live and keeps its binding",
+        json!({"runtimeId":rt.runtime_id,"runId":run_id,"invocationId":invocation,"route":route,"reason":error.code,"bindingRetained":true,"timeoutMs":error.detail["timeoutMs"],"cause":error.message,"error":error.message,"recommendation":"the seat is busy, not gone: retry later on the same runtime"}),
+    )
+}
+
+/// The scope's latest broker runtime when it is out of service but its broker
+/// still answers the liveness probe: its harness holds the continuation, so a
+/// birth would resume the same thread a second time (T-12228).
+async fn live_unbound(server: &Shared, host: &str) -> Result<Option<db::Rt>, ApiError> {
+    let latest = {
+        let db = server.store.lock().unwrap();
+        let id: Option<String> = db
+            .sqlite
+            .query_row(
+                "SELECT runtime_id FROM runtimes WHERE host_session_id=? AND controller_kind='harness-broker' ORDER BY created_at DESC, runtime_id DESC LIMIT 1",
+                [host],
+                |r| r.get(0),
+            )
+            .ok();
+        match id {
+            Some(id) => db::runtime(&db.sqlite, &id)?,
+            None => None,
+        }
+    };
+    let Some(rt) = latest.filter(|r| r.status != "terminated") else {
+        return Ok(None);
+    };
+    Ok(controller::runtime_broker_answers(server, &rt)
+        .await
+        .then_some(rt))
+}
+
 /// executeAdmittedTurn (format1): the live seat, else a birth. Returns the
 /// enriched route receipt.
 pub async fn execute(server: &Shared, plan: &Plan, o: &Options<'_>) -> Result<Value, ApiError> {
@@ -550,6 +622,17 @@ pub async fn execute(server: &Shared, plan: &Plan, o: &Options<'_>) -> Result<Va
             input_turn(server, plan, &rt, o).await?
         }
         None => {
+            if let Some(held) = live_unbound(server, &host).await? {
+                controller::log(
+                    "warn",
+                    "broker.birth_refused_live_broker",
+                    json!({"runtimeId":held.runtime_id,"hostSessionId":host,"status":held.status,"runId":o.run_id}),
+                );
+                return Err(unavailable(
+                    "the scope's broker is live but its runtime is out of service; refusing a second birth on its continuation",
+                    json!({"runtimeId":held.runtime_id,"hostSessionId":host,"runtimeStatus":held.status,"runId":o.run_id,"reason":"continuation_held_by_live_broker","recommendation":"operator recovery: re-adopt or end the live broker seat before delivering again"}),
+                ));
+            }
             let mut intent = plan.intent.clone();
             if let (Some(a), Some(i)) = (o.repair, intent.as_object_mut()) {
                 let _ = (a, i);
@@ -605,4 +688,117 @@ fn enrich(server: &Shared, mut body: Value, plan: &Plan) -> Result<Value, ApiErr
     }
     body["observation"] = observation;
     Ok(body)
+}
+
+#[cfg(test)]
+mod tests {
+    //! T-12228: a kept-binding submission timeout fails its own run only; the
+    //! seat stays in service with its active run. A retiring timeout (the
+    //! broker failed its probe) still marks the runtime stale.
+    use super::*;
+    use crate::server::turns::admission::tests::server;
+
+    fn seat(server: &Shared) -> anyhow::Result<db::Rt> {
+        let mut store = server.store.lock().unwrap();
+        let session = store
+            .create_session("agent:test:project:fixture", "main")?
+            .0;
+        let (host, scope) = (
+            session["hostSessionId"].as_str().unwrap_or(""),
+            session["scopeRef"].as_str().unwrap_or(""),
+        );
+        store.sqlite.execute("INSERT INTO runtimes(runtime_id,host_session_id,scope_ref,lane_ref,generation,transport,status,supports_inflight_input,controller_kind,active_invocation_id,created_at,updated_at) VALUES('rt',?,?,'main',1,'hrcpty','busy',0,'harness-broker','inv','now','now')", params![host, scope])?;
+        for run in ["run-held", "run-steer"] {
+            store.sqlite.execute("INSERT INTO runs(run_id,host_session_id,runtime_id,scope_ref,lane_ref,generation,transport,status,accepted_at,updated_at,invocation_id) VALUES(?,?,'rt',?,'main',1,'headless','accepted','now','now','inv')", params![run, host, scope])?;
+        }
+        store.sqlite.execute(
+            "UPDATE runtimes SET active_run_id='run-held' WHERE runtime_id='rt'",
+            [],
+        )?;
+        Ok(db::runtime(&store.sqlite, "rt")?.expect("runtime"))
+    }
+
+    fn error(code: &str) -> controller::submit::BrokerError {
+        controller::submit::BrokerError {
+            code: code.into(),
+            message: format!("{code} in test"),
+            detail: json!({"timeoutMs":20000}),
+        }
+    }
+
+    fn row(server: &Shared, sql: &str) -> (String, Option<String>) {
+        let store = server.store.lock().unwrap();
+        store
+            .sqlite
+            .query_row(sql, [], |r| Ok((r.get(0)?, r.get(1)?)))
+            .unwrap()
+    }
+
+    #[test]
+    fn a_kept_binding_timeout_fails_only_its_run() -> anyhow::Result<()> {
+        let (_scratch, server) = server("off", false)?;
+        let rt = seat(&server)?;
+        let api = input_failure(
+            &server,
+            &rt,
+            "run-steer",
+            "inv",
+            "headless",
+            "broker",
+            error(controller::submit::SUBMISSION_TIMEOUT),
+        );
+        let detail = api.detail.clone().unwrap_or_default();
+        assert_eq!(
+            (api.status.as_u16(), api.code),
+            (503, "runtime_unavailable")
+        );
+        assert_eq!(detail["reason"], "submission_timeout");
+        assert_eq!(detail["bindingRetained"], true);
+        assert_eq!(
+            row(
+                &server,
+                "SELECT status, active_run_id FROM runtimes WHERE runtime_id='rt'"
+            ),
+            ("busy".into(), Some("run-held".into()))
+        );
+        assert_eq!(
+            row(
+                &server,
+                "SELECT status, broker_input_fence_reason FROM runs WHERE run_id='run-steer'"
+            ),
+            ("failed".into(), Some("submission_timeout".into()))
+        );
+        assert_eq!(
+            row(
+                &server,
+                "SELECT status, error_code FROM runs WHERE run_id='run-held'"
+            ),
+            ("accepted".into(), None)
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn a_retiring_timeout_still_stales_the_runtime() -> anyhow::Result<()> {
+        let (_scratch, server) = server("off", false)?;
+        let rt = seat(&server)?;
+        input_failure(
+            &server,
+            &rt,
+            "run-steer",
+            "inv",
+            "headless",
+            "broker",
+            error("broker_steer_timeout"),
+        );
+        assert_eq!(
+            row(
+                &server,
+                "SELECT status, active_run_id FROM runtimes WHERE runtime_id='rt'"
+            )
+            .0,
+            "stale"
+        );
+        Ok(())
+    }
 }

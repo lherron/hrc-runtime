@@ -529,7 +529,8 @@ async fn terminate_runtime(
     let dropped = if tmux {
         o.drop_continuation == Some(true)
     } else {
-        o.drop_continuation.unwrap_or(rt.active_run_id.is_some())
+        o.drop_continuation
+            .unwrap_or_else(|| rt.active_run_id.is_some() && launched(server, rt))
     };
     let mut response = action_response(rt);
     response["droppedContinuation"] = dropped.into();
@@ -606,6 +607,20 @@ async fn terminate_runtime(
         Ok(())
     })?;
     Ok(Json(response).into_response())
+}
+
+/// Whether the runtime ever ran: its active run started or its invocation
+/// projected a broker event. One that never launched owns no continuation, so
+/// a default terminate leaves the scope's continuation alone (T-12228).
+fn launched(server: &Shared, rt: &db::Rt) -> bool {
+    let db = server.store.lock().unwrap();
+    db.sqlite
+        .query_row(
+            "SELECT EXISTS(SELECT 1 FROM runs WHERE run_id=?1 AND started_at IS NOT NULL) OR EXISTS(SELECT 1 FROM broker_invocations WHERE invocation_id=?2 AND last_projected_seq > 0)",
+            params![rt.active_run_id, rt.active_invocation_id],
+            |r| r.get::<_, bool>(0),
+        )
+        .unwrap_or(true)
 }
 
 /// finalizeRuntimeTermination

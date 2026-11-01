@@ -264,6 +264,17 @@ pub(super) async fn lease_sweep(server: &Shared, grace: i64) -> Result<Value> {
             && lease::unavailable(&rt.status)
             && pid.is_some_and(hrcpty::alive)
         {
+            // An out-of-service row is no death evidence (T-12228): a broker
+            // that answers still holds a live harness.
+            if controller::runtime_broker_answers(server, rt).await {
+                bump(&mut r, "preservedClaimed");
+                log(
+                    "warn",
+                    "broker.hrcpty_orphan_preserved",
+                    json!({"runtimeId":rt.runtime_id,"status":rt.status,"socketPath":socket,"pid":pid,"reason":"broker_answers"}),
+                );
+                continue;
+            }
             match hrcpty::end_lease(&socket, pid).await {
                 Ok(()) => bump(&mut r, "killedLiveLeaseServers"),
                 Err(_) => bump(&mut r, "errors"),

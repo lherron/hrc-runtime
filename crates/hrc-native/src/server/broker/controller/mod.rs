@@ -123,6 +123,72 @@ pub(super) fn active(server: &Server, runtime: &str) -> Option<(String, JsonRpc)
     let client = server.brokers.lock().unwrap().get(runtime).cloned()?;
     Some((invocation, client))
 }
+/// Positive liveness (T-12228): the broker answers `broker.health` ok|degraded
+/// and reports `invocation` non-terminal, each within PROBE_TIMEOUT (the
+/// control proof attach_and_replay runs). A slow submission is not death; only
+/// a failed probe or a closed transport is.
+pub async fn broker_answers(client: &JsonRpc, invocation: &str) -> bool {
+    if client.is_closed() {
+        return false;
+    }
+    let healthy = client
+        .request_within("broker.health", json!({"probeDrivers":true}), PROBE_TIMEOUT)
+        .await
+        .is_ok_and(|h| h["status"] == "ok" || h["status"] == "degraded");
+    healthy
+        && client
+            .request_within(
+                "invocation.status",
+                json!({"invocationId":invocation}),
+                PROBE_TIMEOUT,
+            )
+            .await
+            .is_ok_and(|s| {
+                s["invocationId"] == invocation
+                    && !matches!(s["state"].as_str(), Some("exited" | "failed" | "disposed"))
+            })
+}
+
+/// `broker_answers` for a runtime row: over its active binding, else over a
+/// fresh connection to its durable endpoint (gone socket = no answer).
+pub async fn runtime_broker_answers(server: &Shared, rt: &db::Rt) -> bool {
+    if let Some((invocation, client)) = active(server, &rt.runtime_id) {
+        return broker_answers(&client, &invocation).await;
+    }
+    let Some(invocation) = rt.active_invocation_id.as_deref() else {
+        return false;
+    };
+    let state = rt.state_object();
+    let Some(socket) = crate::server::startup::hosting(&state, rt.generation)
+        .filter(|h| h.endpoint["kind"] == "unix-jsonrpc-ndjson")
+        .and_then(|h| {
+            h.endpoint["socketPath"]
+                .as_str()
+                .map(std::path::PathBuf::from)
+        })
+        .filter(|s| s.exists())
+    else {
+        return false;
+    };
+    let connected = tokio::time::timeout(PROBE_TIMEOUT, async {
+        let (client, events) = JsonRpc::connect_broker(
+            &socket,
+            PROBE_TIMEOUT,
+            permission_handler(Arc::downgrade(server)),
+        )
+        .await?;
+        crate::server::broker::hello(&client, &state["executionRelease"]).await?;
+        anyhow::Ok((client, events))
+    })
+    .await;
+    let Ok(Ok((client, _events))) = connected else {
+        return false;
+    };
+    let answers = broker_answers(&client, invocation).await;
+    client.close();
+    answers
+}
+
 pub fn mark_closing(server: &Server, runtime: &str, reason: &str) {
     server
         .controller

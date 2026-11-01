@@ -27,6 +27,13 @@ A codex turn whose prompt contains `HOLD` stays open until
 held, `seat.probe` answers turn-active (turnId `turn-held`) and
 `turn.manifest` lists the held input as that turn's only submission.
 
+T-12228 controls, codex driver only: a `submission.steer` whose body
+contains `STALL` answers admitted only after 25 s (the connection keeps
+serving other requests meanwhile, as the real broker's async RPC does); an
+initial prompt containing `NOLAUNCH` never runs its turn (a seat that never
+launched); a turn whose prompt contains `CONT` emits continuation.updated
+{provider openai, kind thread, key thread-stub-<socket hash>} before it completes.
+
 `stub.localTurn` emits a turn no HRC input started (a prompt typed in a TUI).
 `stub.usage` {turnId, usedTokens, windowTokens}, sent on its own connection,
 emits one usage.updated for that turn (kernel_fold.py --serve's turnContext).
@@ -188,6 +195,9 @@ def run_turn(input_id, prompt):
             state['state'] = 'ready'
         emit('turn.interrupted', {'reason': 'interrupt'}, input_id)
         return
+    if state['driver'] == 'codex-app-server' and 'CONT' in prompt:
+        emit('continuation.updated', {'provider': 'openai', 'kind': 'thread',
+                                      'key': 'thread-stub-' + str(abs(hash(SOCKET)) % 10**8)}, input_id)
     if not lease or lease['kind'] != 'hrcpty' or state['driver'] == 'codex-app-server':
         emit('assistant.message.completed', {'content': [{'type': 'text', 'text': 'stub ok'}], 'final': True}, input_id)
         emit('turn.completed', {}, input_id)
@@ -251,6 +261,10 @@ def handle(conn, method, params):
         initial = start.get('initialInput')
         if initial:
             text = ''.join(p.get('text', '') for p in initial.get('content', []) if isinstance(p, dict))
+            if 'NOLAUNCH' in text:
+                log('nolaunch', inputId=initial['inputId'])
+                initial = None
+        if initial:
             threading.Thread(target=run_turn, args=(initial['inputId'], text), daemon=True).start()
         return {'invocationId': state['invocation'], 'state': 'ready', 'childPid': child,
                 'capabilities': {'interrupt': True, 'stop': True}}
@@ -323,6 +337,16 @@ def handle(conn, method, params):
     raise KeyError(method)
 
 
+def stalled_steer(conn, frame):
+    """T-12228: a steer the harness takes 25 s to hand off; the reply comes late."""
+    time.sleep(25)
+    submission = 'sub-' + os.urandom(6).hex()
+    reply = {'jsonrpc': '2.0', 'id': frame.get('id'),
+             'result': {'submissionId': submission, 'admission': 'admitted', 'inputId': submission}}
+    log('reply', method=frame['method'], reply=reply, stalledS=25)
+    send(conn, reply)
+
+
 def serve_connection(conn):
     reader = conn.makefile('r')
     for line in reader:
@@ -333,6 +357,10 @@ def serve_connection(conn):
         if 'method' not in frame:
             continue  # a reply to one of our own requests (none are sent)
         log('request', method=frame['method'], params=frame.get('params'))
+        if (frame['method'] == 'submission.steer' and state['driver'] == 'codex-app-server'
+                and 'STALL' in json.dumps((frame.get('params') or {}).get('body'))):
+            threading.Thread(target=stalled_steer, args=(conn, frame), daemon=True).start()
+            continue
         try:
             result = handle(conn, frame['method'], frame.get('params') or {})
             reply = {'jsonrpc': '2.0', 'id': frame.get('id'), 'result': result}
