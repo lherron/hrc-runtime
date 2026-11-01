@@ -1,6 +1,6 @@
 # The Praesidium data taxonomy and the praesidium document
 
-Status: r1.1, 2026-11-01, draft for Daedalus review (T-12244); r1.1 resolves Daedalus F1–F3 of EN-40706 (unattached promises placed; state fencing scoped to third-party writes; M1 import of project-scoped legacy handoffs). **Not for implementation: Lance is weighing whether the change is worth making.** Owner mable@hrc-runtime:primary. Rulings by Lance on 2026-11-01 are marked **RULED**. Diagrams: `diagrams/taxonomy.arris-board.json#taxonomy-subjects` (the nine subjects and their relationships), `diagrams/seat-data.arris-board.json` (the seat in depth, T-12183/T-12239).
+Status: r1.1, 2026-11-01, draft for Daedalus review (T-12244); r1.1 resolves Daedalus F1–F3 of EN-40706; r1.2 resolves F2 again (EN-40708): fencing is a declared per-type property, not a register law. **Not for implementation: Lance is weighing whether the change is worth making.** Owner mable@hrc-runtime:primary. Rulings by Lance on 2026-11-01 are marked **RULED**. Diagrams: `diagrams/taxonomy.arris-board.json#taxonomy-subjects` (the nine subjects and their relationships), `diagrams/seat-data.arris-board.json` (the seat in depth, T-12183/T-12239).
 
 ## 0. Claim
 
@@ -46,12 +46,12 @@ A thing is a subject when other records are about it and it has its own lifecycl
 | register | meaning | write discipline | ends |
 |---|---|---|---|
 | **identity** | the thing exists; this is its key | written once by the minting system | retired, never edited |
-| **state** | the current truth, one value at a time | overwritten in place; a **third-party** write is fenced (`etag`, `expect.updatedAt`); the owner's own writes follow the owner's contract (launch-replaced session metadata is last-writer-wins under `hrc-runtime.session-identity-metadata`, unchanged) | superseded |
+| **state** | the current truth, one value at a time | overwritten in place and superseded; **whether a write is fenced is a per-type declaration** (`writable: fenced` with `etag` / `expect.updatedAt`, or `writable: unfenced`, last-writer-wins), never implied by the register. Session metadata is `unfenced` for every writer, launch and `PATCH /v1/sessions/metadata` alike, under `hrc-runtime.session-identity-metadata`, unchanged; annotations and tasks are `fenced`; every new state type in this record (`seat.asks`, `seat.work`, `seat.handoff`) is `fenced` by its own contract | superseded |
 | **obligation** | owed from A to B, open until discharged | two parties, a lifecycle, a deadline or trigger; someone can be late | discharged, withdrawn, failed |
 | **ledger** | what happened | appended, never changed; ordered; retention is a policy | never (keep-forever by default in this fleet) |
 | **extension** | an opaque body a third party attaches to a subject it does not own | `{subject, ns, kind, id, body, fence}`; the writer owns the schema; the ns names it | with its subject, or by its writer |
 
-The register fixes the write API **as seen by a reader or third-party writer**: state takes a fence, ledger takes a cursor, obligation takes a discharge verb and a lateness query, extension takes a namespace. It does not rewrite an owner's internal write path; where an active owner contract says a write is unfenced (launch metadata), the type declares it (`writable: owner`) and a reader learns it has no fence to supply. Several records are in the wrong register today: a handoff is stored as state with a status column and behaves as an obligation.
+The register fixes the **shape** of the write API: state is set and superseded, ledger is appended and read by cursor, obligation is created and discharged and can be late, extension is put under a namespace. It fixes no fence. Fencing is declared per type (`writable: fenced | unfenced | none`) from the owner's active contract, so a reader learns whether it has a fence to supply by reading the declaration, and no owner API changes to satisfy the taxonomy (D1). The one unfenced state type today is session metadata; the record does not propose to fence it. Several records are in the wrong register today: a handoff is stored as state with a status column and behaves as an obligation.
 
 ### 2.3 Rules
 
@@ -72,7 +72,7 @@ The register fixes the write API **as seen by a reader or third-party writer**: 
 | task | task + relations | state, assignee, claim, spec, workflow instance | claim · promise · workflow obligations | transitions, comments, evidence, attachments, ledger_entry | **`tasks.meta.*`/labels → ext** (move) |
 | workstream | task kind=workstream, owner | title, `covers` (task ids or a container) | — | task events | — |
 | room | room kind=subject, members | state, last_activity | **envelope** (reply_required / fyi / note) | envelope.* events, presentations | — |
-| seat | `hrc.seat`, **kind** | presentation and appearance (owner-written at launch, unfenced by contract); **`seat.asks`** (new); **`seat.work`** (new, → task \| workstream \| none) | **`seat.handoff`** (move from wrkq) | `hrc_events` by scope | `c2.config / ping / receipt` (controller's own) |
+| seat | `hrc.seat`, **kind** | presentation and appearance (session metadata: `unfenced`, launch and API writers alike); **`seat.asks`** (new, fenced); **`seat.work`** (new, fenced, → task \| workstream \| none) | **`seat.handoff`** (move from wrkq) | `hrc_events` by scope | `c2.config / ping / receipt` (controller's own) |
 | generation | `hrc.generation` | status, attention | — | turns, runs | allowed; c2 writes none |
 | runtime | `hrc.runtime` | status, transport, hrcpty/tmux, context | — | broker events, bipc | — |
 
@@ -133,7 +133,7 @@ Solid edges on the subjects frame are hierarchies: `agent ⊃ seat ⊃ generatio
 |---|---|---|
 | D1 | Unify the document, not the systems. | The boundaries pay on the write side; a reader never benefited from three documents; lineage across systems needs one. |
 | D2 | Taxonomy names from day one on the new provider; legacy `hrc.*` retired by mount switch, not rename. | No consumer migration of 40 Loggia sites; the old document simply stops being mounted. |
-| D3 | Register, provider and writability (`writable: owner \| fenced \| none`) are declared attributes on every type. | A pane learns mechanically which fields take a fence when *it* writes, which nodes vanish on discharge, which bodies are opaque; owner-internal writes keep their contracts (F2). |
+| D3 | Register, provider and writability (`writable: fenced \| unfenced \| none`) are declared attributes on every type. | A pane learns mechanically whether a write takes a fence, which nodes vanish on discharge, which bodies are opaque. Writability is read from each owner's active contract, never from the register, so no existing API changes (F2, twice). |
 | D4 | Stale, never absent; cursor age per feed on the document. | Keeps three-system failure isolation visible to readers. |
 | D5 | Durability is the store's; projection is a window (R3). | Handoffs, envelopes, workstreams are kept forever and projected while live. |
 | D6 | Canonical keys (R4) ruled before any projector is written. | The cheapest decision and the one that bites daily if skipped. |
@@ -142,7 +142,7 @@ Solid edges on the subjects frame are hierarchies: `agent ⊃ seat ⊃ generatio
 
 ## 6. Explicitly unsupported
 
-Merging the daemons or stores; moving write authority or fences into the provider; HRC validating wrkq or agent bodies; projecting any ledger (comments, events, transitions) as nodes; projecting closed tasks, terminal envelopes or archived anything (R3 windows); inferring `seat.work` from conversation text or from provenance alone (a primary that mints a campaign has touched twelve tasks and is on none); inferring a legacy handoff's seat from its text (F3: hand assignment of the pending rows at cutover); fencing the owner's own launch writes (F2); renaming wrkq RPC nouns; an agent store outside `var/agents`; lineage hierarchies before cardo's keyed-parent upsert; per-field history in the document.
+Merging the daemons or stores; moving write authority or fences into the provider; HRC validating wrkq or agent bodies; projecting any ledger (comments, events, transitions) as nodes; projecting closed tasks, terminal envelopes or archived anything (R3 windows); inferring `seat.work` from conversation text or from provenance alone (a primary that mints a campaign has touched twelve tasks and is on none); inferring a legacy handoff's seat from its text (F3: hand assignment of the pending rows at cutover); fencing session metadata writes, launch or API (F2: `hrc-runtime.session-identity-metadata` is unchanged; the type declares `unfenced`); renaming wrkq RPC nouns; an agent store outside `var/agents`; lineage hierarchies before cardo's keyed-parent upsert; per-field history in the document.
 
 ## 7. Open for Lance
 
@@ -171,5 +171,6 @@ Merging the daemons or stores; moving write authority or fences into the provide
 
 ## 10. Revision log
 
+- r1.2 (2026-11-01, EN-40708 F2 second cycle): the register fixes the write API's shape, not its fence; `writable` is declared per type from the owner's contract; session metadata is `unfenced` for launch and `PATCH /v1/sessions/metadata` alike; the record proposes no change to it. Universal "third-party state writes are fenced" removed.
 - r1.1 (2026-11-01, EN-40706): F1 — unattached promises placed on the agent row, R1a added for obligations between principals. F2 — state fencing scoped to third-party writes; `writable` declared per type; launch metadata stays last-writer-wins. F3 — M1 import: `legacyScope` + `seat = null` for history, hand seat assignment of the pending rows at cutover, new handoffs keyed by full seat scope.
 - r1 (2026-11-01): first draft, written after a day of iteration with Lance from the hrc-runtime seat; supersedes the three-documents-joined-by-key shape discussed earlier the same day.
