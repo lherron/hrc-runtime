@@ -40,6 +40,12 @@ INSTALLED_LINK="${INSTALLED_LINK:-$HOME/.bun/install/hrc-runtime-current}"
 OWNER_EXE="$OWNER_ROOT/bin/rusthrc"
 LEGACY_OWNER_EXE="$OWNER_ROOT/hrc-runtime-current/bin/rusthrc"
 CODESIGN_ID=com.praesidium.rusthrc
+# The node's signing keychain and its password file, shared with
+# scripts/macos-codesign-identity.sh (which creates them). This file reaches
+# nodes through `ssh bash -s`, so it cannot source that script; the few lines
+# of unlock + sign below repeat it on purpose.
+CODESIGN_KEYCHAIN="${PRAESIDIUM_CODESIGN_KEYCHAIN:-$HOME/Library/Keychains/praesidium-codesign.keychain-db}"
+CODESIGN_KEYCHAIN_PASSWORD_FILE="${PRAESIDIUM_CODESIGN_KEYCHAIN_PASSWORD_FILE:-$HOME/praesidium/var/codesign/praesidium-codesign.keychain.password}"
 export PATH="$HOME/.bun/bin:/opt/homebrew/bin:/usr/local/bin:$PATH"
 
 fail() { echo "[hrc-owner] FAIL: $*" >&2; exit 1; }
@@ -241,6 +247,23 @@ codesign_identity() {
   printf '%s' "${id%"${id##*[![:space:]]}"}"
 }
 
+# Sign $1 as identity $2 (common name) from the signing keychain: unlock it
+# with its password file (an ssh session never sees the console's unlocked
+# keychains, and a locked one makes codesign raise a dialog at the console),
+# then sign by the certificate's SHA-1 restricted to that keychain, so a
+# same-named certificate in another keychain is never picked.
+sign_owner_exe() {
+  local file="$1" identity="$2" hash
+  [[ -f "$CODESIGN_KEYCHAIN" ]] || { echo "[stage] no signing keychain $CODESIGN_KEYCHAIN (run scripts/macos-codesign-identity.sh create)" >&2; return 1; }
+  [[ -f "$CODESIGN_KEYCHAIN_PASSWORD_FILE" ]] || { echo "[stage] no keychain password file $CODESIGN_KEYCHAIN_PASSWORD_FILE" >&2; return 1; }
+  security unlock-keychain -p "$(<"$CODESIGN_KEYCHAIN_PASSWORD_FILE")" "$CODESIGN_KEYCHAIN" || return 1
+  hash="$(security find-identity -p codesigning "$CODESIGN_KEYCHAIN" 2>/dev/null |
+    awk -v q="\"$identity\"" 'index($0, q) && $1 ~ /^[0-9]+\)$/ { print $2; exit }')"
+  [[ -n "$hash" ]] || { echo "[stage] no code-signing identity \"$identity\" in $CODESIGN_KEYCHAIN" >&2; return 1; }
+  echo "[stage] signing as \"$identity\" ($hash in $CODESIGN_KEYCHAIN) with identifier $CODESIGN_ID"
+  codesign -f -s "$hash" --keychain "$CODESIGN_KEYCHAIN" -i "$CODESIGN_ID" --timestamp=none "$file"
+}
+
 # Copy a release's rusthrc to the fixed $OWNER_EXE: a temp file in the same
 # directory, signed there when an identity is configured, then renamed over the
 # old one by commit_owner_exe. The rename gives a new inode, so a running owner
@@ -260,7 +283,7 @@ prepare_owner_exe() {
   if ((dry)); then
     echo "[stage] would copy $dest/bin/rusthrc to $OWNER_EXE (temp file + rename)"
     if [[ -n "$identity" ]]; then
-      echo "[stage] would run: codesign -f -s \"$identity\" -i $CODESIGN_ID --timestamp=none <temp>"
+      echo "[stage] would unlock $CODESIGN_KEYCHAIN and run: codesign -f -s <SHA-1 of \"$identity\"> --keychain $CODESIGN_KEYCHAIN -i $CODESIGN_ID --timestamp=none <temp>"
     else
       echo "[stage] no codesign identity configured; would keep the linker's ad-hoc signature"
     fi
@@ -271,8 +294,7 @@ prepare_owner_exe() {
   rm -f "$OWNER_EXE_TMP"
   cp -p "$dest/bin/rusthrc" "$OWNER_EXE_TMP"
   if [[ -n "$identity" ]]; then
-    echo "[stage] signing as \"$identity\" with identifier $CODESIGN_ID"
-    codesign -f -s "$identity" -i "$CODESIGN_ID" --timestamp=none "$OWNER_EXE_TMP" || {
+    sign_owner_exe "$OWNER_EXE_TMP" "$identity" || {
       rm -f "$OWNER_EXE_TMP"
       fail "codesign as \"$identity\" failed; nothing was replaced. Check: scripts/macos-codesign-identity.sh status --sign-probe (a locked keychain, or a key that denies codesign, fails here)"
     }

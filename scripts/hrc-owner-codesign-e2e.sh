@@ -15,6 +15,10 @@
 # against a scratch OWNER_ROOT, a scratch owner plist (never loaded into
 # launchd) and a scratch store, and starts the fixed exe as a scratch daemon.
 # Failure modes it rules out:
+#   - create needs a pre-made or login keychain, or a console (it must make
+#     the signing keychain, a 0600 password file and the search-list entry)
+#   - stage signs with a same-named certificate from another keychain (a
+#     decoy keychain holds one, as mini's login keychain does)
 #   - the fixed exe is a symlink, or is signed/written in place
 #   - the signature is ad-hoc or carries a per-build cdhash requirement
 #   - two builds signed by the identity get different designated requirements,
@@ -50,7 +54,9 @@ exec > >(tee "$out/transcript.log") 2>&1
 OLD="${releases[0]}" B="${releases[1]}" C="${releases[2]}"
 NAME="HRC E2E Code Signing $$"
 KC="$scratch/e2e.keychain-db"
-KC_PW="$(/usr/bin/openssl rand -hex 16)"
+KC_PWFILE="$scratch/codesign/e2e.keychain.password"
+DECOY="$scratch/decoy.keychain-db"
+DECOY_PWFILE="$scratch/codesign/decoy.keychain.password"
 OWNER="$scratch/owner"
 PLIST="$scratch/LaunchAgents/com.praesidium.hrc-server.plist"
 FIXED="$OWNER/bin/rusthrc"
@@ -67,7 +73,7 @@ die() {
   exit 1
 }
 check() { local what="$1"; shift; if "$@"; then pass "$what"; else die "$what"; fi; }
-show() { printf '$ %s\n' "${*//$KC_PW/<keychain-password>}"; "$@"; }
+show() { printf '$ %s\n' "$*"; "$@"; }
 
 cleanup() {
   local rc=$?
@@ -78,6 +84,7 @@ cleanup() {
     echo "[cleanup] keychain search list restored: $(security list-keychains -d user | tr -d '"' | paste -sd ' ' -)"
   fi
   [[ -f "$KC" ]] && security delete-keychain "$KC" && echo "[cleanup] deleted temporary keychain $KC"
+  [[ -f "$DECOY" ]] && security delete-keychain "$DECOY" && echo "[cleanup] deleted decoy keychain $DECOY"
   local verdict=FAIL
   ((rc == 0)) && verdict=PASS
   {
@@ -98,7 +105,8 @@ trap cleanup EXIT
 manifest() { jq -r "$2" "$1/praesidium-release.json"; }
 owner() {
   env -i HOME="$HOME" PATH="/usr/bin:/bin:/usr/sbin:/sbin:/opt/homebrew/bin:$HOME/.bun/bin" TMPDIR="$scratch/" \
-    OWNER_ROOT="$OWNER" HRC_OWNER_PLIST="$PLIST" INSTALLED_LINK="$scratch/installed" "$@"
+    OWNER_ROOT="$OWNER" HRC_OWNER_PLIST="$PLIST" INSTALLED_LINK="$scratch/installed" \
+    PRAESIDIUM_CODESIGN_KEYCHAIN="$KC" PRAESIDIUM_CODESIGN_KEYCHAIN_PASSWORD_FILE="$KC_PWFILE" "$@"
 }
 select_release() { ln -sfh "$1" "$scratch/installed"; }
 dr_of() { codesign -dr - "$1" 2>/dev/null | sed -n 's/^#* *designated => //p'; }
@@ -114,18 +122,24 @@ while IFS= read -r k; do
   k="${k#\"}"
   orig_keychains+=("${k%\"}")
 done < <(security list-keychains -d user)
-show security create-keychain -p "$KC_PW" "$KC"
-show security set-keychain-settings "$KC"
-show security unlock-keychain -p "$KC_PW" "$KC"
-show security list-keychains -d user -s "$KC" "${orig_keychains[@]}"
 
-log "identity via macos-codesign-identity.sh create (temporary keychain, --no-trust)"
-show bash "$repo/scripts/macos-codesign-identity.sh" create --keychain "$KC" --name "$NAME" --no-trust
-status="$(OWNER_ROOT="$OWNER" bash "$repo/scripts/macos-codesign-identity.sh" status --keychain "$KC" --name "$NAME" --sign-probe)"
+log "decoy keychain $DECOY: a same-named certificate elsewhere in the search list"
+show bash "$repo/scripts/macos-codesign-identity.sh" create --keychain "$DECOY" --password-file "$DECOY_PWFILE" --name "$NAME"
+DECOY_HASH="$(security find-identity -p codesigning "$DECOY" | awk -v q="\"$NAME\"" 'index($0, q) && $1 ~ /^[0-9]+\)$/ { print $2; exit }')"
+echo "decoy identity $DECOY_HASH"
+
+log "identity via macos-codesign-identity.sh create: it makes the keychain, password file and search-list entry"
+idscript() { bash "$repo/scripts/macos-codesign-identity.sh" "$@" --keychain "$KC" --password-file "$KC_PWFILE" --name "$NAME"; }
+show idscript create
+check "create made the signing keychain" test -f "$KC"
+check "password file is mode 0600" test "$(stat -f %Lp "$KC_PWFILE")" == 600
+check "signing keychain is in the user search list" grep -qxF "$KC" < <(security list-keychains -d user | sed -e 's/^[[:space:]]*"//' -e 's/"[[:space:]]*$//')
+check "decoy keychain is still in the search list" grep -qxF "$DECOY" < <(security list-keychains -d user | sed -e 's/^[[:space:]]*"//' -e 's/"[[:space:]]*$//')
+status="$(OWNER_ROOT="$OWNER" idscript status --sign-probe)"
 echo "$status"
 check "identity present in the temporary keychain" grep -q '^IDENTITY=present ' <<<"$status"
 check "sign probe uses the identity without a dialog" grep -q '^SIGN_PROBE=ok identifier "com.praesidium.codesign-probe" and certificate leaf = H"' <<<"$status"
-second="$(bash "$repo/scripts/macos-codesign-identity.sh" create --keychain "$KC" --name "$NAME" --no-trust)"
+second="$(idscript create)"
 echo "$second"
 check "create is idempotent (second run skips the import)" grep -q '1/4 skip: certificate' <<<"$second"
 
@@ -185,6 +199,10 @@ DR="$(dr_of "$FIXED")"
 echo "designated => $DR"
 [[ "$DR" =~ ^identifier\ \"com\.praesidium\.rusthrc\"\ and\ certificate\ leaf\ =\ H\"[0-9a-f]{40}\"$ ]] &&
   pass "designated requirement is identifier + certificate leaf, no cdhash" || die "designated requirement is $DR"
+KC_HASH="$(security find-identity -p codesigning "$KC" | awk -v q="\"$NAME\"" 'index($0, q) && $1 ~ /^[0-9]+\)$/ { print $2; exit }')"
+leaf="$(sed -n 's/.*certificate leaf = H"\([0-9a-f]*\)".*/\1/p' <<<"$DR")"
+check "signed by the signing keychain's certificate, not the same-named decoy" \
+  test "$leaf" == "$(tr 'A-F' 'a-f' <<<"$KC_HASH")" -a "$leaf" != "$(tr 'A-F' 'a-f' <<<"$DECOY_HASH")"
 cp -p "$FIXED" "$scratch/signed-old"
 old_cdhash="$(cdhash_of "$FIXED")"
 if grep -q 'predates the fixed owner exe' <<<"$staged"; then

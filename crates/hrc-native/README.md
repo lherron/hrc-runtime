@@ -50,8 +50,10 @@ and certificate leaf = H"<cert sha1>"`, the same for every build. The grant is
 made once.
 
 Signing: when `HRC_CODESIGN_IDENTITY` or `var/hrc-owner/codesign.identity` names
-an identity, stage runs `codesign -f -s "<identity>" -i com.praesidium.rusthrc
---timestamp=none` on the temp file, then `codesign --verify --strict`, and prints
+an identity, stage unlocks the signing keychain from its password file, runs
+`codesign -f -s <identity SHA-1> --keychain <signing keychain>
+-i com.praesidium.rusthrc --timestamp=none` on the temp file, then
+`codesign --verify --strict`, and prints
 the designated requirement. If signing fails, stage fails and replaces nothing.
 It never falls back to ad-hoc when an identity is configured. When no identity
 is configured, stage keeps the linker's ad-hoc signature and says so.
@@ -65,14 +67,20 @@ bootstrap the owner.
 
 ### One-time setup per node
 
-1. Identity, at the node's console, as the login user:
-   `scripts/macos-codesign-identity.sh create`. It creates and imports
-   `Praesidium Local Code Signing` (self-signed, codeSigning, 10 years), trusts
-   it for code signing (macOS asks for the user's password), and proves that
+1. Identity, as the login user (over ssh is fine; nothing needs a console):
+   `scripts/macos-codesign-identity.sh create`. It creates the signing keychain
+   `~/Library/Keychains/praesidium-codesign.keychain-db` with a random password
+   in `~/praesidium/var/codesign/praesidium-codesign.keychain.password` (0600),
+   turns its auto-lock off, adds it to the user search list, generates and
+   imports `Praesidium Local Code Signing` (self-signed, codeSigning, 10 years),
+   sets the key partition list (without it an ssh session gets
+   `errSecInternalComponent` even with the keychain unlocked) and proves that
    codesign can use the key without a dialog. It is idempotent.
-   `scripts/macos-codesign-identity.sh status --sign-probe` is read-only and safe
-   over ssh. Run it there to confirm that a deploy, which signs over ssh, can use
-   the key.
+   Not the login keychain: an ssh session, which is where deploys sign, cannot
+   use a login keychain unlocked at the console (`errSecInternalComponent`).
+   `scripts/macos-codesign-identity.sh status --sign-probe` repeats the deploy's
+   sign (unlock from the password file, sign by certificate SHA-1 with
+   `--keychain`), so run it over ssh to confirm.
 2. Opt the owner in:
    `echo 'Praesidium Local Code Signing' > ~/praesidium/var/hrc-owner/codesign.identity`.
 3. Move the plist to the fixed exe:
@@ -83,8 +91,12 @@ bootstrap the owner.
    daemon-side), bootstraps the refreshed plist and runs the deploy readback.
    A plain restart would respawn launchd's loaded definition. The refresh needs a
    running release that ships T-12224; it refuses an older one.
-4. Approve the TCC dialog once for `var/hrc-owner/bin/rusthrc` when the owner
-   first touches the protected location.
+4. At the node's console, grant Full Disk Access once to
+   `var/hrc-owner/bin/rusthrc` (System Settings → Privacy & Security → Full
+   Disk Access → +). Harnesses that HRC spawns count rusthrc as their
+   responsible process, so this one grant is meant to replace the separate
+   removable-volume, network-volume and Desktop/Documents/Downloads prompts;
+   the TCC readback below shows whether it did.
 
 After that, every `deploy-*` stages and signs the new release into the same
 path, and the readback prints the exe's designated requirement.
@@ -114,7 +126,8 @@ codesign --verify -R /tmp/rusthrc.csreq "$exe" # passes for every build signed b
 ```
 
 `scripts/hrc-owner-codesign-e2e.sh <old-release> <release-b> <release-c>` proves
-the mechanism headlessly on a temporary keychain: sign, designated requirement,
+the mechanism headlessly on temporary keychains (made by `create`, plus a
+same-named decoy certificate in another keychain): sign, designated requirement,
 the same requirement across builds, the ad-hoc fallback, refresh-plist, a scratch
 daemon reporting its release from the fixed exe, rollback, and the pre-T-12224
 refusal. Its transcript and `result.json` go to the task artifact dir. The
