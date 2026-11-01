@@ -86,7 +86,7 @@ class Fig:
         lst.append(edges.port(pid, edges.side(side, frac)))
         self.b.set_attachments(obj, edges.attachments(list(lst)))
 
-    def edge(self, a, pa, b, pb, *, stroke=SILVER, width=1.2, dash=None, head=False, waypoints=(), label=None, lfill=LEAD, at=0.5):
+    def edge(self, a, pa, b, pb, *, stroke=SILVER, width=1.2, dash=None, head=False, waypoints=(), label=None, lfill=LEAD, at=0.5, label_at=None):
         self.order += 1
         kw = dict(shaft=edges.shaft(stroke=stroke, width=width, dash=dash) if dash else edges.shaft(stroke=stroke, width=width))
         if head:
@@ -96,7 +96,7 @@ class Fig:
                                       waypoints=[edges.page_waypoint(px, py) for px, py in waypoints], corner_radius=6.0)
         if label:
             kw["labels"] = [edges.label("l", "arris.label", clearance=3.0,
-                                        placement=edges.route_fraction(at),
+                                        placement=edges.page_placement(tuple(label_at)) if label_at else edges.route_fraction(at),
                                         parameters={"text": label, "face": "sans.regular", "size": 10, "fill": lfill})]
         return self.b.create_edge(edges.endpoint(a, port_id=pa), edges.endpoint(b, port_id=pb),
                                   edge_id=uid("edge"), order=self.order, **kw)
