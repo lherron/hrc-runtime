@@ -50,17 +50,7 @@ impl Store {
     /// (host_session_id, generation, hrc_seq) index; hydrating and deduping
     /// the whole ledger held the store mutex ~95 s on max3 (T-11915).
     pub fn latest_per_session(&self, query: &HashMap<String, String>) -> Result<Vec<Value>> {
-        let mut predicates = Vec::new();
-        let mut values = Vec::new();
-        field_predicates(query, &mut predicates, &mut values)?;
-        let filter = if predicates.is_empty() {
-            String::new()
-        } else {
-            format!("WHERE {}", predicates.join(" AND "))
-        };
-        let sql = format!(
-            "SELECT e.* FROM hrc_events e INNER JOIN (SELECT MAX(hrc_seq) AS max_hrc_seq FROM hrc_events {filter} GROUP BY host_session_id, generation) latest ON latest.max_hrc_seq = e.hrc_seq ORDER BY e.hrc_seq DESC"
-        );
+        let (sql, values) = latest_per_session_query(query)?;
         self.lifecycle_rows(&sql, &values, true)
     }
     pub fn event_scan(
@@ -112,7 +102,8 @@ fn event_query(
     }
     let order = if descending { "DESC" } else { "ASC" };
     let mut sql = format!(
-        "SELECT * FROM hrc_events WHERE {} ORDER BY hrc_seq {order}",
+        "SELECT * FROM {} WHERE {} ORDER BY hrc_seq {order}",
+        events_source(&predicates),
         predicates.join(" AND ")
     );
     if let Some(limit) = limit {
@@ -120,6 +111,42 @@ fn event_query(
         values.push(Sql::Integer(limit));
     }
     Ok((sql, values))
+}
+
+/// The pin is only on the grouping subquery; the outer join reads `e` by rowid.
+fn latest_per_session_query(query: &HashMap<String, String>) -> Result<(String, Vec<Sql>)> {
+    let mut predicates = Vec::new();
+    let mut values = Vec::new();
+    field_predicates(query, &mut predicates, &mut values)?;
+    let filter = if predicates.is_empty() {
+        String::new()
+    } else {
+        format!("WHERE {}", predicates.join(" AND "))
+    };
+    let sql = format!(
+        "SELECT e.* FROM hrc_events e INNER JOIN (SELECT MAX(hrc_seq) AS max_hrc_seq FROM {} {filter} GROUP BY host_session_id, generation) latest ON latest.max_hrc_seq = e.hrc_seq ORDER BY e.hrc_seq DESC",
+        events_source(&predicates)
+    );
+    Ok((sql, values))
+}
+
+const SCOPE_PREDICATE: &str = "scope_ref = ?";
+const SCOPE_PIN: &str = " INDEXED BY idx_hrc_events_scope_ref_seq";
+
+/// Table source for a filtered ledger read. With no sqlite_stat1 the planner
+/// serves `scope_ref=? AND generation=?` from idx_hrc_events_generation_seq and
+/// walks every generation-1 row under the store mutex (34-44 s on max3,
+/// T-12213). (scope_ref, hrc_seq) is the selective pair and still takes the
+/// hrc_seq bounds, so pin it whenever scope_ref is a predicate, and only then:
+/// without one the index cannot order by hrc_seq. Keyed on the emitted
+/// predicate so a blank scopeRef never pins.
+fn events_source(predicates: &[String]) -> String {
+    let pin = if predicates.iter().any(|p| p == SCOPE_PREDICATE) {
+        SCOPE_PIN
+    } else {
+        ""
+    };
+    format!("hrc_events{pin}")
 }
 
 fn field_predicates(
@@ -147,4 +174,192 @@ fn field_predicates(
         values.push(Sql::Integer(value.trim().parse()?));
     }
     Ok(())
+}
+
+/// T-12213: plan and result proof for the scope pin. The scratch store has no
+/// sqlite_stat1, like max3, so the unpinned control reproduces the live
+/// generation-index plan. F-numbers name the task's failure list.
+#[cfg(test)]
+mod scope_pin {
+    use super::*;
+    use crate::{EventWrite, Store, append_event};
+
+    mod fixture {
+        use crate as hrc_store;
+        include!(concat!(env!("CARGO_MANIFEST_DIR"), "/src/test_support.rs"));
+    }
+
+    const SCOPE: &str = "agent:clod:project:c2:task:c2fixture-1";
+
+    fn seeded() -> (fixture::ScratchStore, Store) {
+        let (scratch, db) = fixture::ScratchStore::new().unwrap();
+        let scopes = [SCOPE, "agent:a:project:p", "agent:b:project:p:task:T-1"];
+        let kinds = ["turn.started", "turn.completed", "runtime.status"];
+        for i in 0..240_i64 {
+            let scope = scopes[(i % 3) as usize];
+            let host = format!("hsid-{}", i % 5);
+            let payload = format!("{{\"i\":{i}}}");
+            append_event(
+                &db.sqlite,
+                &EventWrite {
+                    ts: "2026-11-01T00:00:00Z",
+                    host_session_id: Some(&host),
+                    scope_ref: Some(scope),
+                    lane_ref: Some("main"),
+                    generation: Some(1 + (i / 7) % 3),
+                    runtime_id: None,
+                    run_id: None,
+                    launch_id: None,
+                    app_id: None,
+                    app_session_key: None,
+                    category: "turn",
+                    event_kind: kinds[(i % 4).min(2) as usize],
+                    transport: None,
+                    error_code: None,
+                    replayed: false,
+                    evidence_origin: None,
+                    source_ref: None,
+                    origin_seq: None,
+                    payload_json: &payload,
+                },
+            )
+            .unwrap();
+        }
+        (scratch, db)
+    }
+
+    fn q(pairs: &[(&str, &str)]) -> HashMap<String, String> {
+        pairs
+            .iter()
+            .map(|(k, v)| ((*k).to_owned(), (*v).to_owned()))
+            .collect()
+    }
+
+    fn plan(db: &Store, sql: &str, values: &[Sql]) -> String {
+        let mut stmt = db
+            .sqlite
+            .prepare(&format!("EXPLAIN QUERY PLAN {sql}"))
+            .unwrap();
+        let rows = stmt
+            .query_map(rusqlite::params_from_iter(values), |r| {
+                r.get::<_, String>(3)
+            })
+            .unwrap();
+        rows.collect::<rusqlite::Result<Vec<_>>>()
+            .unwrap()
+            .join("\n")
+    }
+
+    fn unpinned(sql: &str) -> String {
+        assert!(sql.contains(SCOPE_PIN), "expected a pinned query: {sql}");
+        sql.replace(SCOPE_PIN, "")
+    }
+
+    /// The three slow shapes from the task body, plus a scope-only control.
+    fn slow_shapes() -> Vec<HashMap<String, String>> {
+        vec![
+            q(&[("scopeRef", SCOPE), ("generation", "1")]),
+            q(&[
+                ("scopeRef", SCOPE),
+                ("generation", "1"),
+                ("eventKind", "turn.started"),
+            ]),
+            q(&[
+                ("scopeRef", SCOPE),
+                ("generation", "1"),
+                ("laneRef", "main"),
+            ]),
+        ]
+    }
+
+    #[test]
+    fn scope_shapes_plan_on_scope_index_bounded_by_seq_without_sort() {
+        let (_s, db) = seeded();
+        for query in slow_shapes() {
+            for descending in [false, true] {
+                // event_history/event_scan shape: floor, ceiling, order (F2, F3).
+                let (sql, values) =
+                    event_query(&query, 0, Some(1_000), Some(500), descending).unwrap();
+                let pinned = plan(&db, &sql, &values);
+                assert!(
+                    pinned.contains("USING INDEX idx_hrc_events_scope_ref_seq (scope_ref=? AND hrc_seq>? AND hrc_seq<?)"),
+                    "{query:?} desc={descending}: {pinned}"
+                );
+                assert!(!pinned.contains("TEMP B-TREE"), "{query:?}: {pinned}");
+                // Control: the same query unpinned is the live 34-44 s plan.
+                let control = plan(&db, &unpinned(&sql), &values);
+                assert!(
+                    control.contains("idx_hrc_events_generation_seq"),
+                    "control no longer reproduces the defect: {control}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn pinned_rows_and_order_match_unpinned() {
+        let (_s, db) = seeded();
+        let mut shapes = slow_shapes();
+        shapes.push(q(&[("scopeRef", SCOPE)]));
+        for query in shapes {
+            for descending in [false, true] {
+                for (from, before, limit) in [
+                    (0, None, None),
+                    (40, Some(200), Some(9)),
+                    (0, Some(1_000), Some(500)),
+                ] {
+                    let (sql, values) =
+                        event_query(&query, from, before, limit, descending).unwrap();
+                    let pinned = db.lifecycle_rows(&sql, &values, true).unwrap();
+                    let control = db.lifecycle_rows(&unpinned(&sql), &values, true).unwrap();
+                    assert!(!pinned.is_empty(), "{query:?}: seed matched nothing");
+                    assert_eq!(pinned, control, "{query:?} from={from} desc={descending}");
+                }
+            }
+            let (sql, values) = latest_per_session_query(&query).unwrap();
+            let pinned = db.lifecycle_rows(&sql, &values, true).unwrap();
+            assert!(!pinned.is_empty());
+            assert_eq!(
+                pinned,
+                db.lifecycle_rows(&unpinned(&sql), &values, true).unwrap()
+            );
+        }
+    }
+
+    #[test]
+    fn latest_per_session_pins_only_the_grouping_subquery() {
+        let (_s, db) = seeded();
+        let (sql, values) = latest_per_session_query(&slow_shapes()[0]).unwrap();
+        assert_eq!(sql.matches(SCOPE_PIN).count(), 1, "{sql}");
+        assert!(
+            sql.contains("FROM hrc_events e INNER JOIN"),
+            "outer read stays unpinned (F4): {sql}"
+        );
+        let pinned = plan(&db, &sql, &values);
+        assert!(
+            pinned.contains("USING INDEX idx_hrc_events_scope_ref_seq (scope_ref=?)"),
+            "{pinned}"
+        );
+        // Unfiltered keeps T-11915's covering grouping index.
+        let (sql, values) = latest_per_session_query(&HashMap::new()).unwrap();
+        assert!(!sql.contains("INDEXED BY"), "{sql}");
+        assert!(plan(&db, &sql, &values).contains("idx_hrc_events_host_session_generation_seq"));
+    }
+
+    #[test]
+    fn no_scope_predicate_never_pins() {
+        // F1: kind-only, generation-only, run-only and a blank scopeRef.
+        for query in [
+            HashMap::new(),
+            q(&[("generation", "1")]),
+            q(&[("eventKind", "turn.started"), ("generation", "1")]),
+            q(&[("runId", "run-1")]),
+            q(&[("scopeRef", "   "), ("generation", "1")]),
+        ] {
+            let (sql, _) = event_query(&query, 0, Some(10), Some(5), true).unwrap();
+            assert!(!sql.contains("INDEXED BY"), "{query:?}: {sql}");
+            let (sql, _) = latest_per_session_query(&query).unwrap();
+            assert!(!sql.contains("INDEXED BY"), "{query:?}: {sql}");
+        }
+    }
 }
