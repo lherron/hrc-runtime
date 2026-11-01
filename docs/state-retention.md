@@ -370,6 +370,39 @@ filter and never a resume gate forbids. Keyless idle sessions stay `active` and
 stay listed; the projection window already keeps them out of unscoped reads on
 age, which is the actual defect.
 
+### Task-seat retirement (T-12236)
+
+Every 300 s (the first pass 300 s after boot, once brokers have reattached)
+rusthrc retires live task seats. A `ready` runtime whose scope names a wrkq
+task (`task:T-<digits>`) is terminated when that task is `completed`
+(`wrkq.task.show`), or when its `last_activity_at` is older than
+`HRC_TASK_SEAT_IDLE_HOURS` (default 4) whatever the task's state. There is no
+other switch.
+
+It never touches `task:primary`, named standing seats (`rca`, `minisvc`,
+`primary-*`, …), app scopes, external lifecycle owners, a seat that is busy or
+has an active run, a nonterminal run or a protected input, or an hrcpty seat
+with a read-write client attached. The seat is first moved `ready` →
+`stopping` by a compare-and-set, so a turn admitted after the scan wins.
+
+Retirement is `hrc runtime terminate --no-drop-continuation`: the
+`runtime.terminated` event carries `reason` (`task_completed` | `idle_ttl`),
+`source: hrc-seat-retirement` and `droppedContinuation: false`; the session
+stays `active` with its continuation, so the next message resumes the same
+conversation in a new runtime. Each retirement logs `runtime.seat_retired`;
+each pass logs `runtime.seat_retirement_complete` with `scanned`, `retired`,
+`retiredByTrigger` and `skippedByReason`.
+
+### hrcpty aging (T-12236)
+
+The 300 s aging pass (`HRC_TMUX_AGING_ENABLED`) also judges `ready` hrcpty
+seats, with no age cutoff, because the supervisor's own answer is the probe: a
+seat whose hrc-pty supervisor is gone, whose broker exited, or (Claude seats
+only — a Codex seat's pty child is a TUI respawned on attach) whose pty child
+exited goes `stale` through the lease liveness path, which also ends what is
+left of the lease. A supervisor that runs but does not answer is left alone.
+Each pass logs `runtime.hrcpty_aging_complete`.
+
 ## Index adequacy
 
 The C-10743 audit measured 8571 `runtimes` rows on 2026-07-18 (about 8.5k):

@@ -474,7 +474,8 @@ pub(super) fn falsy(value: Option<String>) -> bool {
     })
 }
 
-/// startSessionRetentionSweep and startTmuxAging: once at boot, then on cadence.
+/// startSessionRetentionSweep and startTmuxAging (tmux, then hrcpty seats,
+/// T-12236): once at boot, then on cadence.
 pub fn start_retention(server: &Shared) {
     if std::env::var("HRC_SESSION_RETENTION_SWEEP_ENABLED").as_deref() != Ok("0") {
         let server = server.clone();
@@ -529,6 +530,14 @@ pub fn start_retention(server: &Shared) {
                         "warn",
                         "sweep",
                         "runtime.tmux_aging_failed",
+                        json!({"error":e.message}),
+                    );
+                }
+                if let Err(e) = super::maintenance::hrcpty_aging(&server).await {
+                    super::stderr_json(
+                        "warn",
+                        "sweep",
+                        "runtime.hrcpty_aging_failed",
                         json!({"error":e.message}),
                     );
                 }

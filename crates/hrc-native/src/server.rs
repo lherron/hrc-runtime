@@ -54,6 +54,8 @@ mod recovery;
 mod retained;
 #[path = "server/broker/rpc.rs"]
 mod rpc;
+#[path = "server/broker/seat_retirement.rs"]
+mod seat_retirement;
 #[path = "server/broker/start.rs"]
 mod start;
 #[path = "server/broker/startup/mod.rs"]

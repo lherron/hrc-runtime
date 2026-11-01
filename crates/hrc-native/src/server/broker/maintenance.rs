@@ -443,8 +443,9 @@ async fn prune_guard(server: &Server, r: &Value, facts: &Value) -> Result<Option
     }
     liveness(server, r, facts).await
 }
-async fn aging(r: &Value, facts: &Value) -> Result<Option<String>> {
-    for (flag, reason) in [
+/// The aging guards every transport shares: work in flight is never aged.
+fn in_flight(r: &Value, facts: &Value) -> Option<&'static str> {
+    [
         (
             r["runtimeStateJson"]["lifecycleOwner"] == "external",
             "external_lifecycle_owner",
@@ -452,10 +453,13 @@ async fn aging(r: &Value, facts: &Value) -> Result<Option<String>> {
         (r["status"] == "busy", "busy"),
         (r.get("activeRunId").is_some(), "active_run"),
         (facts["nonterminalRun"] == true, "nonterminal_run"),
-    ] {
-        if flag {
-            return Ok(Some(reason.into()));
-        }
+    ]
+    .into_iter()
+    .find_map(|(flag, reason)| flag.then_some(reason))
+}
+async fn aging(r: &Value, facts: &Value) -> Result<Option<String>> {
+    if let Some(reason) = in_flight(r, facts) {
+        return Ok(Some(reason.into()));
     }
     if process_live(&r["runtimeStateJson"]["broker"]["brokerPid"])? {
         return Ok(Some("live_broker_pid".into()));
@@ -736,6 +740,92 @@ pub async fn tmux_aging(server: &Server) -> std::result::Result<Value, ApiError>
         response["summary"].clone(),
     );
     Ok(response)
+}
+
+/// T-12236: the aging pass over hrcpty seats. A seat whose supervisor is gone,
+/// whose broker exited, or whose Claude child exited is reconciled to `stale`
+/// through the lease liveness path (which also ends what is left of the
+/// lease). The supervisor's own answer is the probe, so no age cutoff applies;
+/// a supervisor that runs but does not answer is left alone.
+pub async fn hrcpty_aging(server: &super::Shared) -> std::result::Result<Value, ApiError> {
+    let all = server.store.lock().unwrap().runtimes_where(
+        "status IN ('ready','busy') AND transport='hrcpty'",
+        rusqlite::params![],
+    )?;
+    let mut skipped = std::collections::BTreeMap::<String, u64>::new();
+    let (mut stale, mut live, mut errors) = (0u64, 0u64, 0u64);
+    for r in &all {
+        let id = r["runtimeId"].as_str().unwrap_or("");
+        let reason = match server.store.lock().unwrap().maintenance_facts(r) {
+            Err(e) => Err(e),
+            Ok(facts) => Ok(in_flight(r, &facts)),
+        };
+        let reason = match reason {
+            Err(e) => {
+                errors += 1;
+                super::stderr_json(
+                    "warn",
+                    "sweep",
+                    "runtime.hrcpty_aging_error",
+                    json!({"runtimeId":id,"error":e.to_string()}),
+                );
+                continue;
+            }
+            Ok(reason) => reason,
+        };
+        if let Some(reason) = reason {
+            *skipped.entry(reason.into()).or_default() += 1;
+            continue;
+        }
+        let rt = {
+            let db = server.store.lock().unwrap();
+            super::projection::db::runtime(&db.sqlite, id)?
+        };
+        let Some(rt) = rt else { continue };
+        let Some((socket, pid)) = super::hrcpty::substrate(&rt) else {
+            *skipped
+                .entry("missing_hrcpty_substrate".into())
+                .or_default() += 1;
+            continue;
+        };
+        let supervisor = pid.is_some_and(super::hrcpty::alive);
+        let status = if supervisor {
+            super::lease::hrcpty_status(&socket, pid).await
+        } else {
+            None
+        };
+        if supervisor && status.is_none() {
+            *skipped.entry("hrcpty_probe_error".into()).or_default() += 1;
+            continue;
+        }
+        if super::lease::hrcpty_dead_reason(&rt, status.as_ref()).is_none() {
+            live += 1;
+            continue;
+        }
+        if let Err(e) = super::lease::reconcile_liveness(server, id).await {
+            errors += 1;
+            super::stderr_json(
+                "warn",
+                "sweep",
+                "runtime.hrcpty_aging_error",
+                json!({"runtimeId":id,"error":e.to_string()}),
+            );
+            continue;
+        }
+        let after = server.store.lock().unwrap().runtime(id)?;
+        match after.as_ref().and_then(|r| r["status"].as_str()) {
+            Some(s) if hrc_store::status::UNAVAILABLE.contains(&s) => stale += 1,
+            _ => *skipped.entry("runtime_changed".into()).or_default() += 1,
+        }
+    }
+    let summary = json!({"type":"summary","matched":all.len(),"stale":stale,"live":live,"skipped":skipped.values().sum::<u64>(),"skippedByReason":skipped,"errors":errors});
+    super::stderr_json(
+        "info",
+        "sweep",
+        "runtime.hrcpty_aging_complete",
+        summary.clone(),
+    );
+    Ok(json!({"ok":true,"summary":summary}))
 }
 
 /// runRuntimeAging (and the prune pass): the selected runtimes judged and moved.

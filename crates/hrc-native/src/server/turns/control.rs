@@ -479,6 +479,25 @@ pub async fn terminate(server: &Shared, body: Value) -> Result<Response, ApiErro
     terminate_runtime(server, &rt, options).await
 }
 
+/// T-12236 seat retirement: the terminate `hrc runtime terminate
+/// --no-drop-continuation` performs, for a runtime the sweep already closed to
+/// admission. Answers whether the continuation was dropped (never, here).
+pub(crate) async fn retire(
+    server: &Shared,
+    rt: &db::Rt,
+    reason: &str,
+    source: &str,
+) -> Result<bool, ApiError> {
+    let options = Terminate {
+        drop_continuation: Some(false),
+        reason: Some(reason.into()),
+        source: Some(source.into()),
+        actor: None,
+    };
+    terminate_runtime(server, rt, options).await?;
+    Ok(false)
+}
+
 /// Other durable active runs, then protected format-2 inputs, deduplicated.
 fn protected_owners(db: &Connection, runtime_id: &str, owner: &str) -> anyhow::Result<Vec<String>> {
     let mut out: Vec<String> = Vec::new();

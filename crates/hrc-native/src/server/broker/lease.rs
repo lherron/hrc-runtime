@@ -392,7 +392,26 @@ pub(crate) async fn hrcpty_broker_alive(socket: &std::path::Path, pid: Option<i6
         .is_some_and(|s| s["broker"]["state"] == "running")
 }
 
-async fn hrcpty_status(socket: &std::path::Path, pid: Option<i64>) -> Option<Value> {
+/// Why a supervisor `status` (None: no supervisor answers as the recorded
+/// pid) shows the seat dead. A Claude seat's pty child IS Claude and is never
+/// respawned, so its exit ends the seat (remain-on-exit keeps the lease); a
+/// Codex seat's pty child is a TUI respawned on the next attach (T-12236).
+pub(crate) fn hrcpty_dead_reason(rt: &db::Rt, status: Option<&Value>) -> Option<&'static str> {
+    let Some(status) = status else {
+        return Some("broker_hrcpty_supervisor_missing");
+    };
+    if status["broker"]["state"] != "running" {
+        return Some("broker_hrcpty_broker_exited");
+    }
+    if status["child"]["state"] == "exited"
+        && rt.state_object()["selection"]["harness"] == "claude-hrcpty"
+    {
+        return Some("broker_hrcpty_child_exited");
+    }
+    None
+}
+
+pub(crate) async fn hrcpty_status(socket: &std::path::Path, pid: Option<i64>) -> Option<Value> {
     match hrcpty::Ops::connect(socket).await {
         Ok(ops) if ops.hello["pid"].as_i64() == pid => ops.call("status", json!({})).await.ok(),
         _ => None,
@@ -400,20 +419,23 @@ async fn hrcpty_status(socket: &std::path::Path, pid: Option<i64>) -> Option<Val
 }
 
 /// An hrcpty seat is live while its supervisor answers `hello` as the
-/// recorded pid and still runs the broker; otherwise it is stale and its
-/// lease ends (§4.6).
+/// recorded pid, still runs the broker and, for a Claude seat, still runs
+/// Claude; otherwise it is stale and its lease ends (§4.6).
 async fn hrcpty_liveness(
     server: &Server,
     rt: &db::Rt,
     socket: &std::path::Path,
     pid: Option<i64>,
 ) -> Result<()> {
-    if hrcpty_broker_alive(socket, pid).await {
-        return Ok(());
-    }
     let status = hrcpty_status(socket, pid).await;
-    let payload = json!({"runtimeId":rt.runtime_id,"socketPath":socket,"supervisorPid":pid,"supervisorLive":status.is_some(),"child":status.as_ref().map(|s| s["child"].clone()),"reason":if status.is_some(){"broker_hrcpty_broker_exited"}else{"broker_hrcpty_supervisor_missing"}});
+    let Some(reason) = hrcpty_dead_reason(rt, status.as_ref()) else {
+        return Ok(());
+    };
+    let payload = json!({"runtimeId":rt.runtime_id,"socketPath":socket,"supervisorPid":pid,"supervisorLive":status.is_some(),"child":status.as_ref().map(|s| s["child"].clone()),"reason":reason});
     not_live(server, &rt.runtime_id, payload.clone())?;
+    // Ending the lease stops a broker that may still run (a Claude child
+    // exit); that close is ours and must not re-mark the stale seat crashed.
+    controller::mark_closing(server, &rt.runtime_id, reason);
     if let Err(error) = hrcpty::end_lease(socket, pid).await {
         super::stderr_json(
             "warn",
