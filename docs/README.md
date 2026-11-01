@@ -43,7 +43,8 @@ Current reference for the HRC runtime. Design records live in
 ## Approved designs
 
 - [proposals/seat-annotations.md](proposals/seat-annotations.md) — draft r1 for Daedalus review, not shipped: namespaced annotations on a seat or generation (`seat_annotations`, `hrc.annotation`, `hrc.generation`), replacing Loggia-side card storage (T-12183).
-- [proposals/praesidium-document.md](proposals/praesidium-document.md) — draft r1 for Daedalus review, not for implementation: the Praesidium data taxonomy (nine subjects × five registers) and one unified read-model document over HRC, wrkq and agent-spaces (T-12244).
+- [proposals/praesidium-document.md](proposals/praesidium-document.md) — r2.2, Daedalus-approved as a design, not for implementation: the Praesidium data taxonomy (nine subjects × five registers) and one unified read-model document over HRC, wrkq and agent-spaces (T-12244).
+- [proposals/praesidium-kernel.md](proposals/praesidium-kernel.md) — draft r1 for Daedalus review, not for implementation: a separate praesidium kernel per node as the one surface every agent migrates to; operation catalog, caller identity, generated tools, strangler rules; amends the taxonomy record in three places (T-12245).
 - [proposals/seat-asks.md](proposals/seat-asks.md) — draft r1 for Daedalus review, not shipped: a seat's open questions as one HRC seat record (`ns: hrc`, `kind: asks`, one row per question), the first HRC-owned annotation kind (T-12239).
 - [proposals/install-publish-split.md](proposals/install-publish-split.md) — implemented design splitting local install selection from publication (T-08559).
 - [proposals/hrc-rust-parity.md](proposals/hrc-rust-parity.md) — native Rust parity r2: whole-node owner transfer, packages N0–N6 against current main, product-claim gates and explicitly unsupported cases (P-00866).
