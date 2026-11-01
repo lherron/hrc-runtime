@@ -172,7 +172,7 @@ def main():
         status, nxt, elapsed = steer(ref1, 'NOLAUNCH next delivery EN-next')
         rts = runtimes(host1)
         run = r.rows('SELECT runtime_id,status FROM runs WHERE run_id=?', (nxt.get('runId'),)) if isinstance(nxt, dict) and nxt.get('runId') else []
-        r.check('D.next-delivery-lands-on-same-runtime', status == 200 and run and run[0]['runtime_id'] == s1,
+        r.check('D.next-delivery-lands-on-same-runtime', status in (200, 202) and run and run[0]['runtime_id'] == s1,
                 status=status, response=nxt, run=run)
         r.check('D.no-duplicate-birth', len(rts) == 1, runtimes=rts)
         r.notes.append({'D': {'status': status, 'response': nxt, 'runtimes': rts}})

@@ -340,12 +340,10 @@ async fn input_turn(
         }
         return Ok(body);
     }
-    let blocks = if interactive {
-        door != "steer" && o.wait_for_completion
-    } else {
-        o.wait_for_completion
-    };
-    if !blocks {
+    // A steer answers at admission on every transport: its run can be a long
+    // turn it started on an idle seat, or a live turn it was absorbed into.
+    // Callers that want the terminal outcome ask wait_stage for it (T-12243).
+    if door == "steer" || !o.wait_for_completion {
         return Ok(body);
     }
     wait_run(server, o.run_id, &rt.runtime_id, label, interactive).await?;
