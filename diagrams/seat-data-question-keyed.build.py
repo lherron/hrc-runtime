@@ -8,7 +8,7 @@ import sys
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import _fig
-from arris_client import Board, deliver
+from arris_client import Board, deliver, edges
 from arris_client.typography import span
 from _fig import (CARD_H, CARD_W, COBALT, COBALT_L, COBALT_T, DEEP, GAP, GRAPHITE, GROUND, LEAD, NESTED, NEUTRAL, PAD, PAPER, PLUM,
                   PLUM_L, PLUM_T, RULE, SILVER, VERMILION, VERMILION_L, VERMILION_T, VIRIDIAN, VIRIDIAN_L, VIRIDIAN_T, Fig)
@@ -42,7 +42,7 @@ def build(fig):
     # ---- sizes -------------------------------------------------------------------------
     g2_w, g3_w = gen_w(1), gen_w(2)
     gen_h = TITLE_H + STRIP_H + CARD_H + PAD
-    REC_H = 150.0
+    REC_H = 166.0
     seat_w = PAD * 2 + g2_w + GAP + g3_w
     seat_w = max(seat_w, 1300.0)
     seat_h = TITLE_H + 44 + REC_H + GAP + gen_h + PAD
@@ -74,7 +74,8 @@ def build(fig):
                 span("     Approve ", size=10.5, fill=GRAPHITE), span("(recommended)", size=10, fill=VIRIDIAN), span(" · Hold     task T-12235     review ", size=10.5, fill=LEAD), span("agree", size=10.5, fill=VIRIDIAN), span(" (vesta)     sent —", size=10.5, fill=LEAD), "\n",
                 span("c2demo  ", face="mono.regular", size=10, fill=PLUM), span("Who taps Send on c2demo-2?", face="sans.semibold", size=11, fill=GRAPHITE),
                 span("     Stella ", size=10.5, fill=GRAPHITE), span("(recommended)", size=10, fill=VIRIDIAN), span(" · Me     task T-12235     review ", size=10.5, fill=LEAD), span("agree", size=10.5, fill=VIRIDIAN), span(" (vesta)     sent —", size=10.5, fill=LEAD), "\n",
-                span("per row:", face="sans.semibold", size=10, fill=LEAD), span("  id · ask · options · recommended · why? · task? · dependsOn? <seat>#<row> (folds under the owner's row, never sent) · review {verdict, why} (vesta) · sent {runId, at} (controller)", size=10, fill=LEAD),
+                span("per row:", face="sans.semibold", size=10, fill=LEAD), span("  id · ask · options · recommended · why? · task? · dependsOn? <seat>#<row> (folds under the owner's row, never sent) · review {verdict, why} (vesta) · sent {runId, at} (controller)", size=10, fill=LEAD), "\n",
+                span("beside it, also on the seat:", face="sans.semibold", size=10, fill=LEAD), span("  c2 · ping · last {at, attentionAt, generation} (controller)   ·   c2 · receipt · <requestId> (the pane's per-action claim; target generation in the body)   ·   Vesta's own asks are rows in vesta@c2's record", size=10, fill=LEAD),
                 padding=12.0)
 
     # ---- generation 2 · archived -----------------------------------------------------------
@@ -103,14 +104,14 @@ def build(fig):
         if last:
             live = chip
     fig.text(gx3 + PAD + 6, ay + chip_h + 6,
-             span("attention", face="sans.semibold", size=10, fill=VERMILION), span("  = the live chip · six lit turns, all covered by the open rows above · the controller never pinged", size=10, fill=LEAD))
+             span("attention", face="sans.semibold", size=10, fill=VERMILION), span("  = the live chip · six lit turns, all covered by the open rows above · ping.last never written", size=10, fill=LEAD))
     cx = gx3 + PAD
     fig.card(cx, cy, kicker="HRC.RUNTIME", name=RUNTIME, lines=("claude · hrcpty · idle", "attachable: hrcpty"),
              meta="key runtimeId · contextReading", hue=(VIRIDIAN, VIRIDIAN_L))
     cx += CARD_W + GAP
-    ping = fig.card(cx, cy, kicker="HRC.ANNOTATION · C2 · PING", name="none this generation",
-                    lines=("fires on a lit turn with no open row", "once per uncovered attention"),
-                    meta="controller bookkeeping · generation-scoped", hue=(SILVER, PLUM_L), fill=PAPER, dash=[5, 4])
+    fig.card(cx, cy, kicker="C2 ANNOTATIONS ON A GENERATION", name="none",
+             lines=("card, ask, receipt and ping all live on the seat", "a rotation touches zero c2 annotations"),
+             meta="HRC keeps the generation subject; c2 stops using it", hue=(SILVER, NEUTRAL), fill=GROUND, dash=[4, 3])
 
     # ---- right column: the hands on the record, then where attention comes from -------------
     SX, SW, WH, WGAP = X0 + doc_w + 150, 330.0, 100.0, 22.0
@@ -146,8 +147,10 @@ def build(fig):
     fig.port(ledger, "l", "left")
     fig.port(live, "r", "right")
     chip_right = gx3 + PAD + (len(EVENTS) - 1) * (chip_w + chip_gap) + chip_w
-    fig.edge(ledger, "l", live, "r", stroke=VIRIDIAN_L, width=1.6, head=True, label="selected event → attention",
-             label_at=((chip_right + gutter - 40) / 2 - 60, ay - 6), waypoints=[(gutter - 40, ly + 46), (gutter - 40, ay + chip_h / 2)])
+    sel = fig.edge(ledger, "l", live, "r", stroke=VIRIDIAN_L, width=1.6, head=True, label="selected event → attention",
+                   waypoints=[(gutter - 40, ly + 46), (gutter - 40, ay + chip_h / 2)])
+    # the label on the route's final horizontal segment, no shaft gap: a point off the route cannot open one
+    fig.b.update_edge_label(sel, "l", placement=edges.page_placement(((chip_right + gutter - 40) / 2 - 60, ay + chip_h / 2)), shaft_gap=None, clearance=6.0)
     fig.text(SX, ly + 92 + 40 + 92 + 24,
              span("proposed in T-12239: ", face="sans.semibold", size=10.5, fill=VIRIDIAN),
              span("the attention fold also carries runId and turnId, so the controller can tie a delivery's run to the turn that answered it", size=10.5, fill=LEAD),
@@ -161,7 +164,8 @@ def build(fig):
         ("subject", "generation → seat: the record survives rotation, so nothing is re-raised from a handoff and a Vesta-carried ask never duplicates the seat's"),
         ("writer", "Vesta from the transcript → the seat itself; Vesta reviews per row"),
         ("fence", "attention.at → the record's CAS (expect.updatedAt); no touch, no generation fence"),
-        ("ping", "lit turn ∧ no open row → one ping, recorded as c2 · ping on the generation; the classifier card is the fallback after one unanswered ping"),
+        ("ping", "lit turn ∧ no open row → one ping, recorded as c2 · ping · last on the seat; the classifier card is the fallback after one unanswered ping"),
+        ("scope", "card, ask, receipt, ping were generation-scoped because the card was; all four move to the seat, so c2 writes no generation-scoped annotation and Vesta's asks are rows in her own record"),
         ("lifecycle", "card open → sent → resolved → per row: sent {runId, at}, greyed in the pane, gone when the seat removes it; partial answers fall out of this (Later rows stay)"),
         ("delivery", "the answer carries its question (\"1. Let Stella run the four live sends? — Approve.\"), so any generation reads it in context"),
         ("cross-seat", "rare, always a dependent waiting on the owner (T-12224: foundry ↔ hrc-runtime): a row's dependsOn folds it under the owner's row; no shared decision record"),
@@ -178,7 +182,7 @@ def build(fig):
         (PLUM_L, "hrc.annotation · c2 · asks", "the seat's one record of open questions · subject seat · rows are the questions · the seat's own writing"),
         (VERMILION_L, "live chip", "the generation's attention field now: a pure fold of its latest turn event"),
         (NEUTRAL, "grey chip", "an earlier lit turn, cleared when the next turn started (ledger history, not a node)"),
-        (PLUM_L, "dashed annotation", "controller bookkeeping (ping), generation-scoped"),
+        (NEUTRAL, "dashed grey card", "an empty slot: what used to live there and no longer does"),
     ]
     for i, (colour, name, desc) in enumerate(items):
         kx = X0 + 60 + (i % 2) * 860
@@ -190,8 +194,9 @@ def build(fig):
 
 def clear(b, doc):
     """Delete every object and edge the live frame holds (edges first, then texts, then boxes), so a rerun redraws cleanly."""
+    snap = doc.inspect()
+    kinds = {o["object_id"]: o["type"] for o in snap["objects"]}
     ids = doc.ids()
-    kinds = {o.id: o.type for o in doc.objects} if hasattr(doc, "objects") else {}
     for e in ids.get("edges", []):
         b.delete_edge(e)
     texts = [o for o in ids.get("objects", []) if kinds.get(o) == "arris.styled_text"]

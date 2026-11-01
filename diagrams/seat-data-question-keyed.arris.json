@@ -3,7 +3,7 @@
   "format": "arris",
   "format_version": 1,
   "document_id": "seat-data-question-keyed",
-  "revision": 8,
+  "revision": 10,
   "nodes": [
     {
       "id": "defs",
@@ -27,80 +27,12 @@
       "payload": {}
     },
     {
-      "id": "fix6.txt.1",
-      "type": "arris.styled_text",
-      "schema_version": 1,
-      "provider": "arris.reference-core",
-      "created_revision": 8,
-      "updated_revision": 8,
-      "hierarchies": {
-        "group": {
-          "parent": null
-        },
-        "owner": {
-          "parent": "page-1"
-        }
-      },
-      "domain_attributes": {
-        "plane_index": 0,
-        "order": 911,
-        "display_name": "fix6.txt.1",
-        "provider_version": "0.6.0",
-        "placement": {
-          "transform": {
-            "translate": [
-              0.0,
-              0.0
-            ]
-          }
-        },
-        "order_authored": true,
-        "bindings": [
-          {
-            "input": "caption_region",
-            "producer": "v2.cont.4",
-            "output_port": "caption"
-          }
-        ]
-      },
-      "payload": {
-        "align": "left",
-        "face": "sans.regular",
-        "fill": "#4A5565",
-        "line_height": 1.3,
-        "max_height": 0.0,
-        "max_width": 0.0,
-        "overflow": "clip_to_region",
-        "padding": 12.0,
-        "runs": [
-          {
-            "start": 0,
-            "end": 14,
-            "face": "cond.semibold",
-            "size": 9.5,
-            "tracking": 0.9,
-            "fill": "#8792A2"
-          },
-          {
-            "start": 16,
-            "end": 39,
-            "face": "sans.semibold",
-            "size": 12.5,
-            "fill": "#1A2330"
-          }
-        ],
-        "size": 11.0,
-        "text": "HRC.GENERATION  generation 2 · archived",
-        "vertical_align": "top"
-      }
-    },
-    {
       "id": "page-1",
       "type": "arris.page",
       "schema_version": 1,
       "provider": "arris",
       "created_revision": 0,
-      "updated_revision": 3,
+      "updated_revision": 9,
       "hierarchies": {
         "group": {
           "parent": null
@@ -113,105 +45,18 @@
         "plane_index": 0,
         "order": 0,
         "width": 1940.0,
-        "height": 1094.0,
+        "height": 1130.0,
         "fill": "#FFFFFF"
       },
       "payload": {}
     },
     {
-      "id": "txt.1",
-      "type": "arris.styled_text",
-      "schema_version": 1,
-      "provider": "arris.reference-core",
-      "created_revision": 6,
-      "updated_revision": 6,
-      "hierarchies": {
-        "group": {
-          "parent": null
-        },
-        "owner": {
-          "parent": "page-1"
-        }
-      },
-      "domain_attributes": {
-        "plane_index": 0,
-        "order": 901,
-        "display_name": "txt.1",
-        "provider_version": "0.6.0",
-        "placement": {
-          "transform": {
-            "translate": [
-              0.0,
-              0.0
-            ]
-          }
-        },
-        "order_authored": true,
-        "bindings": [
-          {
-            "input": "caption_region",
-            "producer": "v2.card.3",
-            "output_port": "caption"
-          }
-        ]
-      },
-      "payload": {
-        "align": "left",
-        "face": "sans.regular",
-        "fill": "#4A5565",
-        "line_height": 1.3,
-        "max_height": 0.0,
-        "max_width": 0.0,
-        "overflow": "clip_to_region",
-        "padding": 10.0,
-        "runs": [
-          {
-            "start": 0,
-            "end": 26,
-            "face": "cond.semibold",
-            "size": 9.5,
-            "tracking": 0.9,
-            "fill": "#8792A2"
-          },
-          {
-            "start": 27,
-            "end": 47,
-            "face": "sans.semibold",
-            "size": 13.0,
-            "fill": "#1A2330"
-          },
-          {
-            "start": 48,
-            "end": 84,
-            "size": 10.5,
-            "fill": "#4A5565"
-          },
-          {
-            "start": 85,
-            "end": 113,
-            "size": 10.5,
-            "fill": "#4A5565"
-          },
-          {
-            "start": 114,
-            "end": 156,
-            "face": "mono.regular",
-            "size": 9.0,
-            "fill": "#8792A2"
-          }
-        ],
-        "size": 11.0,
-        "text": "HRC.ANNOTATION · C2 · PING\nnone this generation\nfires on a lit turn with no open row\nonce per uncovered attention\ncontroller bookkeeping · generation-scoped",
-        "vertical_align": "top"
-      }
-    },
-    {
-      "id": "v2.card.1",
+      "id": "v4.card.1",
       "type": "arris.box",
       "schema_version": 1,
       "provider": "arris.reference-core",
-      "created_revision": 3,
-      "updated_revision": 3,
+      "created_revision": 10,
+      "updated_revision": 10,
       "hierarchies": {
         "group": {
           "parent": null
@@ -223,13 +68,13 @@
       "domain_attributes": {
         "plane_index": 0,
         "order": 18,
-        "display_name": "v2.card.1",
+        "display_name": "v4.card.1",
         "provider_version": "0.6.0",
         "placement": {
           "transform": {
             "translate": [
               112.0,
-              580.0
+              596.0
             ]
           }
         },
@@ -250,12 +95,12 @@
       }
     },
     {
-      "id": "v2.card.2",
+      "id": "v4.card.2",
       "type": "arris.box",
       "schema_version": 1,
       "provider": "arris.reference-core",
-      "created_revision": 3,
-      "updated_revision": 3,
+      "created_revision": 10,
+      "updated_revision": 10,
       "hierarchies": {
         "group": {
           "parent": null
@@ -267,13 +112,13 @@
       "domain_attributes": {
         "plane_index": 0,
         "order": 35,
-        "display_name": "v2.card.2",
+        "display_name": "v4.card.2",
         "provider_version": "0.6.0",
         "placement": {
           "transform": {
             "translate": [
               416.0,
-              580.0
+              596.0
             ]
           }
         },
@@ -290,12 +135,12 @@
       }
     },
     {
-      "id": "v2.card.3",
+      "id": "v4.card.3",
       "type": "arris.box",
       "schema_version": 1,
       "provider": "arris.reference-core",
-      "created_revision": 3,
-      "updated_revision": 3,
+      "created_revision": 10,
+      "updated_revision": 10,
       "hierarchies": {
         "group": {
           "parent": null
@@ -307,13 +152,13 @@
       "domain_attributes": {
         "plane_index": 0,
         "order": 37,
-        "display_name": "v2.card.3",
+        "display_name": "v4.card.3",
         "provider_version": "0.6.0",
         "placement": {
           "transform": {
             "translate": [
               688.0,
-              580.0
+              596.0
             ]
           }
         },
@@ -321,25 +166,25 @@
       },
       "payload": {
         "corner_radius": 8.0,
-        "fill": "#FFFFFF",
+        "fill": "#F3F5F8",
         "height": 104.0,
         "opacity": 1.0,
-        "stroke": "#9877C9",
+        "stroke": "#7D8898",
         "stroke_dash": [
-          5,
-          4
+          4,
+          3
         ],
         "stroke_width": 1.4,
         "width": 258.0
       }
     },
     {
-      "id": "v2.card.4",
+      "id": "v4.card.4",
       "type": "arris.box",
       "schema_version": 1,
       "provider": "arris.reference-core",
-      "created_revision": 3,
-      "updated_revision": 3,
+      "created_revision": 10,
+      "updated_revision": 10,
       "hierarchies": {
         "group": {
           "parent": null
@@ -351,7 +196,7 @@
       "domain_attributes": {
         "plane_index": 0,
         "order": 39,
-        "display_name": "v2.card.4",
+        "display_name": "v4.card.4",
         "provider_version": "0.6.0",
         "placement": {
           "transform": {
@@ -397,12 +242,12 @@
       }
     },
     {
-      "id": "v2.card.5",
+      "id": "v4.card.5",
       "type": "arris.box",
       "schema_version": 1,
       "provider": "arris.reference-core",
-      "created_revision": 3,
-      "updated_revision": 3,
+      "created_revision": 10,
+      "updated_revision": 10,
       "hierarchies": {
         "group": {
           "parent": null
@@ -414,7 +259,7 @@
       "domain_attributes": {
         "plane_index": 0,
         "order": 42,
-        "display_name": "v2.card.5",
+        "display_name": "v4.card.5",
         "provider_version": "0.6.0",
         "placement": {
           "transform": {
@@ -460,12 +305,12 @@
       }
     },
     {
-      "id": "v2.card.6",
+      "id": "v4.card.6",
       "type": "arris.box",
       "schema_version": 1,
       "provider": "arris.reference-core",
-      "created_revision": 3,
-      "updated_revision": 3,
+      "created_revision": 10,
+      "updated_revision": 10,
       "hierarchies": {
         "group": {
           "parent": null
@@ -477,7 +322,7 @@
       "domain_attributes": {
         "plane_index": 0,
         "order": 45,
-        "display_name": "v2.card.6",
+        "display_name": "v4.card.6",
         "provider_version": "0.6.0",
         "placement": {
           "transform": {
@@ -523,12 +368,12 @@
       }
     },
     {
-      "id": "v2.card.7",
+      "id": "v4.card.7",
       "type": "arris.box",
       "schema_version": 1,
       "provider": "arris.reference-core",
-      "created_revision": 3,
-      "updated_revision": 3,
+      "created_revision": 10,
+      "updated_revision": 10,
       "hierarchies": {
         "group": {
           "parent": null
@@ -540,7 +385,7 @@
       "domain_attributes": {
         "plane_index": 0,
         "order": 48,
-        "display_name": "v2.card.7",
+        "display_name": "v4.card.7",
         "provider_version": "0.6.0",
         "placement": {
           "transform": {
@@ -586,12 +431,12 @@
       }
     },
     {
-      "id": "v2.card.8",
+      "id": "v4.card.8",
       "type": "arris.box",
       "schema_version": 1,
       "provider": "arris.reference-core",
-      "created_revision": 3,
-      "updated_revision": 3,
+      "created_revision": 10,
+      "updated_revision": 10,
       "hierarchies": {
         "group": {
           "parent": null
@@ -603,7 +448,7 @@
       "domain_attributes": {
         "plane_index": 0,
         "order": 51,
-        "display_name": "v2.card.8",
+        "display_name": "v4.card.8",
         "provider_version": "0.6.0",
         "placement": {
           "transform": {
@@ -663,12 +508,12 @@
       }
     },
     {
-      "id": "v2.card.9",
+      "id": "v4.card.9",
       "type": "arris.box",
       "schema_version": 1,
       "provider": "arris.reference-core",
-      "created_revision": 3,
-      "updated_revision": 3,
+      "created_revision": 10,
+      "updated_revision": 10,
       "hierarchies": {
         "group": {
           "parent": null
@@ -680,7 +525,7 @@
       "domain_attributes": {
         "plane_index": 0,
         "order": 53,
-        "display_name": "v2.card.9",
+        "display_name": "v4.card.9",
         "provider_version": "0.6.0",
         "placement": {
           "transform": {
@@ -726,12 +571,12 @@
       }
     },
     {
-      "id": "v2.chip.1",
+      "id": "v4.chip.1",
       "type": "arris.box",
       "schema_version": 1,
       "provider": "arris.reference-core",
-      "created_revision": 3,
-      "updated_revision": 3,
+      "created_revision": 10,
+      "updated_revision": 10,
       "hierarchies": {
         "group": {
           "parent": null
@@ -743,13 +588,13 @@
       "domain_attributes": {
         "plane_index": 0,
         "order": 22,
-        "display_name": "v2.chip.1",
+        "display_name": "v4.chip.1",
         "provider_version": "0.6.0",
         "placement": {
           "transform": {
             "translate": [
               416.0,
-              522.0
+              538.0
             ]
           }
         },
@@ -770,12 +615,12 @@
       }
     },
     {
-      "id": "v2.chip.2",
+      "id": "v4.chip.2",
       "type": "arris.box",
       "schema_version": 1,
       "provider": "arris.reference-core",
-      "created_revision": 3,
-      "updated_revision": 3,
+      "created_revision": 10,
+      "updated_revision": 10,
       "hierarchies": {
         "group": {
           "parent": null
@@ -787,13 +632,13 @@
       "domain_attributes": {
         "plane_index": 0,
         "order": 24,
-        "display_name": "v2.chip.2",
+        "display_name": "v4.chip.2",
         "provider_version": "0.6.0",
         "placement": {
           "transform": {
             "translate": [
               498.0,
-              522.0
+              538.0
             ]
           }
         },
@@ -814,12 +659,12 @@
       }
     },
     {
-      "id": "v2.chip.3",
+      "id": "v4.chip.3",
       "type": "arris.box",
       "schema_version": 1,
       "provider": "arris.reference-core",
-      "created_revision": 3,
-      "updated_revision": 3,
+      "created_revision": 10,
+      "updated_revision": 10,
       "hierarchies": {
         "group": {
           "parent": null
@@ -831,13 +676,13 @@
       "domain_attributes": {
         "plane_index": 0,
         "order": 26,
-        "display_name": "v2.chip.3",
+        "display_name": "v4.chip.3",
         "provider_version": "0.6.0",
         "placement": {
           "transform": {
             "translate": [
               580.0,
-              522.0
+              538.0
             ]
           }
         },
@@ -858,12 +703,12 @@
       }
     },
     {
-      "id": "v2.chip.4",
+      "id": "v4.chip.4",
       "type": "arris.box",
       "schema_version": 1,
       "provider": "arris.reference-core",
-      "created_revision": 3,
-      "updated_revision": 3,
+      "created_revision": 10,
+      "updated_revision": 10,
       "hierarchies": {
         "group": {
           "parent": null
@@ -875,13 +720,13 @@
       "domain_attributes": {
         "plane_index": 0,
         "order": 28,
-        "display_name": "v2.chip.4",
+        "display_name": "v4.chip.4",
         "provider_version": "0.6.0",
         "placement": {
           "transform": {
             "translate": [
               662.0,
-              522.0
+              538.0
             ]
           }
         },
@@ -902,12 +747,12 @@
       }
     },
     {
-      "id": "v2.chip.5",
+      "id": "v4.chip.5",
       "type": "arris.box",
       "schema_version": 1,
       "provider": "arris.reference-core",
-      "created_revision": 3,
-      "updated_revision": 3,
+      "created_revision": 10,
+      "updated_revision": 10,
       "hierarchies": {
         "group": {
           "parent": null
@@ -919,13 +764,13 @@
       "domain_attributes": {
         "plane_index": 0,
         "order": 30,
-        "display_name": "v2.chip.5",
+        "display_name": "v4.chip.5",
         "provider_version": "0.6.0",
         "placement": {
           "transform": {
             "translate": [
               744.0,
-              522.0
+              538.0
             ]
           }
         },
@@ -946,12 +791,12 @@
       }
     },
     {
-      "id": "v2.chip.6",
+      "id": "v4.chip.6",
       "type": "arris.box",
       "schema_version": 1,
       "provider": "arris.reference-core",
-      "created_revision": 3,
-      "updated_revision": 3,
+      "created_revision": 10,
+      "updated_revision": 10,
       "hierarchies": {
         "group": {
           "parent": null
@@ -963,13 +808,13 @@
       "domain_attributes": {
         "plane_index": 0,
         "order": 32,
-        "display_name": "v2.chip.6",
+        "display_name": "v4.chip.6",
         "provider_version": "0.6.0",
         "placement": {
           "transform": {
             "translate": [
               826.0,
-              522.0
+              538.0
             ]
           }
         },
@@ -1009,12 +854,12 @@
       }
     },
     {
-      "id": "v2.cont.1",
+      "id": "v4.cont.1",
       "type": "arris.box",
       "schema_version": 1,
       "provider": "arris.reference-core",
-      "created_revision": 3,
-      "updated_revision": 3,
+      "created_revision": 10,
+      "updated_revision": 10,
       "hierarchies": {
         "group": {
           "parent": null
@@ -1026,7 +871,7 @@
       "domain_attributes": {
         "plane_index": 0,
         "order": 5,
-        "display_name": "v2.cont.1",
+        "display_name": "v4.cont.1",
         "provider_version": "0.6.0",
         "placement": {
           "transform": {
@@ -1041,7 +886,7 @@
       "payload": {
         "corner_radius": 10.0,
         "fill": "#F3F5F8",
-        "height": 598.0,
+        "height": 614.0,
         "opacity": 1.0,
         "stroke": "#F3F5F8",
         "stroke_width": 0.0,
@@ -1049,12 +894,12 @@
       }
     },
     {
-      "id": "v2.cont.2",
+      "id": "v4.cont.2",
       "type": "arris.box",
       "schema_version": 1,
       "provider": "arris.reference-core",
-      "created_revision": 3,
-      "updated_revision": 3,
+      "created_revision": 10,
+      "updated_revision": 10,
       "hierarchies": {
         "group": {
           "parent": null
@@ -1066,7 +911,7 @@
       "domain_attributes": {
         "plane_index": 0,
         "order": 7,
-        "display_name": "v2.cont.2",
+        "display_name": "v4.cont.2",
         "provider_version": "0.6.0",
         "placement": {
           "transform": {
@@ -1081,7 +926,7 @@
       "payload": {
         "corner_radius": 10.0,
         "fill": "#E2E7EE",
-        "height": 542.0,
+        "height": 558.0,
         "opacity": 1.0,
         "stroke": "#E2E7EE",
         "stroke_width": 0.0,
@@ -1089,12 +934,12 @@
       }
     },
     {
-      "id": "v2.cont.3",
+      "id": "v4.cont.3",
       "type": "arris.box",
       "schema_version": 1,
       "provider": "arris.reference-core",
-      "created_revision": 3,
-      "updated_revision": 3,
+      "created_revision": 10,
+      "updated_revision": 10,
       "hierarchies": {
         "group": {
           "parent": null
@@ -1106,7 +951,7 @@
       "domain_attributes": {
         "plane_index": 0,
         "order": 9,
-        "display_name": "v2.cont.3",
+        "display_name": "v4.cont.3",
         "provider_version": "0.6.0",
         "placement": {
           "transform": {
@@ -1121,7 +966,7 @@
       "payload": {
         "corner_radius": 10.0,
         "fill": "#FFFFFF",
-        "height": 486.0,
+        "height": 502.0,
         "opacity": 1.0,
         "stroke": "#5C7BD9",
         "stroke_width": 1.0,
@@ -1129,12 +974,12 @@
       }
     },
     {
-      "id": "v2.cont.4",
+      "id": "v4.cont.4",
       "type": "arris.box",
       "schema_version": 1,
       "provider": "arris.reference-core",
-      "created_revision": 3,
-      "updated_revision": 3,
+      "created_revision": 10,
+      "updated_revision": 10,
       "hierarchies": {
         "group": {
           "parent": null
@@ -1146,13 +991,13 @@
       "domain_attributes": {
         "plane_index": 0,
         "order": 14,
-        "display_name": "v2.cont.4",
+        "display_name": "v4.cont.4",
         "provider_version": "0.6.0",
         "placement": {
           "transform": {
             "translate": [
               96.0,
-              478.0
+              494.0
             ]
           }
         },
@@ -1173,12 +1018,12 @@
       }
     },
     {
-      "id": "v2.cont.5",
+      "id": "v4.cont.5",
       "type": "arris.box",
       "schema_version": 1,
       "provider": "arris.reference-core",
-      "created_revision": 3,
-      "updated_revision": 3,
+      "created_revision": 10,
+      "updated_revision": 10,
       "hierarchies": {
         "group": {
           "parent": null
@@ -1190,13 +1035,13 @@
       "domain_attributes": {
         "plane_index": 0,
         "order": 20,
-        "display_name": "v2.cont.5",
+        "display_name": "v4.cont.5",
         "provider_version": "0.6.0",
         "placement": {
           "transform": {
             "translate": [
               400.0,
-              478.0
+              494.0
             ]
           }
         },
@@ -1213,12 +1058,12 @@
       }
     },
     {
-      "id": "v2.edge.1",
+      "id": "v4.edge.1",
       "type": "arris.edge",
       "schema_version": 1,
       "provider": "arris",
-      "created_revision": 3,
-      "updated_revision": 5,
+      "created_revision": 10,
+      "updated_revision": 10,
       "hierarchies": {
         "group": {
           "parent": null
@@ -1236,13 +1081,13 @@
             "width": 7.0
           }
         },
-        "display_name": "v2.edge.1",
+        "display_name": "v4.edge.1",
         "order": 41,
         "source": {
-          "ref": "v2.card.4"
+          "ref": "v4.card.4"
         },
         "target": {
-          "ref": "v2.rec.1"
+          "ref": "v4.rec.1"
         },
         "route": {
           "strategy": {
@@ -1262,7 +1107,7 @@
               "space": "page",
               "point": [
                 1492.0,
-                344.0
+                347.2
               ]
             }
           ],
@@ -1293,7 +1138,7 @@
               "kind": "page",
               "point": [
                 1428.0,
-                335.0
+                338.2
               ]
             },
             "clearance": 3.0
@@ -1311,12 +1156,12 @@
       "payload": {}
     },
     {
-      "id": "v2.edge.2",
+      "id": "v4.edge.2",
       "type": "arris.edge",
       "schema_version": 1,
       "provider": "arris",
-      "created_revision": 3,
-      "updated_revision": 5,
+      "created_revision": 10,
+      "updated_revision": 10,
       "hierarchies": {
         "group": {
           "parent": null
@@ -1334,13 +1179,13 @@
             "width": 7.0
           }
         },
-        "display_name": "v2.edge.2",
+        "display_name": "v4.edge.2",
         "order": 44,
         "source": {
-          "ref": "v2.card.5"
+          "ref": "v4.card.5"
         },
         "target": {
-          "ref": "v2.rec.1"
+          "ref": "v4.rec.1"
         },
         "route": {
           "strategy": {
@@ -1360,7 +1205,7 @@
               "space": "page",
               "point": [
                 1492.0,
-                374.0
+                380.4
               ]
             }
           ],
@@ -1391,7 +1236,7 @@
               "kind": "page",
               "point": [
                 1428.0,
-                365.0
+                371.4
               ]
             },
             "clearance": 3.0
@@ -1409,12 +1254,12 @@
       "payload": {}
     },
     {
-      "id": "v2.edge.3",
+      "id": "v4.edge.3",
       "type": "arris.edge",
       "schema_version": 1,
       "provider": "arris",
-      "created_revision": 3,
-      "updated_revision": 5,
+      "created_revision": 10,
+      "updated_revision": 10,
       "hierarchies": {
         "group": {
           "parent": null
@@ -1432,13 +1277,13 @@
             "width": 7.0
           }
         },
-        "display_name": "v2.edge.3",
+        "display_name": "v4.edge.3",
         "order": 47,
         "source": {
-          "ref": "v2.card.6"
+          "ref": "v4.card.6"
         },
         "target": {
-          "ref": "v2.rec.1"
+          "ref": "v4.rec.1"
         },
         "route": {
           "strategy": {
@@ -1458,7 +1303,7 @@
               "space": "page",
               "point": [
                 1492.0,
-                404.0
+                413.6
               ]
             }
           ],
@@ -1489,7 +1334,7 @@
               "kind": "page",
               "point": [
                 1428.0,
-                395.0
+                404.6
               ]
             },
             "clearance": 3.0
@@ -1507,12 +1352,12 @@
       "payload": {}
     },
     {
-      "id": "v2.edge.4",
+      "id": "v4.edge.4",
       "type": "arris.edge",
       "schema_version": 1,
       "provider": "arris",
-      "created_revision": 3,
-      "updated_revision": 5,
+      "created_revision": 10,
+      "updated_revision": 10,
       "hierarchies": {
         "group": {
           "parent": null
@@ -1530,13 +1375,13 @@
             "width": 7.0
           }
         },
-        "display_name": "v2.edge.4",
+        "display_name": "v4.edge.4",
         "order": 50,
         "source": {
-          "ref": "v2.card.7"
+          "ref": "v4.card.7"
         },
         "target": {
-          "ref": "v2.rec.1"
+          "ref": "v4.rec.1"
         },
         "route": {
           "strategy": {
@@ -1556,7 +1401,7 @@
               "space": "page",
               "point": [
                 1492.0,
-                434.0
+                446.8
               ]
             }
           ],
@@ -1587,7 +1432,7 @@
               "kind": "page",
               "point": [
                 1428.0,
-                425.0
+                437.8
               ]
             },
             "clearance": 3.0
@@ -1605,12 +1450,12 @@
       "payload": {}
     },
     {
-      "id": "v2.edge.5",
+      "id": "v4.edge.5",
       "type": "arris.edge",
       "schema_version": 1,
       "provider": "arris",
-      "created_revision": 3,
-      "updated_revision": 3,
+      "created_revision": 10,
+      "updated_revision": 10,
       "hierarchies": {
         "group": {
           "parent": null
@@ -1628,13 +1473,13 @@
             "width": 7.0
           }
         },
-        "display_name": "v2.edge.5",
+        "display_name": "v4.edge.5",
         "order": 55,
         "source": {
-          "ref": "v2.card.9"
+          "ref": "v4.card.9"
         },
         "target": {
-          "ref": "v2.card.8"
+          "ref": "v4.card.8"
         },
         "route": {
           "strategy": {
@@ -1689,12 +1534,12 @@
       "payload": {}
     },
     {
-      "id": "v2.edge.6",
+      "id": "v4.edge.6",
       "type": "arris.edge",
       "schema_version": 1,
       "provider": "arris",
-      "created_revision": 3,
-      "updated_revision": 7,
+      "created_revision": 10,
+      "updated_revision": 10,
       "hierarchies": {
         "group": {
           "parent": null
@@ -1712,13 +1557,13 @@
             "width": 7.0
           }
         },
-        "display_name": "v2.edge.6",
+        "display_name": "v4.edge.6",
         "order": 56,
         "source": {
-          "ref": "v2.card.8"
+          "ref": "v4.card.8"
         },
         "target": {
-          "ref": "v2.chip.6"
+          "ref": "v4.chip.6"
         },
         "route": {
           "strategy": {
@@ -1738,7 +1583,7 @@
               "space": "page",
               "point": [
                 1452.0,
-                533.0
+                549.0
               ]
             }
           ],
@@ -1768,8 +1613,8 @@
             "placement": {
               "kind": "page",
               "point": [
-                1120.0,
-                533.0
+                1117.0,
+                549.0
               ]
             },
             "clearance": 6.0
@@ -1787,12 +1632,12 @@
       "payload": {}
     },
     {
-      "id": "v2.free.1",
+      "id": "v4.free.1",
       "type": "arris.styled_text",
       "schema_version": 1,
       "provider": "arris.reference-core",
-      "created_revision": 3,
-      "updated_revision": 3,
+      "created_revision": 10,
+      "updated_revision": 10,
       "hierarchies": {
         "group": {
           "parent": null
@@ -1804,7 +1649,7 @@
       "domain_attributes": {
         "plane_index": 0,
         "order": 1,
-        "display_name": "v2.free.1",
+        "display_name": "v4.free.1",
         "provider_version": "0.6.0",
         "placement": {
           "transform": {
@@ -1837,12 +1682,12 @@
       }
     },
     {
-      "id": "v2.free.10",
+      "id": "v4.free.10",
       "type": "arris.styled_text",
       "schema_version": 1,
       "provider": "arris.reference-core",
-      "created_revision": 3,
-      "updated_revision": 3,
+      "created_revision": 10,
+      "updated_revision": 10,
       "hierarchies": {
         "group": {
           "parent": null
@@ -1854,13 +1699,13 @@
       "domain_attributes": {
         "plane_index": 0,
         "order": 59,
-        "display_name": "v2.free.10",
+        "display_name": "v4.free.10",
         "provider_version": "0.6.0",
         "placement": {
           "transform": {
             "translate": [
               60.0,
-              814.0
+              830.0
             ]
           }
         },
@@ -1887,12 +1732,12 @@
       }
     },
     {
-      "id": "v2.free.11",
+      "id": "v4.free.11",
       "type": "arris.styled_text",
       "schema_version": 1,
       "provider": "arris.reference-core",
-      "created_revision": 3,
-      "updated_revision": 3,
+      "created_revision": 10,
+      "updated_revision": 10,
       "hierarchies": {
         "group": {
           "parent": null
@@ -1904,13 +1749,13 @@
       "domain_attributes": {
         "plane_index": 0,
         "order": 60,
-        "display_name": "v2.free.11",
+        "display_name": "v4.free.11",
         "provider_version": "0.6.0",
         "placement": {
           "transform": {
             "translate": [
               172.0,
-              814.0
+              830.0
             ]
           }
         },
@@ -1936,12 +1781,12 @@
       }
     },
     {
-      "id": "v2.free.12",
+      "id": "v4.free.12",
       "type": "arris.styled_text",
       "schema_version": 1,
       "provider": "arris.reference-core",
-      "created_revision": 3,
-      "updated_revision": 3,
+      "created_revision": 10,
+      "updated_revision": 10,
       "hierarchies": {
         "group": {
           "parent": null
@@ -1953,13 +1798,13 @@
       "domain_attributes": {
         "plane_index": 0,
         "order": 61,
-        "display_name": "v2.free.12",
+        "display_name": "v4.free.12",
         "provider_version": "0.6.0",
         "placement": {
           "transform": {
             "translate": [
               60.0,
-              834.0
+              850.0
             ]
           }
         },
@@ -1986,12 +1831,12 @@
       }
     },
     {
-      "id": "v2.free.13",
+      "id": "v4.free.13",
       "type": "arris.styled_text",
       "schema_version": 1,
       "provider": "arris.reference-core",
-      "created_revision": 3,
-      "updated_revision": 3,
+      "created_revision": 10,
+      "updated_revision": 10,
       "hierarchies": {
         "group": {
           "parent": null
@@ -2003,13 +1848,13 @@
       "domain_attributes": {
         "plane_index": 0,
         "order": 62,
-        "display_name": "v2.free.13",
+        "display_name": "v4.free.13",
         "provider_version": "0.6.0",
         "placement": {
           "transform": {
             "translate": [
               172.0,
-              834.0
+              850.0
             ]
           }
         },
@@ -2035,12 +1880,12 @@
       }
     },
     {
-      "id": "v2.free.14",
+      "id": "v4.free.14",
       "type": "arris.styled_text",
       "schema_version": 1,
       "provider": "arris.reference-core",
-      "created_revision": 3,
-      "updated_revision": 3,
+      "created_revision": 10,
+      "updated_revision": 10,
       "hierarchies": {
         "group": {
           "parent": null
@@ -2052,13 +1897,13 @@
       "domain_attributes": {
         "plane_index": 0,
         "order": 63,
-        "display_name": "v2.free.14",
+        "display_name": "v4.free.14",
         "provider_version": "0.6.0",
         "placement": {
           "transform": {
             "translate": [
               60.0,
-              854.0
+              870.0
             ]
           }
         },
@@ -2085,12 +1930,12 @@
       }
     },
     {
-      "id": "v2.free.15",
+      "id": "v4.free.15",
       "type": "arris.styled_text",
       "schema_version": 1,
       "provider": "arris.reference-core",
-      "created_revision": 3,
-      "updated_revision": 3,
+      "created_revision": 10,
+      "updated_revision": 10,
       "hierarchies": {
         "group": {
           "parent": null
@@ -2102,13 +1947,13 @@
       "domain_attributes": {
         "plane_index": 0,
         "order": 64,
-        "display_name": "v2.free.15",
+        "display_name": "v4.free.15",
         "provider_version": "0.6.0",
         "placement": {
           "transform": {
             "translate": [
               172.0,
-              854.0
+              870.0
             ]
           }
         },
@@ -2134,12 +1979,12 @@
       }
     },
     {
-      "id": "v2.free.16",
+      "id": "v4.free.16",
       "type": "arris.styled_text",
       "schema_version": 1,
       "provider": "arris.reference-core",
-      "created_revision": 3,
-      "updated_revision": 3,
+      "created_revision": 10,
+      "updated_revision": 10,
       "hierarchies": {
         "group": {
           "parent": null
@@ -2151,13 +1996,13 @@
       "domain_attributes": {
         "plane_index": 0,
         "order": 65,
-        "display_name": "v2.free.16",
+        "display_name": "v4.free.16",
         "provider_version": "0.6.0",
         "placement": {
           "transform": {
             "translate": [
               60.0,
-              874.0
+              890.0
             ]
           }
         },
@@ -2184,12 +2029,12 @@
       }
     },
     {
-      "id": "v2.free.17",
+      "id": "v4.free.17",
       "type": "arris.styled_text",
       "schema_version": 1,
       "provider": "arris.reference-core",
-      "created_revision": 3,
-      "updated_revision": 3,
+      "created_revision": 10,
+      "updated_revision": 10,
       "hierarchies": {
         "group": {
           "parent": null
@@ -2201,13 +2046,13 @@
       "domain_attributes": {
         "plane_index": 0,
         "order": 66,
-        "display_name": "v2.free.17",
+        "display_name": "v4.free.17",
         "provider_version": "0.6.0",
         "placement": {
           "transform": {
             "translate": [
               172.0,
-              874.0
+              890.0
             ]
           }
         },
@@ -2233,12 +2078,12 @@
       }
     },
     {
-      "id": "v2.free.18",
+      "id": "v4.free.18",
       "type": "arris.styled_text",
       "schema_version": 1,
       "provider": "arris.reference-core",
-      "created_revision": 3,
-      "updated_revision": 3,
+      "created_revision": 10,
+      "updated_revision": 10,
       "hierarchies": {
         "group": {
           "parent": null
@@ -2250,13 +2095,13 @@
       "domain_attributes": {
         "plane_index": 0,
         "order": 67,
-        "display_name": "v2.free.18",
+        "display_name": "v4.free.18",
         "provider_version": "0.6.0",
         "placement": {
           "transform": {
             "translate": [
               60.0,
-              894.0
+              910.0
             ]
           }
         },
@@ -2283,12 +2128,12 @@
       }
     },
     {
-      "id": "v2.free.19",
+      "id": "v4.free.19",
       "type": "arris.styled_text",
       "schema_version": 1,
       "provider": "arris.reference-core",
-      "created_revision": 3,
-      "updated_revision": 3,
+      "created_revision": 10,
+      "updated_revision": 10,
       "hierarchies": {
         "group": {
           "parent": null
@@ -2300,13 +2145,13 @@
       "domain_attributes": {
         "plane_index": 0,
         "order": 68,
-        "display_name": "v2.free.19",
+        "display_name": "v4.free.19",
         "provider_version": "0.6.0",
         "placement": {
           "transform": {
             "translate": [
               172.0,
-              894.0
+              910.0
             ]
           }
         },
@@ -2322,22 +2167,22 @@
         "runs": [
           {
             "start": 0,
-            "end": 137,
+            "end": 138,
             "size": 10.5,
             "fill": "#4A5565"
           }
         ],
         "size": 11.0,
-        "text": "lit turn ∧ no open row → one ping, recorded as c2 · ping on the generation; the classifier card is the fallback after one unanswered ping"
+        "text": "lit turn ∧ no open row → one ping, recorded as c2 · ping · last on the seat; the classifier card is the fallback after one unanswered ping"
       }
     },
     {
-      "id": "v2.free.2",
+      "id": "v4.free.2",
       "type": "arris.styled_text",
       "schema_version": 1,
       "provider": "arris.reference-core",
-      "created_revision": 3,
-      "updated_revision": 3,
+      "created_revision": 10,
+      "updated_revision": 10,
       "hierarchies": {
         "group": {
           "parent": null
@@ -2349,7 +2194,7 @@
       "domain_attributes": {
         "plane_index": 0,
         "order": 2,
-        "display_name": "v2.free.2",
+        "display_name": "v4.free.2",
         "provider_version": "0.6.0",
         "placement": {
           "transform": {
@@ -2381,12 +2226,12 @@
       }
     },
     {
-      "id": "v2.free.20",
+      "id": "v4.free.20",
       "type": "arris.styled_text",
       "schema_version": 1,
       "provider": "arris.reference-core",
-      "created_revision": 3,
-      "updated_revision": 3,
+      "created_revision": 10,
+      "updated_revision": 10,
       "hierarchies": {
         "group": {
           "parent": null
@@ -2398,13 +2243,112 @@
       "domain_attributes": {
         "plane_index": 0,
         "order": 69,
-        "display_name": "v2.free.20",
+        "display_name": "v4.free.20",
         "provider_version": "0.6.0",
         "placement": {
           "transform": {
             "translate": [
               60.0,
-              914.0
+              930.0
+            ]
+          }
+        },
+        "order_authored": true
+      },
+      "payload": {
+        "align": "left",
+        "face": "sans.regular",
+        "fill": "#4A5565",
+        "line_height": 1.3,
+        "max_height": 0.0,
+        "max_width": 110,
+        "runs": [
+          {
+            "start": 0,
+            "end": 5,
+            "face": "sans.semibold",
+            "size": 10.5,
+            "fill": "#1A2330"
+          }
+        ],
+        "size": 11.0,
+        "text": "scope"
+      }
+    },
+    {
+      "id": "v4.free.21",
+      "type": "arris.styled_text",
+      "schema_version": 1,
+      "provider": "arris.reference-core",
+      "created_revision": 10,
+      "updated_revision": 10,
+      "hierarchies": {
+        "group": {
+          "parent": null
+        },
+        "owner": {
+          "parent": "page-1"
+        }
+      },
+      "domain_attributes": {
+        "plane_index": 0,
+        "order": 70,
+        "display_name": "v4.free.21",
+        "provider_version": "0.6.0",
+        "placement": {
+          "transform": {
+            "translate": [
+              172.0,
+              930.0
+            ]
+          }
+        },
+        "order_authored": true
+      },
+      "payload": {
+        "align": "left",
+        "face": "sans.regular",
+        "fill": "#4A5565",
+        "line_height": 1.3,
+        "max_height": 0.0,
+        "max_width": 1224.0,
+        "runs": [
+          {
+            "start": 0,
+            "end": 185,
+            "size": 10.5,
+            "fill": "#4A5565"
+          }
+        ],
+        "size": 11.0,
+        "text": "card, ask, receipt, ping were generation-scoped because the card was; all four move to the seat, so c2 writes no generation-scoped annotation and Vesta's asks are rows in her own record"
+      }
+    },
+    {
+      "id": "v4.free.22",
+      "type": "arris.styled_text",
+      "schema_version": 1,
+      "provider": "arris.reference-core",
+      "created_revision": 10,
+      "updated_revision": 10,
+      "hierarchies": {
+        "group": {
+          "parent": null
+        },
+        "owner": {
+          "parent": "page-1"
+        }
+      },
+      "domain_attributes": {
+        "plane_index": 0,
+        "order": 71,
+        "display_name": "v4.free.22",
+        "provider_version": "0.6.0",
+        "placement": {
+          "transform": {
+            "translate": [
+              60.0,
+              950.0
             ]
           }
         },
@@ -2431,12 +2375,12 @@
       }
     },
     {
-      "id": "v2.free.21",
+      "id": "v4.free.23",
       "type": "arris.styled_text",
       "schema_version": 1,
       "provider": "arris.reference-core",
-      "created_revision": 3,
-      "updated_revision": 3,
+      "created_revision": 10,
+      "updated_revision": 10,
       "hierarchies": {
         "group": {
           "parent": null
@@ -2447,14 +2391,14 @@
       },
       "domain_attributes": {
         "plane_index": 0,
-        "order": 70,
-        "display_name": "v2.free.21",
+        "order": 72,
+        "display_name": "v4.free.23",
         "provider_version": "0.6.0",
         "placement": {
           "transform": {
             "translate": [
               172.0,
-              914.0
+              950.0
             ]
           }
         },
@@ -2480,12 +2424,12 @@
       }
     },
     {
-      "id": "v2.free.22",
+      "id": "v4.free.24",
       "type": "arris.styled_text",
       "schema_version": 1,
       "provider": "arris.reference-core",
-      "created_revision": 3,
-      "updated_revision": 3,
+      "created_revision": 10,
+      "updated_revision": 10,
       "hierarchies": {
         "group": {
           "parent": null
@@ -2496,14 +2440,14 @@
       },
       "domain_attributes": {
         "plane_index": 0,
-        "order": 71,
-        "display_name": "v2.free.22",
+        "order": 73,
+        "display_name": "v4.free.24",
         "provider_version": "0.6.0",
         "placement": {
           "transform": {
             "translate": [
               60.0,
-              934.0
+              970.0
             ]
           }
         },
@@ -2530,12 +2474,12 @@
       }
     },
     {
-      "id": "v2.free.23",
+      "id": "v4.free.25",
       "type": "arris.styled_text",
       "schema_version": 1,
       "provider": "arris.reference-core",
-      "created_revision": 3,
-      "updated_revision": 3,
+      "created_revision": 10,
+      "updated_revision": 10,
       "hierarchies": {
         "group": {
           "parent": null
@@ -2546,14 +2490,14 @@
       },
       "domain_attributes": {
         "plane_index": 0,
-        "order": 72,
-        "display_name": "v2.free.23",
+        "order": 74,
+        "display_name": "v4.free.25",
         "provider_version": "0.6.0",
         "placement": {
           "transform": {
             "translate": [
               172.0,
-              934.0
+              970.0
             ]
           }
         },
@@ -2579,12 +2523,12 @@
       }
     },
     {
-      "id": "v2.free.24",
+      "id": "v4.free.26",
       "type": "arris.styled_text",
       "schema_version": 1,
       "provider": "arris.reference-core",
-      "created_revision": 3,
-      "updated_revision": 3,
+      "created_revision": 10,
+      "updated_revision": 10,
       "hierarchies": {
         "group": {
           "parent": null
@@ -2595,14 +2539,14 @@
       },
       "domain_attributes": {
         "plane_index": 0,
-        "order": 73,
-        "display_name": "v2.free.24",
+        "order": 75,
+        "display_name": "v4.free.26",
         "provider_version": "0.6.0",
         "placement": {
           "transform": {
             "translate": [
               60.0,
-              954.0
+              990.0
             ]
           }
         },
@@ -2629,12 +2573,12 @@
       }
     },
     {
-      "id": "v2.free.25",
+      "id": "v4.free.27",
       "type": "arris.styled_text",
       "schema_version": 1,
       "provider": "arris.reference-core",
-      "created_revision": 3,
-      "updated_revision": 3,
+      "created_revision": 10,
+      "updated_revision": 10,
       "hierarchies": {
         "group": {
           "parent": null
@@ -2645,14 +2589,14 @@
       },
       "domain_attributes": {
         "plane_index": 0,
-        "order": 74,
-        "display_name": "v2.free.25",
+        "order": 76,
+        "display_name": "v4.free.27",
         "provider_version": "0.6.0",
         "placement": {
           "transform": {
             "translate": [
               172.0,
-              954.0
+              990.0
             ]
           }
         },
@@ -2678,12 +2622,12 @@
       }
     },
     {
-      "id": "v2.free.26",
+      "id": "v4.free.28",
       "type": "arris.styled_text",
       "schema_version": 1,
       "provider": "arris.reference-core",
-      "created_revision": 3,
-      "updated_revision": 3,
+      "created_revision": 10,
+      "updated_revision": 10,
       "hierarchies": {
         "group": {
           "parent": null
@@ -2694,14 +2638,14 @@
       },
       "domain_attributes": {
         "plane_index": 0,
-        "order": 75,
-        "display_name": "v2.free.26",
+        "order": 77,
+        "display_name": "v4.free.28",
         "provider_version": "0.6.0",
         "placement": {
           "transform": {
             "translate": [
               60.0,
-              974.0
+              1010.0
             ]
           }
         },
@@ -2728,12 +2672,12 @@
       }
     },
     {
-      "id": "v2.free.27",
+      "id": "v4.free.29",
       "type": "arris.styled_text",
       "schema_version": 1,
       "provider": "arris.reference-core",
-      "created_revision": 3,
-      "updated_revision": 3,
+      "created_revision": 10,
+      "updated_revision": 10,
       "hierarchies": {
         "group": {
           "parent": null
@@ -2744,14 +2688,14 @@
       },
       "domain_attributes": {
         "plane_index": 0,
-        "order": 76,
-        "display_name": "v2.free.27",
+        "order": 78,
+        "display_name": "v4.free.29",
         "provider_version": "0.6.0",
         "placement": {
           "transform": {
             "translate": [
               172.0,
-              974.0
+              1010.0
             ]
           }
         },
@@ -2777,119 +2721,12 @@
       }
     },
     {
-      "id": "v2.free.28",
+      "id": "v4.free.3",
       "type": "arris.styled_text",
       "schema_version": 1,
       "provider": "arris.reference-core",
-      "created_revision": 3,
-      "updated_revision": 3,
-      "hierarchies": {
-        "group": {
-          "parent": null
-        },
-        "owner": {
-          "parent": "page-1"
-        }
-      },
-      "domain_attributes": {
-        "plane_index": 0,
-        "order": 77,
-        "display_name": "v2.free.28",
-        "provider_version": "0.6.0",
-        "placement": {
-          "transform": {
-            "translate": [
-              48.0,
-              1024.0
-            ]
-          }
-        },
-        "order_authored": true
-      },
-      "payload": {
-        "align": "left",
-        "face": "sans.regular",
-        "fill": "#4A5565",
-        "line_height": 1.3,
-        "max_height": 0.0,
-        "max_width": 0.0,
-        "runs": [
-          {
-            "start": 0,
-            "end": 3,
-            "face": "cond.semibold",
-            "size": 9.5,
-            "tracking": 0.9,
-            "fill": "#4A5565"
-          }
-        ],
-        "size": 11.0,
-        "text": "KEY"
-      }
-    },
-    {
-      "id": "v2.free.29",
-      "type": "arris.styled_text",
-      "schema_version": 1,
-      "provider": "arris.reference-core",
-      "created_revision": 3,
-      "updated_revision": 3,
-      "hierarchies": {
-        "group": {
-          "parent": null
-        },
-        "owner": {
-          "parent": "page-1"
-        }
-      },
-      "domain_attributes": {
-        "plane_index": 0,
-        "order": 79,
-        "display_name": "v2.free.29",
-        "provider_version": "0.6.0",
-        "placement": {
-          "transform": {
-            "translate": [
-              126.0,
-              1022.0
-            ]
-          }
-        },
-        "order_authored": true
-      },
-      "payload": {
-        "align": "left",
-        "face": "sans.regular",
-        "fill": "#4A5565",
-        "line_height": 1.3,
-        "max_height": 0.0,
-        "max_width": 0.0,
-        "runs": [
-          {
-            "start": 0,
-            "end": 26,
-            "face": "sans.semibold",
-            "size": 11.0,
-            "fill": "#1A2330"
-          },
-          {
-            "start": 28,
-            "end": 132,
-            "size": 11.0,
-            "fill": "#4A5565"
-          }
-        ],
-        "size": 11.0,
-        "text": "hrc.annotation · c2 · asks  the seat's one record of open questions · subject seat · rows are the questions · the seat's own writing"
-      }
-    },
-    {
-      "id": "v2.free.3",
-      "type": "arris.styled_text",
-      "schema_version": 1,
-      "provider": "arris.reference-core",
-      "created_revision": 3,
-      "updated_revision": 3,
+      "created_revision": 10,
+      "updated_revision": 10,
       "hierarchies": {
         "group": {
           "parent": null
@@ -2901,7 +2738,7 @@
       "domain_attributes": {
         "plane_index": 0,
         "order": 3,
-        "display_name": "v2.free.3",
+        "display_name": "v4.free.3",
         "provider_version": "0.6.0",
         "placement": {
           "transform": {
@@ -2934,12 +2771,63 @@
       }
     },
     {
-      "id": "v2.free.30",
+      "id": "v4.free.30",
       "type": "arris.styled_text",
       "schema_version": 1,
       "provider": "arris.reference-core",
-      "created_revision": 3,
-      "updated_revision": 3,
+      "created_revision": 10,
+      "updated_revision": 10,
+      "hierarchies": {
+        "group": {
+          "parent": null
+        },
+        "owner": {
+          "parent": "page-1"
+        }
+      },
+      "domain_attributes": {
+        "plane_index": 0,
+        "order": 79,
+        "display_name": "v4.free.30",
+        "provider_version": "0.6.0",
+        "placement": {
+          "transform": {
+            "translate": [
+              48.0,
+              1060.0
+            ]
+          }
+        },
+        "order_authored": true
+      },
+      "payload": {
+        "align": "left",
+        "face": "sans.regular",
+        "fill": "#4A5565",
+        "line_height": 1.3,
+        "max_height": 0.0,
+        "max_width": 0.0,
+        "runs": [
+          {
+            "start": 0,
+            "end": 3,
+            "face": "cond.semibold",
+            "size": 9.5,
+            "tracking": 0.9,
+            "fill": "#4A5565"
+          }
+        ],
+        "size": 11.0,
+        "text": "KEY"
+      }
+    },
+    {
+      "id": "v4.free.31",
+      "type": "arris.styled_text",
+      "schema_version": 1,
+      "provider": "arris.reference-core",
+      "created_revision": 10,
+      "updated_revision": 10,
       "hierarchies": {
         "group": {
           "parent": null
@@ -2951,13 +2839,69 @@
       "domain_attributes": {
         "plane_index": 0,
         "order": 81,
-        "display_name": "v2.free.30",
+        "display_name": "v4.free.31",
+        "provider_version": "0.6.0",
+        "placement": {
+          "transform": {
+            "translate": [
+              126.0,
+              1058.0
+            ]
+          }
+        },
+        "order_authored": true
+      },
+      "payload": {
+        "align": "left",
+        "face": "sans.regular",
+        "fill": "#4A5565",
+        "line_height": 1.3,
+        "max_height": 0.0,
+        "max_width": 0.0,
+        "runs": [
+          {
+            "start": 0,
+            "end": 26,
+            "face": "sans.semibold",
+            "size": 11.0,
+            "fill": "#1A2330"
+          },
+          {
+            "start": 28,
+            "end": 132,
+            "size": 11.0,
+            "fill": "#4A5565"
+          }
+        ],
+        "size": 11.0,
+        "text": "hrc.annotation · c2 · asks  the seat's one record of open questions · subject seat · rows are the questions · the seat's own writing"
+      }
+    },
+    {
+      "id": "v4.free.32",
+      "type": "arris.styled_text",
+      "schema_version": 1,
+      "provider": "arris.reference-core",
+      "created_revision": 10,
+      "updated_revision": 10,
+      "hierarchies": {
+        "group": {
+          "parent": null
+        },
+        "owner": {
+          "parent": "page-1"
+        }
+      },
+      "domain_attributes": {
+        "plane_index": 0,
+        "order": 83,
+        "display_name": "v4.free.32",
         "provider_version": "0.6.0",
         "placement": {
           "transform": {
             "translate": [
               986.0,
-              1022.0
+              1058.0
             ]
           }
         },
@@ -2990,12 +2934,12 @@
       }
     },
     {
-      "id": "v2.free.31",
+      "id": "v4.free.33",
       "type": "arris.styled_text",
       "schema_version": 1,
       "provider": "arris.reference-core",
-      "created_revision": 3,
-      "updated_revision": 3,
+      "created_revision": 10,
+      "updated_revision": 10,
       "hierarchies": {
         "group": {
           "parent": null
@@ -3006,14 +2950,14 @@
       },
       "domain_attributes": {
         "plane_index": 0,
-        "order": 83,
-        "display_name": "v2.free.31",
+        "order": 85,
+        "display_name": "v4.free.33",
         "provider_version": "0.6.0",
         "placement": {
           "transform": {
             "translate": [
               126.0,
-              1046.0
+              1082.0
             ]
           }
         },
@@ -3046,12 +2990,12 @@
       }
     },
     {
-      "id": "v2.free.32",
+      "id": "v4.free.34",
       "type": "arris.styled_text",
       "schema_version": 1,
       "provider": "arris.reference-core",
-      "created_revision": 3,
-      "updated_revision": 3,
+      "created_revision": 10,
+      "updated_revision": 10,
       "hierarchies": {
         "group": {
           "parent": null
@@ -3062,14 +3006,14 @@
       },
       "domain_attributes": {
         "plane_index": 0,
-        "order": 85,
-        "display_name": "v2.free.32",
+        "order": 87,
+        "display_name": "v4.free.34",
         "provider_version": "0.6.0",
         "placement": {
           "transform": {
             "translate": [
               986.0,
-              1046.0
+              1082.0
             ]
           }
         },
@@ -3085,29 +3029,29 @@
         "runs": [
           {
             "start": 0,
-            "end": 17,
+            "end": 16,
             "face": "sans.semibold",
             "size": 11.0,
             "fill": "#1A2330"
           },
           {
-            "start": 19,
-            "end": 67,
+            "start": 18,
+            "end": 75,
             "size": 11.0,
             "fill": "#4A5565"
           }
         ],
         "size": 11.0,
-        "text": "dashed annotation  controller bookkeeping (ping), generation-scoped"
+        "text": "dashed grey card  an empty slot: what used to live there and no longer does"
       }
     },
     {
-      "id": "v2.free.4",
+      "id": "v4.free.4",
       "type": "arris.styled_text",
       "schema_version": 1,
       "provider": "arris.reference-core",
-      "created_revision": 3,
-      "updated_revision": 3,
+      "created_revision": 10,
+      "updated_revision": 10,
       "hierarchies": {
         "group": {
           "parent": null
@@ -3119,7 +3063,7 @@
       "domain_attributes": {
         "plane_index": 0,
         "order": 11,
-        "display_name": "v2.free.4",
+        "display_name": "v4.free.4",
         "provider_version": "0.6.0",
         "placement": {
           "transform": {
@@ -3184,12 +3128,12 @@
       }
     },
     {
-      "id": "v2.free.5",
+      "id": "v4.free.5",
       "type": "arris.styled_text",
       "schema_version": 1,
       "provider": "arris.reference-core",
-      "created_revision": 3,
-      "updated_revision": 3,
+      "created_revision": 10,
+      "updated_revision": 10,
       "hierarchies": {
         "group": {
           "parent": null
@@ -3201,13 +3145,13 @@
       "domain_attributes": {
         "plane_index": 0,
         "order": 16,
-        "display_name": "v2.free.5",
+        "display_name": "v4.free.5",
         "provider_version": "0.6.0",
         "placement": {
           "transform": {
             "translate": [
               118.0,
-              524.0
+              540.0
             ]
           }
         },
@@ -3233,12 +3177,12 @@
       }
     },
     {
-      "id": "v2.free.6",
+      "id": "v4.free.6",
       "type": "arris.styled_text",
       "schema_version": 1,
       "provider": "arris.reference-core",
-      "created_revision": 3,
-      "updated_revision": 3,
+      "created_revision": 10,
+      "updated_revision": 10,
       "hierarchies": {
         "group": {
           "parent": null
@@ -3250,13 +3194,13 @@
       "domain_attributes": {
         "plane_index": 0,
         "order": 17,
-        "display_name": "v2.free.6",
+        "display_name": "v4.free.6",
         "provider_version": "0.6.0",
         "placement": {
           "transform": {
             "translate": [
               118.0,
-              542.0
+              558.0
             ]
           }
         },
@@ -3289,12 +3233,12 @@
       }
     },
     {
-      "id": "v2.free.7",
+      "id": "v4.free.7",
       "type": "arris.styled_text",
       "schema_version": 1,
       "provider": "arris.reference-core",
-      "created_revision": 3,
-      "updated_revision": 3,
+      "created_revision": 10,
+      "updated_revision": 10,
       "hierarchies": {
         "group": {
           "parent": null
@@ -3306,13 +3250,13 @@
       "domain_attributes": {
         "plane_index": 0,
         "order": 34,
-        "display_name": "v2.free.7",
+        "display_name": "v4.free.7",
         "provider_version": "0.6.0",
         "placement": {
           "transform": {
             "translate": [
               422.0,
-              550.0
+              566.0
             ]
           }
         },
@@ -3335,22 +3279,22 @@
           },
           {
             "start": 9,
-            "end": 108,
+            "end": 104,
             "size": 10.0,
             "fill": "#4A5565"
           }
         ],
         "size": 11.0,
-        "text": "attention  = the live chip · six lit turns, all covered by the open rows above · the controller never pinged"
+        "text": "attention  = the live chip · six lit turns, all covered by the open rows above · ping.last never written"
       }
     },
     {
-      "id": "v2.free.8",
+      "id": "v4.free.8",
       "type": "arris.styled_text",
       "schema_version": 1,
       "provider": "arris.reference-core",
-      "created_revision": 3,
-      "updated_revision": 3,
+      "created_revision": 10,
+      "updated_revision": 10,
       "hierarchies": {
         "group": {
           "parent": null
@@ -3362,7 +3306,7 @@
       "domain_attributes": {
         "plane_index": 0,
         "order": 57,
-        "display_name": "v2.free.8",
+        "display_name": "v4.free.8",
         "provider_version": "0.6.0",
         "placement": {
           "transform": {
@@ -3401,12 +3345,12 @@
       }
     },
     {
-      "id": "v2.free.9",
+      "id": "v4.free.9",
       "type": "arris.styled_text",
       "schema_version": 1,
       "provider": "arris.reference-core",
-      "created_revision": 3,
-      "updated_revision": 3,
+      "created_revision": 10,
+      "updated_revision": 10,
       "hierarchies": {
         "group": {
           "parent": null
@@ -3418,13 +3362,13 @@
       "domain_attributes": {
         "plane_index": 0,
         "order": 58,
-        "display_name": "v2.free.9",
+        "display_name": "v4.free.9",
         "provider_version": "0.6.0",
         "placement": {
           "transform": {
             "translate": [
               48.0,
-              788.0
+              804.0
             ]
           }
         },
@@ -3451,12 +3395,12 @@
       }
     },
     {
-      "id": "v2.rec.1",
+      "id": "v4.rec.1",
       "type": "arris.box",
       "schema_version": 1,
       "provider": "arris.reference-core",
-      "created_revision": 3,
-      "updated_revision": 3,
+      "created_revision": 10,
+      "updated_revision": 10,
       "hierarchies": {
         "group": {
           "parent": null
@@ -3468,7 +3412,7 @@
       "domain_attributes": {
         "plane_index": 0,
         "order": 12,
-        "display_name": "v2.rec.1",
+        "display_name": "v4.rec.1",
         "provider_version": "0.6.0",
         "placement": {
           "transform": {
@@ -3548,7 +3492,7 @@
       "payload": {
         "corner_radius": 8.0,
         "fill": "#F3EEFA",
-        "height": 150.0,
+        "height": 166.0,
         "opacity": 1.0,
         "stroke": "#9877C9",
         "stroke_width": 1.6,
@@ -3556,12 +3500,12 @@
       }
     },
     {
-      "id": "v2.rule.1",
+      "id": "v4.rule.1",
       "type": "arris.box",
       "schema_version": 1,
       "provider": "arris.reference-core",
-      "created_revision": 3,
-      "updated_revision": 3,
+      "created_revision": 10,
+      "updated_revision": 10,
       "hierarchies": {
         "group": {
           "parent": null
@@ -3573,7 +3517,7 @@
       "domain_attributes": {
         "plane_index": 0,
         "order": 4,
-        "display_name": "v2.rule.1",
+        "display_name": "v4.rule.1",
         "provider_version": "0.6.0",
         "placement": {
           "transform": {
@@ -3596,12 +3540,12 @@
       }
     },
     {
-      "id": "v2.sw.1",
+      "id": "v4.sw.1",
       "type": "arris.box",
       "schema_version": 1,
       "provider": "arris.reference-core",
-      "created_revision": 3,
-      "updated_revision": 3,
+      "created_revision": 10,
+      "updated_revision": 10,
       "hierarchies": {
         "group": {
           "parent": null
@@ -3612,14 +3556,14 @@
       },
       "domain_attributes": {
         "plane_index": 0,
-        "order": 78,
-        "display_name": "v2.sw.1",
+        "order": 80,
+        "display_name": "v4.sw.1",
         "provider_version": "0.6.0",
         "placement": {
           "transform": {
             "translate": [
               108.0,
-              1026.0
+              1062.0
             ]
           }
         },
@@ -3636,12 +3580,12 @@
       }
     },
     {
-      "id": "v2.sw.2",
+      "id": "v4.sw.2",
       "type": "arris.box",
       "schema_version": 1,
       "provider": "arris.reference-core",
-      "created_revision": 3,
-      "updated_revision": 3,
+      "created_revision": 10,
+      "updated_revision": 10,
       "hierarchies": {
         "group": {
           "parent": null
@@ -3652,14 +3596,14 @@
       },
       "domain_attributes": {
         "plane_index": 0,
-        "order": 80,
-        "display_name": "v2.sw.2",
+        "order": 82,
+        "display_name": "v4.sw.2",
         "provider_version": "0.6.0",
         "placement": {
           "transform": {
             "translate": [
               968.0,
-              1026.0
+              1062.0
             ]
           }
         },
@@ -3676,12 +3620,12 @@
       }
     },
     {
-      "id": "v2.sw.3",
+      "id": "v4.sw.3",
       "type": "arris.box",
       "schema_version": 1,
       "provider": "arris.reference-core",
-      "created_revision": 3,
-      "updated_revision": 3,
+      "created_revision": 10,
+      "updated_revision": 10,
       "hierarchies": {
         "group": {
           "parent": null
@@ -3692,14 +3636,14 @@
       },
       "domain_attributes": {
         "plane_index": 0,
-        "order": 82,
-        "display_name": "v2.sw.3",
+        "order": 84,
+        "display_name": "v4.sw.3",
         "provider_version": "0.6.0",
         "placement": {
           "transform": {
             "translate": [
               108.0,
-              1050.0
+              1086.0
             ]
           }
         },
@@ -3716,12 +3660,12 @@
       }
     },
     {
-      "id": "v2.sw.4",
+      "id": "v4.sw.4",
       "type": "arris.box",
       "schema_version": 1,
       "provider": "arris.reference-core",
-      "created_revision": 3,
-      "updated_revision": 3,
+      "created_revision": 10,
+      "updated_revision": 10,
       "hierarchies": {
         "group": {
           "parent": null
@@ -3732,14 +3676,14 @@
       },
       "domain_attributes": {
         "plane_index": 0,
-        "order": 84,
-        "display_name": "v2.sw.4",
+        "order": 86,
+        "display_name": "v4.sw.4",
         "provider_version": "0.6.0",
         "placement": {
           "transform": {
             "translate": [
               968.0,
-              1050.0
+              1086.0
             ]
           }
         },
@@ -3747,21 +3691,21 @@
       },
       "payload": {
         "corner_radius": 3.0,
-        "fill": "#9877C9",
+        "fill": "#7D8898",
         "height": 12,
         "opacity": 1.0,
-        "stroke": "#9877C9",
+        "stroke": "#7D8898",
         "stroke_width": 0.0,
         "width": 12
       }
     },
     {
-      "id": "v2.txt.1",
+      "id": "v4.txt.1",
       "type": "arris.styled_text",
       "schema_version": 1,
       "provider": "arris.reference-core",
-      "created_revision": 3,
-      "updated_revision": 3,
+      "created_revision": 10,
+      "updated_revision": 10,
       "hierarchies": {
         "group": {
           "parent": null
@@ -3773,7 +3717,7 @@
       "domain_attributes": {
         "plane_index": 0,
         "order": 6,
-        "display_name": "v2.txt.1",
+        "display_name": "v4.txt.1",
         "provider_version": "0.6.0",
         "placement": {
           "transform": {
@@ -3787,7 +3731,7 @@
         "bindings": [
           {
             "input": "caption_region",
-            "producer": "v2.cont.1",
+            "producer": "v4.cont.1",
             "output_port": "caption"
           }
         ]
@@ -3831,12 +3775,12 @@
       }
     },
     {
-      "id": "v2.txt.10",
+      "id": "v4.txt.10",
       "type": "arris.styled_text",
       "schema_version": 1,
       "provider": "arris.reference-core",
-      "created_revision": 3,
-      "updated_revision": 3,
+      "created_revision": 10,
+      "updated_revision": 10,
       "hierarchies": {
         "group": {
           "parent": null
@@ -3848,7 +3792,7 @@
       "domain_attributes": {
         "plane_index": 0,
         "order": 27,
-        "display_name": "v2.txt.10",
+        "display_name": "v4.txt.10",
         "provider_version": "0.6.0",
         "placement": {
           "transform": {
@@ -3862,7 +3806,7 @@
         "bindings": [
           {
             "input": "caption_region",
-            "producer": "v2.chip.3",
+            "producer": "v4.chip.3",
             "output_port": "caption"
           }
         ]
@@ -3891,12 +3835,12 @@
       }
     },
     {
-      "id": "v2.txt.11",
+      "id": "v4.txt.11",
       "type": "arris.styled_text",
       "schema_version": 1,
       "provider": "arris.reference-core",
-      "created_revision": 3,
-      "updated_revision": 3,
+      "created_revision": 10,
+      "updated_revision": 10,
       "hierarchies": {
         "group": {
           "parent": null
@@ -3908,7 +3852,7 @@
       "domain_attributes": {
         "plane_index": 0,
         "order": 29,
-        "display_name": "v2.txt.11",
+        "display_name": "v4.txt.11",
         "provider_version": "0.6.0",
         "placement": {
           "transform": {
@@ -3922,7 +3866,7 @@
         "bindings": [
           {
             "input": "caption_region",
-            "producer": "v2.chip.4",
+            "producer": "v4.chip.4",
             "output_port": "caption"
           }
         ]
@@ -3951,12 +3895,12 @@
       }
     },
     {
-      "id": "v2.txt.12",
+      "id": "v4.txt.12",
       "type": "arris.styled_text",
       "schema_version": 1,
       "provider": "arris.reference-core",
-      "created_revision": 3,
-      "updated_revision": 3,
+      "created_revision": 10,
+      "updated_revision": 10,
       "hierarchies": {
         "group": {
           "parent": null
@@ -3968,7 +3912,7 @@
       "domain_attributes": {
         "plane_index": 0,
         "order": 31,
-        "display_name": "v2.txt.12",
+        "display_name": "v4.txt.12",
         "provider_version": "0.6.0",
         "placement": {
           "transform": {
@@ -3982,7 +3926,7 @@
         "bindings": [
           {
             "input": "caption_region",
-            "producer": "v2.chip.5",
+            "producer": "v4.chip.5",
             "output_port": "caption"
           }
         ]
@@ -4011,12 +3955,12 @@
       }
     },
     {
-      "id": "v2.txt.13",
+      "id": "v4.txt.13",
       "type": "arris.styled_text",
       "schema_version": 1,
       "provider": "arris.reference-core",
-      "created_revision": 3,
-      "updated_revision": 3,
+      "created_revision": 10,
+      "updated_revision": 10,
       "hierarchies": {
         "group": {
           "parent": null
@@ -4028,7 +3972,7 @@
       "domain_attributes": {
         "plane_index": 0,
         "order": 33,
-        "display_name": "v2.txt.13",
+        "display_name": "v4.txt.13",
         "provider_version": "0.6.0",
         "placement": {
           "transform": {
@@ -4042,7 +3986,7 @@
         "bindings": [
           {
             "input": "caption_region",
-            "producer": "v2.chip.6",
+            "producer": "v4.chip.6",
             "output_port": "caption"
           }
         ]
@@ -4071,12 +4015,12 @@
       }
     },
     {
-      "id": "v2.txt.14",
+      "id": "v4.txt.14",
       "type": "arris.styled_text",
       "schema_version": 1,
       "provider": "arris.reference-core",
-      "created_revision": 3,
-      "updated_revision": 3,
+      "created_revision": 10,
+      "updated_revision": 10,
       "hierarchies": {
         "group": {
           "parent": null
@@ -4088,7 +4032,7 @@
       "domain_attributes": {
         "plane_index": 0,
         "order": 36,
-        "display_name": "v2.txt.14",
+        "display_name": "v4.txt.14",
         "provider_version": "0.6.0",
         "placement": {
           "transform": {
@@ -4102,7 +4046,7 @@
         "bindings": [
           {
             "input": "caption_region",
-            "producer": "v2.card.2",
+            "producer": "v4.card.2",
             "output_port": "caption"
           }
         ]
@@ -4158,12 +4102,12 @@
       }
     },
     {
-      "id": "v2.txt.16",
+      "id": "v4.txt.15",
       "type": "arris.styled_text",
       "schema_version": 1,
       "provider": "arris.reference-core",
-      "created_revision": 3,
-      "updated_revision": 3,
+      "created_revision": 10,
+      "updated_revision": 10,
       "hierarchies": {
         "group": {
           "parent": null
@@ -4174,8 +4118,8 @@
       },
       "domain_attributes": {
         "plane_index": 0,
-        "order": 40,
-        "display_name": "v2.txt.16",
+        "order": 38,
+        "display_name": "v4.txt.15",
         "provider_version": "0.6.0",
         "placement": {
           "transform": {
@@ -4189,7 +4133,94 @@
         "bindings": [
           {
             "input": "caption_region",
-            "producer": "v2.card.4",
+            "producer": "v4.card.3",
+            "output_port": "caption"
+          }
+        ]
+      },
+      "payload": {
+        "align": "left",
+        "face": "sans.regular",
+        "fill": "#4A5565",
+        "line_height": 1.3,
+        "max_height": 0.0,
+        "max_width": 0.0,
+        "overflow": "clip_to_region",
+        "padding": 10.0,
+        "runs": [
+          {
+            "start": 0,
+            "end": 30,
+            "face": "cond.semibold",
+            "size": 9.5,
+            "tracking": 0.9,
+            "fill": "#8792A2"
+          },
+          {
+            "start": 31,
+            "end": 35,
+            "face": "sans.semibold",
+            "size": 13.0,
+            "fill": "#1A2330"
+          },
+          {
+            "start": 36,
+            "end": 84,
+            "size": 10.5,
+            "fill": "#4A5565"
+          },
+          {
+            "start": 85,
+            "end": 123,
+            "size": 10.5,
+            "fill": "#4A5565"
+          },
+          {
+            "start": 124,
+            "end": 175,
+            "face": "mono.regular",
+            "size": 9.0,
+            "fill": "#8792A2"
+          }
+        ],
+        "size": 11.0,
+        "text": "C2 ANNOTATIONS ON A GENERATION\nnone\ncard, ask, receipt and ping all live on the seat\na rotation touches zero c2 annotations\nHRC keeps the generation subject; c2 stops using it",
+        "vertical_align": "top"
+      }
+    },
+    {
+      "id": "v4.txt.16",
+      "type": "arris.styled_text",
+      "schema_version": 1,
+      "provider": "arris.reference-core",
+      "created_revision": 10,
+      "updated_revision": 10,
+      "hierarchies": {
+        "group": {
+          "parent": null
+        },
+        "owner": {
+          "parent": "page-1"
+        }
+      },
+      "domain_attributes": {
+        "plane_index": 0,
+        "order": 40,
+        "display_name": "v4.txt.16",
+        "provider_version": "0.6.0",
+        "placement": {
+          "transform": {
+            "translate": [
+              0.0,
+              0.0
+            ]
+          }
+        },
+        "order_authored": true,
+        "bindings": [
+          {
+            "input": "caption_region",
+            "producer": "v4.card.4",
             "output_port": "caption"
           }
         ]
@@ -4245,12 +4276,12 @@
       }
     },
     {
-      "id": "v2.txt.17",
+      "id": "v4.txt.17",
       "type": "arris.styled_text",
       "schema_version": 1,
       "provider": "arris.reference-core",
-      "created_revision": 3,
-      "updated_revision": 3,
+      "created_revision": 10,
+      "updated_revision": 10,
       "hierarchies": {
         "group": {
           "parent": null
@@ -4262,7 +4293,7 @@
       "domain_attributes": {
         "plane_index": 0,
         "order": 43,
-        "display_name": "v2.txt.17",
+        "display_name": "v4.txt.17",
         "provider_version": "0.6.0",
         "placement": {
           "transform": {
@@ -4276,7 +4307,7 @@
         "bindings": [
           {
             "input": "caption_region",
-            "producer": "v2.card.5",
+            "producer": "v4.card.5",
             "output_port": "caption"
           }
         ]
@@ -4332,12 +4363,12 @@
       }
     },
     {
-      "id": "v2.txt.18",
+      "id": "v4.txt.18",
       "type": "arris.styled_text",
       "schema_version": 1,
       "provider": "arris.reference-core",
-      "created_revision": 3,
-      "updated_revision": 3,
+      "created_revision": 10,
+      "updated_revision": 10,
       "hierarchies": {
         "group": {
           "parent": null
@@ -4349,7 +4380,7 @@
       "domain_attributes": {
         "plane_index": 0,
         "order": 46,
-        "display_name": "v2.txt.18",
+        "display_name": "v4.txt.18",
         "provider_version": "0.6.0",
         "placement": {
           "transform": {
@@ -4363,7 +4394,7 @@
         "bindings": [
           {
             "input": "caption_region",
-            "producer": "v2.card.6",
+            "producer": "v4.card.6",
             "output_port": "caption"
           }
         ]
@@ -4419,12 +4450,12 @@
       }
     },
     {
-      "id": "v2.txt.19",
+      "id": "v4.txt.19",
       "type": "arris.styled_text",
       "schema_version": 1,
       "provider": "arris.reference-core",
-      "created_revision": 3,
-      "updated_revision": 3,
+      "created_revision": 10,
+      "updated_revision": 10,
       "hierarchies": {
         "group": {
           "parent": null
@@ -4436,7 +4467,7 @@
       "domain_attributes": {
         "plane_index": 0,
         "order": 49,
-        "display_name": "v2.txt.19",
+        "display_name": "v4.txt.19",
         "provider_version": "0.6.0",
         "placement": {
           "transform": {
@@ -4450,7 +4481,7 @@
         "bindings": [
           {
             "input": "caption_region",
-            "producer": "v2.card.7",
+            "producer": "v4.card.7",
             "output_port": "caption"
           }
         ]
@@ -4506,12 +4537,12 @@
       }
     },
     {
-      "id": "v2.txt.2",
+      "id": "v4.txt.2",
       "type": "arris.styled_text",
       "schema_version": 1,
       "provider": "arris.reference-core",
-      "created_revision": 3,
-      "updated_revision": 3,
+      "created_revision": 10,
+      "updated_revision": 10,
       "hierarchies": {
         "group": {
           "parent": null
@@ -4523,7 +4554,7 @@
       "domain_attributes": {
         "plane_index": 0,
         "order": 8,
-        "display_name": "v2.txt.2",
+        "display_name": "v4.txt.2",
         "provider_version": "0.6.0",
         "placement": {
           "transform": {
@@ -4537,7 +4568,7 @@
         "bindings": [
           {
             "input": "caption_region",
-            "producer": "v2.cont.2",
+            "producer": "v4.cont.2",
             "output_port": "caption"
           }
         ]
@@ -4581,12 +4612,12 @@
       }
     },
     {
-      "id": "v2.txt.20",
+      "id": "v4.txt.20",
       "type": "arris.styled_text",
       "schema_version": 1,
       "provider": "arris.reference-core",
-      "created_revision": 3,
-      "updated_revision": 3,
+      "created_revision": 10,
+      "updated_revision": 10,
       "hierarchies": {
         "group": {
           "parent": null
@@ -4598,7 +4629,7 @@
       "domain_attributes": {
         "plane_index": 0,
         "order": 52,
-        "display_name": "v2.txt.20",
+        "display_name": "v4.txt.20",
         "provider_version": "0.6.0",
         "placement": {
           "transform": {
@@ -4612,7 +4643,7 @@
         "bindings": [
           {
             "input": "caption_region",
-            "producer": "v2.card.8",
+            "producer": "v4.card.8",
             "output_port": "caption"
           }
         ]
@@ -4668,12 +4699,12 @@
       }
     },
     {
-      "id": "v2.txt.21",
+      "id": "v4.txt.21",
       "type": "arris.styled_text",
       "schema_version": 1,
       "provider": "arris.reference-core",
-      "created_revision": 3,
-      "updated_revision": 3,
+      "created_revision": 10,
+      "updated_revision": 10,
       "hierarchies": {
         "group": {
           "parent": null
@@ -4685,7 +4716,7 @@
       "domain_attributes": {
         "plane_index": 0,
         "order": 54,
-        "display_name": "v2.txt.21",
+        "display_name": "v4.txt.21",
         "provider_version": "0.6.0",
         "placement": {
           "transform": {
@@ -4699,7 +4730,7 @@
         "bindings": [
           {
             "input": "caption_region",
-            "producer": "v2.card.9",
+            "producer": "v4.card.9",
             "output_port": "caption"
           }
         ]
@@ -4755,12 +4786,12 @@
       }
     },
     {
-      "id": "v2.txt.3",
+      "id": "v4.txt.3",
       "type": "arris.styled_text",
       "schema_version": 1,
       "provider": "arris.reference-core",
-      "created_revision": 3,
-      "updated_revision": 3,
+      "created_revision": 10,
+      "updated_revision": 10,
       "hierarchies": {
         "group": {
           "parent": null
@@ -4772,7 +4803,7 @@
       "domain_attributes": {
         "plane_index": 0,
         "order": 10,
-        "display_name": "v2.txt.3",
+        "display_name": "v4.txt.3",
         "provider_version": "0.6.0",
         "placement": {
           "transform": {
@@ -4786,7 +4817,7 @@
         "bindings": [
           {
             "input": "caption_region",
-            "producer": "v2.cont.3",
+            "producer": "v4.cont.3",
             "output_port": "caption"
           }
         ]
@@ -4830,12 +4861,12 @@
       }
     },
     {
-      "id": "v2.txt.4",
+      "id": "v4.txt.4",
       "type": "arris.styled_text",
       "schema_version": 1,
       "provider": "arris.reference-core",
-      "created_revision": 3,
-      "updated_revision": 3,
+      "created_revision": 10,
+      "updated_revision": 10,
       "hierarchies": {
         "group": {
           "parent": null
@@ -4847,7 +4878,7 @@
       "domain_attributes": {
         "plane_index": 0,
         "order": 13,
-        "display_name": "v2.txt.4",
+        "display_name": "v4.txt.4",
         "provider_version": "0.6.0",
         "placement": {
           "transform": {
@@ -4861,7 +4892,7 @@
         "bindings": [
           {
             "input": "caption_region",
-            "producer": "v2.rec.1",
+            "producer": "v4.rec.1",
             "output_port": "caption"
           }
         ]
@@ -5009,20 +5040,33 @@
             "end": 759,
             "size": 10.0,
             "fill": "#4A5565"
+          },
+          {
+            "start": 760,
+            "end": 788,
+            "face": "sans.semibold",
+            "size": 10.0,
+            "fill": "#4A5565"
+          },
+          {
+            "start": 788,
+            "end": 996,
+            "size": 10.0,
+            "fill": "#4A5565"
           }
         ],
         "size": 11.0,
-        "text": "HRC.ANNOTATION · C2 · ASKS     subject seat · key mable@c2 + c2 + asks + open · updatedBy agent:mable · CAS --expect-updated-at\nopen questions · 2 rows        a status turn writes nothing · a row leaves when the seat removes it · the record survives rotation: it holds the question, not the conversation\n\nstella  Let Stella run the four live sends on the test card?     Approve (recommended) · Hold     task T-12235     review agree (vesta)     sent —\nc2demo  Who taps Send on c2demo-2?     Stella (recommended) · Me     task T-12235     review agree (vesta)     sent —\nper row:  id · ask · options · recommended · why? · task? · dependsOn? <seat>#<row> (folds under the owner's row, never sent) · review {verdict, why} (vesta) · sent {runId, at} (controller)",
+        "text": "HRC.ANNOTATION · C2 · ASKS     subject seat · key mable@c2 + c2 + asks + open · updatedBy agent:mable · CAS --expect-updated-at\nopen questions · 2 rows        a status turn writes nothing · a row leaves when the seat removes it · the record survives rotation: it holds the question, not the conversation\n\nstella  Let Stella run the four live sends on the test card?     Approve (recommended) · Hold     task T-12235     review agree (vesta)     sent —\nc2demo  Who taps Send on c2demo-2?     Stella (recommended) · Me     task T-12235     review agree (vesta)     sent —\nper row:  id · ask · options · recommended · why? · task? · dependsOn? <seat>#<row> (folds under the owner's row, never sent) · review {verdict, why} (vesta) · sent {runId, at} (controller)\nbeside it, also on the seat:  c2 · ping · last {at, attentionAt, generation} (controller)   ·   c2 · receipt · <requestId> (the pane's per-action claim; target generation in the body)   ·   Vesta's own asks are rows in vesta@c2's record",
         "vertical_align": "top"
       }
     },
     {
-      "id": "v2.txt.6",
+      "id": "v4.txt.5",
       "type": "arris.styled_text",
       "schema_version": 1,
       "provider": "arris.reference-core",
-      "created_revision": 3,
-      "updated_revision": 3,
+      "created_revision": 10,
+      "updated_revision": 10,
       "hierarchies": {
         "group": {
           "parent": null
@@ -5033,8 +5077,8 @@
       },
       "domain_attributes": {
         "plane_index": 0,
-        "order": 19,
-        "display_name": "v2.txt.6",
+        "order": 15,
+        "display_name": "v4.txt.5",
         "provider_version": "0.6.0",
         "placement": {
           "transform": {
@@ -5048,7 +5092,75 @@
         "bindings": [
           {
             "input": "caption_region",
-            "producer": "v2.card.1",
+            "producer": "v4.cont.4",
+            "output_port": "caption"
+          }
+        ]
+      },
+      "payload": {
+        "align": "left",
+        "face": "sans.regular",
+        "fill": "#4A5565",
+        "line_height": 1.3,
+        "max_height": 0.0,
+        "max_width": 0.0,
+        "overflow": "clip_to_region",
+        "padding": 12.0,
+        "runs": [
+          {
+            "start": 0,
+            "end": 14,
+            "face": "cond.semibold",
+            "size": 9.5,
+            "tracking": 0.9,
+            "fill": "#8792A2"
+          },
+          {
+            "start": 16,
+            "end": 39,
+            "face": "sans.semibold",
+            "size": 12.5,
+            "fill": "#1A2330"
+          }
+        ],
+        "size": 11.0,
+        "text": "HRC.GENERATION  generation 2 · archived",
+        "vertical_align": "top"
+      }
+    },
+    {
+      "id": "v4.txt.6",
+      "type": "arris.styled_text",
+      "schema_version": 1,
+      "provider": "arris.reference-core",
+      "created_revision": 10,
+      "updated_revision": 10,
+      "hierarchies": {
+        "group": {
+          "parent": null
+        },
+        "owner": {
+          "parent": "page-1"
+        }
+      },
+      "domain_attributes": {
+        "plane_index": 0,
+        "order": 19,
+        "display_name": "v4.txt.6",
+        "provider_version": "0.6.0",
+        "placement": {
+          "transform": {
+            "translate": [
+              0.0,
+              0.0
+            ]
+          }
+        },
+        "order_authored": true,
+        "bindings": [
+          {
+            "input": "caption_region",
+            "producer": "v4.card.1",
             "output_port": "caption"
           }
         ]
@@ -5104,12 +5216,12 @@
       }
     },
     {
-      "id": "v2.txt.7",
+      "id": "v4.txt.7",
       "type": "arris.styled_text",
       "schema_version": 1,
       "provider": "arris.reference-core",
-      "created_revision": 3,
-      "updated_revision": 3,
+      "created_revision": 10,
+      "updated_revision": 10,
       "hierarchies": {
         "group": {
           "parent": null
@@ -5121,7 +5233,7 @@
       "domain_attributes": {
         "plane_index": 0,
         "order": 21,
-        "display_name": "v2.txt.7",
+        "display_name": "v4.txt.7",
         "provider_version": "0.6.0",
         "placement": {
           "transform": {
@@ -5135,7 +5247,7 @@
         "bindings": [
           {
             "input": "caption_region",
-            "producer": "v2.cont.5",
+            "producer": "v4.cont.5",
             "output_port": "caption"
           }
         ]
@@ -5179,12 +5291,12 @@
       }
     },
     {
-      "id": "v2.txt.8",
+      "id": "v4.txt.8",
       "type": "arris.styled_text",
       "schema_version": 1,
       "provider": "arris.reference-core",
-      "created_revision": 3,
-      "updated_revision": 3,
+      "created_revision": 10,
+      "updated_revision": 10,
       "hierarchies": {
         "group": {
           "parent": null
@@ -5196,7 +5308,7 @@
       "domain_attributes": {
         "plane_index": 0,
         "order": 23,
-        "display_name": "v2.txt.8",
+        "display_name": "v4.txt.8",
         "provider_version": "0.6.0",
         "placement": {
           "transform": {
@@ -5210,7 +5322,7 @@
         "bindings": [
           {
             "input": "caption_region",
-            "producer": "v2.chip.1",
+            "producer": "v4.chip.1",
             "output_port": "caption"
           }
         ]
@@ -5239,12 +5351,12 @@
       }
     },
     {
-      "id": "v2.txt.9",
+      "id": "v4.txt.9",
       "type": "arris.styled_text",
       "schema_version": 1,
       "provider": "arris.reference-core",
-      "created_revision": 3,
-      "updated_revision": 3,
+      "created_revision": 10,
+      "updated_revision": 10,
       "hierarchies": {
         "group": {
           "parent": null
@@ -5256,7 +5368,7 @@
       "domain_attributes": {
         "plane_index": 0,
         "order": 25,
-        "display_name": "v2.txt.9",
+        "display_name": "v4.txt.9",
         "provider_version": "0.6.0",
         "placement": {
           "transform": {
@@ -5270,7 +5382,7 @@
         "bindings": [
           {
             "input": "caption_region",
-            "producer": "v2.chip.2",
+            "producer": "v4.chip.2",
             "output_port": "caption"
           }
         ]
