@@ -35,6 +35,11 @@
       "id": "seat-data-model-seat-questions",
       "src": "seat-data-model-seat-questions.arris.json",
       "title": "seat-data-model-seat-questions"
+    },
+    {
+      "id": "seat-data-document-seat-questions",
+      "src": "seat-data-document-seat-questions.arris.json",
+      "title": "seat-data-document-seat-questions"
     }
   ]
 }

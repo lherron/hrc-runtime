@@ -1,0 +1,189 @@
+{
+  "package": "architecture",
+  "title": "The hrc document is a lineage: project › seat › generation › runtime; a seat's open questions are one annotation on the seat",
+  "subtitle": "hrc:hrc node types · to-be · T-12239, 2026-11-01 · shape agreed with Lance, Daedalus pending",
+  "stamp": "TO-BE · 2026-11-01 · T-12239",
+  "direction": "TB",
+  "legend": {
+    "flow": "lineage hierarchy (parent › child)",
+    "result": "folded from the ledger",
+    "dependency": "mirrors a store row"
+  },
+  "boundaries": [
+    {
+      "id": "doc",
+      "name": "hrc document (rebuildable, observation types only)"
+    },
+    {
+      "id": "outside",
+      "name": "Outside doms: the time series"
+    }
+  ],
+  "nodes": [
+    {
+      "id": "project",
+      "name": "hrc.project",
+      "role": "architecture.component",
+      "kicker": "NODE · ROOT",
+      "body": "One per project with a seat on this node",
+      "meta": "key: projectId",
+      "boundary": "doc"
+    },
+    {
+      "id": "seat",
+      "name": "hrc.seat",
+      "role": "architecture.component",
+      "kicker": "NODE · CONTINUITY",
+      "emphasis": true,
+      "bullets": [
+        "identity: agent, project, task, role",
+        "metadata: title, colour",
+        "annotations: asks, receipt, ping, hcs"
+      ],
+      "meta": "key: sessionRef = scope/lane",
+      "boundary": "doc"
+    },
+    {
+      "id": "gen",
+      "name": "hrc.generation (N)",
+      "role": "architecture.component",
+      "kicker": "NODE · SESSION",
+      "bullets": [
+        "status active; continuation state",
+        "attention: jev or tool, at",
+        "live until runtime gone + 24 h"
+      ],
+      "meta": "key: hostSessionId · order: generation · (+ runId, turnId: proposed)",
+      "boundary": "doc"
+    },
+    {
+      "id": "genprev",
+      "name": "hrc.generation (N−1)",
+      "role": "architecture.component",
+      "kicker": "NODE · SESSION",
+      "body": "Archived; drops out after 24 h. No c2 annotation rides with it",
+      "meta": "key: hostSessionId",
+      "boundary": "doc"
+    },
+    {
+      "id": "runtime",
+      "name": "hrc.runtime",
+      "role": "architecture.component",
+      "kicker": "NODE · PROCESS",
+      "bullets": [
+        "transport, harness, status",
+        "tmux, hrcpty attach surface",
+        "contextReading"
+      ],
+      "meta": "key: runtimeId · attachable",
+      "boundary": "doc"
+    },
+    {
+      "id": "asks",
+      "name": "hrc.annotation · c2.asks",
+      "role": "architecture.artifact",
+      "kicker": "NODE · ANNOTATION · SEAT",
+      "emphasis": true,
+      "bullets": [
+        "open questions: one record, a row each",
+        "seat writes, Vesta reviews, controller stamps",
+        "status turns write nothing; survives rotation"
+      ],
+      "meta": "key: subject seat · c2 · asks · open · fence: CAS updatedAt",
+      "boundary": "doc"
+    },
+    {
+      "id": "seatann",
+      "name": "hrc.annotation (other seat kinds)",
+      "role": "architecture.artifact",
+      "kicker": "NODE · ANNOTATION · SEAT",
+      "bullets": [
+        "c2.receipt: the per-action claim",
+        "c2.ping: last ping (at, attentionAt)",
+        "wrkq.hcs: the hcs binding"
+      ],
+      "meta": "key: subject, ns, kind, id · JSON ≤ 64 KB",
+      "boundary": "doc"
+    },
+    {
+      "id": "genann",
+      "name": "hrc.annotation (generation)",
+      "role": "architecture.artifact",
+      "kicker": "NODE · ANNOTATION · GENERATION",
+      "body": "Allowed by HRC (a future turn summary); c2 writes none. Stays with its generation",
+      "meta": "any new kind: no HRC change",
+      "boundary": "doc"
+    },
+    {
+      "id": "ledger",
+      "name": "Event ledger",
+      "role": "architecture.datastore",
+      "kicker": "DATASTORE · HRC",
+      "body": "turn.attention and seat.annotation.action stay events, never nodes",
+      "meta": "hrc_events",
+      "boundary": "outside"
+    },
+    {
+      "id": "tables",
+      "name": "Store rows",
+      "role": "architecture.datastore",
+      "kicker": "DATASTORE · HRC",
+      "body": "Every node mirrors one row; a client changes the row, never the node",
+      "meta": "continuities · sessions · runtimes · session_metadata · seat_annotations",
+      "boundary": "outside"
+    }
+  ],
+  "relationships": [
+    {
+      "from": "project",
+      "to": "seat",
+      "label": "lineage"
+    },
+    {
+      "from": "seat",
+      "to": "asks",
+      "label": "lineage"
+    },
+    {
+      "from": "seat",
+      "to": "seatann",
+      "label": "lineage"
+    },
+    {
+      "from": "seat",
+      "to": "gen",
+      "label": "lineage"
+    },
+    {
+      "from": "seat",
+      "to": "genprev",
+      "label": "lineage"
+    },
+    {
+      "from": "gen",
+      "to": "runtime",
+      "label": "lineage"
+    },
+    {
+      "from": "gen",
+      "to": "genann",
+      "label": "lineage"
+    },
+    {
+      "from": "ledger",
+      "to": "gen",
+      "role": "architecture.result",
+      "label": "selected event → attention"
+    },
+    {
+      "from": "tables",
+      "to": "seat",
+      "role": "architecture.dependency"
+    },
+    {
+      "from": "tables",
+      "to": "asks",
+      "role": "architecture.dependency"
+    }
+  ]
+}
