@@ -17,6 +17,9 @@ Product claims, each a check:
                  question; a put fenced on A1 is admitted; the turn is answered
                  and completes, the kernel's hrc.seat attention moves off A1,
                  and the same A1 fence now refuses stale_attention
+  http-attention (T-12212) GET /v1/sessions/attention answers the kernel's
+                 lit attention (at == A1) while the question is open and null
+                 once the answered turn completes, runtimeLive true throughout
   delete         delete with the current --expect-updated-at succeeds and the
                  row is gone
   act            act appends session.annotation.action {key, action,
@@ -75,6 +78,7 @@ import signal
 import subprocess
 import sys
 import time
+import urllib.parse
 import uuid
 
 HERE = Path(__file__).resolve().parent
@@ -243,6 +247,8 @@ def main():
         r.wait(lambda: r.rows("SELECT 1 FROM hrc_events WHERE run_id=? AND event_kind='turn.awaiting_input'", (run,)), 60, 'open question')
         lit_seat, lit = r.wait(lambda: (lambda s: s if s[1] else None)(seat_attention(ref)), 20, 'lit kernel attention')
         a1 = lit['at']
+        attention_path = '/v1/sessions/attention?' + urllib.parse.urlencode({'scopeRef': scope})
+        http_lit = r.http('GET', attention_path)
         awaiting = r.rows("SELECT ts FROM hrc_events WHERE run_id=? AND event_kind='turn.awaiting_input'", (run,))
         control = cli('put', ref, *key, '--id', 'attn', '--body-file', '-', '--expect-attention-at', a1, stdin='{"state":"draft"}')
         status, contrib = r.http('POST', '/v1/active-run-contributions', {
@@ -250,6 +256,7 @@ def main():
             'prompt': 'E2E-ANSWER', 'selector': {'runtimeId': rt}})
         r.wait(lambda: r.rows("SELECT 1 FROM runs WHERE run_id=? AND status='completed'", (run,)), 60, 'answered turn completed')
         moved_seat, moved = r.wait(lambda: (lambda s: s if (s[1] or {}).get('at') != a1 else None)(seat_attention(ref)), 20, 'attention moved')
+        http_moved = r.http('GET', attention_path)
         stale_attn = cli('put', ref, *key, '--id', 'attn', '--body-file', '-', '--expect-attention-at', a1, stdin='{"state":"sent"}')
         stored = [x for x in cli('list', ref, '--ns', 'e2e')[1]['annotations'] if x['id'] == 'attn']
         (a.artifacts / 'kernel-seat.json').write_text(json.dumps({'lit': lit_seat, 'moved': moved_seat}, indent=1) + '\n')
@@ -259,6 +266,11 @@ def main():
                 and refused(stale_attn, 'stale_attention')
                 and [x['body'] for x in stored] == [{'state': 'draft'}],
                 a1=a1, awaitingTs=awaiting, control=control, answer=contrib, movedAttention=moved, refusal=stale_attn)
+        seat_fields = {'scopeRef': scope, 'laneRef': 'main', 'hostSessionId': host, 'generation': 1, 'runtimeLive': True}
+        r.check('http-attention', http_lit[0] == 200 and http_lit[1] == {**seat_fields, 'attention': lit}
+                and lit['at'] == a1 and moved is None
+                and http_moved[0] == 200 and http_moved[1] == {**seat_fields, 'attention': None},
+                lit=http_lit, moved=http_moved, kernelLit=lit)
 
         # == delete ===================================================================
         current = next(x for x in cli('list', ref)[1]['annotations'] if x['id'] == 'c1')['updatedAt']
@@ -293,13 +305,15 @@ const listed = await client.listSessionAnnotations({ scopeRef, kind: "sdk" })
 let refusal = null
 try { await client.deleteSessionAnnotation({ ...key, expect: { updatedAt: "1999-01-01T00:00:00.000Z" } }) } catch (e) { refusal = e.code }
 const acted = await client.actOnSessionAnnotation({ ...key, action: "probe" })
-console.log(JSON.stringify({ put, listed, refusal, acted }))
+const attention = await client.getSessionAttention({ scopeRef })
+console.log(JSON.stringify({ put, listed, refusal, acted, attention }))
 ''', str(r.socket), scope], cwd=REPO, env=clean, capture_output=True, text=True, timeout=60)
         sdk_out = json.loads(sdk.stdout) if sdk.returncode == 0 else None
         r.check('sdk', sdk_out is not None and sdk_out['put']['annotation']['updatedBy'] == 'agent:e2e-sdk'
                 and [x['body'] for x in sdk_out['listed']['annotations']] == [{'via': 'sdk'}]
                 and sdk_out['refusal'] == 'stale_annotation' and isinstance(sdk_out['acted']['hrcSeq'], int)
-                and row1['updatedBy'] == 'unknown',
+                and row1['updatedBy'] == 'unknown'
+                and sdk_out['attention']['hostSessionId'] == host and sdk_out['attention']['runtimeLive'] is True,
                 exit=sdk.returncode, out=sdk_out, stderr=sdk.stderr[-2000:])
 
         # == ledger ===================================================================

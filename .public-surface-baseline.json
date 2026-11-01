@@ -4527,6 +4527,22 @@
     },
     {
       "package": "hrc-core",
+      "symbol": "SessionAttention",
+      "kind": "type",
+      "file": "packages/hrc-core/src/session-annotations.ts",
+      "hash": "hrc-core|SessionAttention|type",
+      "count": 1
+    },
+    {
+      "package": "hrc-core",
+      "symbol": "SessionAttentionResponse",
+      "kind": "type",
+      "file": "packages/hrc-core/src/session-annotations.ts",
+      "hash": "hrc-core|SessionAttentionResponse|type",
+      "count": 1
+    },
+    {
+      "package": "hrc-core",
       "symbol": "SessionGetResponse",
       "kind": "type",
       "file": "packages/hrc-core/src/session-metadata.ts",

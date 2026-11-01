@@ -10,6 +10,7 @@ import type {
   PutSessionAnnotationRequest,
   PutSessionAnnotationResponse,
   SessionAnnotationWriteOptions,
+  SessionAttentionResponse,
   SessionGetResponse,
   SessionMetadataResponse,
   SessionMetadataTarget,
@@ -777,6 +778,11 @@ export class HrcClientRuntimeMethods extends HrcClientTransport {
     clear: string[]
   ): Promise<SessionMetadataResponse> {
     return this.patchSessionMetadata({ ...target, clear })
+  }
+
+  /** The seat's live attention by the shared rule (seat-annotations r1.1 §3). */
+  async getSessionAttention(target: SessionMetadataTarget): Promise<SessionAttentionResponse> {
+    return this.getJson<SessionAttentionResponse>(buildPath('/v1/sessions/attention', target))
   }
 
   async listSessionAnnotations(

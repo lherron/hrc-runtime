@@ -54,6 +54,11 @@
     {
       "listener": "main",
       "method": "GET",
+      "route": "/v1/sessions/attention"
+    },
+    {
+      "listener": "main",
+      "method": "GET",
       "route": "/v1/sessions"
     },
     {

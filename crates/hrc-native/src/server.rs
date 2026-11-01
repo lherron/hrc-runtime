@@ -807,6 +807,7 @@ fn implemented(method: &Method, path: &str) -> bool {
                 "/v1/sessions/page",
                 "/v1/sessions/facets",
                 "/v1/sessions/metadata",
+                "/v1/sessions/attention",
                 "/v1/runtimes",
                 "/v1/runs",
                 "/v1/attach",

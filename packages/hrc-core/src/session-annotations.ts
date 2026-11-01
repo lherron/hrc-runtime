@@ -82,3 +82,29 @@ export type SessionAnnotationRefusalCode =
   | 'stale_attention'
   | 'stale_annotation'
   | 'unknown_annotation'
+
+/**
+ * The seat's live attention (seat-annotations r1.1 §3): the value
+ * `hrc.seat.attention` carries, by the rule the stale_attention fence reads.
+ */
+export type SessionAttention = {
+  /** `jev` for a lit classification, `tool` for an open awaiting-input question. */
+  source: 'jev' | 'tool'
+  state: string
+  kind: string
+  /** The display event's timestamp; the `attentionAt` fence value. */
+  at: string
+  /** Present for `jev` (null when the classifier sent none). */
+  excerpt?: string | null | undefined
+}
+
+/** `GET /v1/sessions/attention` (local only): the continuity's active generation. */
+export type SessionAttentionResponse = {
+  scopeRef: string
+  laneRef: string
+  hostSessionId: string
+  generation: number
+  /** A runtime of this generation is live; without one, attention is null. */
+  runtimeLive: boolean
+  attention: SessionAttention | null
+}

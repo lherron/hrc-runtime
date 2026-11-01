@@ -22,6 +22,9 @@ pub fn handle(
     if is_annotation_route(method.as_str(), path) {
         return annotations(server, method, path, query, body, headers).map(Some);
     }
+    if *method == Method::GET && path == "/v1/sessions/attention" {
+        return attention(server, query).map(Some);
+    }
     let metadata = path == "/v1/sessions/metadata";
     if !(metadata && (*method == Method::GET || *method == Method::PATCH)
         || path == "/v1/sessions/get" && *method == Method::GET)
@@ -288,6 +291,43 @@ pub async fn resolve(server: &Shared, body: &[u8]) -> Result<Response, ApiError>
     Ok(Json(json!({"found":true,"hostSessionId":session["hostSessionId"],"generation":session["generation"],"created":created,"session":session,"identity":identity})).into_response())
 }
 
+/// `GET /v1/sessions/attention` (T-12212, local only): the continuity's active
+/// generation and its attention by the one rule the annotation fence and the
+/// kernel's `hrc.seat.attention` share (`hrc_store::attention`). `runtimeLive`
+/// is that rule's presence predicate; no second fold lives here.
+fn attention(server: &Server, query: &HashMap<String, String>) -> Result<Response, ApiError> {
+    let scope = query.get("scopeRef").ok_or_else(|| {
+        ApiError::bad(
+            "scopeRef and optional laneRef must be strings",
+            Some(json!({})),
+        )
+    })?;
+    let lane = query.get("laneRef").map_or("main", String::as_str);
+    let ref_string = format!("{scope}/lane:{}", hrc_store::storage_lane(lane));
+    let (scope, lane) = parse_session_ref(&ref_string)?;
+    let lane_ref = hrc_store::canonical_lane(lane);
+    let db = server.store.lock().unwrap();
+    let session = db.continuity_session(scope, lane)?.ok_or_else(|| {
+        ApiError::domain(
+            StatusCode::NOT_FOUND,
+            "unknown_host_session",
+            "unknown continuity",
+            Some(json!({"scopeRef":scope,"laneRef":lane_ref})),
+        )
+    })?;
+    let host = session["hostSessionId"].as_str().unwrap_or_default();
+    let generation = session["generation"].as_i64().unwrap_or_default();
+    Ok(Json(json!({
+        "scopeRef": scope,
+        "laneRef": lane_ref,
+        "hostSessionId": host,
+        "generation": generation,
+        "runtimeLive": db.generation_runtime_live(host, generation)?,
+        "attention": db.live_attention(host, generation)?,
+    }))
+    .into_response())
+}
+
 /// The request principal, as every session write records it (`updatedBy`).
 fn principal(headers: &HeaderMap) -> &str {
     headers
@@ -428,4 +468,198 @@ fn annotations(
         }
     };
     Ok(Json(answer).into_response())
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::server::{Shared, dispatch_inner, turns::admission::tests::server};
+    use axum::{body::Body, extract::Request, http::StatusCode};
+    use cardo_runtime::ingest::Projector;
+    use chrono::{Duration, SecondsFormat, Utc};
+    use hrc_domain::{projector::SeatProjector, reader::HrcRead};
+    use serde_json::{Value, json};
+
+    // Failure cases (T-12212): the route folding attention its own way and
+    // drifting from hrc.seat.attention; reading a generation other than the
+    // continuity's active one; runtimeLive disagreeing with the presence the
+    // rule gated on; a scope with no continuity answered 200 with null instead
+    // of unknown_host_session; the route missing from implemented() and so
+    // proxied or 404'd; laneRef not defaulting to main.
+    fn ts(offset_s: i64) -> String {
+        (Utc::now() - Duration::minutes(5) + Duration::seconds(offset_s))
+            .to_rfc3339_opts(SecondsFormat::Millis, true)
+    }
+    fn event(server: &Shared, s: &Value, category: &str, kind: &str, at: &str, payload: Value) {
+        let db = server.store.lock().unwrap();
+        hrc_store::append_event(
+            &db.sqlite,
+            &hrc_store::EventWrite {
+                ts: at,
+                host_session_id: s["hostSessionId"].as_str(),
+                scope_ref: s["scopeRef"].as_str(),
+                lane_ref: Some("main"),
+                generation: s["generation"].as_i64(),
+                category,
+                event_kind: kind,
+                payload_json: &payload.to_string(),
+                ..Default::default()
+            },
+        )
+        .unwrap();
+    }
+    fn runtime(server: &Shared, s: &Value, status: &str) {
+        let host = s["hostSessionId"].as_str().unwrap();
+        server.store.lock().unwrap().sqlite
+            .execute_batch(&format!(
+                "INSERT INTO runtimes(runtime_id,host_session_id,scope_ref,lane_ref,generation,transport,status,supports_inflight_input,created_at,updated_at) VALUES ('rt-{host}','{host}','{}','main',{},'tmux','{status}',0,'{at}','{at}')",
+                s["scopeRef"].as_str().unwrap(),
+                s["generation"],
+                at = ts(0),
+            ))
+            .unwrap();
+    }
+    fn lit(lit: bool) -> Value {
+        json!({"turnId":"t1","lit":lit,"state":"blocking","kind":"decision","excerpt":"Ship it?","classifierVersion":"attention-v3"})
+    }
+    async fn get(server: &Shared, query: &str) -> (StatusCode, Value) {
+        let request = Request::builder()
+            .method("GET")
+            .uri(format!("/v1/sessions/attention?{query}"))
+            .body(Body::empty())
+            .unwrap();
+        let response = dispatch_inner(server, request, false).await;
+        let status = response.status();
+        let bytes = axum::body::to_bytes(response.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        (status, serde_json::from_slice(&bytes).unwrap())
+    }
+    fn encode(v: &str) -> String {
+        form_urlencoded::byte_serialize(v.as_bytes()).collect()
+    }
+
+    #[tokio::test]
+    async fn route_attention_equals_projected_seat_attention() -> anyhow::Result<()> {
+        let (scratch, server) = server("off", false)?;
+        // case → (runtime status, events after a turn.completed); the cases of
+        // hrc-domain's live_attention equivalence test (T-12185).
+        type Case = (
+            &'static str,
+            Option<&'static str>,
+            Vec<(&'static str, &'static str, Value)>,
+        );
+        let cases: Vec<Case> = vec![
+            (
+                "lit",
+                Some("ready"),
+                vec![("turn", "turn.attention", lit(true))],
+            ),
+            (
+                "unlit",
+                Some("ready"),
+                vec![("turn", "turn.attention", lit(false))],
+            ),
+            (
+                "awaiting",
+                Some("ready"),
+                vec![("turn", "turn.awaiting_input", json!({"toolCallId":"c"}))],
+            ),
+            (
+                "later-non-turn",
+                Some("ready"),
+                vec![
+                    ("turn", "turn.attention", lit(true)),
+                    ("session", "session.metadata.changed", json!({})),
+                ],
+            ),
+            (
+                "later-turn",
+                Some("ready"),
+                vec![
+                    ("turn", "turn.attention", lit(true)),
+                    ("turn", "turn.started", json!({"turnId":"t2"})),
+                ],
+            ),
+            (
+                "no-runtime",
+                None,
+                vec![("turn", "turn.attention", lit(true))],
+            ),
+            (
+                "runtime-gone",
+                Some("terminated"),
+                vec![("turn", "turn.attention", lit(true))],
+            ),
+        ];
+        let mut seats = Vec::new();
+        for (name, rt, events) in &cases {
+            let scope = format!("agent:eq:project:p:task:{name}");
+            let (s, _) = server
+                .store
+                .lock()
+                .unwrap()
+                .create_session(&scope, "main")?;
+            event(
+                &server,
+                &s,
+                "turn",
+                "turn.completed",
+                &ts(1),
+                json!({"turnId":"t1"}),
+            );
+            for (i, (category, kind, payload)) in events.iter().enumerate() {
+                event(
+                    &server,
+                    &s,
+                    category,
+                    kind,
+                    &ts(2 + i as i64),
+                    payload.clone(),
+                );
+            }
+            if let Some(status) = rt {
+                runtime(&server, &s, status);
+            }
+            seats.push((*name, *rt == Some("ready"), scope, s));
+        }
+
+        let read = HrcRead::open(&scratch.root.join("state/state.sqlite"))?;
+        let edits = SeatProjector::new(read).bootstrap(None, 1000)?.edits;
+        let mut lit_seen = 0;
+        for (name, live, scope, s) in &seats {
+            let key = format!("{scope}/lane:main");
+            let seat = edits
+                .iter()
+                .find(|e| e["type"] == "hrc.seat" && e["key"]["sessionRef"] == key.as_str())
+                .unwrap_or_else(|| panic!("no seat for {name}"));
+            let projected = seat["payload"]
+                .get("attention")
+                .cloned()
+                .unwrap_or(Value::Null);
+            let (status, answer) = get(&server, &format!("scopeRef={}", encode(scope))).await;
+            assert_eq!(status, StatusCode::OK, "{name}: {answer}");
+            assert_eq!(
+                answer,
+                json!({"scopeRef":scope,"laneRef":"main","hostSessionId":s["hostSessionId"],
+                       "generation":1,"runtimeLive":live,"attention":projected}),
+                "{name}"
+            );
+            lit_seen += usize::from(!projected.is_null());
+        }
+        // lit, awaiting and later-non-turn carry attention: not vacuous.
+        assert_eq!(lit_seen, 3);
+
+        let unknown = "agent:eq:project:p:task:nobody";
+        let (status, refusal) = get(
+            &server,
+            &format!("scopeRef={}&laneRef=main", encode(unknown)),
+        )
+        .await;
+        assert_eq!(status, StatusCode::NOT_FOUND, "{refusal}");
+        assert_eq!(
+            refusal["error"]["code"], "unknown_host_session",
+            "{refusal}"
+        );
+        Ok(())
+    }
 }
