@@ -107,6 +107,7 @@ fn close(server: &Shared, rt: &db::Rt) -> anyhow::Result<bool> {
 
 /// One pass: judge every live runtime, retire the task seats that are due.
 pub async fn retire_task_seats(server: &Shared) -> anyhow::Result<Value> {
+    let _pass = super::maintenance::SEAT_PASSES.lock().await;
     let hours = idle_hours();
     let ttl_ms = (hours * 3_600_000.0) as i64;
     let rows = {
