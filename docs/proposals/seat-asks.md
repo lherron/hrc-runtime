@@ -1,6 +1,6 @@
 # Seat asks: a seat's open questions as one HRC seat record
 
-Status: r1, 2026-11-01, draft for Daedalus review (T-12239, c2 project; the contract is HRC's and lives here). Owner mable@hrc-runtime:primary. Rulings by Lance on 2026-11-01 are marked **RULED**. Diagrams: `diagrams/seat-data.arris-board.json` (frames `seat-data-question-keyed`, `seat-data-model-seat-questions`, `seat-data-document-seat-questions`; they still read `c2 · asks` and follow this document to `hrc · asks`) and `diagrams/taxonomy.arris-board.json#taxonomy-subjects` (the seat as the join of agent-spaces, wrkq and HRC).
+Status: r1.1, 2026-11-01, draft for Daedalus review (T-12239, c2 project; the contract is HRC's and lives here); r1.1 resolves Daedalus F1 (EN-40695): the seat never deletes the record, empty is the "none" state, absent reads as epoch. Owner mable@hrc-runtime:primary. Rulings by Lance on 2026-11-01 are marked **RULED**. Diagrams: `diagrams/seat-data.arris-board.json` (frames `seat-data-question-keyed`, `seat-data-model-seat-questions`, `seat-data-document-seat-questions`; they still read `c2 · asks` and follow this document to `hrc · asks`) and `diagrams/taxonomy.arris-board.json#taxonomy-subjects` (the seat as the join of agent-spaces, wrkq and HRC).
 
 ## 0. Claim
 
@@ -51,7 +51,7 @@ Row validity (readers apply it; HRC does not): `id` unique, `ask` non-empty, `op
 
 **Lifecycle, per row.** The seat adds a row when a question for its human arises, edits it while it is open, and removes it when answered (by any client) or moot. `sent` is stamped by whoever delivered the answer (`text` is what went to the seat, with the question in it, e.g. `1. Let Stella run the four live sends? — Approve.`); a sent row is shown greyed and leaves when the seat removes it on its next turn. Nobody else removes a seat's row. A row with `dependsOn` is folded under the row it names and is never delivered by itself. Partial answers: answered rows get `sent`, the rest stay open.
 
-**Record-level.** An empty `questions` array is a valid record ("no open questions"); the seat may leave the record absent instead. `updatedAt` moves only when the seat, a reviewer or a deliverer writes; a turn that changes nothing writes nothing. Rotation changes nothing: the next generation reads its own open rows.
+**Record-level.** An empty `questions` array is the "no open questions" state. **The seat never deletes the record:** it is created once (on the seat's first question, or as an empty record to answer a backstop ping) and persists until HRC retires it with the seat (`live_until`), so a reader comparing against its `updatedAt` always has a value; an absent record means "never created" and reads as `updatedAt = epoch` (Daedalus F1). `updatedAt` moves only when the seat, a reviewer or a deliverer writes; a turn that changes nothing writes nothing. Rotation changes nothing: the next generation reads its own open rows.
 
 ## 4. Operations (existing)
 
@@ -59,7 +59,7 @@ Row validity (readers apply it; HRC does not): `id` unique, `ask` non-empty, `op
 hrc session annotation put <seat> --subject seat --ns hrc --kind asks --id open \
     --expect-updated-at <prev> --as <agent principal> --body @asks.json
 hrc session annotation get <seat> --subject seat --ns hrc --kind asks --id open
-hrc session annotation delete …                       # the seat retiring its record
+# no delete: the seat empties the record (questions: []); HRC removes it with the seat
 seat.annotation.act                                   # a client's answer; appends session.annotation.action
 ```
 
@@ -77,7 +77,7 @@ In the Praesidium data taxonomy (`diagrams/taxonomy.arris-board.json`) this reco
 
 ## 7. Explicitly unsupported
 
-HRC-side writer authority or per-kind admission; a touch primitive or attention/generation fence on this record; a declared node type in this revision; body history; dedupe of rows by text; a shared decision record or auto-answering a new row from an old ruling; rows on task seats; HRC reading or validating rows; inferring questions from conversation text (the backstop is a nudge to the seat, never a writer); migration of existing `c2.card` rows (they drain under c2's prune).
+Seat-initiated delete of the record (D-F1: the record persists, empty, until HRC retires it with the seat); HRC-side writer authority or per-kind admission; a touch primitive or attention/generation fence on this record; a declared node type in this revision; body history; dedupe of rows by text; a shared decision record or auto-answering a new row from an old ruling; rows on task seats; HRC reading or validating rows; inferring questions from conversation text (the backstop is a nudge to the seat, never a writer); migration of existing `c2.card` rows (they drain under c2's prune).
 
 ## 8. Acceptance (HRC side; the product claims are T-12239's five gates)
 
@@ -89,3 +89,7 @@ HRC-side writer authority or per-kind admission; a touch primitive or attention/
 
 - D1 one-record-many-rows versus one-record-per-row: the trade is atomic seat edits against per-row CAS; the seat is the only row writer in practice, so the whole-record CAS is sufficient.
 - D6 timing of the typed node.
+
+## 10. Revision log
+
+- r1.1 (2026-11-01, EN-40695 F1): §3 record-level — the seat never deletes; empty is the none state; absent reads as epoch. §4 delete removed from the seat's operations. §7 adds seat-initiated delete. Reason: the T-12239 backstop dedupe compares `ping.at` with the record's `updatedAt`; permitted deletion made "answered then deleted" indistinguishable from "ping unanswered" (annotations.rs:424–431 removes the row outright).
