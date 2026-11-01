@@ -10,6 +10,11 @@
       "id": "taxonomy-subjects",
       "src": "taxonomy-subjects.arris.json",
       "title": "taxonomy-subjects"
+    },
+    {
+      "id": "taxonomy-subjects-inside",
+      "src": "taxonomy-subjects-inside.arris.json",
+      "title": "taxonomy-subjects (text inside)"
     }
   ],
   "title": "taxonomy"
