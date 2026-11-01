@@ -140,7 +140,7 @@ Merging daemons or stores; the kernel holding write authority, fences or a store
 
 0. Lance confirms A1 and §7; this record approved; the taxonomy record's step 0 (R4, R6 ruled; `federated-session-read` amended for the per-node page poll).
 1. **Parity table** (every CLI form → operation / human-only / retired, each write with its reconciliation class) and the HRC additive step from the taxonomy record (`seat.kind`, `seat.work`, `seat.asks` T-12239, `seat.handoff` M1). Both are invariant under every plan.
-2. **Kernel skeleton**: repo, daemon, launchd, fleet-status; `praesidium` document with the `agents` and `own` bindings and the `hrc@<node>` binding (remote-state projector); `praesidium-mcp` with read tools; gate 3 (isolation) and gate 4 (one model, seats only).
+2. **Kernel skeleton**: repo, daemon, launchd, fleet-status; `praesidium` document with the `agents` binding and the `hrc@<node>` binding (remote-state projector); `praesidium-mcp` with read tools; gate 3 (isolation) and gate 4 (one model, seats only).
 3. **wrkq binding** (D12 read views and incarnation land in wrkq first) and the delegated read-through ops; cardo pin bump.
 4. **Write ops over `agent.sock`** with identity and reconciliation classes; the optional HRC literal-input key replay if ruled (§7); gates 1, 2, 2a.
 5. **Migration** by space: one skill, one agent (gate 5); then the drain order mable sets, heaviest verbs first; the injected guides retire per verb.
