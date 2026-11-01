@@ -1,6 +1,6 @@
 # The Praesidium data taxonomy and the praesidium document
 
-Status: r1, 2026-11-01, draft for Daedalus review (T-12244). **Not for implementation: Lance is weighing whether the change is worth making.** Owner mable@hrc-runtime:primary. Rulings by Lance on 2026-11-01 are marked **RULED**. Diagrams: `diagrams/taxonomy.arris-board.json#taxonomy-subjects` (the nine subjects and their relationships), `diagrams/seat-data.arris-board.json` (the seat in depth, T-12183/T-12239).
+Status: r1.1, 2026-11-01, draft for Daedalus review (T-12244); r1.1 resolves Daedalus F1–F3 of EN-40706 (unattached promises placed; state fencing scoped to third-party writes; M1 import of project-scoped legacy handoffs). **Not for implementation: Lance is weighing whether the change is worth making.** Owner mable@hrc-runtime:primary. Rulings by Lance on 2026-11-01 are marked **RULED**. Diagrams: `diagrams/taxonomy.arris-board.json#taxonomy-subjects` (the nine subjects and their relationships), `diagrams/seat-data.arris-board.json` (the seat in depth, T-12183/T-12239).
 
 ## 0. Claim
 
@@ -39,23 +39,24 @@ This record does two things:
 | **generation** | `hostSessionId` | HRC | `hrc.generation`, N of a seat |
 | **runtime** | `runtimeId` | HRC | `hrc.runtime` |
 
-A thing is a subject when other records are about it and it has its own lifecycle. A promise is not a subject (it is about a task or container; nothing is about a promise): it is an obligation record. A workstream is (a seat is bound to it, tasks fall under it, notes are about it; it opens and closes on the human's attention, not on any task's).
+A thing is a subject when other records are about it and it has its own lifecycle. A promise is not a subject (nothing is about a promise): it is an obligation record owned by a principal. Its subject is the task or container it references; a promise that references neither (`wrkq/internal/domain/promises.go`: a principal-owned text subject; PR-00006 open on 2026-11-01, 10 of 198 retained) is the owner's own commitment and is placed on the **agent** row. A workstream is (a seat is bound to it, tasks fall under it, notes are about it; it opens and closes on the human's attention, not on any task's).
 
 ### 2.2 Registers
 
 | register | meaning | write discipline | ends |
 |---|---|---|---|
 | **identity** | the thing exists; this is its key | written once by the minting system | retired, never edited |
-| **state** | the current truth, one value at a time | overwritten in place under a fence (`etag`, `expect.updatedAt`) | superseded |
+| **state** | the current truth, one value at a time | overwritten in place; a **third-party** write is fenced (`etag`, `expect.updatedAt`); the owner's own writes follow the owner's contract (launch-replaced session metadata is last-writer-wins under `hrc-runtime.session-identity-metadata`, unchanged) | superseded |
 | **obligation** | owed from A to B, open until discharged | two parties, a lifecycle, a deadline or trigger; someone can be late | discharged, withdrawn, failed |
 | **ledger** | what happened | appended, never changed; ordered; retention is a policy | never (keep-forever by default in this fleet) |
 | **extension** | an opaque body a third party attaches to a subject it does not own | `{subject, ns, kind, id, body, fence}`; the writer owns the schema; the ns names it | with its subject, or by its writer |
 
-The register fixes the write API: state needs a fence, ledger needs a cursor, obligation needs a discharge verb and a lateness query, extension needs a namespace. Several records are in the wrong register today: a handoff is stored as state with a status column and behaves as an obligation.
+The register fixes the write API **as seen by a reader or third-party writer**: state takes a fence, ledger takes a cursor, obligation takes a discharge verb and a lateness query, extension takes a namespace. It does not rewrite an owner's internal write path; where an active owner contract says a write is unfenced (launch metadata), the type declares it (`writable: owner`) and a reader learns it has no fence to supply. Several records are in the wrong register today: a handoff is stored as state with a status column and behaves as an obligation.
 
 ### 2.3 Rules
 
 - **R1 Minting.** A record lives with the system that mints its subject's key. A record about two subjects lives with the one whose lifecycle ends it (a handoff is owed between two generations of one seat and consumed by the rotation → HRC; an envelope is between two seats inside a conversation and ends with the room → wrkq).
+- **R1a Obligations between principals.** An obligation owed between parties (envelope, promise, workflow obligation) lives in the collaboration ledger, wrkq, whatever subject it is about, because wrkq owns the obligation register between parties. An obligation internal to one subject's lifecycle (a handoff between two generations of one seat; a claim on a task) lives with that subject's minter. R1 names the home; R1a names the exception and why.
 - **R2 Naming.** Type names are `subject[.kind]`: `seat`, `seat.asks`, `seat.handoff`, `task`, `task.comment`, `room.envelope`, `agent`. The provider (who declares and serves the type) is recorded beside the name, as cardo already does. `hrc.*` and `aspd.*` are legacy names retired when readers have moved to the praesidium document.
 - **R3 Durability vs projection.** Keeping is a store property; projecting is a window. Every store keeps forever unless a retention rule is approved; the document shows only the current situation per subject (identity and state as nodes; obligations as nodes until discharged plus a short window; extensions as opaque nodes; ledger never, except as derived "latest" fields).
 - **R4 Canonical keys.** In every payload: `scopeRef` for seats (`sessionRef` only where the lane matters), the public id (`T-`, `P-`, `R-`, `EN-`) for wrkq subjects, `agent:<id>` for agents. `mable@x:y` handles and uuids are display and storage forms, never join keys.
@@ -65,13 +66,13 @@ The register fixes the write API: state needs a fence, ledger needs a cursor, ob
 
 | subject | identity | state | obligation | ledger | extension |
 |---|---|---|---|---|---|
-| agent | profile `[identity]` | resolved profile + hash, status | — | `aspd.compile` by agentId; campaign logs | `skills/ memory/ brain/ SOUL.md` by convention |
+| agent | profile `[identity]` | resolved profile + hash, status | promise with no task/container (the owner's own commitment; stored in wrkq, R1a) | `aspd.compile` by agentId; campaign logs | `skills/ memory/ brain/ SOUL.md` by convention |
 | project | container kind=project | description, webhooks | — | project_events | *(ext, new)* |
 | work group | container directory\|feature\|area | title, sort | promise (subject=container) | container.* events | *(ext, new)* |
 | task | task + relations | state, assignee, claim, spec, workflow instance | claim · promise · workflow obligations | transitions, comments, evidence, attachments, ledger_entry | **`tasks.meta.*`/labels → ext** (move) |
 | workstream | task kind=workstream, owner | title, `covers` (task ids or a container) | — | task events | — |
 | room | room kind=subject, members | state, last_activity | **envelope** (reply_required / fyi / note) | envelope.* events, presentations | — |
-| seat | `hrc.seat`, **kind** | presentation; **`seat.asks`** (new); **`seat.work`** (new, → task \| workstream \| none); appearance | **`seat.handoff`** (move from wrkq) | `hrc_events` by scope | `c2.config / ping / receipt` (controller's own) |
+| seat | `hrc.seat`, **kind** | presentation and appearance (owner-written at launch, unfenced by contract); **`seat.asks`** (new); **`seat.work`** (new, → task \| workstream \| none) | **`seat.handoff`** (move from wrkq) | `hrc_events` by scope | `c2.config / ping / receipt` (controller's own) |
 | generation | `hrc.generation` | status, attention | — | turns, runs | allowed; c2 writes none |
 | runtime | `hrc.runtime` | status, transport, hrcpty/tmux, context | — | broker events, bipc | — |
 
@@ -119,7 +120,7 @@ Solid edges on the subjects frame are hierarchies: `agent ⊃ seat ⊃ generatio
 
 | # | move | from → to | register | authority after |
 |---|---|---|---|---|
-| M1 | **seat.handoff** | wrkq `handoffs` → HRC `seat_handoffs` (keep-forever), `hrc handoff create/get/acknowledge`, rotation injects the pending handoff into generation N+1's first turn; one-time import of the 773 wrkq rows; `wrkq handoff` shim then retired | obligation (N → N+1) | HRC from the landing commit |
+| M1 | **seat.handoff** | wrkq `handoffs` → HRC `seat_handoffs` (keep-forever), `hrc handoff create/get/acknowledge`, rotation injects the pending handoff into generation N+1's first turn; `wrkq handoff` shim then retired. **Import (F3):** legacy rows are project-scoped by design (`wrkq.handoff.caller-owned-scope`: `agent@project`, task/role discarded — H-00741 minisvc and H-00742 hrcdev share `agent:mable:project:hrc-runtime`), so no stored key names the seat. Every imported row keeps `legacyScope` and gets `seat = null`; acknowledged rows are history, listable by `hrc handoff list --project`, never projected; the pending rows (22 on 2026-11-01) are assigned their seat **by hand at cutover** by the owning agent, from the titles, before the shim retires — never by code reading the text. New handoffs key by full seat scope + lane; `hrc handoff create` from a seat defaults to that seat | obligation (N → N+1) | HRC from the landing commit |
 | M2 | **seat.asks** | c2 cards (generation-scoped) → one seat record, T-12239 | state | HRC (`ns: hrc`) |
 | M3 | **seat.kind, seat.work** | key parsing → declared fields; `work` is late-bound (skill rules bind/promote; backstop detector) | identity, state | HRC |
 | M4 | **workstream** | hcs task + `meta.hcs_*` → task `kind=workstream`, `owner`, `covers`; `seat.work` replaces `hcs_agent`; `hcs` CLI and `track-in-hcs` renamed | identity, state | wrkq |
@@ -132,7 +133,7 @@ Solid edges on the subjects frame are hierarchies: `agent ⊃ seat ⊃ generatio
 |---|---|---|
 | D1 | Unify the document, not the systems. | The boundaries pay on the write side; a reader never benefited from three documents; lineage across systems needs one. |
 | D2 | Taxonomy names from day one on the new provider; legacy `hrc.*` retired by mount switch, not rename. | No consumer migration of 40 Loggia sites; the old document simply stops being mounted. |
-| D3 | Register and provider are declared attributes on every type. | A pane learns mechanically which fields take a fence, which nodes vanish on discharge, which bodies are opaque. |
+| D3 | Register, provider and writability (`writable: owner \| fenced \| none`) are declared attributes on every type. | A pane learns mechanically which fields take a fence when *it* writes, which nodes vanish on discharge, which bodies are opaque; owner-internal writes keep their contracts (F2). |
 | D4 | Stale, never absent; cursor age per feed on the document. | Keeps three-system failure isolation visible to readers. |
 | D5 | Durability is the store's; projection is a window (R3). | Handoffs, envelopes, workstreams are kept forever and projected while live. |
 | D6 | Canonical keys (R4) ruled before any projector is written. | The cheapest decision and the one that bites daily if skipped. |
@@ -141,7 +142,7 @@ Solid edges on the subjects frame are hierarchies: `agent ⊃ seat ⊃ generatio
 
 ## 6. Explicitly unsupported
 
-Merging the daemons or stores; moving write authority or fences into the provider; HRC validating wrkq or agent bodies; projecting any ledger (comments, events, transitions) as nodes; projecting closed tasks, terminal envelopes or archived anything (R3 windows); inferring `seat.work` from conversation text or from provenance alone (a primary that mints a campaign has touched twelve tasks and is on none); renaming wrkq RPC nouns; an agent store outside `var/agents`; lineage hierarchies before cardo's keyed-parent upsert; per-field history in the document.
+Merging the daemons or stores; moving write authority or fences into the provider; HRC validating wrkq or agent bodies; projecting any ledger (comments, events, transitions) as nodes; projecting closed tasks, terminal envelopes or archived anything (R3 windows); inferring `seat.work` from conversation text or from provenance alone (a primary that mints a campaign has touched twelve tasks and is on none); inferring a legacy handoff's seat from its text (F3: hand assignment of the pending rows at cutover); fencing the owner's own launch writes (F2); renaming wrkq RPC nouns; an agent store outside `var/agents`; lineage hierarchies before cardo's keyed-parent upsert; per-field history in the document.
 
 ## 7. Open for Lance
 
@@ -170,4 +171,5 @@ Merging the daemons or stores; moving write authority or fences into the provide
 
 ## 10. Revision log
 
+- r1.1 (2026-11-01, EN-40706): F1 — unattached promises placed on the agent row, R1a added for obligations between principals. F2 — state fencing scoped to third-party writes; `writable` declared per type; launch metadata stays last-writer-wins. F3 — M1 import: `legacyScope` + `seat = null` for history, hand seat assignment of the pending rows at cutover, new handoffs keyed by full seat scope.
 - r1 (2026-11-01): first draft, written after a day of iteration with Lance from the hrc-runtime seat; supersedes the three-documents-joined-by-key shape discussed earlier the same day.
