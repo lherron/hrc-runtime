@@ -13,25 +13,22 @@ impl Release {
         let package = binary
             .parent()
             .context("native executable has no directory")?;
-        let root = package.parent().context("native package has no parent")?;
-        let atomic = package.file_name().is_some_and(|s| s == "bin")
-            && root
-                .parent()
-                .and_then(|p| p.file_name())
-                .is_some_and(|s| s == "hrc-runtime-releases")
-            && root.file_name().and_then(|s| s.to_str()).is_some_and(|s| {
+        // In-release or the owner's fixed signed copy (T-12224); see hrc_common::release.
+        let root = hrc_common::release::current().filter(|root| {
+            root.file_name().and_then(|s| s.to_str()).is_some_and(|s| {
                 s.starts_with("release-")
                     && s.len() > 8
                     && s[8..]
                         .bytes()
                         .all(|c| c.is_ascii_alphanumeric() || b"._-".contains(&c))
-            });
-        if !atomic {
+            })
+        });
+        let Some(root) = root else {
             return Ok(Self {
                 captured: json!({"mode":"unmanaged","packagePath":package,"processStartedAt":started_at}),
                 installed_link: None,
             });
-        }
+        };
         let manifest_path = root.join("praesidium-release.json");
         let manifest: Value = serde_json::from_slice(
             &fs::read(&manifest_path).context("native atomic release manifest missing")?,

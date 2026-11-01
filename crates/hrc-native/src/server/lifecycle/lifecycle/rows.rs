@@ -42,18 +42,10 @@ fn ev() -> events::Ev {
     }
 }
 fn release_identity() -> Result<(Value, Value)> {
-    let executable = std::fs::canonicalize(std::env::current_exe()?)?;
-    let root = executable
-        .parent()
-        .and_then(|p| p.parent())
-        .context("native executable has no release parent")?;
-    if root
-        .parent()
-        .and_then(|p| p.file_name())
-        .is_none_or(|n| n != "hrc-runtime-releases")
-    {
+    // In-release or the owner's fixed signed copy (T-12224).
+    let Some(root) = hrc_common::release::current() else {
         return Ok((Value::Null, Value::Null));
-    }
+    };
     let manifest: Value = serde_json::from_str(&std::fs::read_to_string(
         root.join("praesidium-release.json"),
     )?)?;

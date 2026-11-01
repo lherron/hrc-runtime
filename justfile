@@ -436,6 +436,53 @@ switch-owner-rusthrc node mode="render" ref="@max3" restart="wait":
     fi
     just _node-readback "$ssh_target" "$node" "$sha" "$(value SWITCH_ASPD_SHA)" "$(value SWITCH_ASPD_RELEASE)" "" no-publish
 
+# T-12224: a rusthrc owner plist that still execs the release link
+# (hrc-runtime-current/bin/rusthrc) is moved to the fixed signed copy
+# ~/praesidium/var/hrc-owner/bin/rusthrc, which keeps one macOS TCC identity
+# across releases. It stages the installed release (copy + sign), rewrites the
+# plist's exec path only, then `hrc server stop --node` (authorized daemon-side)
+# and bootstraps the refreshed plist; a restart alone would respawn launchd's
+# loaded definition. mode=render is read-only. Run once per node.
+
+# Move a node's rusthrc owner plist to the fixed signed exe (mode=render is read-only)
+refresh-owner-exe node mode="render" restart="wait":
+    #!/usr/bin/env bash
+    set -euo pipefail
+    node='{{ node }}'
+    case "$node" in
+      max3) ssh_target=max3 ;;
+      svc) ssh_target=mini ;;
+      hrcdev) ssh_target=hrcdev ;;
+      *) echo "refresh-owner-exe: unknown node ${node} (max3, svc, hrcdev)" >&2; exit 2 ;;
+    esac
+    case '{{ mode }}' in render | apply) ;; *) echo 'refresh-owner-exe: mode must be render or apply' >&2; exit 2 ;; esac
+    case '{{ restart }}' in
+      wait) flags=(--wait --wait-timeout-ms 300000) ;;
+      force) flags=(--force) ;;
+      *) echo 'refresh-owner-exe: restart must be wait or force' >&2; exit 2 ;;
+    esac
+    owner_script='{{ justfile_directory() }}/scripts/hrc-owner.sh'
+    on_node() { ssh -o BatchMode=yes -o ConnectTimeout=10 "$ssh_target" bash -s -- "$@" < "$owner_script"; }
+    [[ "$(on_node kind)" == rusthrc ]] || { echo "refresh-owner-exe: ${node} is not a rusthrc owner" >&2; exit 1; }
+    status="$(ssh -o BatchMode=yes -o ConnectTimeout=10 "$ssh_target" 'PATH="$HOME/.bun/bin:/opt/homebrew/bin:$PATH" hrc server status --json')"
+    sha="$(jq -er '.release.hrcBuild.sourceCommit' <<<"$status")"
+    aspd_sha="$(jq -r '.api.aspd.release.sourceCommit // ""' <<<"$status")"
+    aspd_release="$(jq -r '.api.aspd.release.releaseId // ""' <<<"$status")"
+    if [[ '{{ mode }}' == render ]]; then
+      on_node stage --expect-commit "$sha" --dry-run
+      on_node refresh-plist --dry-run
+      echo "[refresh-${node}] render only; nothing was changed. Apply: just refresh-owner-exe ${node} apply"
+      exit 0
+    fi
+    on_node stage --expect-commit "$sha"
+    report="$(on_node refresh-plist)"
+    printf '%s\n' "$report"
+    if grep -qx 'REFRESH_NEEDED=1' <<<"$report"; then
+      hrc server stop --node "$node" "${flags[@]}" --reason "refresh ${node} owner exe to the fixed signed copy (T-12224)"
+      on_node bootstrap
+    fi
+    just _node-readback "$ssh_target" "$node" "$sha" "$aspd_sha" "$aspd_release" "" no-publish
+
 # Run this before and after a deploy; an unreachable node prints as unreachable
 # instead of aborting the table.
 
@@ -1350,11 +1397,23 @@ _node-readback ssh-target expected-node target-sha aspd-sha aspd-release injecto
     # with it, or launchd still holds a definition the plist no longer declares.
     if plutil -extract ProgramArguments json -o - "$supervisor_plist" | jq -e 'any(.[]; endswith("/rusthrc"))' >/dev/null; then
       owner=rusthrc
-      # T-11893: the owner execs ~/praesidium/var/hrc-owner/hrc-runtime-current,
-      # a staged copy of an atomic release that no prune touches.
+      # T-11893: the owner runs a staged copy of an atomic release that no prune
+      # touches. T-12224: it execs the fixed signed copy bin/rusthrc; a plist not
+      # yet refreshed (just refresh-owner-exe) still execs the release link.
       owner_root="$HOME/praesidium/var/hrc-owner"
-      [[ "$binary_path" == "$owner_root/hrc-runtime-current/bin/rusthrc" ]] ||
-        fail "the plist declares a rusthrc owner but the daemon runs $binary_path"
+      plist_exe="$(plutil -extract ProgramArguments json -o - "$supervisor_plist" | jq -r 'map(select(endswith("/rusthrc")))[0]')"
+      case "$plist_exe" in
+        "$owner_root/bin/rusthrc")
+          [[ -f "$plist_exe" && ! -L "$plist_exe" ]] || fail "$plist_exe is not a regular file"
+          echo "[hrc] owner exe $plist_exe: $(codesign -dr - "$plist_exe" 2>/dev/null | sed -n 's/^designated => //p')"
+          ;;
+        "$owner_root/hrc-runtime-current/bin/rusthrc")
+          echo "[hrc] NOTE: the owner plist still execs the release link $plist_exe; a new macOS TCC identity every release until: just refresh-owner-exe ${expected_node}"
+          ;;
+        *) fail "the owner plist execs $plist_exe, not a staged owner exe" ;;
+      esac
+      [[ "$binary_path" == "$plist_exe" ]] ||
+        fail "the plist declares the rusthrc owner $plist_exe but the daemon runs $binary_path"
       release_root="$(jq -er '.release.releasePath' <<<"$status_after")" ||
         fail 'post-restart status did not report release.releasePath'
       [[ "$release_root" == "$owner_root/hrc-runtime-releases/release-"* ]] ||

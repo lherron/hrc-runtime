@@ -7,10 +7,14 @@
 #   hrc-owner.sh log-path [plist]                  the owner's StandardOutPath
 #   hrc-owner.sh render <bun-plist> <out>          owner plist from an installed Bun plist
 #   hrc-owner.sh stage --expect-commit <sha> [--dry-run]
-#                                                  copy the installed release to the owner root
+#                                                  copy the installed release to the owner root and
+#                                                  its rusthrc (signed when configured) to the fixed exe
 #   hrc-owner.sh preflight <node> <sha>            read-only switch report (KEY=value lines)
 #   hrc-owner.sh prepare <node> <sha>              stage + render the owner plist to <plist>.rusthrc-owner.next
 #   hrc-owner.sh activate                          after the stop: swap the plist in, bootstrap, wait for health
+#   hrc-owner.sh refresh-plist [--dry-run]         a rusthrc owner plist that still execs the old
+#                                                  release-link path: point it at the fixed exe
+#   hrc-owner.sh bootstrap                         after the stop: bootstrap the installed plist, wait for health
 #
 # The deploy and switch recipes pipe this file to a node over ssh
 # (`ssh host bash -s -- <cmd> ... < scripts/hrc-owner.sh`), so a node does not
@@ -26,7 +30,16 @@ LABEL=com.praesidium.hrc-server
 PLIST="${HRC_OWNER_PLIST:-$HOME/Library/LaunchAgents/$LABEL.plist}"
 OWNER_ROOT="${OWNER_ROOT:-$HOME/praesidium/var/hrc-owner}"
 INSTALLED_LINK="${INSTALLED_LINK:-$HOME/.bun/install/hrc-runtime-current}"
-OWNER_EXE="$OWNER_ROOT/hrc-runtime-current/bin/rusthrc"
+# The owner execs a fixed, real (never symlinked) copy of the staged release's
+# rusthrc (T-12224). macOS TCC keys a non-bundled binary's grants on its
+# resolved path plus its designated requirement, so a new release dir path or
+# an ad-hoc cdhash is a new app that must be approved again at the console.
+# With a node codesign identity, the copy's designated requirement is identifier
+# + certificate and stays the same across builds; rusthrc finds its release
+# through hrc-runtime-current beside bin/.
+OWNER_EXE="$OWNER_ROOT/bin/rusthrc"
+LEGACY_OWNER_EXE="$OWNER_ROOT/hrc-runtime-current/bin/rusthrc"
+CODESIGN_ID=com.praesidium.rusthrc
 export PATH="$HOME/.bun/bin:/opt/homebrew/bin:/usr/local/bin:$PATH"
 
 fail() { echo "[hrc-owner] FAIL: $*" >&2; exit 1; }
@@ -201,6 +214,9 @@ stage() {
     run mv "$dest.partial" "$dest"
     echo "[stage] copied to $dest"
   fi
+  # The fixed exe is copied, signed and probed before the link moves, so a
+  # refusal leaves the link and the exe as a matched pair.
+  prepare_owner_exe "$dest" "$id" "$dry"
   local link="$OWNER_ROOT/hrc-runtime-current" prev
   prev="$(readlink "$link" 2>/dev/null || true)"
   run ln -s "$dest" "$link.next"
@@ -209,7 +225,85 @@ stage() {
   if ((!dry)); then
     [[ "$(cd "$link" && pwd -P)" == "$dest" ]] || fail "link does not resolve to $dest"
   fi
+  commit_owner_exe "$dest/bin/rusthrc" "$dry"
   echo "[stage] ok release=$id sourceCommit=$commit exe=$OWNER_EXE"
+}
+
+# The node's code-signing identity (its certificate common name): the
+# HRC_CODESIGN_IDENTITY env, else the first line of $OWNER_ROOT/codesign.identity.
+# Empty means none is configured.
+codesign_identity() {
+  local id="${HRC_CODESIGN_IDENTITY:-}"
+  if [[ -z "$id" && -f "$OWNER_ROOT/codesign.identity" ]]; then
+    IFS= read -r id < "$OWNER_ROOT/codesign.identity" || true
+  fi
+  id="${id#"${id%%[![:space:]]*}"}"
+  printf '%s' "${id%"${id##*[![:space:]]}"}"
+}
+
+# Copy a release's rusthrc to the fixed $OWNER_EXE: a temp file in the same
+# directory, signed there when an identity is configured, then renamed over the
+# old one by commit_owner_exe. The rename gives a new inode, so a running owner
+# keeps executing the file it started from; the kernel kills a process whose
+# signed pages change under it, which is why the copy is never signed or
+# written in place.
+#
+# A build that predates the fixed exe (T-12224) cannot find its release from
+# $OWNER_EXE: it would report itself unmanaged and miss its hrc-pty. The probe
+# runs the signed copy from a scratch twin of the owner layout and requires its
+# --version to name the release. A plist that already execs $OWNER_EXE refuses
+# such a build; under a plist that still execs the release link it is a warning.
+OWNER_EXE_TMP=""
+prepare_owner_exe() {
+  local dest="$1" id="$2" dry="$3" identity probe version
+  identity="$(codesign_identity)"
+  if ((dry)); then
+    echo "[stage] would copy $dest/bin/rusthrc to $OWNER_EXE (temp file + rename)"
+    if [[ -n "$identity" ]]; then
+      echo "[stage] would run: codesign -f -s \"$identity\" -i $CODESIGN_ID --timestamp=none <temp>"
+    else
+      echo "[stage] no codesign identity configured; would keep the linker's ad-hoc signature"
+    fi
+    return
+  fi
+  mkdir -p "$OWNER_ROOT/bin"
+  OWNER_EXE_TMP="$OWNER_ROOT/bin/.rusthrc.$$.tmp"
+  rm -f "$OWNER_EXE_TMP"
+  cp -p "$dest/bin/rusthrc" "$OWNER_EXE_TMP"
+  if [[ -n "$identity" ]]; then
+    echo "[stage] signing as \"$identity\" with identifier $CODESIGN_ID"
+    codesign -f -s "$identity" -i "$CODESIGN_ID" --timestamp=none "$OWNER_EXE_TMP" || {
+      rm -f "$OWNER_EXE_TMP"
+      fail "codesign as \"$identity\" failed; nothing was replaced. Check: scripts/macos-codesign-identity.sh status --sign-probe (a locked keychain, or a key without the codesign partition list, fails here)"
+    }
+    codesign --verify --strict "$OWNER_EXE_TMP" || { rm -f "$OWNER_EXE_TMP"; fail "signed copy does not verify"; }
+    echo "[stage] designated requirement: $(codesign -dr - "$OWNER_EXE_TMP" 2>/dev/null | sed -n 's/^designated => //p')"
+  else
+    echo "[stage] no codesign identity ($OWNER_ROOT/codesign.identity or HRC_CODESIGN_IDENTITY); $OWNER_EXE keeps the linker's ad-hoc signature, a new macOS TCC identity every release"
+  fi
+  probe="$OWNER_ROOT/.exe-probe.$$"
+  rm -rf "$probe"
+  mkdir -p "$probe/bin"
+  ln "$OWNER_EXE_TMP" "$probe/bin/rusthrc"
+  ln -s "$dest" "$probe/hrc-runtime-current"
+  version="$("$probe/bin/rusthrc" --version 2>&1 || true)"
+  rm -rf "$probe"
+  if [[ "$version" != *"releaseId $id,"* ]]; then
+    if [[ -f "$PLIST" ]] && program_args "$PLIST" | grep -qxF "$OWNER_EXE"; then
+      rm -f "$OWNER_EXE_TMP"
+      fail "$id predates the fixed owner exe ($version); $PLIST execs $OWNER_EXE, so this release cannot run there. Nothing was switched"
+    fi
+    echo "[stage] WARN: $id predates the fixed owner exe ($version); the plist execs the release link, so the copy is unused and refresh-plist refuses it"
+  fi
+}
+
+commit_owner_exe() {
+  local src="$1" dry="$2"
+  ((dry)) && return
+  [[ -n "$OWNER_EXE_TMP" ]] || return 0
+  mv -f "$OWNER_EXE_TMP" "$OWNER_EXE"
+  [[ -f "$OWNER_EXE" && ! -L "$OWNER_EXE" ]] || fail "$OWNER_EXE is not a regular file"
+  echo "[stage] $OWNER_EXE <- $src"
 }
 
 # Read-only. Prints the rendered diff and KEY=value lines the switch recipe
@@ -272,22 +366,38 @@ prepare() {
 }
 
 activate() {
-  local domain target health_s=240 socket
+  local domain target
   domain="gui/$(id -u)"
   target="$domain/$LABEL"
   [[ -f "$PLIST.rusthrc-owner.next" ]] || fail "no rendered $PLIST.rusthrc-owner.next; run prepare first"
-  socket="$(plutil -extract EnvironmentVariables.HRC_RUNTIME_DIR raw -o - "$PLIST")/hrc.sock"
-  for _ in $(seq 1 90); do
-    launchctl print "$target" >/dev/null 2>&1 || break
-    sleep 1
-  done
-  launchctl print "$target" >/dev/null 2>&1 && fail "$target is still loaded 90s after the stop; nothing was swapped"
+  wait_unloaded
   ! pgrep -f '/bin/hrc server serve' >/dev/null || fail "a Bun owner is still running: $(pgrep -fl '/bin/hrc server serve')"
   cp -p "$PLIST" "$PLIST.bun-owner"
   install -m 0644 "$PLIST.rusthrc-owner.next" "$PLIST"
   rm "$PLIST.rusthrc-owner.next"
   if command -v praesidium-adopt >/dev/null; then praesidium-adopt "$PLIST"; fi
   echo "[activate] $PLIST now runs $OWNER_EXE; Bun plist kept as $PLIST.bun-owner"
+  bootstrap_owner || {
+    echo "[activate] roll back to Bun: launchctl bootout $target; install -m 0644 $PLIST.bun-owner $PLIST; launchctl bootstrap $domain $PLIST" >&2
+    exit 1
+  }
+}
+
+# Wait for the job a stop booted out to unload, then bootstrap the installed
+# plist and wait for health. Returns 1 (after saying why) on no health.
+wait_unloaded() {
+  local target="gui/$(id -u)/$LABEL"
+  for _ in $(seq 1 90); do
+    launchctl print "$target" >/dev/null 2>&1 || return 0
+    sleep 1
+  done
+  fail "$target is still loaded 90s after the stop"
+}
+
+bootstrap_owner() {
+  local domain health_s=240 socket
+  domain="gui/$(id -u)"
+  socket="$(plutil -extract EnvironmentVariables.HRC_RUNTIME_DIR raw -o - "$PLIST")/hrc.sock"
   # A bootstrap right after a bootout can fail once with I/O error 5.
   for attempt in 1 2 3 4 5; do
     launchctl bootstrap "$domain" "$PLIST" && break
@@ -296,14 +406,60 @@ activate() {
   done
   for _ in $(seq 1 "$health_s"); do
     if curl -sf --max-time 2 --unix-socket "$socket" http://localhost/v1/health >/dev/null; then
-      echo "[activate] rusthrc owner healthy on $socket"
-      return
+      echo "[bootstrap] rusthrc owner healthy on $socket"
+      return 0
     fi
     sleep 1
   done
-  echo "[activate] no health on $socket after ${health_s}s; see $(plist_value "$PLIST" StandardOutPath)" >&2
-  echo "[activate] roll back to Bun: launchctl bootout $target; install -m 0644 $PLIST.bun-owner $PLIST; launchctl bootstrap $domain $PLIST" >&2
-  exit 1
+  echo "[bootstrap] no health on $socket after ${health_s}s; see $(plist_value "$PLIST" StandardOutPath)" >&2
+  return 1
+}
+
+# The one-time move of a rusthrc owner plist from the release-link exe
+# ($LEGACY_OWNER_EXE) to the fixed $OWNER_EXE (T-12224). Refuses unless that
+# ProgramArguments entry is the only difference, and unless stage has already
+# put a regular file at $OWNER_EXE. It rewrites the file only: launchd keeps
+# running the loaded definition until the authorized stop, then `bootstrap`.
+refresh_plist() {
+  local dry=0 expect got tmp
+  [[ "${1:-}" == --dry-run ]] && dry=1
+  [[ "$(owner_kind)" == rusthrc ]] || fail "$PLIST is not a rusthrc owner"
+  if program_args "$PLIST" | grep -qxF "$OWNER_EXE"; then
+    echo "[refresh-plist] $PLIST already execs $OWNER_EXE; nothing to do"
+    echo "REFRESH_NEEDED=0"
+    return
+  fi
+  [[ -f "$OWNER_EXE" && ! -L "$OWNER_EXE" ]] || fail "no regular file at $OWNER_EXE; stage first"
+  local current version
+  current="$(cd "$OWNER_ROOT/hrc-runtime-current" && pwd -P)" || fail "no $OWNER_ROOT/hrc-runtime-current"
+  version="$("$OWNER_EXE" --version 2>&1 || true)"
+  [[ "$version" == *"releaseId ${current##*/},"* ]] ||
+    fail "$OWNER_EXE does not resolve its release ${current##*/} ($version); stage a release that ships the fixed owner exe first"
+  tmp="$(mktemp "${TMPDIR:-/tmp}/rusthrc-owner-refresh.XXXXXX")"
+  # Textual edit of the one <string>, then a semantic check that it is the only change.
+  OLD="<string>$LEGACY_OWNER_EXE</string>" NEW="<string>$OWNER_EXE</string>" awk '
+    BEGIN { old = ENVIRON["OLD"]; new = ENVIRON["NEW"] }
+    { line = $0; at = index(line, old); if (at) { line = substr(line, 1, at - 1) new substr(line, at + length(old)); n++ } print line }
+    END { if (n != 1) exit 3 }
+  ' "$PLIST" > "$tmp" || { rm -f "$tmp"; fail "$PLIST does not exec $LEGACY_OWNER_EXE exactly once: $(program_args "$PLIST" | paste -sd ' ' -)"; }
+  plutil -lint -s "$tmp" || { rm -f "$tmp"; fail "refreshed plist does not lint"; }
+  expect="$(plutil -convert json -o - "$PLIST" | jq -S --arg old "$LEGACY_OWNER_EXE" --arg new "$OWNER_EXE" \
+    '.ProgramArguments |= map(if . == $old then $new else . end)')"
+  got="$(plutil -convert json -o - "$tmp" | jq -S .)"
+  [[ "$expect" == "$got" ]] || { diff <(echo "$expect") <(echo "$got") >&2 || true; rm -f "$tmp"; fail "refresh changed more than the exec path"; }
+  echo "[refresh-plist] $PLIST:"
+  diff -u "$PLIST" "$tmp" | sed "s|$tmp|<refreshed>|" || true
+  if ((dry)); then
+    rm -f "$tmp"
+    echo "REFRESH_NEEDED=1"
+    return
+  fi
+  cp -p "$PLIST" "$PLIST.pre-fixed-exe"
+  install -m 0644 "$tmp" "$PLIST"
+  rm -f "$tmp"
+  if command -v praesidium-adopt >/dev/null; then praesidium-adopt "$PLIST"; fi
+  echo "[refresh-plist] $PLIST now execs $OWNER_EXE (previous kept as $PLIST.pre-fixed-exe); the loaded job is unchanged until the stop + bootstrap"
+  echo "REFRESH_NEEDED=1"
 }
 
 cmd="${1:-}"
@@ -316,5 +472,7 @@ case "$cmd" in
   preflight) preflight "$@" ;;
   prepare) prepare "$@" ;;
   activate) activate ;;
-  *) echo "usage: $0 kind|log-path|render|stage|preflight|prepare|activate ..." >&2; exit 2 ;;
+  refresh-plist) refresh_plist "$@" ;;
+  bootstrap) wait_unloaded; bootstrap_owner ;;
+  *) echo "usage: $0 kind|log-path|render|stage|preflight|prepare|activate|refresh-plist|bootstrap ..." >&2; exit 2 ;;
 esac

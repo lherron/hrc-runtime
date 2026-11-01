@@ -177,15 +177,9 @@ pub fn finish_invocation(exit_code: i32) {
 pub fn run(args: Vec<String>) -> i32 {
     if args == ["--version"] {
         metrics::begin(&args, &Value::Null);
-        // Resolve the PATH symlink so the manifest is found beside the release.
-        let manifest = std::env::current_exe()
-            .and_then(std::fs::canonicalize)
-            .ok()
-            .and_then(|p| {
-                p.parent()?
-                    .parent()
-                    .map(|p| p.join("praesidium-release.json"))
-            });
+        // Through the PATH symlink or the owner's fixed copy to the release.
+        let manifest =
+            hrc_common::release::current().map(|root| root.join("praesidium-release.json"));
         let release = manifest
             .and_then(|p| std::fs::read_to_string(p).ok())
             .and_then(|s| serde_json::from_str::<Value>(&s).ok());

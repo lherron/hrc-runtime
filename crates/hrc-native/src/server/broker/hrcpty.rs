@@ -25,8 +25,13 @@ const SHUTDOWN_GRACE: Duration = Duration::from_secs(7);
 /// tmux's detached default size, so a seat starts the size it did under tmux.
 pub const INITIAL_SIZE: (u16, u16) = (80, 24);
 
-/// `hrc-pty`, installed beside the running daemon binary.
+/// `hrc-pty` from the running daemon's own release (fixed at its start, so a
+/// later stage never hands a running daemon another release's hrc-pty), else
+/// beside the executable for an unmanaged build.
 pub fn binary() -> PathBuf {
+    if let Some(root) = hrc_common::release::current() {
+        return root.join("bin/hrc-pty");
+    }
     std::env::current_exe()
         .ok()
         .and_then(|exe| exe.parent().map(|dir| dir.join("hrc-pty")))
