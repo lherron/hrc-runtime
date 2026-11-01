@@ -1,0 +1,42 @@
+{
+  "package": "graph",
+  "title": "To-be taxonomy: eight subjects, three minting systems, and how they relate",
+  "subtitle": "Praesidium data taxonomy · subjects and relationships · DRAFT 2026-11-01 · registers (identity, state, obligation, ledger, extension) are the next frame",
+  "stamp": "TO-BE · DRAFT · 2026-11-01",
+  "direction": "TB",
+  "legend": {
+    "hierarchy": "owns / contains (parent above child)",
+    "reference": "keyed reference",
+    "directed_reference": "record on the source about the target"
+  },
+  "boundaries": [
+    {"id": "asp", "name": "agent-spaces mints: var/agents"},
+    {"id": "wrkq", "name": "wrkq mints: the work tree and the collaboration ledger"},
+    {"id": "hrc", "name": "HRC mints: execution"}
+  ],
+  "nodes": [
+    {"id": "agent", "name": "agent", "meta": "agent:<id>", "body": "agent-profile.toml: identity, provisioning, spaces, placement", "boundary": "asp", "tier": 0},
+    {"id": "project", "name": "project", "meta": "projectId · P-", "body": "container kind=project; mirrored as hrc.project", "boundary": "wrkq", "tier": 0},
+    {"id": "group", "name": "work group", "meta": "P- / A- · directory | feature | area", "body": "a campaign is a feature + its room", "boundary": "wrkq", "tier": 1},
+    {"id": "task", "name": "task", "meta": "T- · task | subtask | bug | chore | spike", "body": "comments, evidence, relations, workflow", "boundary": "wrkq", "tier": 2},
+    {"id": "room", "name": "room", "meta": "R- · task | campaign | project | adhoc", "body": "envelopes live here; members are seats", "boundary": "wrkq", "tier": 2},
+    {"id": "seat", "name": "seat", "meta": "scope/lane = agent × project × task/role", "body": "asks, handoff, binding, presentation; the join of all three systems", "boundary": "hrc", "tier": 1, "emphasis": true},
+    {"id": "generation", "name": "generation", "meta": "hostSessionId · N of a seat", "body": "attention; handoff is owed N → N+1", "boundary": "hrc", "tier": 2},
+    {"id": "runtime", "name": "runtime", "meta": "runtimeId", "body": "process: transport, hrcpty, context", "boundary": "hrc", "tier": 3}
+  ],
+  "relationships": [
+    {"from": "agent", "to": "seat", "label": "seats of"},
+    {"from": "project", "to": "group", "label": "contains"},
+    {"from": "group", "to": "task", "label": "contains"},
+    {"from": "task", "to": "room", "label": "task room"},
+    {"from": "seat", "to": "generation", "label": "generations"},
+    {"from": "generation", "to": "runtime", "label": "process"},
+    {"from": "project", "to": "seat", "role": "reference", "label": "project of"},
+    {"from": "task", "to": "seat", "role": "reference", "label": "task seat"},
+    {"from": "group", "to": "room", "role": "reference", "label": "campaign room"},
+    {"from": "project", "to": "room", "role": "reference", "label": "project room"},
+    {"from": "room", "to": "seat", "role": "reference", "label": "members · envelopes to/from"},
+    {"from": "seat", "to": "task", "role": "directed_reference", "label": "binding: hcs"},
+    {"from": "agent", "to": "runtime", "role": "directed_reference", "label": "compiled release"}
+  ]
+}

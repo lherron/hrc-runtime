@@ -1,0 +1,16 @@
+{
+  "format": "arris.board",
+  "format_version": 1,
+  "flow": {
+    "columns": 3,
+    "gap": 160
+  },
+  "frames": [
+    {
+      "id": "taxonomy-subjects",
+      "src": "taxonomy-subjects.arris.json",
+      "title": "taxonomy-subjects"
+    }
+  ],
+  "title": "taxonomy"
+}

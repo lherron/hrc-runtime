@@ -36,3 +36,11 @@ Facts the frames rest on (verified 2026-10-31 on max3):
 - `session_metadata` is continuity-scoped `(scope_ref, lane_ref, key, source)`, scalars or arrays of scalars, ≤ 4 KB, 64 keys (`crates`/`packages/hrc-core/src/session-metadata.ts`).
 - The kernel document is declared in `crates/hrc-domain/src/declarations.rs`: three flat root observation types, no hierarchies or reference fields.
 - Loggia plugin storage holding seat state: c2 `cards`, `actions`, `inflight`; session-switcher `attention.asks`.
+
+## taxonomy board (2026-11-01, DRAFT, Lance ruling in progress)
+
+One unified data taxonomy across agent-spaces, wrkq and HRC. Every record is (subject × register); a record lives with the system that mints its subject's key, and a record about two subjects lives with the one whose lifecycle ends it. Registers: identity, state, obligation, ledger, extension. Open the board live: `arris serve diagrams/taxonomy.arris-board.json --gui`.
+
+| frame | claim |
+| --- | --- |
+| `taxonomy-subjects` | **To-be subjects and relationships.** Eight subjects in three minting systems: agent (agent-spaces, `var/agents`); project, work group, task, room (wrkq); seat, generation, runtime (HRC). The seat (`agent × project × task/role`) is the join of all three. Solid = owns/contains; dotted = keyed reference; dotted-with-head = a record on the source about the target (`seat → task: binding hcs`). Rulings so far (Lance 2026-11-01): handoff moves to the seat (HRC); agent storage stays `var/agents` and is represented, not moved. From `taxonomy-subjects.declaration.json` via the scenario starter (package `graph`); the native is the source. |
