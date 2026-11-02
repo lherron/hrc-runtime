@@ -75,7 +75,7 @@ Routes in `hrc-native` (`server/projection/sessions.rs` beside metadata):
 
 | route | body / query | answer | refusals |
 |---|---|---|---|
-| `GET /v1/sessions/annotations` | `scopeRef, laneRef?, subject?, generation?, ns?, kind?` | `{annotations: [row…]}` | `unknown_host_session` |
+| `GET /v1/sessions/annotations` | `scopeRef, laneRef?, subject?, generation?, ns?, kind?, localOnly?` | `{annotations: [row…]}` | `unknown_host_session` |
 | `PUT /v1/sessions/annotations` | `{scopeRef, laneRef?, subject, generation?, ns, kind, id, body, expect?}` | `{annotation: row, created: bool}` | §3 |
 | `POST /v1/sessions/annotations/delete` | `{scopeRef, laneRef?, subject, generation?, ns, kind, id, expect?: {updatedAt}}` | `{deleted: bool}` | `stale_annotation` |
 | `POST /v1/sessions/annotations/act` | `{scopeRef, laneRef?, subject, generation?, ns, kind, id, action, attributes?}` | `{hrcSeq}` | `unknown_annotation` |
@@ -83,6 +83,8 @@ Routes in `hrc-native` (`server/projection/sessions.rs` beside metadata):
 Delete is a POST, not an HTTP DELETE, because it carries a body through the federation forwarder like `act` does. `act` appends `session.annotation.action {…key, action, attributes}` and writes nothing else; `attributes` is writer-owned (c2: `{recommended, edited, ok, runId?, error?}`). `updated_by` is the request principal, as metadata records `updatedBy`.
 
 Federation: the four method/path pairs join `routing.rs` (scoped by `scopeRef`; `principal: true` on the three writes, as `PATCH /v1/sessions/metadata`) and the peer listener's allowlist, so a put from any node lands in the home node's store and the home node's ledger.
+
+For node-local observation, the unix socket accepts literal `localOnly=true` on GET annotations and GET `/v1/sessions/get` (T-12362), bypassing scope-home routing and reading the same local rows as the projector. Existing scope, lane and filter validation still applies. Absent, false or other values retain home routing. The authenticated peer listener refuses literal true with `403 local_only_forbidden`; ordinary forwarded reads remain unchanged. This observation grants no write or home-binding authority.
 
 SDK (`hrc-sdk`): `listSessionAnnotations`, `putSessionAnnotation`, `deleteSessionAnnotation`, `actOnSessionAnnotation`. CLI: `hrc session annotation list|put|delete|act <target> --ns NS --kind KIND --id ID [--subject seat|generation] [--generation N] [--body-file -] [--expect-generation N] [--expect-attention-at TS] [--expect-updated-at TS] [--action A] [--attributes JSON]`, same target grammar as `session meta`.
 

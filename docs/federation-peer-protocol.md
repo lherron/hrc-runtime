@@ -21,8 +21,11 @@ availability is discovered from health capabilities and route presence.
 | `POST` | `/v1/federation/exact-start` | Provision one exact scope on its authoritative home. |
 | `GET` | `/v1/sessions/page` | Read a bounded node-local session page. |
 | `GET` | `/v1/sessions/facets` | Read node-local session facets. |
-| `GET` | `/v1/sessions/get` | Read the home-node continuity, identity, facts and resolved metadata without creating a session. |
+| `GET` | `/v1/sessions/get` | Read home-node continuity, identity, facts and metadata; literal `localOnly=true` refuses `403 local_only_forbidden` on peers. |
 | `GET` / `PATCH` | `/v1/sessions/metadata` | Read or patch API metadata on the continuity home; cosmetic writes need no additional authority check. |
+| `GET` / `PUT` | `/v1/sessions/annotations` | Read or put annotations on the home; GET with literal `localOnly=true` refuses `403 local_only_forbidden`. |
+| `POST` | `/v1/sessions/annotations/delete` | Delete a home annotation with its fence. |
+| `POST` | `/v1/sessions/annotations/act` | Append an annotation action on the home. |
 | `POST` | `/v1/sessions/resolve` | Read-only resolve on the scope home (T-10418). The body must be exactly `{ sessionRef, create?: false }`; `create: true`, `summonIntent` or `runtimeIntent` is `403 peer_read_only` before any create path. |
 | `GET` | `/v1/events/tail` | Scope-filtered bounded tail page from the home ledger (T-10418); `scopeRef` required. |
 | `GET` | `/v1/events/page` | Node-local covering event page (T-12257); required `afterSeq` and `limit`, valid limits clamped to 200. |

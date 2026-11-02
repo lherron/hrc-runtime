@@ -202,6 +202,23 @@ async fn route_request(server: &Shared, peer: &str, request: Request) -> Result<
             json!({"retryable":false}),
         )
     };
+    // Explicit node-local observation is a unix-socket door only.
+    // Match the main dispatch's first-occurrence query semantics.
+    if method == Method::GET
+        && matches!(
+            path.as_str(),
+            "/v1/sessions/annotations" | "/v1/sessions/get"
+        )
+        && form_urlencoded::parse(uri.query().unwrap_or("").as_bytes())
+            .find(|(key, _)| key == "localOnly")
+            .is_some_and(|(_, value)| value == "true")
+    {
+        return Ok(refusal(
+            StatusCode::FORBIDDEN,
+            "local_only_forbidden",
+            json!({"retryable":false}),
+        ));
+    }
     match (method.as_str(), path.as_str()) {
         ("GET", "/v1/federation/health") => {
             let mut health = json!({
@@ -568,3 +585,7 @@ mod tests {
         assert!(!is_annotation_route("GET", "/v1/sessions/annotations/act"));
     }
 }
+
+#[cfg(test)]
+#[path = "annotations_local_tests.rs"]
+mod annotations_local_tests;

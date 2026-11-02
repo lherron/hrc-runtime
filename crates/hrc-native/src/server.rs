@@ -470,6 +470,13 @@ async fn dispatch_inner(server: &Shared, request: Request, local_only: bool) -> 
         Ok(body) => body,
         Err(_) => return ApiError::bad("request body must be valid JSON", None).into_response(),
     };
+    // T-12362: the local projector observes this node's session data even
+    // when placement refuses current home continuity. The peer listener
+    // refuses this explicit flag before its internal local dispatch.
+    let local_only = local_only
+        || (method == Method::GET
+            && matches!(uri.path(), "/v1/sessions/annotations" | "/v1/sessions/get")
+            && query.get("localOnly").map(String::as_str) == Some("true"));
     // T-10418: a scope-keyed read is answered by the scope's home.
     if !local_only
         && let Some(scoped) = federation::scope_of(&method, uri.path(), &query, &body)
