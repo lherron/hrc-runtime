@@ -699,9 +699,6 @@ impl Claim {
 
     /// startSuffixRosterRuntime / startExactScopeRuntime on the home node.
     async fn start(&self, server: &Shared) -> Result<Value, ApiError> {
-        if has_prompt(&self.intent) {
-            return Err(prompt_unported());
-        }
         let lock = summon::namespace_lock(self.scope.mutex_key());
         let (session, slot, replayed, minted) = {
             let _held = lock.lock().await;
@@ -722,7 +719,11 @@ impl Claim {
             (session, slot, replayed, minted)
         };
         let host = session["hostSessionId"].as_str().unwrap_or("").to_owned();
-        let intent = localize(&self.intent, &session);
+        let mut intent = localize(&self.intent, &session);
+        // T-12316: initialPrompt binds the canonical claim request/hash, but
+        // delivery belongs to the caller's subsequent pinned /v1/turns call.
+        // Keep self.intent intact so a changed-message retry still conflicts.
+        intent.as_object_mut().unwrap().remove("initialPrompt");
         let started = attached::start(
             server,
             session.clone(),

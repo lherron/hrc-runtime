@@ -139,6 +139,63 @@ def run_owner(owner, binary, args, out_dir):
                 intent['placement'].setdefault('correlation', {})['sessionRef'] = scope(task) + '/lane:main'
             return intent
 
+        if args.deferred_message_only:
+            checks = []
+
+            def check(name, ok, **evidence):
+                checks.append({'name': name, 'ok': bool(ok), **evidence})
+
+            for policy in ('reject', 'suffix'):
+                task = 'deferred-' + policy
+                target = scope(task)
+                marker = 'DEFERRED_MESSAGE_' + policy.upper()
+                launch = intent_for(task)
+                # Explicit test selection: never dispatch the historical
+                # tabularasa Claude profile for this recovery qualification.
+                launch['selection'] = {'harness': 'codex-hrcpty', 'modelProvider': 'openai-codex',
+                                       'model': 'gpt-6.1-sol', 'reasoningEffort': 'medium', 'presentation': True}
+                bound = {**launch, 'initialPrompt': 'Reply only ' + marker}
+                key = 't12316-' + policy
+                request = {'runtimeIntent': bound, 'conflictPolicy': policy, 'idempotencyKey': key,
+                           'restartStyle': 'reuse_pty', 'summonIntent': 'implicit',
+                           'sessionRef' if policy == 'reject' else 'baseSessionRef': target + '/lane:main'}
+                status, claim = case(policy + '.deferred-claim', request, [target])
+                check(policy + '.deferred-claim', status == 200, status=status, response=claim)
+                if status != 200:
+                    continue
+                host = claim['hostSessionId']
+                # The owner must bind the message without delivering it at
+                # claim/start. Only the following pinned turn carries it.
+                check(policy + '.not-delivered-by-claim',
+                      marker not in json.dumps(s.rows('SELECT * FROM inputs')))
+                turn = {'hostSessionId': host, 'idempotencyKey': key, 'prompt': bound['initialPrompt'],
+                        'runtimeIntent': launch, 'waitFor': 'accepted', 'waitForCompletion': False}
+                status, dispatched = case(policy + '.pinned-turn', turn, [target], '/v1/turns')
+                check(policy + '.pinned-turn', status in (200, 202) and bool(dispatched.get('runId')),
+                      status=status, response=dispatched)
+                if status not in (200, 202) or not dispatched.get('runId'):
+                    continue
+                s.wait_completed(dispatched['runId'], timeout=120)
+                status, repeated = case(policy + '.claim-replay', request, [target])
+                check(policy + '.claim-replay', status == 200 and repeated.get('hostSessionId') == host
+                      and repeated.get('claim', {}).get('replayed') is True)
+                status, replay = case(policy + '.turn-replay', turn, [target], '/v1/turns')
+                runs = s.rows('SELECT run_id FROM runs WHERE host_session_id=? AND dispatch_idempotency_key=?',
+                              (host, key))
+                check(policy + '.one-initial-turn', status in (200, 202)
+                      and replay.get('runId') == dispatched['runId'] and len(runs) == 1, runs=runs)
+                changed = {**request, 'runtimeIntent': {**bound, 'initialPrompt': 'changed message'}}
+                status, refused = case(policy + '.changed-message', changed, [target])
+                check(policy + '.changed-message-refused', status == 409
+                      and refused.get('error', {}).get('code') == 'idempotency_key_conflict'
+                      and not cases[policy + '.changed-message']['mutated'])
+                status, refused = case(policy + '.ensure-prompt', {'hostSessionId': host, 'intent': bound}, [target])
+                check(policy + '.ensure-still-refuses-prompt', status == 503
+                      and refused.get('error', {}).get('detail', {}).get('reason') == 'start-prompt-not-ported')
+            value = {'checks': checks, 'cases': cases, 'ok': bool(checks) and all(c['ok'] for c in checks)}
+            (out_dir / 'native-deferred.json').write_text(json.dumps(value, indent=2) + '\n')
+            return value
+
         # A: exact claim (kernel summon / iOS reject / force-primary create).
         ex = scope('ex1')
         exact = {'sessionRef': ex + '/lane:main', 'runtimeIntent': intent_for('ex1'), 'conflictPolicy': 'reject',
@@ -273,6 +330,7 @@ def diff(a, b, path=''):
 
 
 def main():
+    global AGENT
     p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     p.add_argument('--native-binary', type=Path, help='rusthrc to test; a build without the route must FAIL')
     p.add_argument('--installed-release', type=Path, default=Path.home() / '.bun/install/hrc-runtime-current')
@@ -281,12 +339,21 @@ def main():
     p.add_argument('--artifacts', type=Path, default=None)
     p.add_argument('--bun-only', action='store_true')
     p.add_argument('--native-only', action='store_true', help='reuse an existing bun.json in --artifacts')
+    p.add_argument('--deferred-message-only', action='store_true',
+                   help='native T-12316 claim binding + pinned-turn qualification on Codex')
     args = p.parse_args()
     args.installed_release = args.installed_release.resolve()
     out_dir = args.artifacts or ARTIFACTS / ('runtimes-start-' + time.strftime('%Y%m%dT%H%M%SZ', time.gmtime()))
     out_dir.mkdir(parents=True, exist_ok=True)
     result = {'artifacts': str(out_dir), 'installedRelease': str(args.installed_release)}
     sides = {}
+    if args.deferred_message_only:
+        assert args.native_binary, '--native-binary is required'
+        AGENT = 'cody'
+        result = run_owner('native', args.native_binary, args, out_dir)
+        (out_dir / 'result.json').write_text(json.dumps(result, indent=2) + '\n')
+        print(json.dumps({'ok': result['ok'], 'checks': result['checks'], 'artifacts': str(out_dir)}, indent=2))
+        sys.exit(0 if result['ok'] else 1)
     if not args.native_only:
         # The Bun owner never execs --binary; Scratch only resolves it.
         sides['bun'] = run_owner('bun', args.installed_release / 'bin/rusthrc', args, out_dir)

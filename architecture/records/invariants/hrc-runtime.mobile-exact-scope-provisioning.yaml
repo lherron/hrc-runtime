@@ -58,6 +58,8 @@ predicate: >
   runtime_unavailable and does not use the message outbox.
 authority: Lance / wrkq:T-07398 / wrkq:T-07655 / wrkq:T-08407
 source:
+  - wrkq:T-12316
+  - crates/hrc-native/src/server/broker/start.rs
   - hrcchat#19456
   - hrcchat#20022
   - wrkq:T-07302
@@ -69,6 +71,7 @@ source:
   - packages/hrc-server/src/roster-claim.ts
   - packages/hrc-server/src/federation/exact-start-client.ts
 required_tests:
+  - python3 crates/hrc-native/e2e/runtimes_start.py --deferred-message-only (T-12316 deferred claim binding and pinned-turn replay)
   - just verify
   - wrkq:T-07302 exact/suffix overlap tests in both winner orders and after restart
   - wrkq:T-07398 reserved-family placement parity across exact, dm, and suffix doors

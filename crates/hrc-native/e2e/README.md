@@ -104,7 +104,7 @@ Deleted entries stay listed to explain their removal; their source remains in gi
 | `runtime_key_order.py` | none — completed T-11880 capture analysis; promoted maintenance and existing conformance key-order comparisons retain wire checks | delete |
 | `runtime_reads.py` | Real-seat runtime reads against sequential owners on one scratch snapshot. (requires explicit scratch/capture inputs; retained qualification) | keep-manual |
 | `runtime_surfaces.py` | Real ready-seat attachment and durable surface fences on isolated state. (requires explicit scratch/capture inputs; retained qualification) | keep-manual |
-| `runtimes_start.py` | POST /v1/runtimes/start on Bun and native, compared case by case (T-11911). (requires explicit scratch/capture inputs; retained qualification) | keep-manual |
+| `runtimes_start.py` | POST /v1/runtimes/start on Bun and native, compared case by case (T-11911). `--deferred-message-only` qualifies native exact/suffix deferred message binding, pinned delivery/replay, changed-message refusal and unchanged ensure refusal on Codex (T-12316). Requires explicit scratch/capture inputs. | keep-manual |
 | `schema_refusal.py` | Gate3: schema refusal preserves canonical DB and control files. | promote |
 | `server_owner.py` | Real owner recovery, with refusal and concurrent-reclaimer controls. | promote |
 | `session_index.py` | N1 session index workflow on a real Bun-created scratch store. (requires explicit scratch/capture inputs; retained qualification) | keep-manual |

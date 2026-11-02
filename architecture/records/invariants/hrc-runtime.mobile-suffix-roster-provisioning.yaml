@@ -37,6 +37,8 @@ predicate: >
   does not use the message outbox.
 authority: Lance / wrkq:T-07398 / wrkq:T-08407 / wrkq:T-08564 revision 4 architecture approval, 2026-09-17
 source:
+  - wrkq:T-12316
+  - crates/hrc-native/src/server/broker/start.rs
   - hrcchat#18964
   - hrcchat#20022
   - wrkq:T-07398
@@ -48,6 +50,7 @@ source:
   - packages/hrc-server/src/federation/peer-protocol.ts
   - docs/federation-peer-protocol.md
 required_tests:
+  - python3 crates/hrc-native/e2e/runtimes_start.py --deferred-message-only (T-12316 deferred claim binding and pinned-turn replay)
   - just verify
   - wrkq:T-07398 parser refusal for reserved-member pins and homes
   - wrkq:T-07398 exact-first and suffix-first family placement parity across restart
