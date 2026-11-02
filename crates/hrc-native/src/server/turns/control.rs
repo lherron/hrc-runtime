@@ -603,6 +603,20 @@ async fn terminate_runtime(
     let transport = if tmux { "tmux" } else { audit_transport(rt) };
     commit(server, |db| {
         finalize(db, rt, &now)?;
+        if let Some(reason) = &o.reason {
+            // Disposal awaits broker events which can update the state. Merge
+            // into the current row so those observations survive termination.
+            let current = db::runtime(db, &rt.runtime_id)?.unwrap_or_else(|| rt.clone());
+            let mut state = current.state_object();
+            state["status"] = "terminated".into();
+            state["updatedAt"] = now.as_str().into();
+            state["terminationReason"] = reason.as_str().into();
+            db::update_runtime(
+                db,
+                &rt.runtime_id,
+                &[("runtime_state_json", db::text(state.to_string()))],
+            )?;
+        }
         if !tmux {
             settle_disposed(db, rt, &now)?;
         }
@@ -792,5 +806,64 @@ pub async fn dispose(
                 detail: json!({"runtimeId":runtime_id,"timeoutMs":DISPOSE_TIMEOUT.as_millis() as u64}),
             })
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::server::turns::admission::tests::server;
+    use axum::{Router, routing::post};
+
+    // HTTP -> migrated store -> public runtime projection and lifecycle event.
+    // Discriminate omitted reasons, verbatim whitespace/Unicode, and preserve
+    // unrelated runtime state rather than replacing it during finalization.
+    #[tokio::test]
+    async fn terminate_reason_http() -> anyhow::Result<()> {
+        for reason in [Some("  operator: rotate → next\nkeep verbatim  "), None] {
+            let (_scratch, server) = server("off", false)?;
+            {
+                let mut store = server.store.lock().unwrap();
+                let session = store
+                    .create_session("agent:test:project:fixture", "main")?
+                    .0;
+                store.sqlite.execute("INSERT INTO runtimes(runtime_id,host_session_id,scope_ref,lane_ref,generation,transport,status,supports_inflight_input,controller_kind,runtime_state_json,created_at,updated_at) VALUES('rt',?,'agent:test:project:fixture','main',1,'headless','ready',0,'harness-broker',?,'now','now')", params![session["hostSessionId"].as_str(), json!({"status":"ready","retained":"value"}).to_string()])?;
+            }
+            let subject = server.clone();
+            let app = Router::new().route(
+                "/v1/terminate",
+                post(move |Json(body): Json<Value>| {
+                    let subject = subject.clone();
+                    async move { terminate(&subject, body).await }
+                }),
+            );
+            let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await?;
+            let url = format!("http://{}/v1/terminate", listener.local_addr()?);
+            let task = tokio::spawn(async move { axum::serve(listener, app).await });
+            let mut body = json!({"runtimeId":"rt","dropContinuation":false});
+            if let Some(reason) = reason {
+                body["reason"] = reason.into();
+            }
+            reqwest::Client::new()
+                .post(url)
+                .json(&body)
+                .send()
+                .await?
+                .error_for_status()?;
+            task.abort();
+            let store = server.store.lock().unwrap();
+            let runtime = db::runtime(&store.sqlite, "rt")?.unwrap();
+            let event: String = store.sqlite.query_row("SELECT payload_json FROM hrc_events WHERE runtime_id='rt' AND event_kind='runtime.terminated'", [], |r| r.get(0))?;
+            let event: Value = serde_json::from_str(&event)?;
+            assert_eq!(event["reason"].as_str(), reason);
+            assert_eq!(runtime.status, "terminated");
+            let state = runtime.state_object();
+            assert_eq!(state["terminationReason"].as_str(), reason);
+            assert_eq!(state["retained"], "value");
+            if reason.is_some() {
+                assert_eq!(state["status"], "terminated");
+            }
+        }
+        Ok(())
     }
 }
