@@ -243,3 +243,88 @@ const FACETS_ORDER: &[&str] = &[
     "complete",
     "peerStatus",
 ];
+
+#[cfg(test)]
+mod tests {
+    use crate::server::{dispatch_inner, turns::admission::tests::server};
+    use axum::{body::Body, extract::Request, http::StatusCode};
+    use serde_json::{Value, json};
+
+    // Failures: a missing continuity aborts an entire page; stripping a stored
+    // lane: prefix loses an existing identity; task IDs get silently rewritten;
+    // a cursor skips/duplicates the affected row or never reaches exhaustion.
+    #[tokio::test]
+    async fn page_walk_preserves_exact_identities_and_tolerates_missing_ones() -> anyhow::Result<()>
+    {
+        let (_scratch, server) = server("off", false)?;
+        let mut expected = Vec::new();
+        {
+            let mut db = server.store.lock().unwrap();
+            for (task, lane, missing) in [
+                ("T-8154", "main", false),
+                ("historical", "lane:historical", false),
+                ("summary", "main", true),
+            ] {
+                let scope = format!("agent:cody:project:p:task:{task}");
+                let (session, _) = db.create_session(&scope, lane)?;
+                assert!(db.stored_identity(&scope, lane)?.is_some());
+                if missing {
+                    db.sqlite.execute(
+                        "DELETE FROM continuities WHERE scope_ref=? AND lane_ref=?",
+                        [&scope, lane],
+                    )?;
+                    assert!(db.stored_identity(&scope, lane)?.is_none());
+                }
+                expected.push((session["hostSessionId"].clone(), task, lane, missing));
+            }
+            assert_eq!(
+                db.sqlite
+                    .query_row("SELECT COUNT(*) FROM session_index", [], |r| r
+                        .get::<_, i64>(0))?,
+                3
+            );
+        }
+        let mut cursor = None;
+        let mut seen = Vec::new();
+        for page in 0..3 {
+            let mut path = "/v1/sessions/page?nodes=local&limit=1".to_owned();
+            if let Some(cursor) = &cursor {
+                path.push_str(&format!("&cursor={cursor}"));
+            }
+            let response = dispatch_inner(
+                &server,
+                Request::builder().uri(path).body(Body::empty())?,
+                false,
+            )
+            .await;
+            let status = response.status();
+            let bytes = axum::body::to_bytes(response.into_body(), usize::MAX).await?;
+            let body: Value = serde_json::from_slice(&bytes)?;
+            assert_eq!(status, StatusCode::OK, "{body}");
+            let items = body["items"].as_array().unwrap();
+            assert_eq!(items.len(), 1);
+            let item = &items[0];
+            let (_, task, lane, missing) = expected
+                .iter()
+                .find(|(host, ..)| host == &item["hostSessionId"])
+                .unwrap();
+            assert!(!seen.contains(&item["hostSessionId"]));
+            seen.push(item["hostSessionId"].clone());
+            assert_eq!(item["laneRef"], hrc_store::canonical_lane(lane));
+            assert!(item.get("identity").is_some());
+            if *missing {
+                assert_eq!(item["identity"], Value::Null);
+            } else {
+                assert_eq!(
+                    item["identity"],
+                    json!({"kind":"project-task","agentId":"cody","projectId":"p","taskId":task})
+                );
+                assert_eq!(item["taskId"], *task);
+            }
+            cursor = body["nextCursor"].as_str().map(str::to_owned);
+            assert_eq!(cursor.is_some(), page < 2);
+        }
+        assert_eq!(seen.len(), expected.len());
+        Ok(())
+    }
+}

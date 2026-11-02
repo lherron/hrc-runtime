@@ -165,14 +165,16 @@ impl Store {
         let more = rows.len() > limit;
         rows.truncate(limit);
         for row in &mut rows {
-            let identity = self.identity(
+            // These are exact projection keys. Historical continuities can
+            // store a literal lane: prefix; stripping it loses their identity.
+            let identity = self.stored_identity(
                 row["scopeRef"].as_str().unwrap(),
                 row["laneRef"].as_str().unwrap(),
             )?;
-            if let Some(task) = identity.get("taskId") {
+            if let Some(task) = identity.as_ref().and_then(|id| id.get("taskId")) {
                 row["taskId"] = task.clone();
             }
-            row["identity"] = identity;
+            row["identity"] = identity.unwrap_or(Value::Null);
             row["laneRef"] = canonical_lane(row["laneRef"].as_str().unwrap()).into();
         }
         Ok((rows, more))
