@@ -32,6 +32,24 @@ native owner lives in `crates/`, so search it with `rg` as well.
 
 ## Test entry points and timing
 
+In a fresh linked worktree, provision its own dependencies and build sibling
+declarations before typechecking:
+
+```sh
+bun install --frozen-lockfile
+bun run build
+bun run typecheck
+```
+
+Worktrees under `~/praesidium/under-construction/` are outside the parent dev
+workspace. Without local `node_modules`, package resolution can fall through to
+the canonical checkout and report missing fields that already exist in the
+worktree's source. Check the resolved package path before changing a contract;
+T-12266 reproduced this with `selfRestartResumePrompt.handoff` and
+`DeliverLiteralBySelectorResponse.uncertain`. Keep the lockfile unchanged.
+After pulling changes in an existing checkout, rebuild before typechecking too:
+stale sibling `dist/*.d.ts` declarations can produce the same errors.
+
 Run the full hrc-server suite from the repository root:
 
 ```sh
