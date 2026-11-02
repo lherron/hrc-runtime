@@ -85,9 +85,6 @@ pub(super) async fn start(server: &Shared) -> Option<Kernel> {
 struct AdapterRouted;
 impl cardo_runtime::core_adapter::WorkerCall for AdapterRouted {
     fn call(&mut self, _: &str, _: Value, _: Duration) -> Result<Value, DispatchFailure> {
-        #[cfg(test)]
-        panic!("HRC owner operation reached the core worker");
-        #[cfg(not(test))]
         Err(DispatchFailure {
             code: "adapter_routed".into(),
             message: "hrc owner operations are dispatched by HrcAdapter; reaching the core worker is a routing defect".into(),
@@ -195,6 +192,21 @@ mod tests {
         Arc::get_mut(server).expect("unshared test server").runtime = root.clone();
         ShortRoot(root)
     }
+    #[test]
+    fn executor_of_record_refuses_direct_calls() {
+        use cardo_runtime::core_adapter::WorkerCall;
+        let failure = AdapterRouted
+            .call("seat.summon", json!({}), Duration::from_secs(1))
+            .expect_err("only HrcAdapter may dispatch owner operations");
+        assert_eq!(failure.code, "adapter_routed");
+        assert!(
+            failure
+                .message
+                .contains("reaching the core worker is a routing defect")
+        );
+        assert_eq!(failure.details, json!({}));
+    }
+
     #[tokio::test(flavor = "multi_thread")]
     async fn ops_only_provider() -> anyhow::Result<()> {
         let (_scratch, mut server) = server("off", false)?;

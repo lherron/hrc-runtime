@@ -1,6 +1,7 @@
-//! hrc-runtime.turn-attention, owned here so the annotation fence and the
-//! kernel's `praesidium seat.attention` share one rule (seat-annotations r1.1 §3):
-//! display selection, the fold, and live-runtime presence.
+//! hrc-runtime.turn-attention: the owner rule for the annotation fence and
+//! attention HTTP route (seat-annotations r1.1 §3): display selection, the
+//! fold, and live-runtime presence. Praesidium ports the rule independently;
+//! it must verify parity against the owner HTTP route (T-12360 F1).
 use crate::{Store, status::unavailable_sql};
 use anyhow::{Result, anyhow};
 use rusqlite::params;
