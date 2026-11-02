@@ -486,7 +486,7 @@ refresh-owner-exe node mode="render" restart="wait":
 # Run this before and after a deploy; an unreachable node prints as unreachable
 # instead of aborting the table.
 
-# Read-only hrc/aspd/injector parity table plus bun/codex/claude tool versions across max3, svc, and hrcdev
+# Read-only hrc/aspd/injector/kernel parity table plus bun/codex/claude tool versions across max3, svc, and hrcdev
 fleet-status:
     #!/usr/bin/env bash
     set -uo pipefail
@@ -511,6 +511,23 @@ fleet-status:
           ps eww -p "$p" -o command= | tr " " "\n" | grep -qx "HRC_SOCKET_PATH=$socket" && loose=1
         done
         [[ -n "$loose" ]] && echo UNSUPERVISED || echo down
+      fi
+      kernel_bin="$HOME/.local/bin/praesidium-kernel"
+      if [[ ! -x "$kernel_bin" ]]; then
+        echo absent
+      else
+        kernel_status="$("$kernel_bin" status --json 2>/dev/null)"
+        kernel_exit=$?
+        if [[ "$kernel_exit" == 3 ]]; then
+          echo down
+        elif [[ "$kernel_exit" != 0 ]]; then
+          echo "probe-error:$kernel_exit"
+        else
+          jq -r '\''if .serving == false then "down"
+            elif .launchd.state == "UNSUPERVISED" then "UNSUPERVISED"
+            else ((.running.sourceCommit // .sourceCommit // "unknown")[0:8]
+              + " " + (if .runningEqualsInstalled == true then "running==installed" else "STALE PROCESS" end)) end'\'' <<<"$kernel_status" || echo probe-error
+        fi
       fi'
 
     # A bare local probe is only the max3 row when this driver is max3. Every
@@ -536,7 +553,7 @@ fleet-status:
     }
 
     probe() {
-      local label="$1" target="$2" out status health hrc aspd owner cli injector coherent actual_node
+      local label="$1" target="$2" out status health hrc aspd owner cli injector kernel coherent actual_node
       out="$(run_on_node "$label" "$target" "$node_probe" 2>/dev/null)"
       status="$(sed -n '1p' <<<"$out")"
       if [[ -z "$status" || "$status" == '{}' ]]; then
@@ -550,18 +567,20 @@ fleet-status:
       fi
       cli="$(sed -n '2p' <<<"$out")"
       injector="$(sed -n '3p' <<<"$out")"
+      kernel="$(sed -n '4p' <<<"$out")"
       health="$(jq -r '.status // "down"' <<<"$status")"
       hrc="$(jq -r '.release.hrcBuild.sourceCommit // "unknown"' <<<"$status")"
       aspd="$(jq -r 'if .api.aspd.reachable == true then (.api.aspd.release.sourceCommit // "unidentified")[0:8] else "DOWN" end' <<<"$status")"
       # The running binary names the owner: Bun's hrc CLI or the native rusthrc (T-11893).
       owner="$(jq -r '.binaryPath // "" | if endswith("/rusthrc") then "rusthrc" elif . == "" then "unknown" else "bun" end' <<<"$status")"
       coherent="$(jq -r '.release.runningEqualsInstalled // false' <<<"$status")"
-      printf '%-8s %-12s %-10s %-10s %-8s %-8s %-26s %s\n' \
+      printf '%-8s %-12s %-10s %-10s %-8s %-8s %-26s %-28s %s\n' \
         "$label" "$health" "${hrc:0:8}" "$aspd" "$owner" "${cli:-unknown}" "${injector:-unknown}" \
+        "${kernel:-unknown}" \
         "$([[ "$coherent" == true ]] && echo 'running==installed' || echo 'STALE PROCESS')"
     }
 
-    printf '%-8s %-12s %-10s %-10s %-8s %-8s %-26s %s\n' NODE STATUS HRC ASPD OWNER CLI INJECTOR COHERENCE
+    printf '%-8s %-12s %-10s %-10s %-8s %-8s %-26s %-28s %s\n' NODE STATUS HRC ASPD OWNER CLI INJECTOR KERNEL COHERENCE
     probe max3 'max3'
     probe svc 'mini'
     probe hrcdev 'hrcdev'

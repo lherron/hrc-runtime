@@ -16,7 +16,7 @@ use axum::{
 use hrc_store::timestamp;
 use serde_json::{Map, Value, json};
 
-pub const ROUTE_KEYS: [&str; 23] = [
+pub const ROUTE_KEYS: [&str; 24] = [
     "GET /v1/federation/health",
     "GET /v1/sessions/metadata",
     "PATCH /v1/sessions/metadata",
@@ -29,6 +29,7 @@ pub const ROUTE_KEYS: [&str; 23] = [
     "GET /v1/sessions/facets",
     "POST /v1/sessions/resolve",
     "GET /v1/events/tail",
+    "GET /v1/events/page",
     "GET /v1/events/bounded-stream",
     "GET /v1/runs",
     "POST /v1/federation/locate",
@@ -249,6 +250,36 @@ async fn route_request(server: &Shared, peer: &str, request: Request) -> Result<
         ("GET", "/v1/sessions/page" | "/v1/sessions/facets") => {
             Ok(local(server, method, local_nodes(&uri), &headers, Body::empty()).await)
         }
+        ("GET", "/v1/events/page") => {
+            // Use the local parser so invalid/missing limits retain its refusal.
+            // Only peer pages have the tighter 200-row ceiling; cursor and
+            // incarnation validation remain entirely with the local handler.
+            let mut pairs: Vec<(String, String)> =
+                form_urlencoded::parse(uri.query().unwrap_or("").as_bytes())
+                    .into_owned()
+                    .collect();
+            let query = pairs.iter().cloned().fold(
+                std::collections::HashMap::new(),
+                |mut query, (key, value)| {
+                    query.entry(key).or_insert(value);
+                    query
+                },
+            );
+            if crate::server::events::integer(&query, "limit", 1).is_ok_and(|limit| limit > 200) {
+                for (key, value) in &mut pairs {
+                    if key == "limit" {
+                        *value = "200".into();
+                    }
+                }
+            }
+            let query = form_urlencoded::Serializer::new(String::new())
+                .extend_pairs(pairs)
+                .finish();
+            let uri = format!("/v1/events/page?{query}")
+                .parse()
+                .map_err(|_| Invalid)?;
+            Ok(local(server, method, uri, &headers, Body::empty()).await)
+        }
         (_, "/v1/sessions/resolve") => {
             if method != Method::POST {
                 return Ok(read_only());
@@ -415,7 +446,7 @@ mod tests {
 
     #[test]
     fn allowlist_names_the_session_writes_once() {
-        assert_eq!(ROUTE_KEYS.len(), 23);
+        assert_eq!(ROUTE_KEYS.len(), 24);
         assert_eq!(
             ROUTE_KEYS.iter().collect::<HashSet<_>>().len(),
             ROUTE_KEYS.len()

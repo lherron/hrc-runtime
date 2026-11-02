@@ -33,6 +33,10 @@ task-body/comment reference snapshot is in that task's artifacts. The gate
 signature history was checked through 178a9474; `evaluate` was unchanged.
 
 Reusable modules: `n2_scratch.py`, `n3_scratch.py`, `n2_aspd_proxy.py`.
+`peer_events_page.py` checks authenticated native peer pages, the 200-row
+ceiling and local cursor/fence semantics against a private seeded ledger
+(T-12257). It takes the same binary, installed-release, aspd-socket,
+scratch-root and artifacts arguments as the federation drivers.
 Participant `.mjs` files are descriptor assets. `n2_restart_self.md` is an
 operator recipe. Retained CLI helpers are documented in its README.
 
