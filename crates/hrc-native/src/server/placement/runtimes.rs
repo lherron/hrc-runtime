@@ -81,6 +81,60 @@ pub fn runtime(server: &Server, id: &str) -> Result<Value, ApiError> {
         )
     })
 }
+// Pagination needs only filter/sort keys. Do not parse historical runtime
+// JSON again for each page; hydrate selected IDs while holding the same lock.
+fn list_keys(
+    db: &hrc_store::Store,
+    clause: &str,
+    values: Vec<String>,
+) -> Result<Vec<Value>, ApiError> {
+    let mut stmt = db.sqlite.prepare(&format!(
+            "SELECT runtime_id,host_session_id,scope_ref,lane_ref,transport,status,last_activity_at,created_at FROM runtimes WHERE {} ORDER BY created_at,runtime_id",
+            clause
+        )).map_err(anyhow::Error::from)?;
+    Ok(stmt
+        .query_map(rusqlite::params_from_iter(values), |r| {
+            let mut row = serde_json::Map::new();
+            for (column, key) in [
+                ("runtime_id", "runtimeId"),
+                ("host_session_id", "hostSessionId"),
+                ("scope_ref", "scopeRef"),
+                ("lane_ref", "laneRef"),
+                ("transport", "transport"),
+                ("status", "status"),
+                ("last_activity_at", "lastActivityAt"),
+                ("created_at", "createdAt"),
+            ] {
+                if let Some(value) = r.get::<_, Option<String>>(column)? {
+                    row.insert(key.into(), value.into());
+                }
+            }
+            Ok(Value::Object(row))
+        })
+        .map_err(anyhow::Error::from)?
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(anyhow::Error::from)?)
+}
+
+fn attach_identity(db: &hrc_store::Store, row: &mut Value) {
+    if let Ok(identity) = db.identity(
+        row["scopeRef"].as_str().unwrap_or(""),
+        row["laneRef"].as_str().unwrap_or(""),
+    ) {
+        row["identity"] = identity;
+    }
+}
+
+fn hydrate_page(db: &hrc_store::Store, rows: &mut [Value]) -> Result<(), ApiError> {
+    for row in rows {
+        *row = db
+            .runtime(row["runtimeId"].as_str().unwrap())?
+            .ok_or_else(|| anyhow::anyhow!("runtime disappeared during pagination"))?;
+        attach_identity(db, row);
+    }
+    Ok(())
+}
+
 /// runtime-list-handlers.ts `queryRuntimesForProjection`: the filtered,
 /// ordered snapshots with health. `paginate` applies cursor and limit; the
 /// federation projection lists everything, terminal runtimes included.
@@ -173,13 +227,15 @@ pub fn query(
         values.extend([scope.to_owned(), scope.to_owned()]);
     }
     let db = server.store.lock().unwrap();
-    let mut rows = db.runtimes_where(&clause.join(" AND "), rusqlite::params_from_iter(values))?;
-    for r in &mut rows {
-        if let Ok(identity) = db.identity(
-            r["scopeRef"].as_str().unwrap_or(""),
-            r["laneRef"].as_str().unwrap_or(""),
-        ) {
-            r["identity"] = identity;
+    let clause = clause.join(" AND ");
+    let mut rows = if paginate {
+        list_keys(&db, &clause, values)?
+    } else {
+        db.runtimes_where(&clause, rusqlite::params_from_iter(values))?
+    };
+    if !paginate || optional(q, "agent").is_some() || optional(q, "task").is_some() {
+        for row in &mut rows {
+            attach_identity(&db, row);
         }
     }
     rows.retain(|r| {
@@ -264,6 +320,9 @@ pub fn query(
     } else {
         None
     };
+    if paginate {
+        hydrate_page(&db, &mut rows)?;
+    }
     let mut trips=db.sqlite.prepare("SELECT runtime_id,first_turn_missing_tripped_at,trip_event_seq,generation,bundle_dir FROM runtime_first_turn_watch WHERE first_turn_missing_tripped_at IS NOT NULL ORDER BY first_turn_missing_tripped_at ASC").map_err(anyhow::Error::from)?;
     let trips = trips
         .query_map([], |r| {
@@ -351,4 +410,52 @@ pub async fn seat(server: &Shared, id: &str) -> Result<Response, ApiError> {
         Err(error) => (Value::Null, error),
     };
     Ok(Json(json!({"runtimeId":id,"invocationId":invocation,"generation":runtime["generation"],"admissionClasses":classes,"currentBrokerSeq":seq,"probe":probe,"probeError":error})).into_response())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::server::turns::admission::tests::server;
+
+    // Regressions: reading JSON outside the requested page, changing status
+    // priority/cursor order, losing state or identity during late hydration.
+    #[test]
+    fn page_hydrates_only_selected_runtime() -> anyhow::Result<()> {
+        let (_scratch, server) = server("off", false)?;
+        {
+            let mut db = server.store.lock().unwrap();
+            let session = db.create_session("agent:test:project:fixture", "main")?.0;
+            for (id, status, state) in [
+                ("a", "terminated", "invalid JSON outside the page"),
+                ("b", "busy", r#"{"retained":"state"}"#),
+                ("c", "ready", r#"{"retained":"next"}"#),
+            ] {
+                db.sqlite.execute("INSERT INTO runtimes(runtime_id,host_session_id,scope_ref,lane_ref,generation,transport,status,supports_inflight_input,runtime_state_json,created_at,updated_at) VALUES(?,?,'agent:test:project:fixture','main',1,'hrcpty',?,0,?,'2026-01-01T00:00:00Z','now')", rusqlite::params![id, session["hostSessionId"].as_str(), status, state])?;
+            }
+        }
+        let mut q: HashMap<String, String> = [
+            ("all", "true"),
+            ("status", "busy,ready,terminated"),
+            ("limit", "1"),
+        ]
+        .into_iter()
+        .map(|(k, v)| (k.into(), v.into()))
+        .collect();
+        let (rows, cursor) =
+            query(&server, &q, true, false).map_err(|e| anyhow::anyhow!("{e:?}"))?;
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0]["runtimeId"], "b");
+        assert_eq!(rows[0]["runtimeStateJson"]["retained"], "state");
+        assert_eq!(rows[0]["identity"]["agentId"], "test");
+        q.insert("cursor".into(), cursor.unwrap());
+        q.insert("agent".into(), "test".into());
+        let (rows, cursor) =
+            query(&server, &q, true, false).map_err(|e| anyhow::anyhow!("{e:?}"))?;
+        assert_eq!(rows[0]["runtimeId"], "c");
+        assert_eq!(rows[0]["runtimeStateJson"]["retained"], "next");
+        assert!(cursor.is_some());
+        // The unpaginated projection still reads the entire matching wire set.
+        assert!(query(&server, &HashMap::new(), false, true).is_err());
+        Ok(())
+    }
 }

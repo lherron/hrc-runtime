@@ -244,6 +244,13 @@ fn route(method: &str, path: &str) -> String {
             return "/v1/active-run-contributions/:inputApplicationId".into();
         }
     }
+    // Native-only routes are absent from the retained Bun inventory. Use
+    // dispatch's own exact inventory after normalizing parameterized paths.
+    if let Ok(method) = axum::http::Method::from_bytes(method.as_bytes())
+        && super::implemented(&method, path)
+    {
+        return path.into();
+    }
     "unmatched".into()
 }
 pub(super) struct Entry {
@@ -510,5 +517,33 @@ impl Drop for ObservedBody {
         } else {
             "cancel"
         });
+    }
+}
+
+#[cfg(test)]
+mod route_tests {
+    use super::route;
+    #[test]
+    fn labels_native_routes_without_unbounded_labels() {
+        for (method, path) in [
+            ("GET", "/v1/sessions/annotations"),
+            ("PUT", "/v1/sessions/annotations"),
+            ("POST", "/v1/sessions/annotations/act"),
+            ("POST", "/v1/sessions/annotations/delete"),
+            ("GET", "/v1/sessions/attention"),
+            ("POST", "/v1/events/append"),
+            ("GET", "/v1/runs"),
+            ("POST", "/v1/seat-handoffs"),
+            ("GET", "/v1/seat-handoffs/get"),
+            ("POST", "/v1/seat-handoffs/acknowledge"),
+        ] {
+            assert_eq!(route(method, path), path);
+        }
+        assert_eq!(
+            route("GET", "/v1/runtimes/rt-123/seat"),
+            "/v1/runtimes/:runtimeId/seat"
+        );
+        assert_eq!(route("GET", "/unknown/arbitrary-id"), "unmatched");
+        assert_eq!(route("DELETE", "/v1/sessions/attention"), "unmatched");
     }
 }
