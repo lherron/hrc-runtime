@@ -34,6 +34,16 @@
     {
       "listener": "main",
       "method": "GET",
+      "route": "/v1/sessions/work"
+    },
+    {
+      "listener": "main",
+      "method": "PUT",
+      "route": "/v1/sessions/work"
+    },
+    {
+      "listener": "main",
+      "method": "GET",
       "route": "/v1/seat-handoffs"
     },
     {
@@ -560,6 +570,16 @@
       "listener": "peer",
       "method": "PATCH",
       "route": "/v1/sessions/metadata"
+    },
+    {
+      "listener": "peer",
+      "method": "GET",
+      "route": "/v1/sessions/work"
+    },
+    {
+      "listener": "peer",
+      "method": "PUT",
+      "route": "/v1/sessions/work"
     },
     {
       "listener": "peer",

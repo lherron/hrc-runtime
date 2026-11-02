@@ -38,6 +38,7 @@ async fn start_owner_services(server: &Shared) -> Result<()> {
         reconcile::start(server);
         startup::start_gc(server);
         sweeps::start_retention(server);
+        federation::start_seat_kind_refresh(server);
         seat_retirement::start(server);
         transcript::start(server);
         let prior = server.lifecycle.admission.snapshot();

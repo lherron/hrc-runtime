@@ -16,6 +16,9 @@ pub fn handle(
     body: &[u8],
     headers: &HeaderMap,
 ) -> Result<Option<Response>, ApiError> {
+    if path == "/v1/sessions/work" && (*method == Method::GET || *method == Method::PUT) {
+        return super::seat_work::handle(server, method, query, body).map(Some);
+    }
     if path.starts_with("/v1/seat-handoffs") {
         return seat_handoffs(server, method, path, query, body).map(Some);
     }
@@ -102,6 +105,10 @@ pub fn handle(
     if !metadata {
         let facts=db.sqlite.query_row("SELECT effective_status,execution_mode,last_activity_at FROM session_index WHERE scope_ref=? AND lane_ref=?",[scope,lane],|r|Ok(json!({"effectiveStatus":r.get::<_,String>(0)?,"executionMode":r.get::<_,String>(1)?,"lastActivityAt":r.get::<_,String>(2)?}))).unwrap_or_else(|_|json!({"effectiveStatus":"inactive","executionMode":"nonInteractive","lastActivityAt":session["updatedAt"]}));
         result["continuity"] = json!({"scopeRef":scope,"laneRef":hrc_store::canonical_lane(lane)});
+        let seat = db.seat_state(scope, lane)?;
+        for key in ["kind", "work", "workEtag"] {
+            result[key] = seat[key].clone();
+        }
         result["identity"] = session["identity"].clone();
         result["generation"] = json!({"hostSessionId":session["hostSessionId"],"generation":session["generation"],"status":session["status"],"createdAt":session["createdAt"],"lastAppliedIntent":session.get("lastAppliedIntentJson").cloned().unwrap_or(json!({})),"continuation":session.get("continuation").cloned().unwrap_or(json!({}))});
         result["facts"] = facts;

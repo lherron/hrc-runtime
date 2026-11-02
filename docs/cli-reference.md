@@ -507,3 +507,16 @@ Usage/selector rejection exits 2 before arm and emits no terminal event.
 ---
 
 Source of truth: command registration in `packages/hrc-cli/src/cli/build-program.ts` and `cli/register-*.ts` (scope-verb flags in `cli/scope-verb-options.ts`); monitor exit codes in `packages/hrc-core/src/monitor/exit-codes.ts`; turn exit codes in `packages/hrc-cli/src/turn/commands/turn-terminals.ts`. Checked against checkout `--help` output on 2026-10-18 (T-11318). Run `hrc <command> --help` for the complete flag set.
+
+### Seat work (native)
+
+`hrc seat work get <scope>` reads the continuity's `kind`, tagged `work`, and
+`workEtag`. To bind work, use `hrc seat work set <scope> --task T-12247
+--if-match N`, replacing N with the observed `workEtag`. Alternatively choose
+`--workstream <id>` or `--none`. A stale etag refuses with `stale_seat_work`
+and leaves the stored association unchanged. Work survives generation rotation.
+
+Task seats start bound to their task; free seats start with `{ "kind": "none" }`.
+The stored seat `kind` (`task`, `standing`, `adhoc`) follows the agent's declared
+placement homes and pins and refreshes when its profile changes. Binding work
+does not change kind. These fields also appear on kernel `hrc.seat` nodes.

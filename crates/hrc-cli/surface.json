@@ -4,8 +4,8 @@
   "aliases": [],
   "usage": "[options] [command]",
   "allowExcessArguments": false,
-  "help": "Usage: hrc [--agent|--human] <command> [options]\n\nVIEW: agent\n  Override with --human. The complete maintenance cellar is always visible via:\n  hrc admin --help\n\nAGENT COMMANDS\n  server status        show daemon/socket/API health state\n  session list         list sessions\n  monitor show         show the current monitor-state snapshot and counters, unlike hrc ls or hrc runtime list inventory\n  monitor wait         watch --until without the event stream, using the same condition engine\n  monitor watch        stream monitor events\n  monitor search       search completed transcript turns across runtimes with the resident BM25 index\n  monitor events       list durable invocation-ledger events (invocation-local seq; never used by monitor conditions)\n  monitor transcript   render an invocation activity transcript (tool starts/results, completed assistant messages, driver notices)\n  monitor stats        summarize durable invocation-ledger activity\n  start                start a managed runtime\n  run                  launch or reattach and attach\n  resume               resume the latest stored continuation for a target (regardless of status)\n  show                 show a runtime, host session, or message by selector\n  ls                   list runtimes | sessions | messages\n  turn                 dispatch tracked work or attach to an admitted turn and stream its progress\n  summon               materialize/pre-warm a target; message traffic auto-summons when needed\n  restart              end a scope's conversation and relaunch it fresh (generation+1, no continuation); refuses a busy seat\n  restartme            restart this agent into a fresh context when the current turn ends (needs a pending handoff)\n  send                 inject literal input into a live tmux runtime; no envelope or obligation; not for tracked work\n  peek                 tail the live tmux pane of a bound runtime\n  attach               attach to a live runtime\n  runtime list         list runtimes (use `hrc show <scope>` or `runtime inspect <id>` for one target)\n  runtime inspect      inspect nested HRC and broker authority views for a runtime\n  runtime diagnostics  list first_turn_missing trips, or print one trip and its diagnostic bundle (read-only)\n  runtime terminate    terminate a runtime\n  target locate        show declared policy, established binding, and observed runtimes for a scope\n  doctor               check daemon health, node identity, placement skew, and one target\n  handoff [command]    durable successor handoffs\n\nRun hrc <command> --help for the complete help of any explicitly named command.\n",
-  "humanHelp": "Usage: hrc [--agent|--human] <command> [options]\n\nVIEW: human\n  Override with --agent. The complete maintenance cellar is always visible via:\n  hrc admin --help\n\nGROUPS\n  server      daemon lifecycle, health, and tmux backend control\n  session     resolve, list, and inspect sessions\n  monitor     show, watch, and wait on HRC monitor state\n  admin       administrative maintenance commands\n  capture     inspect or release broker capture state\n  runtime     list, inspect, and control runtimes\n  federation  inspect and operate federation\n  target      inspect where scopes live (placement)\n\nHUMAN FLOWS\n  hrc run <target>\n    launch or reattach and attach\n  hrc attach <target>\n    attach to a live runtime\n\nOTHER COMMANDS\n  info    show HRC orientation and first-contact guidance\n  doctor  check daemon health, node identity, placement skew, and one target\n  handoff [command]    durable successor handoffs\n\nRun hrc <command> --help for the complete help of any explicitly named command.\n",
+  "help": "Usage: hrc [--agent|--human] <command> [options]\n\nVIEW: agent\n  Override with --human. The complete maintenance cellar is always visible via:\n  hrc admin --help\n\nAGENT COMMANDS\n  server status        show daemon/socket/API health state\n  session list         list sessions\n  monitor show         show the current monitor-state snapshot and counters, unlike hrc ls or hrc runtime list inventory\n  monitor wait         watch --until without the event stream, using the same condition engine\n  monitor watch        stream monitor events\n  monitor search       search completed transcript turns across runtimes with the resident BM25 index\n  monitor events       list durable invocation-ledger events (invocation-local seq; never used by monitor conditions)\n  monitor transcript   render an invocation activity transcript (tool starts/results, completed assistant messages, driver notices)\n  monitor stats        summarize durable invocation-ledger activity\n  start                start a managed runtime\n  run                  launch or reattach and attach\n  resume               resume the latest stored continuation for a target (regardless of status)\n  show                 show a runtime, host session, or message by selector\n  ls                   list runtimes | sessions | messages\n  turn                 dispatch tracked work or attach to an admitted turn and stream its progress\n  summon               materialize/pre-warm a target; message traffic auto-summons when needed\n  restart              end a scope's conversation and relaunch it fresh (generation+1, no continuation); refuses a busy seat\n  restartme            restart this agent into a fresh context when the current turn ends (needs a pending handoff)\n  send                 inject literal input into a live tmux runtime; no envelope or obligation; not for tracked work\n  peek                 tail the live tmux pane of a bound runtime\n  attach               attach to a live runtime\n  runtime list         list runtimes (use `hrc show <scope>` or `runtime inspect <id>` for one target)\n  runtime inspect      inspect nested HRC and broker authority views for a runtime\n  runtime diagnostics  list first_turn_missing trips, or print one trip and its diagnostic bundle (read-only)\n  runtime terminate    terminate a runtime\n  target locate        show declared policy, established binding, and observed runtimes for a scope\n  doctor               check daemon health, node identity, placement skew, and one target\n  handoff [command]    durable successor handoffs\n  seat [options] [command]  read or bind seat work\n\nRun hrc <command> --help for the complete help of any explicitly named command.\n",
+  "humanHelp": "Usage: hrc [--agent|--human] <command> [options]\n\nVIEW: human\n  Override with --agent. The complete maintenance cellar is always visible via:\n  hrc admin --help\n\nGROUPS\n  server      daemon lifecycle, health, and tmux backend control\n  session     resolve, list, and inspect sessions\n  monitor     show, watch, and wait on HRC monitor state\n  admin       administrative maintenance commands\n  capture     inspect or release broker capture state\n  runtime     list, inspect, and control runtimes\n  federation  inspect and operate federation\n  target      inspect where scopes live (placement)\n\nHUMAN FLOWS\n  hrc run <target>\n    launch or reattach and attach\n  hrc attach <target>\n    attach to a live runtime\n\nOTHER COMMANDS\n  info    show HRC orientation and first-contact guidance\n  doctor  check daemon health, node identity, placement skew, and one target\n  handoff [command]    durable successor handoffs\n  seat [options] [command]  read or bind seat work\n\nRun hrc <command> --help for the complete help of any explicitly named command.\n",
   "arguments": [],
   "options": [
     {
@@ -7823,6 +7823,245 @@
             }
           ],
           "children": [],
+          "nativeOnly": true
+        }
+      ],
+      "nativeOnly": true
+    },
+    {
+      "path": [
+        "seat"
+      ],
+      "name": "seat",
+      "aliases": [],
+      "usage": "[options] [command]",
+      "allowExcessArguments": false,
+      "help": "Usage: hrc seat [options] [command]\n\nseat continuity\n\nOptions:\n  -h, --help  display help for command\n\nCommands:\n  work [options] [command]  read or set work\n  help [command]  display help for command\n",
+      "humanHelp": "Usage: hrc seat [options] [command]\n\nseat continuity\n\nOptions:\n  -h, --help  display help for command\n\nCommands:\n  work [options] [command]  read or set work\n  help [command]  display help for command\n",
+      "arguments": [],
+      "options": [
+        {
+          "flags": "--output <format>",
+          "long": "--output",
+          "required": true,
+          "optional": false,
+          "mandatory": false,
+          "negate": false,
+          "hidden": true,
+          "choices": [
+            "json"
+          ]
+        },
+        {
+          "flags": "--agent",
+          "long": "--agent",
+          "required": false,
+          "optional": false,
+          "mandatory": false,
+          "negate": false,
+          "hidden": true
+        },
+        {
+          "flags": "--human",
+          "long": "--human",
+          "required": false,
+          "optional": false,
+          "mandatory": false,
+          "negate": false,
+          "hidden": true
+        }
+      ],
+      "children": [
+        {
+          "path": [
+            "seat",
+            "work"
+          ],
+          "name": "work",
+          "aliases": [],
+          "usage": "[options] [command]",
+          "allowExcessArguments": false,
+          "help": "Usage: hrc seat work [options] [command]\n\nread or set continuity work\n\nOptions:\n  -h, --help  display help for command\n\nCommands:\n  get [options] <scope>  get work\n  set [options] <scope>  set work\n  help [command]  display help for command\n",
+          "humanHelp": "Usage: hrc seat work [options] [command]\n\nread or set continuity work\n\nOptions:\n  -h, --help  display help for command\n\nCommands:\n  get [options] <scope>  get work\n  set [options] <scope>  set work\n  help [command]  display help for command\n",
+          "arguments": [],
+          "options": [
+            {
+              "flags": "--output <format>",
+              "long": "--output",
+              "required": true,
+              "optional": false,
+              "mandatory": false,
+              "negate": false,
+              "hidden": true,
+              "choices": [
+                "json"
+              ]
+            },
+            {
+              "flags": "--agent",
+              "long": "--agent",
+              "required": false,
+              "optional": false,
+              "mandatory": false,
+              "negate": false,
+              "hidden": true
+            },
+            {
+              "flags": "--human",
+              "long": "--human",
+              "required": false,
+              "optional": false,
+              "mandatory": false,
+              "negate": false,
+              "hidden": true
+            }
+          ],
+          "children": [
+            {
+              "path": [
+                "seat",
+                "work",
+                "get"
+              ],
+              "name": "get",
+              "aliases": [],
+              "usage": "[options] <scope>",
+              "allowExcessArguments": false,
+              "help": "Usage: hrc seat work get [options] <scope>\n\nread work and current etag\n\nOptions:\n  -h, --help  display help for command\n",
+              "humanHelp": "Usage: hrc seat work get [options] <scope>\n\nread work and current etag\n\nOptions:\n  -h, --help  display help for command\n",
+              "arguments": [
+                {
+                  "name": "scope",
+                  "required": true,
+                  "variadic": false
+                }
+              ],
+              "options": [
+                {
+                  "flags": "--output <format>",
+                  "long": "--output",
+                  "required": true,
+                  "optional": false,
+                  "mandatory": false,
+                  "negate": false,
+                  "hidden": true,
+                  "choices": [
+                    "json"
+                  ]
+                },
+                {
+                  "flags": "--agent",
+                  "long": "--agent",
+                  "required": false,
+                  "optional": false,
+                  "mandatory": false,
+                  "negate": false,
+                  "hidden": true
+                },
+                {
+                  "flags": "--human",
+                  "long": "--human",
+                  "required": false,
+                  "optional": false,
+                  "mandatory": false,
+                  "negate": false,
+                  "hidden": true
+                }
+              ],
+              "children": [],
+              "nativeOnly": true
+            },
+            {
+              "path": [
+                "seat",
+                "work",
+                "set"
+              ],
+              "name": "set",
+              "aliases": [],
+              "usage": "[options] <scope>",
+              "allowExcessArguments": false,
+              "help": "Usage: hrc seat work set [options] <scope>\n\nbind work with an etag fence\n\nOptions:\n  --task <task>  work association\n  --workstream <id>  work association\n  --none  work association\n  --if-match <n>  required etag fence\n  -h, --help  display help for command\n",
+              "humanHelp": "Usage: hrc seat work set [options] <scope>\n\nbind work with an etag fence\n\nOptions:\n  --task <task>  work association\n  --workstream <id>  work association\n  --none  work association\n  --if-match <n>  required etag fence\n  -h, --help  display help for command\n",
+              "arguments": [
+                {
+                  "name": "scope",
+                  "required": true,
+                  "variadic": false
+                }
+              ],
+              "options": [
+                {
+                  "flags": "--output <format>",
+                  "long": "--output",
+                  "required": true,
+                  "optional": false,
+                  "mandatory": false,
+                  "negate": false,
+                  "hidden": true,
+                  "choices": [
+                    "json"
+                  ]
+                },
+                {
+                  "flags": "--agent",
+                  "long": "--agent",
+                  "required": false,
+                  "optional": false,
+                  "mandatory": false,
+                  "negate": false,
+                  "hidden": true
+                },
+                {
+                  "flags": "--human",
+                  "long": "--human",
+                  "required": false,
+                  "optional": false,
+                  "mandatory": false,
+                  "negate": false,
+                  "hidden": true
+                },
+                {
+                  "flags": "--task <task>",
+                  "long": "--task",
+                  "required": true,
+                  "optional": false,
+                  "mandatory": false,
+                  "negate": false,
+                  "hidden": false
+                },
+                {
+                  "flags": "--workstream <id>",
+                  "long": "--workstream",
+                  "required": true,
+                  "optional": false,
+                  "mandatory": false,
+                  "negate": false,
+                  "hidden": false
+                },
+                {
+                  "flags": "--none",
+                  "long": "--none",
+                  "required": false,
+                  "optional": false,
+                  "mandatory": false,
+                  "negate": false,
+                  "hidden": false
+                },
+                {
+                  "flags": "--if-match <n>",
+                  "long": "--if-match",
+                  "required": true,
+                  "optional": false,
+                  "mandatory": true,
+                  "negate": false,
+                  "hidden": false
+                }
+              ],
+              "children": [],
+              "nativeOnly": true
+            }
+          ],
           "nativeOnly": true
         }
       ],

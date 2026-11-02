@@ -92,16 +92,21 @@ impl SeatProjector {
         }
         let now = Utc::now();
         let mut out = project_with_context(sessions, runtimes, events, &turns, &context, now)?;
-        // Only metadata enters the document. The body stays in the durable
-        // store and in the successor's first turn, never in kernel subscribers.
         for edit in &mut out {
             if edit["type"] == "hrc.seat" && edit["kind"] == "upsert" {
                 let seat = &mut edit["payload"];
-                if let Some(handoff) = db
-                    .projected_seat_handoff(text(seat, "scopeRef"), text(seat, "laneRef"), now)
-                    .map_err(error)?
-                {
+                let scope = text(seat, "scopeRef");
+                let lane = hrc_store::storage_lane(text(seat, "laneRef"));
+                let state = db.seat_state(scope, lane);
+                // Only handoff metadata enters the document; its body stays
+                // in the durable store and the successor's first turn.
+                if let Some(handoff) = db.projected_seat_handoff(scope, lane, now).map_err(error)? {
                     seat["handoff"] = json!({"id":handoff["id"],"state":handoff["state"]});
+                }
+                if let Ok(state) = state {
+                    for key in ["kind", "work", "workEtag"] {
+                        seat[key] = state[key].clone();
+                    }
                 }
             }
         }

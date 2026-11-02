@@ -72,6 +72,7 @@ const info = {
 }
 type SurfaceNode = {
   path: string[]
+  name: string
   help: string
   humanHelp: string
   children: SurfaceNode[]
@@ -90,16 +91,18 @@ function graftNative(tree: SurfaceNode, grafts: Graft[]): SurfaceNode {
     }
     target.children.push(node)
     for (const key of ['help', 'humanHelp'] as const) {
+      const lines = target[key].split('\n')
       if (parent.length === 0) {
-        if (!target[key].includes('\nRun hrc <command>'))
-          throw new Error('native root command help insertion point missing')
-        target[key] = target[key].replace(
-          '\nRun hrc <command>',
-          `  ${commandLine[0].padEnd(21)}${commandLine[1]}\n\nRun hrc <command>`
+        const at = lines.findIndex((line) => line.startsWith('Run hrc '))
+        if (at < 0) throw new Error('native root command help insertion point missing')
+        lines.splice(
+          at - 1,
+          0,
+          `  ${commandLine[0].padEnd(Math.max(21, commandLine[0].length + 2))}${commandLine[1]}`
         )
+        target[key] = lines.join('\n')
         continue
       }
-      const lines = target[key].split('\n')
       const at = lines.findIndex((line) => /^ {2}help \[command\] +display help/.test(line))
       const column = lines[at]?.indexOf('display help') ?? -1
       if (at < 0 || commandLine[0].length + 4 > column)

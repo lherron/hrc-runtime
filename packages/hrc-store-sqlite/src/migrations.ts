@@ -10,6 +10,7 @@ import { runtimeLegacyIdentityNullableMigration } from './migrations/runtime-leg
 import { schemaMigrations } from './migrations/schema-migrations.js'
 import { seatAnnotations } from './migrations/seat-annotations.js'
 import { seatHandoffs } from './migrations/seat-handoffs.js'
+import { seatKindWork } from './migrations/seat-kind-work.js'
 import { sessionIdentityMetadata } from './migrations/session-identity-metadata.js'
 import { sessionStateDeadFieldRemoval } from './migrations/session-state-dead-field-removal.js'
 import { sessionTitleCascadeMigrations } from './migrations/session-title-cascade-migrations.js'
@@ -34,6 +35,7 @@ export const phase1Migrations: readonly HrcMigration[] = [
   planPolicyTableRemoval,
   permissionAuditRemoval,
   seatAnnotations,
+  seatKindWork,
   seatHandoffs,
 ]
 

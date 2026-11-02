@@ -113,3 +113,59 @@ pub async fn policy_for(server: &Server, scope: &str) -> Policy {
     policy["placement"] = observed_policy["placement"].clone();
     Policy::Resolved { policy, profile }
 }
+
+/// Startup backfill, then re-resolve only agents whose source profile changed.
+/// Failed observations retain the stored policy and retry next pass.
+pub fn start_refresh(server: &crate::server::Shared) {
+    let server = server.clone();
+    tokio::spawn(async move {
+        let mut sources =
+            std::collections::HashMap::<String, (String, Option<std::time::SystemTime>)>::new();
+        loop {
+            let rows = {
+                let db = server.store.lock().unwrap();
+                let mut stmt = db.sqlite.prepare("SELECT agent_id,MIN(scope_ref) FROM continuities WHERE agent_id IS NOT NULL GROUP BY agent_id").expect("seat policy agents");
+                stmt.query_map([], |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?)))
+                    .expect("seat policy rows")
+                    .collect::<rusqlite::Result<Vec<_>>>()
+                    .unwrap_or_default()
+            };
+            for (agent, _scope) in rows {
+                if sources.get(&agent).is_some_and(|(path, stamp)| {
+                    *stamp == std::fs::metadata(path).and_then(|m| m.modified()).ok()
+                }) {
+                    continue;
+                }
+                if let Policy::Resolved { profile, policy } =
+                    policy_for(&server, &format!("agent:{agent}")).await
+                {
+                    if let Err(error) = server
+                        .store
+                        .lock()
+                        .unwrap()
+                        .refresh_seat_kinds(&agent, &policy["placement"])
+                    {
+                        crate::server::stderr_json(
+                            "warn",
+                            "seat",
+                            "seat.kind.refresh_failed",
+                            json!({"agentId":agent,"error":error.to_string()}),
+                        );
+                        continue;
+                    }
+                    let stamp = std::fs::metadata(&profile).and_then(|m| m.modified()).ok();
+                    sources.insert(agent, (profile, stamp));
+                    server.ledger_committed();
+                }
+            }
+            tokio::time::sleep(std::time::Duration::from_secs(5)).await;
+            if server
+                .controller
+                .shutting_down
+                .load(std::sync::atomic::Ordering::SeqCst)
+            {
+                break;
+            }
+        }
+    });
+}

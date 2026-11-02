@@ -774,6 +774,252 @@
         ],
         "nativeOnly": true
       }
+    },
+    {
+      "parent": [],
+      "commandLine": [
+        "seat [options] [command]",
+        "read or bind seat work"
+      ],
+      "node": {
+        "path": [
+          "seat"
+        ],
+        "name": "seat",
+        "aliases": [],
+        "usage": "[options] [command]",
+        "allowExcessArguments": false,
+        "help": "Usage: hrc seat [options] [command]\n\nseat continuity\n\nOptions:\n  -h, --help  display help for command\n\nCommands:\n  work [options] [command]  read or set work\n  help [command]  display help for command\n",
+        "humanHelp": "Usage: hrc seat [options] [command]\n\nseat continuity\n\nOptions:\n  -h, --help  display help for command\n\nCommands:\n  work [options] [command]  read or set work\n  help [command]  display help for command\n",
+        "arguments": [],
+        "options": [
+          {
+            "flags": "--output <format>",
+            "long": "--output",
+            "required": true,
+            "optional": false,
+            "mandatory": false,
+            "negate": false,
+            "hidden": true,
+            "choices": [
+              "json"
+            ]
+          },
+          {
+            "flags": "--agent",
+            "long": "--agent",
+            "required": false,
+            "optional": false,
+            "mandatory": false,
+            "negate": false,
+            "hidden": true
+          },
+          {
+            "flags": "--human",
+            "long": "--human",
+            "required": false,
+            "optional": false,
+            "mandatory": false,
+            "negate": false,
+            "hidden": true
+          }
+        ],
+        "children": [
+          {
+            "path": [
+              "seat",
+              "work"
+            ],
+            "name": "work",
+            "aliases": [],
+            "usage": "[options] [command]",
+            "allowExcessArguments": false,
+            "help": "Usage: hrc seat work [options] [command]\n\nread or set continuity work\n\nOptions:\n  -h, --help  display help for command\n\nCommands:\n  get [options] <scope>  get work\n  set [options] <scope>  set work\n  help [command]  display help for command\n",
+            "humanHelp": "Usage: hrc seat work [options] [command]\n\nread or set continuity work\n\nOptions:\n  -h, --help  display help for command\n\nCommands:\n  get [options] <scope>  get work\n  set [options] <scope>  set work\n  help [command]  display help for command\n",
+            "arguments": [],
+            "options": [
+              {
+                "flags": "--output <format>",
+                "long": "--output",
+                "required": true,
+                "optional": false,
+                "mandatory": false,
+                "negate": false,
+                "hidden": true,
+                "choices": [
+                  "json"
+                ]
+              },
+              {
+                "flags": "--agent",
+                "long": "--agent",
+                "required": false,
+                "optional": false,
+                "mandatory": false,
+                "negate": false,
+                "hidden": true
+              },
+              {
+                "flags": "--human",
+                "long": "--human",
+                "required": false,
+                "optional": false,
+                "mandatory": false,
+                "negate": false,
+                "hidden": true
+              }
+            ],
+            "children": [
+              {
+                "path": [
+                  "seat",
+                  "work",
+                  "get"
+                ],
+                "name": "get",
+                "aliases": [],
+                "usage": "[options] <scope>",
+                "allowExcessArguments": false,
+                "help": "Usage: hrc seat work get [options] <scope>\n\nread work and current etag\n\nOptions:\n  -h, --help  display help for command\n",
+                "humanHelp": "Usage: hrc seat work get [options] <scope>\n\nread work and current etag\n\nOptions:\n  -h, --help  display help for command\n",
+                "arguments": [
+                  {
+                    "name": "scope",
+                    "required": true,
+                    "variadic": false
+                  }
+                ],
+                "options": [
+                  {
+                    "flags": "--output <format>",
+                    "long": "--output",
+                    "required": true,
+                    "optional": false,
+                    "mandatory": false,
+                    "negate": false,
+                    "hidden": true,
+                    "choices": [
+                      "json"
+                    ]
+                  },
+                  {
+                    "flags": "--agent",
+                    "long": "--agent",
+                    "required": false,
+                    "optional": false,
+                    "mandatory": false,
+                    "negate": false,
+                    "hidden": true
+                  },
+                  {
+                    "flags": "--human",
+                    "long": "--human",
+                    "required": false,
+                    "optional": false,
+                    "mandatory": false,
+                    "negate": false,
+                    "hidden": true
+                  }
+                ],
+                "children": [],
+                "nativeOnly": true
+              },
+              {
+                "path": [
+                  "seat",
+                  "work",
+                  "set"
+                ],
+                "name": "set",
+                "aliases": [],
+                "usage": "[options] <scope>",
+                "allowExcessArguments": false,
+                "help": "Usage: hrc seat work set [options] <scope>\n\nbind work with an etag fence\n\nOptions:\n  --task <task>  work association\n  --workstream <id>  work association\n  --none  work association\n  --if-match <n>  required etag fence\n  -h, --help  display help for command\n",
+                "humanHelp": "Usage: hrc seat work set [options] <scope>\n\nbind work with an etag fence\n\nOptions:\n  --task <task>  work association\n  --workstream <id>  work association\n  --none  work association\n  --if-match <n>  required etag fence\n  -h, --help  display help for command\n",
+                "arguments": [
+                  {
+                    "name": "scope",
+                    "required": true,
+                    "variadic": false
+                  }
+                ],
+                "options": [
+                  {
+                    "flags": "--output <format>",
+                    "long": "--output",
+                    "required": true,
+                    "optional": false,
+                    "mandatory": false,
+                    "negate": false,
+                    "hidden": true,
+                    "choices": [
+                      "json"
+                    ]
+                  },
+                  {
+                    "flags": "--agent",
+                    "long": "--agent",
+                    "required": false,
+                    "optional": false,
+                    "mandatory": false,
+                    "negate": false,
+                    "hidden": true
+                  },
+                  {
+                    "flags": "--human",
+                    "long": "--human",
+                    "required": false,
+                    "optional": false,
+                    "mandatory": false,
+                    "negate": false,
+                    "hidden": true
+                  },
+                  {
+                    "flags": "--task <task>",
+                    "long": "--task",
+                    "required": true,
+                    "optional": false,
+                    "mandatory": false,
+                    "negate": false,
+                    "hidden": false
+                  },
+                  {
+                    "flags": "--workstream <id>",
+                    "long": "--workstream",
+                    "required": true,
+                    "optional": false,
+                    "mandatory": false,
+                    "negate": false,
+                    "hidden": false
+                  },
+                  {
+                    "flags": "--none",
+                    "long": "--none",
+                    "required": false,
+                    "optional": false,
+                    "mandatory": false,
+                    "negate": false,
+                    "hidden": false
+                  },
+                  {
+                    "flags": "--if-match <n>",
+                    "long": "--if-match",
+                    "required": true,
+                    "optional": false,
+                    "mandatory": true,
+                    "negate": false,
+                    "hidden": false
+                  }
+                ],
+                "children": [],
+                "nativeOnly": true
+              }
+            ],
+            "nativeOnly": true
+          }
+        ],
+        "nativeOnly": true
+      }
     }
   ]
 }

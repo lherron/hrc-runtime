@@ -105,5 +105,6 @@
   "0126_plan_policy_table_removal",
   "0127_permission_audit_removal",
   "0128_seat_annotations",
+  "0129_seat_kind_work",
   "0130_seat_handoffs"
 ]

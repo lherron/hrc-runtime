@@ -25,22 +25,18 @@ fn idle_hours() -> f64 {
         .unwrap_or(DEFAULT_IDLE_HOURS)
 }
 
-/// The wrkq task id a task seat's scope names (`task:T-<digits>`), else None:
-/// `task:primary`, named standing seats and project scopes are not task seats.
-fn task_id(scope: &str) -> Option<String> {
-    let task = hrc_store::derive_identity(scope)["taskId"]
-        .as_str()?
-        .to_owned();
-    let digits = task.strip_prefix("T-")?;
-    (!digits.is_empty() && digits.bytes().all(|b| b.is_ascii_digit())).then_some(task)
-}
-
 /// Why the seat must be left alone, before any trigger is considered.
 async fn guard(server: &Shared, rt: &db::Rt) -> anyhow::Result<Option<String>> {
     if rt.scope_ref.starts_with("app:") {
         return Ok(Some("app_scope".into()));
     }
-    if task_id(&rt.scope_ref).is_none() {
+    if server
+        .store
+        .lock()
+        .unwrap()
+        .seat_state(&rt.scope_ref, &rt.lane_ref)?["kind"]
+        != "task"
+    {
         return Ok(Some("standing_seat".into()));
     }
     if super::controller::is_external_lifecycle_owner(rt) {
@@ -131,7 +127,14 @@ pub async fn retire_task_seats(server: &Shared) -> anyhow::Result<Value> {
             *skipped.entry(reason).or_default() += 1;
             continue;
         }
-        let task = task_id(&rt.scope_ref).unwrap_or_default();
+        let task = server
+            .store
+            .lock()
+            .unwrap()
+            .identity(&rt.scope_ref, &rt.lane_ref)?["taskId"]
+            .as_str()
+            .unwrap_or_default()
+            .to_owned();
         if !tasks.contains_key(&task) {
             let state = server
                 .wrkq

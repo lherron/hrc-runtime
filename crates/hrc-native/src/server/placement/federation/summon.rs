@@ -69,6 +69,18 @@ where
         Some(lock) => Some(lock.lock().await),
         None => None,
     };
+    // Birth uses the very same ASP declaration path as the summon gate.
+    // A missing declaration keeps the last known policy; authority still gates mint.
+    if let super::policy::Policy::Resolved { policy, .. } =
+        super::policy::policy_for(server, request.scope_ref).await
+    {
+        let (agent, _, _) = super::policy::scope_parts(request.scope_ref);
+        server
+            .store
+            .lock()
+            .unwrap()
+            .refresh_seat_kinds(agent, &policy["placement"])?;
+    }
     assert_authority(server, &request).await?;
     mint().await
 }

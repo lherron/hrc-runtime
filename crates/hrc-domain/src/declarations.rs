@@ -24,6 +24,9 @@ pub fn declarations() -> Value {
         "lastActivityAt",
         "title",
     ]);
+    seat["kind"] = json!({"kind":"enum","values":["task","standing","adhoc"]});
+    seat["work"] = json!({"kind":"json"});
+    seat["workEtag"] = json!({"kind":"integer"});
     seat["generation"] = json!({"kind":"integer"});
     seat["activeGeneration"] = json!({"kind":"integer"});
     seat["lastHrcSeq"] = json!({"kind":"integer"});

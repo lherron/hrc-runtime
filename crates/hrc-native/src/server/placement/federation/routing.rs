@@ -59,15 +59,18 @@ pub fn scope_of(
                 ..scoped(scope, Method::GET)
             })
         }
-        (Method::GET, "/v1/sessions/get" | "/v1/sessions/metadata") => {
+        (Method::GET, "/v1/sessions/get" | "/v1/sessions/metadata" | "/v1/sessions/work") => {
             Some(scoped(query.get("scopeRef")?, Method::GET))
         }
-        (Method::PATCH, "/v1/sessions/metadata") => {
+        (Method::PUT, "/v1/sessions/work") | (Method::PATCH, "/v1/sessions/metadata") => {
             let value: Value = serde_json::from_slice(body).ok()?;
             Some(Scoped {
                 body: Some(String::from_utf8_lossy(body).into_owned()),
                 principal: true,
-                ..scoped(value.as_object()?.get("scopeRef")?.as_str()?, Method::PATCH)
+                ..scoped(
+                    value.as_object()?.get("scopeRef")?.as_str()?,
+                    method.clone(),
+                )
             })
         }
         (Method::GET, "/v1/sessions/annotations") => {

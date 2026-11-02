@@ -55,7 +55,9 @@ def main():
     # must be the declared text and their grammar refusal native, and the
     # parent's grafted Commands row is the only difference from Bun's help.
     grafts = json.loads((ROOT / 'crates/hrc-cli/surface-native.json').read_text())['grafts']
-    grafted_rows = {' '.join(g['parent']): g['commandLine'][0] for g in grafts}
+    grafted_rows = {}
+    for g in grafts:
+        grafted_rows.setdefault(' '.join(g['parent']), []).append(g['commandLine'][0])
     cases, native_only = [], {}
     for node in nodes(surface):
         if node.get('nativeOnly'):
@@ -101,8 +103,8 @@ def main():
         if name in {f'help:{path}:{view}' for path in ('server', 'server serve') for view in ('agent', 'human')}:
             expected['stdout'] += rust_server_help
         if kind == 'help' and path in grafted_rows:
-            row = grafted_rows[path]
-            observed[1] = dict(observed[1], stdout=''.join(line for line in observed[1]['stdout'].splitlines(True) if not line.startswith(f'  {row} ')))
+            prefixes = tuple(f'  {row} ' for row in grafted_rows[path])
+            observed[1] = dict(observed[1], stdout=''.join(line for line in observed[1]['stdout'].splitlines(True) if not line.startswith(prefixes)))
         results.append({'case': name, 'argv': argv, 'pass': normalize(expected) == normalize(observed[1]), 'oracle': observed[0], 'subject': observed[1]})
     if args.inventory:
         coverage = json.loads(args.inventory.read_text())
@@ -121,6 +123,7 @@ def main():
         'restart.py': 'restart', 'restartme.py': 'restartme',
         'resume.py': 'resume', 'send.py': 'send', 'summon.py': 'summon',
         '../../hrc-native/e2e/seat_handoffs.py': 'handoff|handoff create|handoff get|handoff acknowledge|handoff list',
+        'seat_work.py': 'seat|seat work|seat work get|seat work set',
         'annotations.py': 'session annotation|session annotation list|session annotation put|session annotation delete|session annotation act',
         'controls.py': 'runtime capture|runtime interrupt|runtime terminate|capture status|session drop-continuation|session rotate|admin surface bind',
         'server_lifecycle.py': 'server stop|server restart',
@@ -146,6 +149,8 @@ def main():
             if command == 'server':
                 row.update(suite='daemon_entrypoints.py', reason='Bare server is the native daemon entrypoint; its help is native too.')
             elif decision['disposition'] == 'IMPLEMENT':
+                if command.startswith('seat'):
+                    row['suiteRoot'] = 'crates/hrc-native/e2e'
                 row.update(suite=suites[command], **({'requiredArguments': ['--extended']} if command == 'session resolve' else {}), reason='Native execution qualification is in this separate suite; help alone does not qualify it.')
             else:
                 row.update(suite='passthrough.py', reason='POSTPONED by T-11820 observed-use audit; exact argv/streams/PID/exit exec the same-release Bun CLI.')

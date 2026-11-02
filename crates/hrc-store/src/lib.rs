@@ -8,6 +8,8 @@ use serde_json::{Map, Value, json};
 use std::{collections::BTreeSet, path::Path, time::Duration};
 use uuid::Uuid;
 
+mod seat_work;
+pub use seat_work::classify_seat;
 mod annotations;
 mod seat_handoffs;
 pub use annotations::{
@@ -292,6 +294,7 @@ impl Store {
         let identity = derive_identity(scope);
         tx.execute("INSERT INTO sessions(host_session_id,scope_ref,lane_ref,generation,status,created_at,updated_at,last_applied_intent_json) VALUES (?,?,?,1,'active',?,?,?)", params![host,scope,lane,now,now,intent.map(Value::to_string)])?;
         tx.execute("INSERT INTO continuities(scope_ref,lane_ref,active_host_session_id,updated_at,scope_kind,agent_id,project_id,task_id,role_name) VALUES (?,?,?,?,?,?,?,?,?)", params![scope,lane,host,now,identity["kind"].as_str(),identity["agentId"].as_str(),identity["projectId"].as_str(),identity["taskId"].as_str(),identity["roleName"].as_str()])?;
+        seat_work::initialize_seat(&tx, scope, lane)?;
         append_session_event(
             &tx,
             &json!({"hostSessionId":host,"scopeRef":scope,"laneRef":lane,"generation":1}),

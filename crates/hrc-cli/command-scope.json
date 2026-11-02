@@ -328,6 +328,26 @@
       "implementation": "native"
     },
     {
+      "command": "seat",
+      "disposition": "IMPLEMENT",
+      "implementation": "native"
+    },
+    {
+      "command": "seat work",
+      "disposition": "IMPLEMENT",
+      "implementation": "native"
+    },
+    {
+      "command": "seat work get",
+      "disposition": "IMPLEMENT",
+      "implementation": "native"
+    },
+    {
+      "command": "seat work set",
+      "disposition": "IMPLEMENT",
+      "implementation": "native"
+    },
+    {
       "command": "send",
       "disposition": "IMPLEMENT",
       "implementation": "native"

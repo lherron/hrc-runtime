@@ -81,6 +81,8 @@ mod projection;
 mod recover_unstarted;
 #[path = "server/projection/runs.rs"]
 mod runs;
+#[path = "server/projection/seat_work.rs"]
+mod seat_work;
 #[path = "server/projection/sessions.rs"]
 mod sessions;
 #[path = "server/projection/streams.rs"]
@@ -884,6 +886,7 @@ fn implemented(method: &Method, path: &str) -> bool {
                 "/v1/transcript-index/rebuild",
             ]
             .contains(&path))
+        || (path == "/v1/sessions/work" && (*method == Method::GET || *method == Method::PUT))
         || (*method == Method::PATCH && path == "/v1/sessions/metadata")
         || sessions::is_annotation_route(method.as_str(), path)
 }

@@ -16,8 +16,10 @@ use axum::{
 use hrc_store::timestamp;
 use serde_json::{Map, Value, json};
 
-pub const ROUTE_KEYS: [&str; 24] = [
+pub const ROUTE_KEYS: [&str; 26] = [
     "GET /v1/federation/health",
+    "GET /v1/sessions/work",
+    "PUT /v1/sessions/work",
     "GET /v1/sessions/metadata",
     "PATCH /v1/sessions/metadata",
     "GET /v1/sessions/annotations",
@@ -241,7 +243,9 @@ async fn route_request(server: &Shared, peer: &str, request: Request) -> Result<
             }
             Ok(reply(health, StatusCode::OK))
         }
-        ("GET" | "PATCH", "/v1/sessions/metadata") | ("GET", "/v1/sessions/get") => {
+        ("GET" | "PUT", "/v1/sessions/work")
+        | ("GET" | "PATCH", "/v1/sessions/metadata")
+        | ("GET", "/v1/sessions/get") => {
             Ok(local(server, method, uri, &headers, Body::from(body)).await)
         }
         (m, p) if crate::server::sessions::is_annotation_route(m, p) => {
@@ -446,12 +450,17 @@ mod tests {
 
     #[test]
     fn allowlist_names_the_session_writes_once() {
-        assert_eq!(ROUTE_KEYS.len(), 24);
+        assert_eq!(ROUTE_KEYS.len(), 26);
         assert_eq!(
             ROUTE_KEYS.iter().collect::<HashSet<_>>().len(),
             ROUTE_KEYS.len()
         );
-        for key in ["GET /v1/sessions/metadata", "PATCH /v1/sessions/metadata"] {
+        for key in [
+            "GET /v1/sessions/metadata",
+            "PATCH /v1/sessions/metadata",
+            "GET /v1/sessions/work",
+            "PUT /v1/sessions/work",
+        ] {
             assert!(ROUTE_KEYS.contains(&key), "{key}");
         }
         for (method, path) in ANNOTATION_ROUTES {
