@@ -1,28 +1,9 @@
 #!/usr/bin/env python3
-"""The kernel inside rusthrc (T-12067 §8.1 items 4 and 5), black-box on one
-isolated scratch daemon. Never the live daemon or the live kernel socket.
-
-The substrate is hrcpty_substrate.py's: a Bun-created schema, a fake aspd and
-the stub broker release, so a seat births without a real harness. The fake
-aspd here also answers aspc.resolveRuntimeDeclaration, which seat.summon's
-first owner route (/v1/declarations/resolve) needs.
-
-Failure modes, each a check below:
-  1 startup order: the kernel serves before the HTTP listener announces, on
-    <runtimeRoot>/hrc-kernel.sock, from the daemon's own pid
-  2 kq.py status answers from that socket
-  3 wake: a seat written over HTTP projects well inside the 10 s backstop
-  4 seat.summon through the wire births an hrcpty seat; its row projects and
-    resource.attach answers (the owner's in-process GET /v1/attach); every
-    owner call keeps the historical client identity hrc-kernel/<version>
-  5 shutdown order: SIGTERM stops the kernel after the listener and before
-    the federation step; the daemon exits 0 and the socket is gone
-  6 a kernel that cannot start (its lock held) logs kernel.start_failed and
-    HRC still serves
-  7 a front-mode rusthrc starts no kernel
-  8 context usage readings commit once and project
-  9 clear-context publishes each ended runtime and wakes its projection,
-    without waiting for the ten-minute resync
+"""Ops-only HRC wire E2E (2026-11-02, praesidium-kernel r1.9 / T-12360).
+Private real daemon, stub broker, private wrkqd. Proves six owner operations,
+stale fences, discovery without HRC types/documents, startup/stop ordering,
+lock failure isolation and front-mode exclusion. Projection/attach coverage
+moved to praesidium-kernel and campaign T-12361; no live service is modified.
 """
 import argparse
 import fcntl
@@ -41,7 +22,6 @@ import uuid
 from hrcpty_substrate import FakeAspd, Run, AGENT, PROJECT, LEAK, HERE, REPO
 from n4_federation import local_tailnet_address, free_port
 
-KQ = HERE / 'kq.py'
 LIVE_KERNEL = Path.home() / 'praesidium/var/run/hrc/hrc-kernel.sock'
 
 
@@ -92,12 +72,6 @@ def wire(path, op, args=None):
         w.close()
 
 
-def rows(path, kind):
-    reply = wire(path, 'document.query', dict(document_id='hrc', type=kind, limit=1000))
-    assert reply['ok'], reply
-    return [r for r in reply['result']['rows']]
-
-
 def events(r, tag):
     return [e for e in r.daemon_log(tag) if isinstance(e, dict) and e.get('server') == 'rusthrc']
 
@@ -121,7 +95,7 @@ def substrate(root, artifacts, binary):
     stub.chmod(0o755)
     release = {'releaseId': 'stub-broker-t12140', 'sourceCommit': '1' * 40, 'builtAt': '2026-10-29T00:00:00.000Z',
                'releaseRoot': str(release_root),
-               'worker': {'protocol': 'harness-broker/0.2', 'executable': str(stub), 'argvPrefix': [],
+               'worker': {'protocol': 'harness-broker/0.2', 'executable': str(stub), 'argvPrefix': ['--ops-only', '1'],
                           'hostedDrivers': ['claude-code-hrcpty', 'claude-code-tmux']}}
     (release_root / 'release.json').write_text(json.dumps({**{k: release[k] for k in ('releaseId', 'sourceCommit', 'builtAt')},
                                                            'protocol': 'harness-broker/0.2',
@@ -311,81 +285,61 @@ def main():
                 serving=log[serving] if serving >= 0 else None, listening=log[listening] if listening >= 0 else None)
         r.check('1.no-start-failed', index_of(log, 'kernel.start_failed') < 0)
 
-        # == 2. kq.py status ===================================================
-        kq = subprocess.run([sys.executable, str(KQ), 'status'], env=dict(clean, HRC_KERNEL_SOCKET=str(kernel)),
-                            capture_output=True, text=True, timeout=30)
-        (args.artifacts / 'kq-status.txt').write_text(kq.stdout + kq.stderr)
-        status = json.loads(kq.stdout) if kq.returncode == 0 else None
-        r.check('2.kq-status-answers', status and status[0].get('cursor') is not None, rc=kq.returncode, out=kq.stdout, err=kq.stderr)
-        r.wait(lambda: wire(kernel, 'ingest.status', dict(document_id='hrc'))['result']['bindings'][0].get('caught_up'),
-               30, 'bootstrap')
+        discovery = wire(kernel, 'registry.discover')
+        (args.artifacts / 'discovery.json').write_text(json.dumps(discovery, indent=2) + '\n')
+        assert discovery['ok'], discovery
+        d = discovery['result']
+        expected = {'seat.summon', 'seat.send', 'seat.restart', 'seat.annotation.put',
+                    'seat.annotation.act', 'seat.annotation.delete'}
+        r.check('2.exact-six-ops', {o['name'] for o in d['operations'] if o['provider'] == 'hrc'} == expected)
+        r.check('2.no-hrc-types', not [t for t in d['node_types'] if t['provider'] == 'hrc'])
+        resync = wire(kernel, 'resync')
+        r.check('2.no-documents', resync.get('ok') and resync['result']['documents'] == {}, reply=resync)
+        unknown = wire(kernel, 'seat.unknown')
+        r.check('2.unknown-refused', unknown.get('ok') is False and unknown['error']['code'] == 'unknown_declaration')
+        status_cli = subprocess.run([str(binary), 'server', 'status', '--json'], env=r.env,
+                                    capture_output=True, text=True, timeout=30)
+        (args.artifacts / 'server-status.json').write_text(status_cli.stdout + status_cli.stderr)
+        r.check('2.server-status-unchanged', status_cli.returncode == 0 and bool(json.loads(status_cli.stdout)), rc=status_cli.returncode)
 
-        # == 3. ledger wake ====================================================
-        woken = f'agent:{AGENT}:project:{PROJECT}:task:wake-{uuid.uuid4().hex[:6]}/lane:main'
-        t0 = time.time()
-        code, out = r.http('POST', '/v1/sessions/resolve', {'sessionRef': woken, 'create': True, 'summonIntent': 'explicit_local',
-                                                             'runtimeIntent': placement_hint(root)})
-        assert code == 200, out
-        r.wait(lambda: any(x['payload'].get('sessionRef') == woken for x in rows(kernel, 'hrc.seat')), 9, 'woken seat')
-        r.check('3.wake-before-backstop', time.time() - t0 < 3, seconds=round(time.time() - t0, 3))
-
-        # == 4. seat.summon through the wire → attachable ======================
         ref = f'agent:{AGENT}:project:{PROJECT}:task:pty-{uuid.uuid4().hex[:8]}/lane:main'
         summoned = wire(kernel, 'seat.summon', dict(session_ref=ref, request_id='kf-' + uuid.uuid4().hex[:6]))
-        (args.artifacts / 'summon-reply.json').write_text(json.dumps(summoned, indent=2) + '\n')
-        r.check('4.summon-ok', summoned.get('ok') and summoned['result']['session_ref'] == ref, reply=summoned)
-        runtime = summoned['result']['runtime_id'] if summoned.get('ok') else None
-        seat = r.wait(lambda: next((x for x in rows(kernel, 'hrc.seat') if x['payload'].get('sessionRef') == ref
-                                    and x['payload'].get('runtimeId') == runtime and x['payload'].get('hrcpty')), None),
-                      30, 'summoned seat projected with its hrcpty surface')
-        attached = wire(kernel, 'resource.attach', dict(document_id='hrc', id=seat['id']))
-        (args.artifacts / 'attach-reply.json').write_text(json.dumps(attached, indent=2) + '\n')
-        descriptor = (attached.get('result') or {}).get('descriptor') or {}
-        r.check('4.seat-attachable', attached.get('ok') and descriptor.get('transport') == 'hrcpty' and descriptor.get('argv'),
-                reply=attached)
-        metered = [e['data'] for e in events(r, '1') if e.get('event') == 'http.request'
-                   and e['data'].get('path') in ('/v1/declarations/resolve', '/v1/runtimes/start', '/v1/attach')]
-        r.check('4.owner-calls-metered-as-kernel', {m['path'] for m in metered} == {'/v1/declarations/resolve', '/v1/runtimes/start', '/v1/attach'}
-                # Preserve the historical accounting identity across the fold.
-                and all(m['client'].startswith('hrc-kernel/') for m in metered), metered=metered)
-        # == 8. a context reading: one usage.updated, one committed row ======
-        readings = []
-        for n, (turn, used) in enumerate((('ctx-loc', 10), ('ctx-gone', 10)), 1):
-            head = r.rows('SELECT coalesce(max(hrc_seq),0) AS s FROM hrc_events')[0]['s']
-            seq = turn_context(r, dict(runtimeId=runtime, turnId=turn, usedTokens=used), 200_000 + n)
-            time.sleep(0.5)
-            new = r.rows('SELECT hrc_seq, event_kind FROM hrc_events WHERE hrc_seq>?', (head,))
-            projected = r.wait(lambda: next((x['payload'].get('contextReading') for x in rows(kernel, 'hrc.runtime')
-                                             if x['payload'].get('runtimeId') == runtime
-                                             and (x['payload'].get('contextReading') or {}).get('turnId') == turn), None),
-                               5, 'projected reading')
-            readings.append(dict(seq=seq, rows=new, projected=projected))
-        r.check('8.turn-context-one-row-each', all(x['rows'] == [{'hrc_seq': x['seq'], 'event_kind': 'runtime.context.updated'}]
-                                                   and x['projected']['usedTokens'] == 10 for x in readings), readings=readings)
-        # == 9. context rotation ends the old runtime in the ledger and kernel ==
-        before = next(x for x in rows(kernel, 'hrc.runtime') if x['payload'].get('runtimeId') == runtime)
-        r.check('9.old-runtime-ready', before['payload'].get('status') == 'ready', row=before)
-        head = r.rows('SELECT coalesce(max(hrc_seq),0) AS s FROM hrc_events')[0]['s']
-        t0 = time.time()
-        code, rotated = r.http('POST', '/v1/clear-context', {'hostSessionId': seat['payload']['hostSessionId']})
-        r.check('9.clear-context-ok', code == 200, status=code, body=rotated)
-        assert code == 200, rotated
-        r.wait(lambda: any(x['payload'].get('sessionRef') == ref
-                          and x['payload'].get('hostSessionId') == rotated['hostSessionId']
-                          for x in rows(kernel, 'hrc.seat')), 5, 'rotated seat via ledger wake')
-        after = [x for x in rows(kernel, 'hrc.runtime') if x['payload'].get('runtimeId') == runtime]
-        r.check('9.old-runtime-ended-without-resync', time.time() - t0 < 5
-                and (not after or all(x['payload'].get('status') == 'terminated' for x in after)),
-                seconds=round(time.time() - t0, 3), before=before, after=after)
-        ended = r.rows("SELECT runtime_id, host_session_id, event_kind, payload_json FROM hrc_events "
-                       "WHERE hrc_seq>? AND runtime_id=? AND event_kind='runtime.terminated'", (head, runtime))
-        r.check('9.runtime-end-published', len(ended) == 1
-                and ended[0]['host_session_id'] == seat['payload']['hostSessionId']
-                and json.loads(ended[0]['payload_json']).get('reason') == 'clear-context', rows=ended)
-        code, term = r.http('POST', '/v1/terminate', {'runtimeId': runtime})
-        r.check('9.owner-confirms-terminated', code == 503 and term.get('error', {}).get('code') == 'runtime_unavailable'
-                and term['error'].get('detail', {}).get('status') == 'terminated',
-                status=code, body=term)
+        r.check('3.summon', summoned.get('ok') and summoned['result']['session_ref'] == ref, reply=summoned)
+        assert summoned['ok'], summoned
+        host, runtime = summoned['result']['host_session_id'], summoned['result']['runtime_id']
+        key = dict(session_ref=ref, subject='seat', ns='e2e', kind='ops', id='one')
+        put = wire(kernel, 'seat.annotation.put', dict(**key, body={'v': 1}, expect={'updatedAt': None}))
+        r.check('3.annotation-put', put.get('ok') and put['result']['created'] is True, reply=put)
+        assert put['ok'], put
+        stale = wire(kernel, 'seat.annotation.put', dict(**key, body={'v': 2}, expect={'updatedAt': None}))
+        r.check('3.stale-annotation', stale.get('ok') is False and stale['error']['code'] == 'stale_annotation', reply=stale)
+        act = wire(kernel, 'seat.annotation.act', dict(**key, action='sent', attributes={'ok': True}))
+        r.check('3.annotation-act', act.get('ok'), reply=act)
+        deleted = wire(kernel, 'seat.annotation.delete', dict(**key, expect={'updatedAt': put['result']['updated_at']}))
+        r.check('3.annotation-delete', deleted.get('ok') and deleted['result'] == {'deleted': True}, reply=deleted)
+        # Submit real literal input to the stub broker and grade the turn ledger.
+        sent = wire(kernel, 'seat.send', dict(session_ref=ref, host_session_id=host, expected_generation=1,
+                                             text='ops-only e2e'))
+        r.check('3.send', sent.get('ok') and sent['result']['runtime_id'] == runtime, reply=sent)
+        assert sent['ok'], sent
+        run_id = sent['result']['run_id']
+        r.wait(lambda: r.rows("SELECT 1 FROM hrc_events WHERE run_id=? AND event_kind='turn.awaiting_input'", (run_id,)),
+               30, 'stub asks a question')
+        code, answer = r.http('POST', '/v1/active-run-contributions', {
+            'inputApplicationId': 'app-' + uuid.uuid4().hex, 'inputAttemptId': 'att-' + uuid.uuid4().hex,
+            'prompt': 'E2E-ANSWER', 'selector': {'runtimeId': runtime}})
+        r.check('3.answer', code == 200 and answer.get('status') == 'accepted', reply=answer)
+        r.wait(lambda: r.rows("SELECT 1 FROM hrc_events WHERE run_id=? AND event_kind='turn.completed'", (run_id,)),
+               30, 'turn completed')
+        restarted = wire(kernel, 'seat.restart', dict(host_session_id=host, expected_generation=1))
+        r.check('3.restart', restarted.get('ok') and restarted['result']['generation'] == 2
+                and restarted['result']['launch']['status'] == 'started', reply=restarted)
+        stale = wire(kernel, 'seat.send', dict(session_ref=ref, host_session_id=host, expected_generation=1, text='stale'))
+        r.check('3.stale-context', stale.get('ok') is False and stale['error']['code'] == 'stale_context', reply=stale)
+        records = r.rows("SELECT event_kind,payload_json FROM hrc_events WHERE scope_ref=? AND event_kind LIKE 'session.annotation.%'",
+                         (ref.split('/lane:')[0],))
+        r.check('3.annotation-ledger', len(records) == 3 and all(json.loads(e['payload_json'])['updatedBy'] == 'system:hrc-kernel' for e in records if e['event_kind'] == 'session.annotation.changed'), records=records)
+        (args.artifacts / 'ops.json').write_text(json.dumps(dict(summon=summoned, put=put, act=act, delete=deleted, send=sent, restart=restarted), indent=2) + '\n')
 
         # == 5. shutdown order =================================================
         rc = r.down(daemon)

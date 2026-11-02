@@ -1,14 +1,10 @@
 #!/usr/bin/env python3
-"""Inspect HRC through rusthrc's embedded kernel (the same wire Loggia mounts).
-
-Reads the kernel's own projection, so it uses its own read-only connection: no
-whole-table scans, no store lock. Prefer it to `hrc runtime list` / `/v1/status`
-for read-only inspection. Socket: $HRC_KERNEL_SOCKET, else the default below.
-  kq.py status                      ingest binding: caught_up, cursor, resync
-  kq.py seats [regex]               hrc.seat rows: sessionRef, status, latest event
-  kq.py runtimes [regex]            hrc.runtime rows, one JSON object per line
-  kq.py busy                        runtimes whose status is busy
-  kq.py raw <op> '<json args>'      any kernel op
+"""Inspect seats and runtimes in praesidium:praesidium (r1.9 / T-12360).
+Uses the kernel projection without whole-table HRC owner scans.
+$PRAESIDIUM_KERNEL_SOCKET overrides the read socket.
+  kq.py status | seats [regex] | runtimes [regex] | busy
+  kq.py raw <op> '<json args>'   on the read socket; pass an explicit socket
+                                override to inspect the ops-only HRC provider
 """
 import json
 import os
@@ -16,7 +12,7 @@ import re
 import socket
 import sys
 
-SOCK = os.environ.get('HRC_KERNEL_SOCKET', os.path.expanduser('~/praesidium/var/run/hrc/hrc-kernel.sock'))
+SOCK = os.environ.get('PRAESIDIUM_KERNEL_SOCKET', os.path.expanduser('~/praesidium/var/run/praesidium/kernel.sock'))
 
 
 def call(op, args=None):
@@ -35,9 +31,9 @@ def call(op, args=None):
 def rows(kind):
     out, cursor = [], None
     while True:
-        args = dict(document_id='hrc', type=kind, limit=1000)
+        args = dict(document_id='praesidium', type=kind, limit=1000)
         if cursor:
-            args['cursor'] = cursor
+            args['after'] = cursor
         page = call('document.query', args)
         out += page['rows']
         cursor = page.get('next')
@@ -56,22 +52,22 @@ def main():
     cmd = sys.argv[1] if len(sys.argv) > 1 else 'status'
     pat = re.compile(sys.argv[2]) if len(sys.argv) > 2 and cmd != 'raw' else None
     if cmd == 'status':
-        st = call('ingest.status', dict(document_id='hrc'))
+        st = call('ingest.status', dict(document_id='praesidium'))
         print(json.dumps([dict(caught_up=b.get('caught_up'), cursor=b.get('cursor'),
                                resync=b.get('resync')) for b in st['bindings']]))
     elif cmd == 'seats':
-        for r in rows('hrc.seat'):
+        for r in rows('seat'):
             p = r['payload']
             if pat and not pat.search(p.get('sessionRef', '')):
                 continue
             print(seat_line(p))
     elif cmd == 'busy':
-        for r in rows('hrc.runtime'):
+        for r in rows('runtime'):
             p = r['payload']
             if p.get('status') == 'busy':
                 print('\t'.join((p.get('scopeRef', '').replace('agent:', ''), p.get('runtimeId', ''), str(p.get('generation')))))
     elif cmd == 'runtimes':
-        for r in rows('hrc.runtime'):
+        for r in rows('runtime'):
             p = r['payload']
             if pat and not pat.search(json.dumps(p)):
                 continue

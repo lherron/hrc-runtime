@@ -138,3 +138,14 @@ N3 stream transport parity remains in `n3_streams.py`; `front_door.py` asserts
 that front mode hosts no kernel. See migration §8.1 for activation gates.
 
 `seat_handoffs.py --binary <unmanaged rusthrc> --scratch-root <fresh path> --out <artifacts>` drives the native handoff CLI, private owner/store and embedded kernel, including etag refusals and owner-restart durability. Live model rotation is the installed acceptance for T-12248.
+
+
+2026-11-02 amendment (praesidium-kernel r1.9 / T-12360): `kernel_projection.py`
+retired with the HRC document; praesidium-kernel and T-12361 own projection,
+lineage and resource-attach coverage. `kernel_fold.py` now checks the ops-only
+provider and all six owner operations. `live_probe.py` checks its installed
+read-only discovery. `kernel_fd_cost.py` keeps plain/events connection checks;
+query subscriptions now belong to praesidium-kernel. `seat_handoffs.py` and
+`seat_work.py` keep owner/CLI/ledger durability and fence checks, while their
+projection assertions move to the praesidium kernel. `front_door.py` still
+requires no HRC operator socket on fronts. `kq.py` reads praesidium:praesidium.

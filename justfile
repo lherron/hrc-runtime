@@ -181,7 +181,6 @@ cargo-check:
     python3 crates/hrc-cli/e2e/differential.py --binary crates/target/debug/rusthrc --artifacts "${HRC_CLI_E2E_ARTIFACTS:-/tmp/hrc-cli-e2e-$(date +%s)-$$}"
     cargo build --manifest-path crates/Cargo.toml --locked -p hrc-pty
     python3 crates/hrc-native/e2e/kernel_fold.py --binary crates/target/debug/rusthrc --artifacts "${HRC_NATIVE_E2E_ARTIFACTS:-/tmp/hrc-native-e2e-$(date +%s)-$$}/kernel-fold"
-    python3 crates/hrc-native/e2e/kernel_projection.py --binary crates/target/debug/rusthrc --artifacts "${HRC_NATIVE_E2E_ARTIFACTS:-/tmp/hrc-native-e2e-$(date +%s)-$$}/kernel-projection"
     python3 crates/hrc-native/e2e/kernel_fd_cost.py --binary crates/target/debug/rusthrc --artifacts "${HRC_NATIVE_E2E_ARTIFACTS:-/tmp/hrc-native-e2e-$(date +%s)-$$}/kernel-fd-cost"
     python3 crates/hrc-native/e2e/foundation.py --binary crates/target/debug/rusthrc --artifacts "${HRC_NATIVE_E2E_ARTIFACTS:-/tmp/hrc-native-e2e-$(date +%s)-$$}"
     python3 crates/hrc-native/e2e/command_runs.py --binary crates/target/debug/rusthrc --scratch-root "/tmp/hrc-command-runs-$(date +%s)-$$" --artifacts "${HRC_NATIVE_E2E_ARTIFACTS:-/tmp/hrc-native-e2e-$(date +%s)-$$}/command-runs"
@@ -238,9 +237,9 @@ e2e:
 # routes on a private scratch rusthrc with a stub-broker hrcpty seat — put/list,
 # stale_annotation, the 64 KiB body cap, stale_attention across a real turn,
 # delete, act, the SDK, and the session.annotation.* ledger rows. Then Gate 2
-# (T-12187) on the same daemon: hrc.annotation in the kernel per put and
-# revision, and `session rotate --relaunch` archiving hrc.generation 1 with its
-# annotations while hrc.seat.activeGeneration moves to 2.
+# 2026-11-02 amendment (praesidium-kernel r1.9 / T-12360): projection and
+# lineage moved to praesidium:praesidium; this suite keeps owner API/CLI and
+# ops-only socket checks. The kernel-fold suite proves all six operations.
 
 # Run the seat-annotations e2e on a scratch rusthrc
 e2e-annotations:

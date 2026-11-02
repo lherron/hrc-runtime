@@ -68,25 +68,26 @@ must not assert the other repo's behavior; shared render semantics live in
 
 ## Inspecting live HRC through the kernel
 
-For read-only inspection of live seats and runtimes, query rusthrc's embedded cardo kernel
-the way Loggia does, rather than polling the daemon:
-`python3 -I crates/hrc-native/e2e/kq.py status|seats [re]|runtimes [re]|busy|raw <op> '<json>'`
-(socket `~/praesidium/var/run/hrc/hrc-kernel.sock`, override with
-`HRC_KERNEL_SOCKET`). The kernel answers from its own projection, so it avoids
-the daemon’s store mutex. `hrc runtime list`, `/v1/status`, `/v1/runtimes` and
-`runtimes/inspect` are whole-table scans, which under the native owner run
-under the single store mutex and delay mail and turns for everyone.
+2026-11-02 amendment (praesidium-kernel r1.9, T-12360): read seats,
+runtimes and annotations from the `praesidium:praesidium` document through
+`prae seat`, `prae runtime` and `prae ext list`. The document's types are
+`seat`, `runtime` and `seat.ext`. HRC owns storage and admission; the separate
+Praesidium kernel owns the rebuildable read projection and seat attachment.
+Use `prae describe <type>` and generated `--help` for supported reads.
 
-- The projection trails the ledger by the kernel's ingest lag (seconds; check
-  `kq.py status`).
-- Seat rows report `active`/`inactive`; busy/ready lives on `hrc.runtime` rows.
-- `seat.summon`, `seat.restart`, `seat.send`, `seat.annotation.put`,
-  `seat.annotation.act` and `seat.annotation.delete` are write ops on the same wire; `kq.py raw` reaches
-  them. Use them only when you mean to act. Annotation writes through the
-  kernel record `updatedBy: system:hrc-kernel` (the wire names no caller).
-- Restarting rusthrc also rebuilds the embedded projection and blanks Loggia
-  until catch-up (3–4 s on max3 since T-11919). Check `ingest.status`; service
-  restarts follow Mable’s restart authority.
+Rusthrc's `~/praesidium/var/run/hrc/hrc-kernel.sock` is an operator ops mount
+only: it exposes no document, ingest, observation types or attach capability.
+Its six operations are `seat.summon`, `seat.restart`, `seat.send`,
+`seat.annotation.put`, `seat.annotation.act` and `seat.annotation.delete`.
+The legacy `kq.py` observation commands do not read this socket anymore.
+Operator annotation writes retain `updatedBy: system:hrc-kernel`; agent writes
+through `prae` retain their runtime principal. Restarting rusthrc does not
+rebuild a rusthrc read projection; shared service restarts still require the
+authorized operator.
+
+`hrc runtime list`, `/v1/status`, `/v1/runtimes` and `runtimes/inspect` are
+whole-table daemon reads under the store mutex. Use the Praesidium document
+for routine seat and runtime observation to avoid delaying mail and turns.
 
 ## Runtime gotchas
 

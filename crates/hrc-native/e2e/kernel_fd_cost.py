@@ -8,9 +8,8 @@ wire dups, fixed in cardo 2d62819, T-12170); a closed connection keeps an fd
 until another client connects.
 
 Phases, each measured with lsof on the scratch daemon pid:
-  plain      N connections, one ingest.status each, held open
+  plain      N connections, one registry.discover each, held open
   events     N connections subscribed with events.subscribe, held open
-  query      N connections subscribed with query.subscribe, held open
   closed     all closed, 1 s settle
   pruned     one more connect/close (the wire's accept loop prunes then)
 
@@ -53,7 +52,7 @@ def main():
     report = {'n': a.n, 'phases': {}}
     try:
         daemon = r.up('fd')
-        r.wait(lambda: kernel.exists() and wire(kernel, 'ingest.status', {'document_id': 'hrc'})['ok'], 30, 'kernel')
+        r.wait(lambda: kernel.exists() and wire(kernel, 'registry.discover')['ok'], 30, 'kernel')
         time.sleep(1)
         pid = daemon.pid
 
@@ -68,7 +67,7 @@ def main():
         held = []
         for _ in range(a.n):
             w = Wire(kernel)
-            assert w.raw('ingest.status', {'document_id': 'hrc'})['ok']
+            assert w.raw('registry.discover')['ok']
             held.append(w)
         time.sleep(.5)
         plain = measure('plain') - base
@@ -80,23 +79,15 @@ def main():
             held.append(w)
         time.sleep(.5)
         events = measure('events') - base - plain
-        for _ in range(a.n):
-            w = Wire(kernel)
-            reply = w.raw('query.subscribe', dict(document_id='hrc', type='hrc.seat'))
-            assert reply['ok'], reply
-            held.append(w)
-        time.sleep(.5)
-        query = measure('query') - base - plain - events
         for w in held:
             w.close()
         time.sleep(1)
         closed = measure('closed') - base
         # The wire used to release a closed connection's last fd only here.
-        wire(kernel, 'ingest.status', {'document_id': 'hrc'})
+        wire(kernel, 'registry.discover')
         time.sleep(.5)
         pruned = measure('pruned') - base
-        report['perConnection'] = {'plain': plain / a.n, 'eventsSubscribe': events / a.n,
-                                   'querySubscribe': query / a.n}
+        report['perConnection'] = {'plain': plain / a.n, 'eventsSubscribe': events / a.n}
         report['residualAfterClose'] = closed
         report['residualAfterPrune'] = pruned
         report['pass'] = (all(v <= 1 for v in report['perConnection'].values())

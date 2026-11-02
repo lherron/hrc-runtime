@@ -69,17 +69,6 @@ def main():
         assert (result.returncode == 0) == ok, steps[-1]
         return json.loads(result.stdout) if ok else result.stderr
 
-    def seat_handoff():
-        connection = socket.socket(socket.AF_UNIX)
-        connection.connect(str(root / 'run/hrc-kernel.sock'))
-        wire = connection.makefile('rwb')
-        wire.write((json.dumps({'id': 'handoff', 'op': 'document.query', 'args': {'document_id': 'hrc', 'type': 'hrc.seat', 'limit': 1000}}) + '\n').encode())
-        wire.flush()
-        value = json.loads(wire.readline())
-        wire.close()
-        connection.close()
-        return value
-
     try:
         up()
         status, resolved = http('POST', '/v1/sessions/resolve', {'sessionRef': session, 'create': True})
@@ -97,19 +86,8 @@ def main():
         assert cli(['list'])['handoffs'] == []
         history = cli(['list', '--project', 'hrc-runtime', '--all'])['handoffs']
         assert history[0]['state'] == 'acknowledged' and history[0]['etag'] == 2
-        # Wait for the real embedded kernel, and assert metadata only.
-        for _ in range(100):
-            try:
-                projection = seat_handoff()
-                if hid in json.dumps(projection):
-                    break
-            except (OSError, ValueError):
-                pass
-            time.sleep(.1)
-        else:
-            raise AssertionError('kernel omitted the handoff')
-        assert 'INLINE_BODY_T12248' not in json.dumps(projection), projection
-        (args.out / 'kernel.json').write_text(json.dumps(projection, indent=2) + '\n')
+        # T-12360: projected handoff metadata is owned by praesidium-kernel;
+        # this suite retains native CLI/store/fence and restart durability.
         proc.terminate()
         proc.wait(timeout=30)
         up()
