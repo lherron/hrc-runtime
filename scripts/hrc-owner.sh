@@ -11,6 +11,8 @@
 #                                                  its rusthrc (signed when configured) to the fixed exe
 #   hrc-owner.sh preflight <node> <sha>            read-only switch report (KEY=value lines)
 #   hrc-owner.sh prepare <node> <sha>              stage + render the owner plist to <plist>.rusthrc-owner.next
+#   hrc-owner.sh activate --expect-commit <sha> [--expect-pending <id,id>] [--reason <text>]
+#                                                  migrate the store, stage, request authorized restart, verify
 #   hrc-owner.sh activate                          after the stop: swap the plist in, bootstrap, wait for health
 #   hrc-owner.sh refresh-plist [--dry-run]         a rusthrc owner plist that still execs the old
 #                                                  release-link path: point it at the fixed exe
@@ -20,7 +22,8 @@
 # (`ssh host bash -s -- <cmd> ... < scripts/hrc-owner.sh`), so a node does not
 # need this commit checked out to be switched.
 #
-# Nothing here stops or restarts a daemon. A swapped plist takes effect only
+# Schema activation requests a restart through HRC (Mable primary only).
+# The separate plist switch takes effect only
 # through a bootout + bootstrap: `hrc server restart` respawns launchd's LOADED
 # definition. The invoking seat does the authorized `hrc server stop --node`;
 # `activate` then bootstraps the job that stop booted out.
@@ -387,6 +390,114 @@ prepare() {
   echo "[prepare] staged; owner plist rendered to $PLIST.rusthrc-owner.next (the loaded Bun job is untouched)"
 }
 
+# Inline so this script still works when piped to a node via ssh bash -s.
+# The installed package owns migration; the wrapper is never used for readback.
+activation_migrations() {
+  bun run - "$@" <<'JS'
+import { Database } from 'bun:sqlite'
+const [rel, path, mode, expected] = process.argv.slice(2)
+const m = await import(`${rel}/packages/hrc-store-sqlite/dist/migrations.js`)
+function report() {
+  const ro = new Database(path, { readonly: true })
+  try {
+    const applied = m.appliedMigrationIds(ro)
+    const known = new Set(m.phase1Migrations.map(x => x.id))
+    return { storeVersion: applied.at(-1), releaseVersion: m.releaseSchemaVersion(),
+      pending: m.pendingMigrationIds(ro), schemaAhead: applied.some(id => !known.has(id)) }
+  } finally { ro.close() }
+}
+const before = report()
+console.log(JSON.stringify({ path, before }))
+const pending = [...before.pending].sort()
+if (before.schemaAhead || !pending.length ||
+    (expected !== undefined && JSON.stringify(pending) !== JSON.stringify(expected.split(',').sort()))) {
+  throw new Error('unexpected pending set or schema ahead; nothing changed')
+}
+if (mode === 'apply') {
+  const { openHrcDatabase } = await import(`${rel}/packages/hrc-store-sqlite/dist/database.js`)
+  const store = openHrcDatabase(path)
+  store.close()
+  const after = report()
+  console.log(JSON.stringify({ path, after }))
+  if (after.pending.length || after.schemaAhead || after.storeVersion !== after.releaseVersion) {
+    throw new Error('migration readback is not current; stage/restart skipped')
+  }
+}
+JS
+}
+
+activate_schema() {
+  local expect="" pending="" has_pending=0 reason="" release src id commit env_json db log since status warm attempt
+  while (($#)); do
+    case "$1" in
+      --expect-commit|--expect-pending|--reason)
+        [[ $# -ge 2 && -n "$2" && "$2" != --* ]] || fail "activate: $1 requires a value; nothing changed"
+        case "$1" in
+          --expect-commit) expect="$2" ;;
+          --expect-pending) pending="$2"; has_pending=1 ;;
+          --reason) reason="$2" ;;
+        esac
+        shift 2 ;;
+      *) fail "activate: unknown argument $1; nothing changed" ;;
+    esac
+  done
+  [[ "$expect" =~ ^[0-9a-f]{40}$ ]] || fail 'activate requires --expect-commit <full sha>; nothing changed'
+  release="$(installed_release)" || return 1
+  read -r src id commit <<<"$release"
+  [[ "$commit" == "$expect" ]] || fail "installed release is $commit, expected $expect; nothing changed"
+  [[ "$(owner_kind)" == rusthrc ]] || fail 'activate requires a rusthrc owner; nothing changed'
+  knows_native_roles "$src/bin/rusthrc" || fail 'installed release lacks native roles; nothing changed'
+  env_json="$(plutil -extract EnvironmentVariables json -o - "$PLIST")"
+  # Scope every CLI/schema read to the same store the owner will open.
+  local HRC_STATE_DIR HRC_RUNTIME_DIR
+  HRC_STATE_DIR="$(jq -er '.HRC_STATE_DIR | select(type == "string" and startswith("/"))' <<<"$env_json")" || fail 'no absolute owner state root; nothing changed'
+  HRC_RUNTIME_DIR="$(jq -er '.HRC_RUNTIME_DIR | select(type == "string" and startswith("/"))' <<<"$env_json")" || fail 'no absolute owner runtime root; nothing changed'
+  export HRC_STATE_DIR HRC_RUNTIME_DIR
+  db="$HRC_STATE_DIR/state.sqlite"
+  log="$(plist_value "$PLIST" StandardOutPath)"
+  [[ -f "$db" && -r "$log" ]] || fail "store or owner log unavailable ($db, $log); nothing changed"
+  echo "[activate] db=$db release=$id sourceCommit=$commit"
+  local -a expected_args=()
+  if ((has_pending)); then expected_args=("$pending"); fi
+  activation_migrations "$src" "$db" report ${expected_args[@]+"${expected_args[@]}"} || fail 'migration preflight failed; nothing changed'
+  [[ -n "$reason" ]] || reason="activate schema bump at $expect"
+  echo "[activate] migrate -> stage -> restart (restart requires mable@<project>:primary)"
+  activation_migrations "$src" "$db" apply ${expected_args[@]+"${expected_args[@]}"}
+  stage --expect-commit "$expect"
+  if ! hrc server restart --force --reason "$reason"; then
+    fail 'restart failed; migration and stage already applied. HRC permits restart only from an authorized Mable primary seat (or Lance); ask mable@hrc-runtime:primary to finish activation'
+  fi
+  for attempt in $(seq 1 60); do
+    status="$(hrc server status --json 2>/dev/null || true)"
+    if jq -e --arg sha "$expect" '
+      .release.hrcBuild.sourceCommit == $sha and .release.runningEqualsInstalled == true and
+      .api.startedAt != null and (.api.startedAt | type == "string") and
+      .schema.readable == true and (.schema.releaseVersion | type == "string") and
+      .schema.storeVersion == .schema.releaseVersion and .schema.pending == [] and
+      .schema.schemaAhead == false' >/dev/null 2>&1 <<<"$status"; then
+      echo "$status" | jq -c '{sourceCommit:.release.hrcBuild.sourceCommit, schema}'
+      break
+    fi
+    [[ "$attempt" != 60 ]] || fail 'post-restart release/schema readback failed'
+    sleep 1
+  done
+  # Bound warmup to the verified process start.
+  since="$(jq -r .api.startedAt <<<"$status")"
+  for _ in $(seq 1 120); do
+    warm="$(jq -Rc --arg since "$since" 'fromjson? | select(.event == "broker.warmup.complete" and .ts >= $since)' "$log" | tail -1)"
+    if [[ -n "$warm" ]]; then
+      echo "$warm"
+      jq -e '.data | (.attached | type == "number") and (.total | type == "number") and
+        .attached == .total and (.byCategory | type == "object") and
+        (.byCategory | del(.attached) | [.[]] | all(. == 0))' >/dev/null <<<"$warm" || fail 'broker warmup incomplete'
+      echo "[activate] ok release=$id sourceCommit=$commit"
+      return
+    fi
+    sleep 1
+  done
+  fail "no broker.warmup.complete from this activation in $log"
+}
+
 activate() {
   local domain target
   domain="gui/$(id -u)"
@@ -497,7 +608,7 @@ case "$cmd" in
   stage) stage "$@" ;;
   preflight) preflight "$@" ;;
   prepare) prepare "$@" ;;
-  activate) activate ;;
+  activate) if (($#)); then activate_schema "$@"; else activate; fi ;;
   refresh-plist) refresh_plist "$@" ;;
   bootstrap) wait_unloaded; bootstrap_owner ;;
   *) echo "usage: $0 kind|log-path|render|stage|preflight|prepare|activate|refresh-plist|bootstrap ..." >&2; exit 2 ;;

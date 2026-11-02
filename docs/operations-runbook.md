@@ -93,6 +93,39 @@ hrc server restart --force --reason 'activate the selected HRC release'
 hrc server status --json
 ```
 
+For a schema bump while rusthrc owns the node, use the scripted door from
+an authorized Mable primary seat after installing the target release:
+
+```bash
+bash scripts/hrc-owner.sh activate --expect-commit <full-source-sha> \
+  --expect-pending 0129_seat_kind_work,0130_seat_handoffs \
+  --reason 'activate the selected release and its schema bump'
+```
+
+This command is documented here rather than adding a `just activate` recipe;
+`just deploy-max3` is unchanged. `--expect-pending` compares the exact set
+(order does not matter); omit it to require any nonempty pending set. The
+read-only preflight requires the installed commit, a rusthrc owner, and a store
+that is not ahead of the release. A failed preflight changes nothing. Roots and
+log path come from the owner plist, not the caller's shell.
+
+The installed release's own Bun store package migrates the database, with
+readback through a separate read-only SQLite connection. The script immediately
+stages that release and requests `hrc server restart --force` with the reason.
+The old daemon can refuse kernel reads between migration and restart. A later
+failure does not undo migration or staging: a restart authority refusal says to
+ask Mable primary to finish activation. After fixing that refusal, Mable should
+restart the already staged owner directly with the reason above (rerunning this
+door would refuse the now-empty pending set), then perform the status and
+warmup checks below. Do not roll back to a binary that lacks the new migrations.
+
+On success the door requires the expected running commit,
+`runningEqualsInstalled`, a readable schema with `storeVersion == releaseVersion`,
+`pending == []`, and `schemaAhead == false`. It prints the new
+`broker.warmup.complete` line from the owner log and requires `attached == total`
+and zero failure categories. The existing no-argument `activate` remains the
+separate prepared-plist switch used after an authorized stop.
+
 Use `--node <id>` for a peer. Default stop/restart gates refuse in-flight work;
 `--wait` drains up to `--wait-timeout-ms` (default 300000), while `--force`
 skips that gate. Tmux runs are excluded from the restart gate. Brokers reattach
