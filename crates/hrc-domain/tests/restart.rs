@@ -17,7 +17,7 @@ fn input_is_an_hrc_generation_fence_without_force() {
         json!({"host_session_id":"hs","expected_generation":1.5}),
         json!({"host_session_id":"hs","expected_generation":"2"}),
         json!({"host_session_id":"hs","expected_generation":2,"force":true}),
-        json!({"host_session_id":"hs","expected_generation":2,"document_id":"hrc"}),
+        json!({"host_session_id":"hs","expected_generation":2,"document_id":"unexpected"}),
     ] {
         assert!(Restart::parse(bad).is_err());
     }

@@ -303,7 +303,7 @@ pub async fn resolve(server: &Shared, body: &[u8]) -> Result<Response, ApiError>
 
 /// `GET /v1/sessions/attention` (T-12212, local only): the continuity's active
 /// generation and its attention by the one rule the annotation fence and the
-/// kernel's `hrc.seat.attention` share (`hrc_store::attention`). `runtimeLive`
+/// kernel's `praesidium seat.attention` share (`hrc_store::attention`). `runtimeLive`
 /// is that rule's presence predicate; no second fold lives here.
 fn attention(server: &Server, query: &HashMap<String, String>) -> Result<Response, ApiError> {
     let scope = query.get("scopeRef").ok_or_else(|| {
@@ -565,13 +565,11 @@ fn seat_handoffs(
 mod tests {
     use crate::server::{Shared, dispatch_inner, turns::admission::tests::server};
     use axum::{body::Body, extract::Request, http::StatusCode};
-    use cardo_runtime::ingest::Projector;
     use chrono::{Duration, SecondsFormat, Utc};
-    use hrc_domain::{projector::SeatProjector, reader::HrcRead};
     use serde_json::{Value, json};
 
     // Failure cases (T-12212): the route folding attention its own way and
-    // drifting from hrc.seat.attention; reading a generation other than the
+    // drifting from praesidium seat.attention; reading a generation other than the
     // continuity's active one; runtimeLive disagreeing with the presence the
     // rule gated on; a scope with no continuity answered 200 with null instead
     // of unknown_host_session; the route missing from implemented() and so
@@ -630,8 +628,8 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn route_attention_equals_projected_seat_attention() -> anyhow::Result<()> {
-        let (scratch, server) = server("off", false)?;
+    async fn route_attention_equals_owner_store_attention() -> anyhow::Result<()> {
+        let (_scratch, server) = server("off", false)?;
         // case → (runtime status, events after a turn.completed); the cases of
         // hrc-domain's live_attention equivalence test (T-12185).
         type Case = (
@@ -714,18 +712,13 @@ mod tests {
             seats.push((*name, *rt == Some("ready"), scope, s));
         }
 
-        let read = HrcRead::open(&scratch.root.join("state/state.sqlite"))?;
-        let edits = SeatProjector::new(read).bootstrap(None, 1000)?.edits;
         let mut lit_seen = 0;
         for (name, live, scope, s) in &seats {
-            let key = format!("{scope}/lane:main");
-            let seat = edits
-                .iter()
-                .find(|e| e["type"] == "hrc.seat" && e["key"]["sessionRef"] == key.as_str())
-                .unwrap_or_else(|| panic!("no seat for {name}"));
-            let projected = seat["payload"]
-                .get("attention")
-                .cloned()
+            let projected = server
+                .store
+                .lock()
+                .unwrap()
+                .live_attention(s["hostSessionId"].as_str().unwrap(), 1)?
                 .unwrap_or(Value::Null);
             let (status, answer) = get(&server, &format!("scopeRef={}", encode(scope))).await;
             assert_eq!(status, StatusCode::OK, "{name}: {answer}");

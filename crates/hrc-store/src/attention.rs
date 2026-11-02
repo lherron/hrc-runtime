@@ -1,5 +1,5 @@
 //! hrc-runtime.turn-attention, owned here so the annotation fence and the
-//! kernel's `hrc.seat.attention` share one rule (seat-annotations r1.1 §3):
+//! kernel's `praesidium seat.attention` share one rule (seat-annotations r1.1 §3):
 //! display selection, the fold, and live-runtime presence.
 use crate::{Store, status::unavailable_sql};
 use anyhow::{Result, anyhow};
@@ -112,7 +112,7 @@ impl Store {
         )?)
     }
 
-    /// The attention `hrc.seat` shows for this generation, read from the
+    /// The attention `seat` shows for this generation, read from the
     /// store: selection, then the fold, gated on live-runtime presence.
     pub fn live_attention(&self, host_session_id: &str, generation: i64) -> Result<Option<Value>> {
         let query = HashMap::from([

@@ -6,20 +6,27 @@ scope: Rust workspace crate graph and native library boundary
 predicate: >
   hrc-common owns leaf scope, federation-config and JavaScript utilities and
   has no HRC, database, HTTP-client or async-runtime dependency. Allowed HRC
-  edges are hrc-store to hrc-common; hrc-domain and hrc-cli to hrc-common and
-  hrc-store; hrc-native library to hrc-common, hrc-store and hrc-domain;
+  edges are hrc-store and hrc-domain to hrc-common; hrc-cli to hrc-common
+  and hrc-store; hrc-native library to hrc-common, hrc-store and hrc-domain;
   and the rusthrc binary to hrc-native library and hrc-cli. The hrc-native
   library hosts the kernel (T-12067 L2b) and also depends on the cardo crates
-  cardo-runtime, cardo-runtime-tokio and cardo-host. hrc-domain has no
+  cardo-core, cardo-runtime, cardo-runtime-tokio and cardo-host. hrc-domain has no
   HTTP-client dependency. The standalone kernel crate and edge were removed
   by T-12141 (L2c).
-  Projection stays in hrc-domain, which cannot
-  depend on hrc-native; its reader takes a state path, not the daemon's
-  Server or store mutex. Only
+  Amendment 2026-11-02 (praesidium-kernel r1.9, T-12360): the former
+  requirement to keep a state-path read projector in hrc-domain is retired.
+  The separate Praesidium kernel owns the read projection; rusthrc retains
+  an ops-only provider and in-process owner dispatch. The obsolete
+  hrc-domain to hrc-store edge is removed; hrc-domain still cannot depend
+  on hrc-native. Native
+  adds cardo-core for the required refusing executor of record. Only
   main.rs may use hrc-cli in hrc-native. The check derives package edges from
   cargo metadata --no-deps --offline and checks the binary-only CLI usage
   separately because Cargo dependencies are declared at package granularity.
-authority: wrkq:T-11941; T-12067 section 8.1 at 1e5109af, Daedalus approval EN-38698, 2026-10-29
+authority: >
+  wrkq:T-11941; T-12067 section 8.1 at 1e5109af, Daedalus approval
+  EN-38698, 2026-10-29. Amendment 2026-11-02 follows praesidium-kernel
+  r1.9 step 6 and T-12360; earlier graph authority is preserved.
 design_approval:
   revision: 1e5109af
   evidence: EN-38698 source review; amended checker verified with its forbidden-edge negative control (T-12140)
@@ -31,13 +38,16 @@ source:
   - scripts/check-rust-crate-edges.py
   - justfile
   - docs/proposals/hrc-rust-migration.md
+  - docs/proposals/praesidium-kernel.md
+  - crates/hrc-native/Cargo.toml
+  - wrkq:T-12360
 required_tests:
   - python3 scripts/check-rust-crate-edges.py
   - just cargo-check
   - just verify
 last_verified:
   date: 2026-10-29
-  evidence: T-12140 crate-edges log and forbidden-edge negative control (wrkq-artifacts/T-12140)
+  evidence: T-12140 crate-edges log and forbidden-edge negative control (wrkq-artifacts/T-12140); amendment read 2026-11-02 against praesidium-kernel r1.9 and T-12360 removes the obsolete hrc-domain to hrc-store edge and projection premise and records native cardo-core; no new implementation or deployment verification claimed
 reopen_when: A Rust workspace crate or allowed dependency edge changes.
 supersedes: []
 superseded_by: []
