@@ -1,6 +1,6 @@
 # Seat asks: a seat's open questions as one HRC seat record
 
-Status: r1.1, 2026-11-01, draft for Daedalus review (T-12239, c2 project; the contract is HRC's and lives here); r1.1 resolves Daedalus F1 (EN-40695): the seat never deletes the record, empty is the "none" state, absent reads as epoch. Owner mable@hrc-runtime:primary. Rulings by Lance on 2026-11-01 are marked **RULED**. Diagrams: `diagrams/seat-data.arris-board.json` (frames `seat-data-question-keyed`, `seat-data-model-seat-questions`, `seat-data-document-seat-questions`; they still read `c2 · asks` and follow this document to `hrc · asks`) and `diagrams/taxonomy.arris-board.json#taxonomy-subjects` (the seat as the join of agent-spaces, wrkq and HRC).
+Status: r1.2, 2026-11-02, resubmitted for Daedalus review (T-12239, c2 project; the contract is HRC's and lives here); r1.1 resolved Daedalus F1 (EN-40695): the seat never deletes the record, empty is the "none" state, absent reads as epoch; r1.2 adds the `prae` form of the operations under the kernel record's verb grammar (`praesidium-kernel.md` r1.6 §2.4) with no change to the HRC contract. Owner mable@hrc-runtime:primary. Rulings by Lance on 2026-11-01 are marked **RULED**. Diagrams: `diagrams/seat-data.arris-board.json` (frames `seat-data-question-keyed`, `seat-data-model-seat-questions`, `seat-data-document-seat-questions`; they still read `c2 · asks` and follow this document to `hrc · asks`) and `diagrams/taxonomy.arris-board.json#taxonomy-subjects` (the seat as the join of agent-spaces, wrkq and HRC).
 
 ## 0. Claim
 
@@ -63,6 +63,17 @@ hrc session annotation get <seat> --subject seat --ns hrc --kind asks --id open
 seat.annotation.act                                   # a client's answer; appends session.annotation.action
 ```
 
+**`prae` form (kernel record r1.6 §2.4; type `seat.asks`, owner HRC, register state, class `fenced`).** The same facility, reached by a migrated agent through the kernel; the kernel forwards the caller's identity and the fence verbatim and HRC admits the write exactly as above (D2 holds: HRC changes no code). The fence is the record's `updatedAt`, because HRC annotations carry no etag; `--if-match` takes that value.
+
+```
+prae seat asks get <seat>                                          # owner read: rows, updatedAt, updatedBy
+prae seat asks create <seat> --body @asks.json                     # the first record (possibly questions: []); refuses `exists`
+prae seat asks update <seat> --if-match <updatedAt> --body @asks.json   # whole-record fenced write; seat, reviewer and deliverer all use it
+prae seat ext act <seat> --ns hrc --kind asks --id open --row <rowId> --action <answered|other|later> …   # a client's answer action: unkeyed ledger append (session.annotation.action)
+```
+
+`create` and `update` map 1:1 onto `hrc session annotation put` (absent → create; present → update with `--expect-updated-at`); `get` onto `annotation get`; `act` onto `seat.annotation.act`. The parity table (T-12246) carries these four rows. There is no `delete` in either form (§7).
+
 Events: `session.annotation.changed` on every admitted write (subject, key, op, writer; no body); `session.annotation.action` on every client action against a row (the deliverer records `{rowId, option|other|later, recommended, edited}` as action attributes). The ledger is the history; there is no body history.
 
 ## 5. Readers
@@ -91,5 +102,7 @@ Seat-initiated delete of the record (D-F1: the record persists, empty, until HRC
 - D6 timing of the typed node.
 
 ## 10. Revision log
+
+- r1.2 (2026-11-02): §4 adds the `prae seat asks get/create/update` and `prae seat ext act` forms under the kernel record's verb grammar, fence = `updatedAt`, class `fenced`, mapped 1:1 onto the existing `hrc session annotation` forms; no HRC change (D2 unchanged). Reason: step 1 of the kernel campaign (P-00919) needs every seat record named in the grammar before the parity table closes.
 
 - r1.1 (2026-11-01, EN-40695 F1): §3 record-level — the seat never deletes; empty is the none state; absent reads as epoch. §4 delete removed from the seat's operations. §7 adds seat-initiated delete. Reason: the T-12239 backstop dedupe compares `ping.at` with the record's `updatedAt`; permitted deletion made "answered then deleted" indistinguishable from "ping unanswered" (annotations.rs:424–431 removes the row outright).
