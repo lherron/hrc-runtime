@@ -46,7 +46,12 @@ export async function cmdSummon(
   )
 }
 
-export type SendOptions = { enter?: boolean; file?: string; json?: boolean | undefined }
+export type SendOptions = {
+  enter?: boolean
+  file?: string
+  idempotencyKey?: string
+  json?: boolean | undefined
+}
 
 export async function cmdSend(
   client: HrcClient,
@@ -66,13 +71,16 @@ export async function cmdSend(
     selector: { sessionRef },
     text: body,
     enter,
+    ...(opts.idempotencyKey === undefined ? {} : { idempotencyKey: opts.idempotencyKey }),
   })
 
   if (opts.json) {
     printJson(result)
     return
   }
-  process.stdout.write(`Sent to ${sessionRef}\n`)
+  process.stdout.write(
+    result.uncertain ? `Delivery pending (uncertain): ${sessionRef}\n` : `Sent to ${sessionRef}\n`
+  )
 }
 
 export type PeekOptions = { lines?: string; json?: boolean | undefined }

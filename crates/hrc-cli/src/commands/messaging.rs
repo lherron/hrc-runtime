@@ -57,12 +57,15 @@ pub(super) fn send(args: &Parsed<'_>) -> Result<()> {
     let mut scope = crate::scope::Qualified::parse(target, true)?;
     scope.observe(&client)?;
     let reference = format!("{}/lane:{}", scope.scope, scope.lane);
-    let result = client.post(
-        "/v1/literal-input/by-selector",
-        json!({"selector":{"sessionRef":reference},"text":body,"enter":args.last_flag("enter","no-enter",true)}),
-    )?;
+    let mut request = json!({"selector":{"sessionRef":reference},"text":body,"enter":args.last_flag("enter","no-enter",true)});
+    if let Some(key) = args.value("idempotency-key") {
+        request["idempotencyKey"] = key.into();
+    }
+    let result = client.post("/v1/literal-input/by-selector", request)?;
     if args.flag("json") {
         print_json(&result);
+    } else if result["uncertain"] == true {
+        crate::cli_println!("Delivery pending (uncertain): {reference}");
     } else {
         crate::cli_println!("Sent to {reference}");
     }

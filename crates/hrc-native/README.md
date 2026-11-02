@@ -174,6 +174,14 @@ stop → dispose → close within 15 s, lease teardown, `runtime.terminated`),
 (`server/io.rs`). `POST /v1/literal-input/by-selector` (`server/input.rs`)
 buffers broker literal text until Enter, sends an empty Enter to the pane, and
 flushes the prompt through admission as door `literal-flush`.
+An optional `idempotencyKey` (`hrc send --idempotency-key <key>`) reserves an
+`active_input_deliveries` row before delivery, scoped to the resolved host
+session. An identical retry returns the saved response with `replayed: true`;
+a changed request returns HTTP 409 `idempotency_key_conflict`. A reservation
+without a saved response returns `status: pending`, `uncertain: true` and
+`delivered: false`, including after a crash; retries never redeliver it.
+Unkeyed input keeps delivering on every request. The HTTP integration regression
+is `cargo test --manifest-path crates/Cargo.toml -p hrc-native literal_input_idempotency_http`.
 `POST /v1/active-run-contributions` records `active_input_deliveries`, types an
 answer into a pending AskUserQuestion, and otherwise recommends the queue.
 `POST /v1/runs/prepare-attached` and `/v1/runs/resume-attached`

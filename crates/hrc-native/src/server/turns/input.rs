@@ -13,6 +13,7 @@ use axum::{
     http::StatusCode,
     response::{IntoResponse, Response},
 };
+use rusqlite::OptionalExtension;
 use serde_json::{Value, json};
 use std::time::Duration;
 use uuid::Uuid;
@@ -101,6 +102,7 @@ impl Literal<'_> {
 }
 
 pub async fn literal_by_selector(server: &Shared, body: Value) -> Result<Response, ApiError> {
+    let request = body.clone();
     let (body, session_ref) = selector_request(&body)?;
     let Some(text) = body.get("text").and_then(Value::as_str).map(str::to_owned) else {
         return Err(ApiError::bad(
@@ -112,6 +114,24 @@ pub async fn literal_by_selector(server: &Shared, body: Value) -> Result<Respons
         return Err(unknown_session(&session_ref));
     };
     let host = session["hostSessionId"].as_str().unwrap_or("").to_owned();
+    let key = match body.get("idempotencyKey") {
+        None => None,
+        Some(Value::String(key)) if !key.trim().is_empty() => Some(key.as_str()),
+        Some(_) => {
+            return Err(ApiError::bad(
+                "idempotencyKey must be a non-empty string",
+                None,
+            ));
+        }
+    };
+    // Replays remain readable even after the recorded runtime stops or its
+    // fences expire. A new generation resolves to a different host session.
+    if let Some(key) = key {
+        let db = server.store.lock().unwrap();
+        if let Some(response) = literal_replay(&db.sqlite, &host, key, &request)? {
+            return Ok(Json(response).into_response());
+        }
+    }
     // A fenced send to a seat that rotated must refuse, not land in the successor.
     if let Some(raw) = body.get("fences") {
         let fence = turns::parse::fence(raw)?;
@@ -159,23 +179,93 @@ pub async fn literal_by_selector(server: &Shared, body: Value) -> Result<Respons
         rt: &rt,
         session_ref: &session_ref,
     };
+    let application = if let Some(key) = key {
+        let db = server.store.lock().unwrap();
+        // Recheck and reserve under the same lock: simultaneous requests
+        // cannot both pass the lookup before either inserts its reservation.
+        if let Some(response) = literal_replay(&db.sqlite, &host, key, &request)? {
+            return Ok(Json(response).into_response());
+        }
+        let id = format!("literal-input-{}", Uuid::new_v4());
+        let now = hrc_store::timestamp();
+        db.sqlite.execute(
+            "INSERT INTO active_input_deliveries (input_application_id, input_attempt_id, idempotency_key, host_session_id, generation, runtime_id, status, request_json, created_at, updated_at) VALUES (?, 'literal-input', ?, ?, ?, ?, 'pending', ?, ?, ?)",
+            rusqlite::params![id, key, host, session["generation"].as_i64(), rt.runtime_id, request.to_string(), now, now],
+        ).map_err(anyhow::Error::from)?;
+        Some(id)
+    } else {
+        None
+    };
+    let response = deliver_literal(server, &literal, &text, enter).await?;
+    if let Some(id) = application {
+        let db = server.store.lock().unwrap();
+        db.sqlite.execute(
+            "UPDATE active_input_deliveries SET status='delivered', response_json=?, run_id=?, updated_at=? WHERE input_application_id=?",
+            rusqlite::params![response.to_string(), response["runId"].as_str(), hrc_store::timestamp(), id],
+        ).map_err(anyhow::Error::from)?;
+    }
+    Ok(Json(response).into_response())
+}
+
+/// Only this door's reservations participate; contributions retain their own
+/// application-id contract even when they happen to use the same key.
+fn literal_replay(
+    db: &rusqlite::Connection,
+    host: &str,
+    key: &str,
+    request: &Value,
+) -> Result<Option<Value>, ApiError> {
+    let row = db.query_row(
+        "SELECT input_application_id, request_json FROM active_input_deliveries WHERE host_session_id=? AND idempotency_key=? AND input_attempt_id='literal-input'",
+        [host, key],
+        |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?)),
+    ).optional().map_err(anyhow::Error::from)?;
+    let Some((id, recorded)) = row else {
+        return Ok(None);
+    };
+    if serde_json::from_str::<Value>(&recorded).map_err(anyhow::Error::from)? != *request {
+        return Err(ApiError::domain(
+            StatusCode::CONFLICT,
+            "idempotency_key_conflict",
+            "idempotencyKey was already used for a different literal-input request",
+            Some(json!({"idempotencyKey":key,"hostSessionId":host})),
+        ));
+    }
+    let mut response = stored_delivery(db, &id)?
+        .ok_or_else(|| ApiError::bad("literal input reservation is missing", None))?;
+    response["replayed"] = true.into();
+    if response["status"] == "pending" {
+        response["uncertain"] = true.into();
+        response["delivered"] = false.into();
+        response["sessionRef"] = request["selector"]["sessionRef"].clone();
+    }
+    Ok(Some(response))
+}
+
+async fn deliver_literal(
+    server: &Shared,
+    literal: &Literal<'_>,
+    text: &str,
+    enter: bool,
+) -> Result<Value, ApiError> {
+    let (rt, session, session_ref) = (literal.rt, literal.session, literal.session_ref);
     if rt.controller_kind.as_deref() == Some("harness-broker") && rt.active_invocation_id.is_some()
     {
-        return broker_literal(server, &literal, &text, enter).await;
+        return broker_literal(server, literal, text, enter).await;
     }
-    if let Some((socket, _)) = hrcpty::substrate(&rt) {
+    if let Some((socket, _)) = hrcpty::substrate(rt) {
         // §4.5: one bracketed paste, then \r to submit.
-        hrcpty::input(&socket, &hrcpty::paste(&text, enter)).await?;
+        hrcpty::input(&socket, &hrcpty::paste(text, enter)).await?;
     } else {
-        let pane = pane(&rt)?;
+        let pane = pane(rt)?;
         if enter {
             if !text.is_empty() {
-                lease::tmux(&pane.0, &["send-keys", "-l", "-t", &pane.1, &text]).await?;
+                lease::tmux(&pane.0, &["send-keys", "-l", "-t", &pane.1, text]).await?;
             }
             tokio::time::sleep(Duration::from_millis(1_000)).await;
             lease::tmux(&pane.0, &["send-keys", "-t", &pane.1, "Enter"]).await?;
         } else if !text.is_empty() {
-            lease::tmux(&pane.0, &["send-keys", "-l", "-t", &pane.1, &text]).await?;
+            lease::tmux(&pane.0, &["send-keys", "-l", "-t", &pane.1, text]).await?;
         }
     }
     let now = hrc_store::timestamp();
@@ -205,12 +295,12 @@ pub async fn literal_by_selector(server: &Shared, body: Value) -> Result<Respons
             &db.sqlite,
             "turn.user_prompt",
             &ev,
-            &events::user_prompt_payload(&text),
+            &events::user_prompt_payload(text),
         )?;
         drop(db);
         server.ledger_committed();
     }
-    Ok(Json(delivered(&session, &rt, None)).into_response())
+    Ok(delivered(session, rt, None))
 }
 
 /// requireTmuxPane: (socketPath, paneId).
@@ -243,7 +333,7 @@ async fn broker_literal(
     l: &Literal<'_>,
     text: &str,
     enter: bool,
-) -> Result<Response, ApiError> {
+) -> Result<Value, ApiError> {
     let runtime_id = l.rt.runtime_id.clone();
     let pending = server
         .literal
@@ -271,7 +361,7 @@ async fn broker_literal(
             None,
             true,
         )?;
-        return Ok(Json(delivered(l.session, l.rt, None)).into_response());
+        return Ok(delivered(l.session, l.rt, None));
     }
     let prompt = format!("{pending}{text}");
     if prompt.trim().is_empty() {
@@ -289,7 +379,7 @@ async fn broker_literal(
             None,
             true,
         )?;
-        return Ok(Json(delivered(l.session, l.rt, None)).into_response());
+        return Ok(delivered(l.session, l.rt, None));
     }
     let run_id = format!("run-{}", Uuid::new_v4());
     server.literal.lock().unwrap().remove(&runtime_id);
@@ -310,7 +400,7 @@ async fn broker_literal(
         ))
     })
     .await?;
-    Ok(Json(value).into_response())
+    Ok(value)
 }
 
 /// isPendingAskUserQuestionRun over the run's lifecycle rows.

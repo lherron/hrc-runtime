@@ -275,10 +275,14 @@ export type DeliverLiteralBySelectorRequest = {
   text: string
   enter?: boolean | undefined
   fences?: HrcFence | undefined
+  idempotencyKey?: string | undefined
 }
 
 export type DeliverLiteralBySelectorResponse = {
-  delivered: true
+  delivered: boolean
+  replayed?: boolean | undefined
+  uncertain?: boolean | undefined
+  inputApplicationId?: string | undefined
   sessionRef: string
   hostSessionId: string
   generation: number

@@ -440,6 +440,7 @@ The output always names the resolved kind and the concrete ID(s).
       'do not send enter key; on a broker-hosted runtime the text is held by the daemon, not typed (see below)'
     )
     .option('--file <path>', 'read body from file')
+    .option('--idempotency-key <key>', 'stable retry identity for literal input')
     .option('--json', 'emit the delivery result as JSON')
     .action(async (target, message, opts) => {
       await cmdSend(createClient(), { ...opts, json: opts.json === true }, [
