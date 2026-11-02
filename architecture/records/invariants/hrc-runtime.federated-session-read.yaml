@@ -32,6 +32,15 @@ predicate: >
   exclusive cursor, ledger-incarnation fence and covering-page response.
   Each peer answers only its own ledger; no peer-page request forwards to
   another node. Per-node projector polling creates no write or input authority.
+  GET /v1/sessions/annotations on the local unix dispatch has an explicit
+  node-local observation exception: only literal localOnly=true bypasses
+  scope-home routing and reads this node's db.list_annotations with existing
+  scope, lane and filter validation. Absent or false preserves home routing,
+  including retired-placement refusal. Authenticated peer annotation GET
+  refuses literal localOnly=true with 403 local_only_forbidden before internal
+  local dispatch; ordinary forwarded annotation reads remain unchanged.
+  This exception grants no write or home-binding authority and changes no
+  other route.
   ACP remote timeline and history admission and per-row capabilities depend on
   HRC's federatedSessionRead declaration; ACP and iOS gain no peer-probe or
   credential authority. Read-only session lookup uses client sessionRef scope
@@ -50,8 +59,9 @@ predicate: >
   clients remain safely refusing. Mobile remote input, literal input,
   interrupt, answerPrompt and diagnostics remain disabled. Federation observation carries
   lifecycle facts only; agent-message delivery remains on the shared wrkq ledger.
-authority: Daedalus approval of wrkq:T-10418 Spec rev 3, task etag 5, 2026-10-06; explicit-node interrupt separation clarified by T-12177 rev 2 APPROVE EN-39461, 2026-10-31; bounded per-peer observation adopted by praesidium-kernel r1.6 section 2.3 and T-12257
+authority: Daedalus approval of wrkq:T-10418 Spec rev 3, task etag 5, 2026-10-06; explicit-node interrupt separation clarified by T-12177 rev 2 APPROVE EN-39461, 2026-10-31; bounded per-peer observation adopted by praesidium-kernel r1.6 section 2.3 and T-12257; T-12362 local-only annotations-read design APPROVE on EN-41761, 2026-11-02
 source:
+  - wrkq:T-12362
   - wrkq:T-12257
   - docs/proposals/praesidium-kernel.md
   - wrkq:T-10418
@@ -70,6 +80,7 @@ source:
   - packages/hrc-server/src/runtime-list-handlers.ts
   - crates/hrc-native/src/server/placement/federation/peer_listener.rs
 required_tests:
+  - T-12362 retired unbound scope default and false refuse session_home_pending; unix localOnly=true returns exact local annotation rows; authenticated peer true refuses local_only_forbidden; ordinary peer read remains local
   - crates/hrc-native/e2e/peer_events_page.py authenticated page, 200-row cap, bearer refusal, local-only cursor and fence checks
   - just architecture-records
   - T-10418 installed max3-to-svc taskboard resolve and timeline including a turn starting after attach, and local-seat regression gates
@@ -81,6 +92,12 @@ required_tests:
 last_verified: 2026-10-06 Spec rev 3 reviewed against source and active records; implementation, build, installation and live acceptance pending
 reopen_when: Home authority routing, retirement or unknown-authority treatment, peer route admission, forwarding filters, home provenance, capability meaning, remote lookup completeness, observation versus control isolation, or consumer cursor behavior changes.
 design_review: >
+  2026-11-02 T-12362 APPROVE on EN-41761 adopts the explicit local-dispatch
+  annotation observation exception. Source read covered dispatch admission,
+  scope routing and retired authority, authenticated peer local dispatch,
+  annotation validation and store reads, and embedded projector selection.
+  Implementation and installed acceptance remain the requester's work;
+  existing last_verified evidence is unchanged.
   T-12257 adopts the bounded per-peer observation amendment required by
   praesidium-kernel r1.6 section 2.3 and the taxonomy adoption step 0;
   existing scope-home routing and observation/control isolation remain intact.

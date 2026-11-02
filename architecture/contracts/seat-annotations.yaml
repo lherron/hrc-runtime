@@ -32,7 +32,14 @@ predicate: >
   /v1/sessions/annotations/delete and /v1/sessions/annotations/act.
   Scope-home routing precedes local access, following the session metadata
   routing mechanism, with principal forwarding on writes and peer allowlist
-  admission. Bun supplies schema migration, SDK and CLI, not annotation
+  admission. The explicit observation exception is GET annotations on the
+  local unix dispatch with literal localOnly=true: it reads this node's
+  db.list_annotations with existing scope, lane and filter validation and
+  bypasses home routing. Absent or false preserves routing. Authenticated
+  peer annotation GET refuses true with 403 local_only_forbidden before
+  internal local dispatch; ordinary forwarded reads remain unchanged.
+  This exception grants no write or home-binding authority and changes no
+  other route. Bun supplies schema migration, SDK and CLI, not annotation
   handlers. The Bun migration and Rust MIGRATIONS entry land together.
   The embedded kernel projects hrc.generation keyed by hostSessionId and
   hrc.annotation keyed by sessionRef, hostSessionId, ns, kind and id alongside
@@ -54,7 +61,10 @@ authority: >
   submitted on the EN-39516 review thread, 2026-10-31. HRC storage ownership,
   annotation naming and the 64 KB body limit follow Lance's rulings recorded
   in the submitted specification.
+  T-12362 local-only annotations-read design APPROVE on EN-41761, 2026-11-02,
+  amends only the explicit local observation exception and peer refusal.
 source:
+  - wrkq:T-12362
   - wrkq:T-12183
   - docs/proposals/seat-annotations.md
   - architecture/contracts/turn-attention.yaml
@@ -72,6 +82,9 @@ validation_scope: >
   projector expiry coverage; svc-to-max3 home-node persistence and projection;
   installed Loggia guards and seat-row compatibility; and the separate c2
   adoption task's durable card/action/remount readback. This ruling adds no gate.
+  T-12362 requester owns retired-unbound default/false refusal, exact local
+  rows with unix localOnly=true, authenticated peer true refusal, and unchanged
+  ordinary peer reads.
 last_verified: >
   2026-10-31 design read of r1.1 against active producer contracts, store
   metadata transactions and schema ownership, projector selection and reads,
