@@ -12,16 +12,36 @@ fn target(scope: &str, lane: &str) -> String {
     format!("{scope}/lane:{}", hrc_store::storage_lane(lane))
 }
 pub fn hint(server: &Server, body: &[u8]) -> Response {
-    let value=(||->anyhow::Result<Value>{
-        let input=match parse_body(body){Ok(v)=>v,Err(_)=>return Ok(json!({}))};
-        let Some(id)=input["runtimeId"].as_str().filter(|s|!s.is_empty()) else{return Ok(json!({}))};
-        let db=server.store.lock().unwrap();let Some((scope,lane))=db.mail_runtime(id)? else{return Ok(json!({}))};
-        if scope.starts_with("app:"){return Ok(json!({"heldCount":0,"reason":"not-mail-addressable"}))}
-        let Some((count,reason))=db.mail_hint(id,&target(&scope,&lane))? else{return Ok(json!({}))};
-        let noun=if count==1{"envelope is"}else{"envelopes are"};
-        let hint=format!("Mail hint from HRC: {count} {noun} waiting for this seat. Run `wrkc inbox` to see them and `wrkc show EN-xxxxx` to read one. Replying with `wrkc say <room> --to <sender> - <<'EOF'` answers it now; anything unanswered presents at turn end.");
+    let value = (|| -> anyhow::Result<Value> {
+        let input = match parse_body(body) {
+            Ok(v) => v,
+            Err(_) => return Ok(json!({})),
+        };
+        let Some(id) = input["runtimeId"].as_str().filter(|s| !s.is_empty()) else {
+            return Ok(json!({}));
+        };
+        let db = server.store.lock().unwrap();
+        let Some((scope, lane)) = db.mail_runtime(id)? else {
+            return Ok(json!({}));
+        };
+        if scope.starts_with("app:") {
+            return Ok(json!({"heldCount":0,"reason":"not-mail-addressable"}));
+        }
+        let Some((count, reason)) = db.mail_hint(id, &target(&scope, &lane))? else {
+            return Ok(json!({}));
+        };
+        let hint = hrc_store::mail_hint_text(count, db.mail_uses_prae(id));
         Ok(json!({"hint":hint,"heldCount":count,"reason":reason}))
-    })().unwrap_or_else(|error|{stderr_json("debug","wrkq","wrkq.kicker.hint_suppressed",json!({"reason":"error","error":error.to_string()}));json!({})});
+    })()
+    .unwrap_or_else(|error| {
+        stderr_json(
+            "debug",
+            "wrkq",
+            "wrkq.kicker.hint_suppressed",
+            json!({"reason":"error","error":error.to_string()}),
+        );
+        json!({})
+    });
     Json(value).into_response()
 }
 pub async fn stop(server: &Shared, body: &[u8]) -> Response {

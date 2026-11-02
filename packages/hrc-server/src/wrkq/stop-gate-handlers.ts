@@ -48,8 +48,10 @@ function envelopeIdSequence(envelopeId: string): number {
   return Number.parseInt(envelopeId.slice(3), 10)
 }
 
-export const MAIL_HINT_TEXT = (heldCount: number): string => {
+export const MAIL_HINT_TEXT = (heldCount: number, prae = false): string => {
   const noun = heldCount === 1 ? 'envelope is' : 'envelopes are'
+  if (prae)
+    return `Mail hint from HRC: ${heldCount} ${noun} waiting for this seat. Run \`prae room mail find --to me\` to see them and \`prae room mail get EN-xxxxx\` to read one. Replying with \`prae room say <EN-id> --to <replyTo> - <<'EOF'\` answers it now; anything unanswered presents at turn end.`
   return `Mail hint from HRC: ${heldCount} ${noun} waiting for this seat. Run \`wrkc inbox\` to see them and \`wrkc show EN-xxxxx\` to read one. Replying with \`wrkc say <room> --to <sender> - <<'EOF'\` answers it now; anything unanswered presents at turn end.`
 }
 
@@ -135,7 +137,7 @@ export async function handleMailStopDecision(
 
   return json({
     decision: 'block',
-    reason: formatStopReason(decision),
+    reason: formatStopReason(decision, usesPrae(this, runtime.activeOperationId)),
     runtimeId,
     targetSessionRef,
     unackedCount: decision.unackedCount,
@@ -185,7 +187,10 @@ export async function handleMailHintDecision(
       return json({})
     }
 
-    const hint = MAIL_HINT_TEXT(decision.outstandingCount)
+    const hint = MAIL_HINT_TEXT(
+      decision.outstandingCount,
+      usesPrae(this, runtime.activeOperationId)
+    )
     writeServerLog('INFO', 'wrkq.kicker.hint_issued', {
       runtimeId,
       targetSessionRef,
@@ -217,11 +222,32 @@ function writeHintSuppressed(
   })
 }
 
-function formatStopReason(
+// Read the frozen ASP resolution, never the prompt or an agent-name allowlist.
+// No network/compile work belongs inside the hook budget.
+function usesPrae(server: HrcServerInstanceForHandlers, operationId: string | undefined): boolean {
+  try {
+    if (operationId === undefined) return false
+    const raw = server.db.runtimeOperations.getByOperationId(operationId)?.preparationJson
+    if (raw === undefined) return false
+    const spaces = JSON.parse(raw)?.response?.plan?.resolvedBundle?.spaces
+    return (
+      Array.isArray(spaces) &&
+      spaces.some(
+        (space) =>
+          typeof space?.resolvedKey === 'string' && space.resolvedKey.startsWith('prae-tools@')
+      )
+    )
+  } catch {
+    return false
+  }
+}
+
+export function formatStopReason(
   decision: Extract<
     ReturnType<HrcServerInstanceForHandlers['db']['mailStopRefusals']['evaluate']>,
     { decision: 'block' }
-  >
+  >,
+  prae = false
 ): string {
   const lines = [
     `Turn finish paused: ${decision.unackedCount} unanswered ${decision.unackedCount === 1 ? 'envelope' : 'envelopes'} remain (refusal ${decision.refusalCount}/3).`,
@@ -235,7 +261,9 @@ function formatStopReason(
     lines.push(`- … and ${decision.unackedCount - decision.envelopes.length} more`)
   }
   lines.push(
-    "Run `wrkc inbox`, then reply (`wrkc say <room> --to <sender> - <<'EOF'`) or `wrkc defer` every envelope before stopping. Replying IS the ack; deferred envelopes leave this gate."
+    prae
+      ? "Run `prae room mail find --to me`, then read `prae room mail get <EN-id> --json` for the body, replyTo and etag. Reply (`prae room say <EN-id> --to <replyTo> - <<'EOF'`) or defer (`prae room mail defer <EN-id> --reason '<why>' --if-match <etag>`) every envelope before stopping. Replying IS the ack; deferred envelopes leave this gate."
+      : "Run `wrkc inbox`, then reply (`wrkc say <room> --to <sender> - <<'EOF'`) or `wrkc defer` every envelope before stopping. Replying IS the ack; deferred envelopes leave this gate."
   )
   return clip(lines.join('\n'), STOP_REASON_MAX_CHARS)
 }

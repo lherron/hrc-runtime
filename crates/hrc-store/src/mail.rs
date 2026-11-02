@@ -4,7 +4,31 @@ use super::{Store, timestamp};
 use anyhow::Result;
 use rusqlite::{OptionalExtension, params};
 use serde_json::{Value, json};
+/// Render only from the locally persisted ASP resolution for this runtime.
+/// Missing/invalid preparation is a legacy recipient, never a gate failure.
 impl Store {
+    pub fn mail_uses_prae(&self, runtime: &str) -> bool {
+        let read = || -> Result<bool> {
+            let spaces: Option<String> = self.sqlite.query_row(
+                "SELECT json_extract(o.preparation_json, '$.response.plan.resolvedBundle.spaces') FROM runtimes r JOIN runtime_operations o ON o.operation_id=r.active_operation_id WHERE r.runtime_id=?",
+                [runtime], |r| r.get(0),
+            ).optional()?.flatten();
+            let Some(spaces) = spaces else {
+                return Ok(false);
+            };
+            let spaces: Value = serde_json::from_str(&spaces)?;
+            Ok(spaces.as_array().is_some_and(|spaces| {
+                spaces.iter().any(|space| {
+                    space["resolvedKey"].as_str().is_some_and(|key| {
+                        key.split_once('@')
+                            .is_some_and(|(id, _)| id == "prae-tools")
+                    })
+                })
+            }))
+        };
+        read().unwrap_or(false)
+    }
+
     pub fn mail_runtime(&self, id: &str) -> Result<Option<(String, String)>> {
         Ok(self
             .sqlite
@@ -97,7 +121,7 @@ impl Store {
             if count > 8 {
                 lines.push(format!("- … and {} more", count - 8));
             }
-            lines.push("Run `wrkc inbox`, then reply (`wrkc say <room> --to <sender> - <<'EOF'`) or `wrkc defer` every envelope before stopping. Replying IS the ack; deferred envelopes leave this gate.".into());
+            lines.push(if self.mail_uses_prae(runtime) { "Run `prae room mail find --to me`, then read `prae room mail get <EN-id> --json` for the body, replyTo and etag. Reply (`prae room say <EN-id> --to <replyTo> - <<'EOF'`) or defer (`prae room mail defer <EN-id> --reason '<why>' --if-match <etag>`) every envelope before stopping. Replying IS the ack; deferred envelopes leave this gate." } else { "Run `wrkc inbox`, then reply (`wrkc say <room> --to <sender> - <<'EOF'`) or `wrkc defer` every envelope before stopping. Replying IS the ack; deferred envelopes leave this gate." }.into());
             clip(&lines.join("\n"), 4096)
         };
         Ok(
@@ -118,4 +142,29 @@ fn clip(value: &str, max: usize) -> String {
         })
         .collect();
     format!("{prefix}…")
+}
+
+/// Both native hook paths share the same recipient selection and hint wording.
+pub fn mail_hint_text(count: i64, prae: bool) -> String {
+    let noun = if count == 1 {
+        "envelope is"
+    } else {
+        "envelopes are"
+    };
+    let (inbox, read, reply) = if prae {
+        (
+            "prae room mail find --to me",
+            "prae room mail get EN-xxxxx",
+            "prae room say <EN-id> --to <replyTo> - <<'EOF'",
+        )
+    } else {
+        (
+            "wrkc inbox",
+            "wrkc show EN-xxxxx",
+            "wrkc say <room> --to <sender> - <<'EOF'",
+        )
+    };
+    format!(
+        "Mail hint from HRC: {count} {noun} waiting for this seat. Run `{inbox}` to see them and `{read}` to read one. Replying with `{reply}` answers it now; anything unanswered presents at turn end."
+    )
 }

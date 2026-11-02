@@ -26,6 +26,7 @@ mod maintenance;
 pub use maintenance::fail_unresolved_absorbed;
 pub mod collective_history;
 mod mail;
+pub use mail::mail_hint_text;
 mod messages;
 mod metadata;
 mod monitor_read;

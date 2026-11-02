@@ -186,3 +186,46 @@ describe('T-07615 — the Stop gate over the wrkq ledger', () => {
     })
   })
 })
+
+describe('resolved recipient mail surface', () => {
+  async function preparation(raw: string): Promise<void> {
+    const db = openHrcDatabase(fixture.dbPath)
+    try {
+      db.sqlite
+        .query("UPDATE runtimes SET active_operation_id='op-mail-surface' WHERE runtime_id=?")
+        .run(runtimeId)
+      db.sqlite
+        .query(
+          "INSERT OR REPLACE INTO runtime_operations(operation_id,runtime_id,host_session_id,generation,operation_kind,controller,startup_method,status,route_decision_json,created_at,updated_at,preparation_json) VALUES ('op-mail-surface',?,?,1,'broker_invocation','harness-broker','broker.startInvocationFromRequest','running','{}',?,?,?)"
+        )
+        .run(runtimeId, hostSessionId, fixture.now(), fixture.now(), raw)
+    } finally {
+      db.close()
+    }
+  }
+
+  it('routes the stop hint using frozen resolved spaces', async () => {
+    await preparation(
+      JSON.stringify({
+        response: { plan: { resolvedBundle: { spaces: [{ resolvedKey: 'prae-tools@dev' }] } } },
+      })
+    )
+    await present('answer through prae')
+    const decision = await stopDecision()
+    expect(decision['decision']).toBe('block')
+    expect(decision['reason']).toContain("prae room say <EN-id> --to <replyTo> - <<'EOF'")
+    expect(decision['reason']).toContain(
+      "prae room mail defer <EN-id> --reason '<why>' --if-match <etag>"
+    )
+    expect(decision['reason']).not.toContain('wrkc')
+  })
+
+  it('keeps the legacy stop hint when membership cannot be read', async () => {
+    await preparation('unreadable preparation')
+    await present('still gates with legacy text')
+    const decision = await stopDecision()
+    expect(decision['decision']).toBe('block')
+    expect(decision['reason']).toContain('Run `wrkc inbox`')
+    expect(decision['reason']).not.toContain('prae room')
+  })
+})
