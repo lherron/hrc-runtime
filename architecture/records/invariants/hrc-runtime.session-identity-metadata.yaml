@@ -45,7 +45,16 @@ predicate: >
   before continuity lookup under hrc-runtime.federated-session-read. Unknown
   authority never falls back locally, and locally retired continuity is never
   served as current continuity. This routing changes neither cosmetic metadata
-  write authority nor its source precedence. Title writes and clears use
+  write authority nor its source precedence. The explicit node-local observation
+  exception under hrc-runtime.federated-session-read is GET /v1/sessions/get
+  on local unix dispatch with literal localOnly=true. It retains the existing
+  handler's scope/lane validation and response, reading local continuity,
+  identity, generation, seat state, indexed facts and resolved metadata without
+  a home-authority claim or mutation. Absent or false preserves home routing.
+  Authenticated peers refuse literal true with 403 local_only_forbidden before
+  internal local dispatch; ordinary forwarded reads remain unchanged.
+  This changes no metadata route, write authority or home binding.
+  Title writes and clears use
   PATCH /v1/sessions/metadata with the continuity scopeRef and laneRef,
   set.title or clear: [title]; the retitle CLI uses the same metadata path.
   The deprecated POST and DELETE host-session title routes and SDK title
@@ -53,8 +62,9 @@ predicate: >
   metadata writes emit session.metadata.changed rather than the retired
   shim's session.retitled event. Migration preserves the most recently
   updated title per continuity before removing session_titles and its triggers.
-authority: wrkq:T-10148 revision 3 specification etag 6, Daedalus architecture approval, 2026-10-03; Lance Herron overrides of review F1 and F2 relayed in EN-22974 and its subsequent etag correction; home-routing amendment approved by Daedalus under wrkq:T-10418 Spec rev 3, task etag 5, 2026-10-06; Daedalus approval of T-11711 title-route retirement amendment submitted in EN-35003 and EN-35006, 2026-10-23
+authority: wrkq:T-10148 revision 3 specification etag 6, Daedalus architecture approval, 2026-10-03; Lance Herron overrides of review F1 and F2 relayed in EN-22974 and its subsequent etag correction; home-routing amendment approved by Daedalus under wrkq:T-10418 Spec rev 3, task etag 5, 2026-10-06; Daedalus approval of T-11711 title-route retirement amendment submitted in EN-35003 and EN-35006, 2026-10-23; T-12362 explicit local sessions/get observation extension APPROVE on EN-41778, 2026-11-02
 source:
+  - wrkq:T-12362
   - wrkq:T-10148
   - wrkq:T-10418
   - wrkq:T-11711
@@ -68,6 +78,7 @@ source:
   - packages/hrc-server/src/participant-attach-handlers.ts
   - packages/hrc-server/src/aspd-headless-start.ts
 required_tests:
+  - T-12362 sessions/get default and false preserve retired-unbound refusal; unix literal true returns the existing local response; authenticated peer true refuses local_only_forbidden; ordinary peer read remains unchanged
   - T-10148 shared-parser backfill and continuity creation fixtures agree, identity columns have no NULL agent_id and fleet unparsed counts are reported
   - T-10148 HRC-received scope identity parser sweep covers all four repos and lists justified human-input exceptions
   - T-10148 same-plan-hash metadata refresh, absent versus empty launch sets, omitted-key deletion, source precedence and invalid-key soft rejection
@@ -78,5 +89,11 @@ required_tests:
   - T-10418 sessions/get and metadata share home routing, unknown-authority refusal and retirement fencing gates
 last_verified: 2026-10-23 T-11711 retirement amendment reviewed against title handlers, metadata repository, CLI and viewer source; caller migration and deletion acceptance pending; 2026-10-06 T-10418 home-routing amendment reviewed against source; original T-10148 implementation, migration and installed acceptance and T-10418 implementation remain pending evidence
 reopen_when: Continuity identity storage, parser ownership, historical identity absence, wire coverage, metadata grammar or limits, registered keys, source precedence, cosmetic versus lifecycle authority, last-writer launch semantics, envelope/plan placement, home-node writes, title migration, retired-route behavior or title mutation interfaces, event atomicity, or read side effects change.
+design_review: >
+  2026-11-02 T-12362 extension APPROVE on EN-41778 adds only the explicit
+  local sessions/get observation exception and peer refusal. Source read of
+  native sessions handler and store continuity, metadata and seat-state readers
+  established a store-only GET path. Existing last_verified evidence remains
+  unchanged; this is not implementation or installed acceptance evidence.
 supersedes: []
 superseded_by: []
