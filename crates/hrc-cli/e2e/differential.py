@@ -120,6 +120,7 @@ def main():
         'launch.py': 'start|run|attach',
         'restart.py': 'restart', 'restartme.py': 'restartme',
         'resume.py': 'resume', 'send.py': 'send', 'summon.py': 'summon',
+        '../../hrc-native/e2e/seat_handoffs.py': 'handoff|handoff create|handoff get|handoff acknowledge|handoff list',
         'annotations.py': 'session annotation|session annotation list|session annotation put|session annotation delete|session annotation act',
         'controls.py': 'runtime capture|runtime interrupt|runtime terminate|capture status|session drop-continuation|session rotate|admin surface bind',
         'server_lifecycle.py': 'server stop|server restart',

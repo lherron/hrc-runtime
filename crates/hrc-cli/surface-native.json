@@ -633,7 +633,8 @@
                 "negate": false
               }
             ],
-            "children": []
+            "children": [],
+            "nativeOnly": true
           },
           {
             "path": [
@@ -642,7 +643,7 @@
             ],
             "name": "get",
             "aliases": [],
-            "usage": "[options]",
+            "usage": "[options] <id>",
             "allowExcessArguments": false,
             "help": "Usage: hrc handoff get [options] <id>\n\nRead one handoff.\n\nOptions:\n  --json\n  -h, --help\n",
             "humanHelp": "Usage: hrc handoff get [options] <id>\n\nRead one handoff.\n\nOptions:\n  --json\n  -h, --help\n",
@@ -664,7 +665,8 @@
                 "negate": false
               }
             ],
-            "children": []
+            "children": [],
+            "nativeOnly": true
           },
           {
             "path": [
@@ -673,7 +675,7 @@
             ],
             "name": "acknowledge",
             "aliases": [],
-            "usage": "[options]",
+            "usage": "[options] <id>",
             "allowExcessArguments": false,
             "help": "Usage: hrc handoff acknowledge [options] <id>\n\nAcknowledge with an optimistic etag fence.\n\nOptions:\n  --if-match <etag>\n  --note <note>\n  --json\n  -h, --help\n",
             "humanHelp": "Usage: hrc handoff acknowledge [options] <id>\n\nAcknowledge with an optimistic etag fence.\n\nOptions:\n  --if-match <etag>\n  --note <note>\n  --json\n  -h, --help\n",
@@ -713,7 +715,8 @@
                 "negate": false
               }
             ],
-            "children": []
+            "children": [],
+            "nativeOnly": true
           },
           {
             "path": [
@@ -765,9 +768,11 @@
                 "negate": false
               }
             ],
-            "children": []
+            "children": [],
+            "nativeOnly": true
           }
-        ]
+        ],
+        "nativeOnly": true
       }
     }
   ]
