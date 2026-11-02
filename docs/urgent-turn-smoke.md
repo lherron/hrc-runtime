@@ -7,8 +7,15 @@ Admission class is selected by the endpoint or CLI flag, never by a policy field
 
 1. Install the certified commit and activate it through the campaign coordinator.
 2. Warm one real `claude-code-tmux` seat and one real `codex-app-server` seat.
-3. Record each runtime and invocation id, then read the whole invocation ledger;
+3. Record each runtime and invocation id, then read that invocation's ledger;
    do not grade from a capture or an agent self-report.
+
+The current owner and CLI are native Rust. Admission and turn disposition live
+in `crates/hrc-native/src/server/turns/turns/`; CLI validation and transport live
+in `crates/hrc-cli/src/turn/`. The retained Bun counterparts under `packages/`
+are useful for comparison, not proof of the running owner's behavior. Follow
+the [operations runbook](operations-runbook.md) for owner readback and restart
+authority. Keep ledger reads scoped to the recorded invocation/runtime ids.
 
 ## CLI matrix
 
@@ -18,12 +25,17 @@ or starts one when none is running. Steer is the default door of `hrc turn`.
 | Command | Door | Expected disposition |
 |---|---|---|
 | `hrc turn <target> 'idle steer'` | steer | `executed{turnId}`: the steer starts its own turn |
-| `hrc turn <target> 'mid-turn note'` while busy | steer | `absorbed{turnId}` when the active turn is open; typed rejection when guarded |
+| `hrc turn <target> 'mid-turn note'` while busy | steer | `absorbed{turnId}` when the active turn is open; enqueue downgrade when steer is unsupported; typed rejection when guarded |
 | `hrc turn <target> --wait final 'note'` | steer + wait | waits for `executed` or `absorbed{turnId}` and THAT turn's terminal |
 | `hrc turn <target> --queue 'idle enqueue'` | enqueue | `executed{turnId}` and its own terminal |
 | `hrc turn <target> --queue 'boundary enqueue'` while busy | enqueue | `queue.enqueued`, then `executed{turnId}` at the boundary |
 | `hrc turn <target> --queue --wait final 'guarded work'` | enqueue + guarded | waits for this submission's `executed{turnId}` and that turn's terminal |
 | `hrc turn <target> --preempt 'operator takeover'` | preempt | interrupted active terminal, then the preempting submission's own turn |
+
+When the effective door is downgraded, require `requestedDoor: steer`,
+`effectiveDoor: enqueue` and the `downgradeReason`; grade the queued submission's
+own terminal rather than treating it as an absorbed steer. Authority and other
+admission failures still return typed refusals.
 
 `--steer` is accepted as a no-op alias of the default. `--ttl <duration>` is
 accepted only with `--queue` or `--preempt`, and `--reply-to` only with
@@ -33,7 +45,7 @@ handoff, whose launch turn carries the body. A non-operator preempt must return
 
 ## Ledger proof
 
-For a blocking enqueue, the whole-runtime ledger must contain this ordered
+For a blocking enqueue, the invocation-scoped ledger must contain this ordered
 subsequence with one stable submission id and one identified turn id:
 
 ```text

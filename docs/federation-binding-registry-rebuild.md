@@ -5,6 +5,16 @@ It is reconstructible from the union of active node-local `placement_ledger`
 rows. A node-local `retired` row is a permanent fence on that node; it is not a
 shared tombstone and must never be imported as an active registry binding.
 
+The current native owner implements the registry in
+`crates/hrc-native/src/server/placement/federation/registry_listener.rs`.
+The rebuild command below remains a Bun maintenance tool
+(`scripts/rebuild-binding-registry.ts` and
+`packages/hrc-store-sqlite/src/federation-repositories.ts`). It reconstructs
+active bindings only; it does not recover `binding_retirement_audit` or birth
+designations. Preserve those separately from registry backups when recovery
+requires their history or routing hints. An audit row is not an active binding
+or a retirement fence.
+
 This is a recovery procedure, not a relocation mechanism. Federation v1.3 has
 no movement operation. If two node backups contain active rows for the same
 scope with different homes, the rebuild refuses the conflict. An operator must

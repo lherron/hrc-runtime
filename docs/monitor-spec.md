@@ -1,12 +1,17 @@
 # HRC Monitor — Canonical Specification
 
-**Status:** CANONICAL. Supersedes `MONITOR_HARNESS_AUDIT.md` and the never-committed `MONITOR_PROPOSAL.md`. Code and tests cite this file's sections (selector grammar tests at `§5`, cursor-fence tests at `§6`, the harness-coverage structure test at `§8`; `monitor-schema.ts` still cites a stale `§10`, which is §4 here).
+**Status:** CANONICAL monitor contract reference. The current CLI and daemon
+are native Rust. Supersedes `MONITOR_HARNESS_AUDIT.md` and the never-committed
+`MONITOR_PROPOSAL.md`. Retained Bun code and tests still cite this file's
+sections; their source paths below describe that implementation, not the
+installed owner. The harness audit in §§8–9 is retained history.
 
 **Source of truth is the code, not this document.** Where this spec and the implementation disagree, the implementation wins and this doc is the bug. The authoritative artifacts are:
 
-- Monitor output schema — `packages/hrc-events/src/monitor-schema.ts`
-- Condition waits — `packages/hrc-cli/src/monitor/engine.ts` (`runMonitorUntilPlan`), with exit codes in `packages/hrc-core/src/monitor/exit-codes.ts` and status levels in `packages/hrc-core/src/monitor/status-levels.ts`
-- Selector grammar — `packages/hrc-core/src/selectors.ts`
+- Native monitor output and projection — `crates/hrc-cli/src/monitor/show.rs`, `state.rs`, and `watch/` (paths relative to that monitor directory)
+- Native condition waits, exit codes and status levels — `crates/hrc-cli/src/monitor/engine.rs`, with selector plans in `spec.rs` and entry handling in `wait.rs`
+- Native selector grammar and role-tree resolution — `crates/hrc-cli/src/monitor/selector.rs` and `reader.rs`
+- Retained Bun schema and implementation — `packages/hrc-events/src/monitor-schema.ts`, `packages/hrc-cli/src/monitor/engine.ts`, `packages/hrc-core/src/monitor/exit-codes.ts`, `status-levels.ts` in the same directory, and `packages/hrc-core/src/selectors.ts`
 
 ---
 
@@ -18,9 +23,9 @@ It is **observational**. It reports on signals emitted by the harness layer; it 
 
 ## 2. Governing principle — never guess success
 
-> When a terminal signal is missing, the monitor emits `failureKind=unknown`. We never guess success.
+> A missing terminal signal is not evidence of success.
 
-A condition wait returns `matched` or `already_true` only when a positive signal was actually observed. Absence of signal is never read as success. When the harness is silent, the honest answer is `unknown` (for failure classification) or one of the non-committal terminals (`timeout`, `stalled`, `runtime_death_obstruction`). This principle is what makes monitor output safe to branch a script on.
+A condition wait returns `matched` or `already_true` only when a positive signal was actually observed. Absence of signal is never read as success. When the harness is silent, waits can end with `timeout`, `stalled`, or `runtime_death_obstruction`. Condition completions omit `failureKind`; the native projection stamps `runtime` on the failure events it classifies. The schema's `unknown` value is not an automatically emitted fallback.
 
 ## 3. Architecture
 
@@ -32,7 +37,7 @@ inner harness (Claude / Codex / Pi) inside the harness broker
         ▼
    hrc_events ledger + runtime status ────────────▶ monitor event stream
                                                              │
-                                  hrc-cli monitor/engine.ts runMonitorUntilPlan
+                                  native hrc-cli monitor/engine.rs
                                   (100ms poll of hrc_events + runtime status)
                                                              │
                                                              ▼
@@ -42,11 +47,21 @@ inner harness (Claude / Codex / Pi) inside the harness broker
                                               exit code  (0/2/10/11/12/13/20/21/22/23/130)
 ```
 
-Condition waits poll a CLI-built `HrcMonitorState`, read straight from the daemon's SQLite store, and evaluate runtime status levels plus edge events at or after the arm cursor. `createMonitorReader` (`packages/hrc-core/src/monitor/index.ts`) provides `snapshot`/`watch` for `monitor show` and the watch event stream, and `captureStart` for role-tree binding of a single exact target or scope.
+Native condition waits use `monitor/live.rs` and `state.rs` to read
+selector-scoped SQLite state and incremental event batches, then evaluate
+runtime levels plus edge events at or after the arm cursor. Events marked with
+`evidenceOrigin` are excluded from condition-edge matching: retained history
+must not settle a live wait. `reader.rs` supplies snapshot/replay and role-tree
+capture. Unfiltered watch can still take the full status-listing path in
+`watch/build.rs`; for routine live inventory use the kernel projection described
+in the [operations runbook](operations-runbook.md).
 
 ## 4. Monitor output schema
 
-Defined in `monitor-schema.ts`. Every stdout line in `--output json` mode is a `MonitorEvent`.
+The retained TypeScript `monitor-schema.ts` describes stream/condition events.
+Native JSON output uses `--json`; `monitor show` emits its snapshot object,
+while wait/watch emit event records. Do not assume every snapshot has the
+stream event envelope or that the TypeScript enum exhausts raw watch kinds.
 
 **Stable event names** (`MonitorEventName`): `monitor.snapshot`, `turn.started`, `turn.finished`, `turn.zombied`, `turn.reaped`, `runtime.idle`, `runtime.busy`, `runtime.crashed`, `runtime.dead`, `message.response`, `monitor.completed`, `monitor.stalled`. The list is append-only — new names may be added; shipped names are frozen. `MonitorEventName` also includes the raw `hrc_events` kinds `turn.completed`, `turn.failed`, `turn.tool_call`, `turn.tool_result` and `turn.message`, which server-side filtered `monitor watch` (`--kind`/`--tool`/`--grep`/`--milestone`) emits verbatim. `--milestone` also emits `session.started`/`session.cleared`, which are not in the enum. The wait's `monitor.armed` report goes to stderr and is not in the enum.
 
@@ -56,13 +71,14 @@ Defined in `monitor-schema.ts`. Every stdout line in `--output json` mode is a `
 
 **`outcome`** (`MonitorOutcome`): `success`, `not_matched`, `observed_failure`, `error` (see §7).
 
-**`failureKind` discriminator** (`MonitorFailureKind`): `model`, `tool`, `process`, `runtime`, `cancelled`, `unknown`. May appear on projected stream events whose `result` is `turn_failed`, `runtime_dead` or `runtime_crashed` (currently always `runtime`; see §9.3). The `monitor.completed` emitted by condition waits does not carry it. `unknown` is the honest default per §2.
+**`failureKind` discriminator** (`MonitorFailureKind`): `model`, `tool`, `process`, `runtime`, `cancelled`, `unknown`. May appear on projected stream events whose `result` is `turn_failed`, `runtime_dead` or `runtime_crashed` (currently `runtime` in native `state.rs`). The `monitor.completed` emitted by condition waits does not carry it. The remaining schema values do not establish native producer coverage.
 
 **`reason` discriminator**: `ContextChangedReason` (`session_rebound`, `generation_changed`, `cleared`) or the before-arm reasons `initial_read_timeout` / `initial_read_unavailable`. Condition waits currently emit only the before-arm reasons; their `context_changed` completion carries no `reason`.
 
 ## 5. Selectors
 
-Defined in `selectors.ts` (`parseSelector` → `parseMonitorSelector`). A selector is a string. If it contains a `prefix:` before any `@`, it is a prefixed selector; otherwise it is parsed as a **target** session handle.
+Native parsing lives in `monitor/selector.rs`; the retained Bun counterpart is
+`selectors.ts` (`parseSelector` → `parseMonitorSelector`). A selector is a string. If it contains a `prefix:` before any `@`, it is a prefixed selector; otherwise it is parsed as a **target** session handle.
 
 **Prefixed forms** (`parsePrefixedMonitorSelector`):
 
@@ -104,7 +120,7 @@ The `seq:` value must match `^[0-9]+$` and be a safe integer; otherwise `message
 
 ## 6. Condition engine
 
-Defined in `packages/hrc-cli/src/monitor/engine.ts` (`runMonitorUntilPlan`), shared by `monitor wait` and `monitor watch --until*`.
+Defined in native `crates/hrc-cli/src/monitor/engine.rs`, shared by `monitor wait` and `monitor watch --until*`. Retained Bun counterpart: `packages/hrc-cli/src/monitor/engine.ts` (`runMonitorUntilPlan`).
 
 **Conditions**: levels `idle`, `busy`, `runtime-dead`; edges `turn-finished`, `response`. Flags are repeatable ORs. Baked unions are not conditions.
 
@@ -139,11 +155,22 @@ The arm cut is authoritative. Pre-existing named level truth returns exit 10; ed
 
 Use an exact cursor for scripts and coordinators. A duration is a human convenience: an over-wide duration can reach back to a prior attempt on a multi-attempt scope and let that stale terminal event win.
 
-Fan-in uses an explicit quantifier. `ANY` admits later members and returns on the first matching member. `ALL` freezes membership at arm and succeeds only when every member matches one requested level in a single daemon-owned observation cut.
+Fan-in uses an explicit quantifier. `ANY` returns on the first matching member
+and evaluates later members present in refreshed state. `ALL` freezes membership
+at arm and succeeds only when every frozen member matches one requested level
+in the CLI's observed state; this is not a separate daemon-owned wait operation.
 
-**Stall / timeout**: the loop races state observation against `timeoutMs` and `stallAfterMs`. Timeout → `timeout` exit 20; stall → `stalled` exit 21; observer failure → `monitor_error` exit 23. An initial-read timeout uses exit 20 with `phase:"before-arm"`, `reason:"initial_read_timeout"`, and `members:[]`. An unavailable initial read (or any non-usage HRC error before arm) uses exit 23 with `phase:"before-arm"`, `reason:"initial_read_unavailable"`, and `members:[]`.
+**Stall / timeout**: native polling checks deadlines between synchronous state
+reads; it does not preempt an in-progress read. Timeout → `timeout` exit 20;
+stall → `stalled` exit 21; observer failure → `monitor_error` exit 23. Native
+`monitor wait` checks its initial-read deadline after `Live::open` returns;
+expiry uses exit 20 with `phase:"before-arm"`,
+`reason:"initial_read_timeout"`, and `members:[]`. A non-usage domain error
+before arm uses exit 23 with `reason:"initial_read_unavailable"`; other local
+errors propagate through CLI error handling. Watch has its own initial-read
+error handling in `watch/mod.rs`.
 
-Every armed wait terminates with exactly one `monitor.completed` or `monitor.stalled` event. Its `exitCode` equals the process exit code and it carries `result`, `outcome`, `phase`, last-observed state, `replayed:false`, and `ts`. Usage rejection exits 2 before arm and emits no terminal event. Exception: a real SIGINT currently kills the process (shell status 130) without a terminal event; `interrupted` is emitted only when the caller supplies an abort signal.
+Every normally settled armed wait terminates with exactly one `monitor.completed` or `monitor.stalled` event. Its `exitCode` equals the process exit code and it carries `result`, `outcome`, `phase`, last-observed state, `replayed:false`, and `ts`. Usage rejection exits 2 before arm and emits no terminal event. A real SIGINT kills the native process (shell status 130) without a terminal event; the abort-signal `interrupted` event belongs to the retained Bun implementation.
 
 ## 7. Wait / exit-code semantics
 
@@ -160,7 +187,9 @@ Every armed wait terminates with exactly one `monitor.completed` or `monitor.sta
 
 ### 7.3 Exit-code mapping (authoritative)
 
-The codes are `MONITOR_EXIT_CODES` (`packages/hrc-core/src/monitor/exit-codes.ts`); `runMonitorUntilPlan` (`packages/hrc-cli/src/monitor/engine.ts`) sets them and derives `outcome` with `monitorOutcome()`:
+Native codes and outcome mapping live in `monitor/engine.rs` (`exit` and
+`outcome`). The retained Bun equivalents are `MONITOR_EXIT_CODES`
+(`packages/hrc-core/src/monitor/exit-codes.ts`) and `monitorOutcome()`:
 
 | Result                            | exitCode | Carries |
 | --------------------------------- | -------- | ------- |
@@ -173,11 +202,24 @@ The codes are `MONITOR_EXIT_CODES` (`packages/hrc-core/src/monitor/exit-codes.ts
 | `stalled`                         | 21       | `outcome:not_matched`, emitted as `monitor.stalled` |
 | `context_changed`                 | 22       | `outcome:not_matched` |
 | `monitor_error`                   | 23       | `outcome:error` |
-| `interrupted`                     | 130      | `outcome:error` (abort-signal path only; CLI SIGINT emits no event) |
+| `interrupted`                     | 130      | retained Bun abort-signal path only; native CLI SIGINT emits no event |
 
-## 8. Harness signal coverage
+## 8. Retained Bun harness signal audit
 
-Coverage matrix carried forward from `MONITOR_HARNESS_AUDIT.md`. Every harness now reaches HRC through harness-broker envelopes (`turn.started`, `turn.completed`, and so on, projected in `packages/hrc-server/src/broker/event-mapper.ts` and `broker/event-mapper/`, with post-projection handling in `broker/controller/bc-projection.ts`); the harness packages live in agent-spaces (`drivers/harness-*`, `harness/harness-broker*`). The recurring shape: harnesses emit turn lifecycle and message signals well, but **none emit structured failure classification, crash-vs-stop differentiation, or context-changed signals**. Where a harness is silent, the monitor degrades to `unknown` / non-committal terminals per §2.
+The following inventory records the Bun-era adapter audit and its named source
+paths. It is retained for contract/test references, not a current native
+coverage certification. Native broker ingestion and projection live under
+`crates/hrc-native/src/server/projection/`; check the selected driver and ASP
+producer tuple before drawing conclusions about current harness capabilities.
+
+Coverage matrix carried forward from `MONITOR_HARNESS_AUDIT.md`. That audit
+followed harness-broker envelopes (`turn.started`, `turn.completed`, and so on)
+through `packages/hrc-server/src/broker/event-mapper.ts`, `broker/event-mapper/`
+and `broker/controller/bc-projection.ts`; harness packages lived in agent-spaces
+(`drivers/harness-*`, `harness/harness-broker*`). It found lifecycle and message
+signals but no structured failure classification, crash-vs-stop differentiation,
+or context-changed signals. Missing signals yield non-committal terminals;
+`unknown` is a schema value, not an emitted fallback (see §2).
 
 ### Claude — `spaces-harness-claude` (Agent SDK, in-process)
 
@@ -200,9 +242,12 @@ Coverage matrix carried forward from `MONITOR_HARNESS_AUDIT.md`. Every harness n
 - **Provides:** pane create/lookup, `parsePaneState`, process control (`sendKeys`/`sendLiteral`/`sendEnter`/`interrupt`), `capture`, deterministic session naming, tmux ≥ 3.2 version check. Emits **no events itself** — it is passive transport; the inner harness inside the pane emits signals.
 - **Gaps:** no pushed process-health signal or periodic all-pane heartbeat (liveness is only the on-demand `inspectPaneLiveness` / `inspectPaneProcess` probes); no idle/busy concept; no crash detection; no exit-code forwarding.
 
-## 9. Known-open items
+## 9. Retained audit gaps
 
-These are documented gaps, **not** filed tasks and **not** claims of implemented behavior. Do not read any of these as shipped.
+These are the retained Bun audit's documented gaps and recommendations,
+**not** a current native backlog or certification. Recheck native code before
+using a gap as an operational claim; these paragraphs name the historical
+implementation they assessed.
 
 1. **No general tmux pane-health poll.** Pane liveness is checked by `TmuxManager.inspectPaneLiveness(paneId)` (`tmux.ts`) only where a code path asks: runtime I/O (`runtime-io-handlers.ts`), broker input turns (`broker-interactive-input-turn.ts`), lease sweeps (`sweep-helpers.ts`), and the recurring active-run reconcile (`sweep-reconcile-active.ts`), which runs on the zombie-sweep interval and probes only the leased pane of a harness-broker run older than the zombie-run timeout. A live pane there leaves the run `suspect`; it is not a turn signal. `TmuxManager.inspectPaneProcess(paneId)` (pane_pid/pane_dead/pane_current_command, parsed by `parsePaneProcess`) additionally backs the recurring broker lease GC's claimed-lease check (`startup-reconcile/lease-identity.ts`, zombie-sweep cadence), the live-substrate door (`broker/live-substrate.ts`), and substrate allocation. The audit's recommendation of a configurable liveness interval (default 5s) checking all active panes is **unimplemented**.
 
