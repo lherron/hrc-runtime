@@ -1,6 +1,6 @@
 # Seat asks: a seat's open questions as one HRC seat record
 
-Status: r1.3, 2026-11-02; r1.2 **APPROVED by Daedalus** (EN-40752; contract `architecture/contracts/seat-asks.yaml` f07a94f1); r1.3 is editorial (`sent.runId` optional, `--body-file` on the hrc form, rewrite keeps other writers' sub-objects) and not resubmitted (T-12239, c2 project; the contract is HRC's and lives here); r1.1 resolved Daedalus F1 (EN-40695): the seat never deletes the record, empty is the "none" state, absent reads as epoch; r1.2 adds the `prae` form of the operations under the kernel record's verb grammar (`praesidium-kernel.md` r1.6 §2.4) with no change to the HRC contract. Owner mable@hrc-runtime:primary. Rulings by Lance on 2026-11-01 are marked **RULED**. Diagrams: `diagrams/seat-data.arris-board.json` (frames `seat-data-question-keyed`, `seat-data-model-seat-questions`, `seat-data-document-seat-questions`; they still read `c2 · asks` and follow this document to `hrc · asks`) and `diagrams/taxonomy.arris-board.json#taxonomy-subjects` (the seat as the join of agent-spaces, wrkq and HRC).
+Status: r1.4, 2026-11-02 (r1.4: the hrc read form is `annotation list` filtered, since the installed CLI has no `annotation get`; no HRC change); r1.2 **APPROVED by Daedalus** (EN-40752; contract `architecture/contracts/seat-asks.yaml` f07a94f1); r1.3 is editorial (`sent.runId` optional, `--body-file` on the hrc form, rewrite keeps other writers' sub-objects) and not resubmitted (T-12239, c2 project; the contract is HRC's and lives here); r1.1 resolved Daedalus F1 (EN-40695): the seat never deletes the record, empty is the "none" state, absent reads as epoch; r1.2 adds the `prae` form of the operations under the kernel record's verb grammar (`praesidium-kernel.md` r1.6 §2.4) with no change to the HRC contract. Owner mable@hrc-runtime:primary. Rulings by Lance on 2026-11-01 are marked **RULED**. Diagrams: `diagrams/seat-data.arris-board.json` (frames `seat-data-question-keyed`, `seat-data-model-seat-questions`, `seat-data-document-seat-questions`; they still read `c2 · asks` and follow this document to `hrc · asks`) and `diagrams/taxonomy.arris-board.json#taxonomy-subjects` (the seat as the join of agent-spaces, wrkq and HRC).
 
 ## 0. Claim
 
@@ -58,7 +58,7 @@ Row validity (readers apply it; HRC does not): `id` unique, `ask` non-empty, `op
 ```
 hrc session annotation put <seat> --subject seat --ns hrc --kind asks --id open \
     --expect-updated-at <prev> --as <agent principal> --body-file asks.json
-hrc session annotation get <seat> --subject seat --ns hrc --kind asks --id open
+hrc session annotation list <seat> --subject seat --ns hrc --kind asks --json   # select the row with id == "open"; its body and updatedAt are the record and the fence (the installed CLI has no `get`)
 # no delete: the seat empties the record (questions: []); HRC removes it with the seat
 seat.annotation.act                                   # a client's answer; appends session.annotation.action
 ```
@@ -72,7 +72,7 @@ prae seat asks update <seat> --if-match <updatedAt> --body @asks.json   # whole-
 prae seat ext act <seat> --ns hrc --kind asks --id open --row <rowId> --action <answered|other|later> …   # a client's answer action: unkeyed ledger append (session.annotation.action)
 ```
 
-A whole-record rewrite by the seat keeps `review`, `dependsOn` and `sent` on every row it retains: those sub-objects belong to other writers (D3) and the seat carries them through unchanged. `create` and `update` map 1:1 onto `hrc session annotation put` (absent → create; present → update with `--expect-updated-at`); `get` onto `annotation get`; `act` onto `seat.annotation.act`. The parity table (T-12246) carries these four rows. There is no `delete` in either form (§7).
+A whole-record rewrite by the seat keeps `review`, `dependsOn` and `sent` on every row it retains: those sub-objects belong to other writers (D3) and the seat carries them through unchanged. `create` and `update` map 1:1 onto `hrc session annotation put` (absent → create; present → update with `--expect-updated-at`); `get` onto `annotation list` filtered to `id == "open"` (the kernel's owner read; the CLI has no single-row `get`, D2); `act` onto `seat.annotation.act`. The parity table (T-12246) carries these four rows. There is no `delete` in either form (§7).
 
 Events: `session.annotation.changed` on every admitted write (subject, key, op, writer; no body); `session.annotation.action` on every client action against a row (the deliverer records `{rowId, option|other|later, recommended, edited}` as action attributes). The ledger is the history; there is no body history.
 
@@ -102,6 +102,8 @@ Seat-initiated delete of the record (D-F1: the record persists, empty, until HRC
 - D6 timing of the typed node.
 
 ## 10. Revision log
+
+- r1.4 (2026-11-02, editorial, Vesta EN-41005): §4 hrc read form corrected to `hrc session annotation list … --json` selecting `id == "open"`; the installed CLI has `list|put|delete|act` and no `get`. The `prae seat asks get` form is unchanged and maps onto that filtered list. No HRC change (D2).
 
 - r1.3 (2026-11-02, editorial, after Vesta's card-contract rev 4 questions): `sent.runId` optional; the hrc form says `--body-file` (the installed flag; the `prae` form keeps wrkq's `@file`); the seat's whole-record rewrite preserves other writers' sub-objects on retained rows (D3).
 
