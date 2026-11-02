@@ -306,7 +306,14 @@ async function executeSelfRestart(
     reason: 'self-restart',
   })
   const next = requireSession(server.db, rotation.hostSessionId)
+  const handoff =
+    server.db.sqlite
+      .query<{ id: string; etag: number; title: string; body: string }, [string, string]>(
+        "SELECT id,etag,title,body FROM seat_handoffs WHERE scope_ref=? AND lane_ref=? AND state='pending'"
+      )
+      .get(next.scopeRef, next.laneRef.replace(/^lane:/, '')) ?? undefined
   const prompt = selfRestartResumePrompt({
+    handoff,
     handoffId: intent.handoffId,
     priorGeneration: session.generation,
     nextGeneration: next.generation,

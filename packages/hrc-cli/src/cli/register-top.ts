@@ -416,9 +416,9 @@ The output always names the resolved kind and the concrete ID(s).
   program
     .command('restartme')
     .description(
-      'restart this agent into a fresh context when the current turn ends (needs a pending wrkq handoff)'
+      'restart this agent into a fresh context when the current turn ends (needs a pending handoff)'
     )
-    .option('--handoff <id>', 'the pending wrkq handoff the successor will consume')
+    .option('--handoff <id>', 'the pending HRC or legacy wrkq handoff the successor will consume')
     .option('--cancel', 'disarm a restart armed earlier')
     .action(async (opts) => {
       await cmdRestartMe({

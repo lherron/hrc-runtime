@@ -496,6 +496,31 @@
       "command": "turn",
       "disposition": "IMPLEMENT",
       "implementation": "native"
+    },
+    {
+      "command": "handoff",
+      "disposition": "IMPLEMENT",
+      "implementation": "native"
+    },
+    {
+      "command": "handoff create",
+      "disposition": "IMPLEMENT",
+      "implementation": "native"
+    },
+    {
+      "command": "handoff get",
+      "disposition": "IMPLEMENT",
+      "implementation": "native"
+    },
+    {
+      "command": "handoff acknowledge",
+      "disposition": "IMPLEMENT",
+      "implementation": "native"
+    },
+    {
+      "command": "handoff list",
+      "disposition": "IMPLEMENT",
+      "implementation": "native"
     }
   ]
 }

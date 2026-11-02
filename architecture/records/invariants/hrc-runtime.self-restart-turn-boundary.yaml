@@ -12,15 +12,21 @@ predicate: >
   terminal for a different turn cannot consume the intent or rotate the session.
   Only a committed, non-retained terminal for the bound turn may claim the intent
   once. On that terminal, HRC rotates the session to generation plus one with
-  continuation dropped, then delivers a prompt naming the handoff as the
-  successor's first turn through the semantic turn-handoff delivery path. The
-  CLI checks that the named wrkq handoff is pending and belongs to the caller's
-  agent and project; HRC stores the id without making wrkq an authorization
-  dependency. External-lifecycle participants cannot use this rotation. Queued
+  continuation dropped, then delivers the pending HRC seat handoff body inline
+  as the successor's first turn through the semantic turn-handoff delivery path.
+  HRC validates the pending obligation against the credential-bound full seat
+  scope and lane. When no HRC handoff is pending, the daemon validates the legacy
+  wrkq handoff by agent and project and retains the wrkq resume wording. The CLI
+  never shells out to wrkq for this check. HRC rows survive rotation and retain
+  acknowledged history with an etag fence. The document projects only id/state
+  while pending and for 24 hours after acknowledgement. External-lifecycle
+  participants cannot use this rotation. Queued
   input on the old session and intents stranded by runtime or daemon loss before
   the bound terminal are outside this contract by Lance's direction.
-authority: Lance request and explicit scope exclusions, 2026-09-28; Daedalus approval of wrkq:T-09872 revision 2, 2026-09-28
+authority: Lance approved campaign M1 (wrkq:T-12248), 2026-11-02; Lance request and explicit scope exclusions, 2026-09-28; Daedalus approval of wrkq:T-09872 revision 2, 2026-09-28
 source:
+  - wrkq:T-12248
+  - docs/proposals/praesidium-document.md
   - wrkq:T-09872
   - architecture/records/invariants/hrc-runtime.harness-broker-committed-observation-control.yaml
   - architecture/records/invariants/hrc-runtime.continuation-history-resume.yaml

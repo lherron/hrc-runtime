@@ -1,7 +1,7 @@
-//! Self restart: validate the pending handoff before presenting this runtime's
-//! daemon-minted lifecycle credential. The daemon remains the authority.
+//! Self restart: present this runtime's daemon-minted lifecycle credential.
+//! The daemon validates the handoff against the credential-bound seat.
 use crate::{Error, Result, client::Daemon, js, parse::Parsed};
-use serde_json::{Value, json};
+use serde_json::json;
 
 type Caller = (String, String);
 
@@ -32,92 +32,8 @@ fn refuse(code: &str, message: impl AsRef<str>) -> Error {
     error
 }
 
-fn recipe(scope: Option<&Caller>) -> String {
-    let handle = scope
-        .map(|(agent, project)| format!("{agent}@{project}"))
-        .unwrap_or_else(|| "<agent>@<project>".into());
-    format!(
-        "write a handoff for your successor first:\n  wrkq handoff create --scope {handle} -t '<title>' --body-file - <<'EOF'\n  <objective, decisions, durable evidence, remaining work, concrete next action>\n  EOF\nthen rerun with --handoff <id>:\n  hrc restartme --handoff H-xxxxx"
-    )
-}
-
-fn check_handoff(id: &str, scope: &Caller) -> Result<()> {
-    let result = crate::process::run("wrkq", &["handoff", "get", id, "--json"]);
-    if let Some(error) = result.error {
-        return Err(refuse(
-            "handoff_unverified",
-            format!("could not run wrkq to check {id}: {error}"),
-        ));
-    }
-    let parsed = serde_json::from_str::<Value>(&result.stdout)
-        .ok()
-        .or_else(|| serde_json::from_str(&result.stderr).ok());
-    let record = parsed
-        .as_ref()
-        .and_then(|v| v.get("handoff").filter(|v| !v.is_null()).or(Some(v)));
-    if result.status != Some(0) || !record.is_some_and(|v| v.is_object() || v.is_array()) {
-        let error = parsed.as_ref().map(|v| &v["error"]);
-        let message = error
-            .and_then(|v| v["message"].as_str())
-            .unwrap_or_else(|| {
-                let text = if result.stderr.is_empty() {
-                    &result.stdout
-                } else {
-                    &result.stderr
-                };
-                js::trim(text).split('\n').next().unwrap_or_default()
-            });
-        let code = error
-            .and_then(|v| v["code"].as_str())
-            .unwrap_or("handoff_not_found");
-        return Err(refuse(
-            code,
-            format!(
-                "could not read handoff {id}{}",
-                if message.is_empty() {
-                    String::new()
-                } else {
-                    format!(": {message}")
-                }
-            ),
-        ));
-    }
-    let record = record.unwrap();
-    if record["agent_id"].as_str() != Some(scope.0.as_str())
-        || record["project_id"].as_str() != Some(scope.1.as_str())
-    {
-        let owner = record
-            .get("scope_ref")
-            .filter(|v| !v.is_null())
-            .map(js::display)
-            .unwrap_or_else(|| {
-                format!(
-                    "{}@{}",
-                    js::member(record, "agent_id"),
-                    js::member(record, "project_id")
-                )
-            });
-        return Err(refuse(
-            "handoff_scope_mismatch",
-            format!(
-                "{id} belongs to {owner}, not {}@{}; {}",
-                scope.0,
-                scope.1,
-                recipe(Some(scope))
-            ),
-        ));
-    }
-    if record["status"] != "pending" {
-        return Err(refuse(
-            "handoff_not_pending",
-            format!(
-                "{id} is {}, not pending; {}",
-                js::member(record, "status"),
-                recipe(Some(scope))
-            ),
-        ));
-    }
-    Ok(())
+fn recipe() -> String {
+    "write a handoff for your successor first:\n  hrc handoff create -t '<title>' --body-file - <<'EOF'\n  <objective, decisions, durable evidence, remaining work, concrete next action>\n  EOF\nthen rerun with --handoff <id>:\n  hrc restartme --handoff H-xxxxx".into()
 }
 
 /// The runtime ID only locates the credential; no authority is inferred from it.
@@ -169,20 +85,14 @@ pub(crate) fn command(args: &Parsed<'_>) -> Result<()> {
     if !cancel && handoff.is_none_or(str::is_empty) {
         return Err(refuse(
             "handoff_required",
-            format!(
-                "hrc restartme needs a pending wrkq handoff; {}",
-                recipe(scope.as_ref())
-            ),
+            format!("hrc restartme needs a pending handoff; {}", recipe()),
         ));
     }
-    if !cancel {
-        let Some(scope) = scope.as_ref() else {
-            return Err(refuse(
-                "not_an_agent_runtime",
-                "hrc restartme restarts the calling agent runtime, and HRC_SESSION_REF names none",
-            ));
-        };
-        check_handoff(handoff.unwrap(), scope)?;
+    if !cancel && scope.is_none() {
+        return Err(refuse(
+            "not_an_agent_runtime",
+            "hrc restartme restarts the calling agent runtime, and HRC_SESSION_REF names none",
+        ));
     }
     let client = Daemon::connect()?;
     let status = client.get("/v1/status", &[])?;

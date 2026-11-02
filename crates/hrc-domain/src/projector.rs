@@ -92,6 +92,19 @@ impl SeatProjector {
         }
         let now = Utc::now();
         let mut out = project_with_context(sessions, runtimes, events, &turns, &context, now)?;
+        // Only metadata enters the document. The body stays in the durable
+        // store and in the successor's first turn, never in kernel subscribers.
+        for edit in &mut out {
+            if edit["type"] == "hrc.seat" && edit["kind"] == "upsert" {
+                let seat = &mut edit["payload"];
+                if let Some(handoff) = db
+                    .projected_seat_handoff(text(seat, "scopeRef"), text(seat, "laneRef"), now)
+                    .map_err(error)?
+                {
+                    seat["handoff"] = json!({"id":handoff["id"],"state":handoff["state"]});
+                }
+            }
+        }
         let annotations = Self::annotations(db, generations.values().copied()).map_err(error)?;
         let generations: Vec<Value> = generations.into_values().cloned().collect();
         let lineage = project_lineage(

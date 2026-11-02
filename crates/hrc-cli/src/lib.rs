@@ -13,6 +13,7 @@ mod admin;
 mod client;
 mod commands;
 mod forensics;
+mod handoff;
 mod inspect;
 mod js;
 mod launch;

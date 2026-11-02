@@ -553,6 +553,222 @@
         ],
         "nativeOnly": true
       }
+    },
+    {
+      "parent": [],
+      "commandLine": [
+        "handoff [command]",
+        "durable successor handoffs"
+      ],
+      "node": {
+        "path": [
+          "handoff"
+        ],
+        "name": "handoff",
+        "aliases": [],
+        "usage": "[options]",
+        "allowExcessArguments": false,
+        "help": "Usage: hrc handoff [options]\n\nCreate, list, get or acknowledge seat handoffs.\n\nCommands:\n  create\n  get\n  acknowledge\n  list\n\nOptions:\n  --json\n  -h, --help\n",
+        "humanHelp": "Usage: hrc handoff [options]\n\nCreate, list, get or acknowledge seat handoffs.\n\nCommands:\n  create\n  get\n  acknowledge\n  list\n\nOptions:\n  --json\n  -h, --help\n",
+        "arguments": [],
+        "options": [
+          {
+            "flags": "--json",
+            "long": "--json",
+            "short": null,
+            "required": false,
+            "optional": false,
+            "mandatory": false,
+            "negate": false
+          }
+        ],
+        "children": [
+          {
+            "path": [
+              "handoff",
+              "create"
+            ],
+            "name": "create",
+            "aliases": [],
+            "usage": "[options]",
+            "allowExcessArguments": false,
+            "help": "Usage: hrc handoff create [options]\n\nCreate a durable handoff for the caller seat.\n\nOptions:\n  --scope <seat>\n  -t, --title <title>\n  --body-file <file>\n  --json\n  -h, --help\n",
+            "humanHelp": "Usage: hrc handoff create [options]\n\nCreate a durable handoff for the caller seat.\n\nOptions:\n  --scope <seat>\n  -t, --title <title>\n  --body-file <file>\n  --json\n  -h, --help\n",
+            "arguments": [],
+            "options": [
+              {
+                "flags": "--scope <seat>",
+                "long": "--scope",
+                "short": null,
+                "required": true,
+                "optional": false,
+                "mandatory": false,
+                "negate": false
+              },
+              {
+                "flags": "-t, --title <title>",
+                "long": "--title",
+                "short": "-t",
+                "required": true,
+                "optional": false,
+                "mandatory": false,
+                "negate": false
+              },
+              {
+                "flags": "--body-file <file>",
+                "long": "--body-file",
+                "short": null,
+                "required": true,
+                "optional": false,
+                "mandatory": false,
+                "negate": false
+              },
+              {
+                "flags": "--json",
+                "long": "--json",
+                "short": null,
+                "required": false,
+                "optional": false,
+                "mandatory": false,
+                "negate": false
+              }
+            ],
+            "children": []
+          },
+          {
+            "path": [
+              "handoff",
+              "get"
+            ],
+            "name": "get",
+            "aliases": [],
+            "usage": "[options]",
+            "allowExcessArguments": false,
+            "help": "Usage: hrc handoff get [options] <id>\n\nRead one handoff.\n\nOptions:\n  --json\n  -h, --help\n",
+            "humanHelp": "Usage: hrc handoff get [options] <id>\n\nRead one handoff.\n\nOptions:\n  --json\n  -h, --help\n",
+            "arguments": [
+              {
+                "name": "id",
+                "required": true,
+                "variadic": false
+              }
+            ],
+            "options": [
+              {
+                "flags": "--json",
+                "long": "--json",
+                "short": null,
+                "required": false,
+                "optional": false,
+                "mandatory": false,
+                "negate": false
+              }
+            ],
+            "children": []
+          },
+          {
+            "path": [
+              "handoff",
+              "acknowledge"
+            ],
+            "name": "acknowledge",
+            "aliases": [],
+            "usage": "[options]",
+            "allowExcessArguments": false,
+            "help": "Usage: hrc handoff acknowledge [options] <id>\n\nAcknowledge with an optimistic etag fence.\n\nOptions:\n  --if-match <etag>\n  --note <note>\n  --json\n  -h, --help\n",
+            "humanHelp": "Usage: hrc handoff acknowledge [options] <id>\n\nAcknowledge with an optimistic etag fence.\n\nOptions:\n  --if-match <etag>\n  --note <note>\n  --json\n  -h, --help\n",
+            "arguments": [
+              {
+                "name": "id",
+                "required": true,
+                "variadic": false
+              }
+            ],
+            "options": [
+              {
+                "flags": "--if-match <etag>",
+                "long": "--if-match",
+                "short": null,
+                "required": true,
+                "optional": false,
+                "mandatory": false,
+                "negate": false
+              },
+              {
+                "flags": "--note <note>",
+                "long": "--note",
+                "short": null,
+                "required": true,
+                "optional": false,
+                "mandatory": false,
+                "negate": false
+              },
+              {
+                "flags": "--json",
+                "long": "--json",
+                "short": null,
+                "required": false,
+                "optional": false,
+                "mandatory": false,
+                "negate": false
+              }
+            ],
+            "children": []
+          },
+          {
+            "path": [
+              "handoff",
+              "list"
+            ],
+            "name": "list",
+            "aliases": [],
+            "usage": "[options]",
+            "allowExcessArguments": false,
+            "help": "Usage: hrc handoff list [options]\n\nList pending handoffs; --all includes history.\n\nOptions:\n  --scope <seat>\n  --project <project>\n  --all\n  --json\n  -h, --help\n",
+            "humanHelp": "Usage: hrc handoff list [options]\n\nList pending handoffs; --all includes history.\n\nOptions:\n  --scope <seat>\n  --project <project>\n  --all\n  --json\n  -h, --help\n",
+            "arguments": [],
+            "options": [
+              {
+                "flags": "--scope <seat>",
+                "long": "--scope",
+                "short": null,
+                "required": true,
+                "optional": false,
+                "mandatory": false,
+                "negate": false
+              },
+              {
+                "flags": "--project <project>",
+                "long": "--project",
+                "short": null,
+                "required": true,
+                "optional": false,
+                "mandatory": false,
+                "negate": false
+              },
+              {
+                "flags": "--all",
+                "long": "--all",
+                "short": null,
+                "required": false,
+                "optional": false,
+                "mandatory": false,
+                "negate": false
+              },
+              {
+                "flags": "--json",
+                "long": "--json",
+                "short": null,
+                "required": false,
+                "optional": false,
+                "mandatory": false,
+                "negate": false
+              }
+            ],
+            "children": []
+          }
+        ]
+      }
     }
   ]
 }

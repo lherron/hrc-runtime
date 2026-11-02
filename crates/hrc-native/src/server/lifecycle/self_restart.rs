@@ -161,6 +161,69 @@ pub async fn handle(
         Body::Arm(id) => id,
     };
 
+    // Validate at the authority boundary, after resolving the credential's seat.
+    // HRC IDs cannot collide with wrkq's H-number IDs. Legacy rows are read only
+    // when there is no pending HRC obligation for this seat.
+    let (stored, pending) = {
+        let db = server.store.lock().unwrap();
+        (
+            db.seat_handoff(&handoff_id)?,
+            db.pending_seat_handoff(
+                string(&session["scopeRef"]).as_str(),
+                string(&session["laneRef"]).as_str(),
+            )?,
+        )
+    };
+    if let Some(value) = stored {
+        if value["scopeRef"] != session["scopeRef"]
+            || hrc_store::storage_lane(string(&value["laneRef"]).as_str())
+                != hrc_store::storage_lane(string(&session["laneRef"]).as_str())
+        {
+            return Err(refused(
+                "handoff_scope_mismatch",
+                "handoff belongs to a different seat".into(),
+            ));
+        }
+        if value["state"] != "pending" {
+            return Err(refused(
+                "handoff_not_pending",
+                "handoff is not pending".into(),
+            ));
+        }
+    } else {
+        if pending.is_some() {
+            return Err(refused(
+                "handoff_scope_mismatch",
+                "use the pending HRC seat handoff".into(),
+            ));
+        }
+        let legacy = server
+            .wrkq
+            .request("wrkq.handoff.get", json!({"handoff":handoff_id}))
+            .await
+            .map_err(|e| {
+                refused(
+                    "handoff_not_found",
+                    format!("could not read handoff {handoff_id}: {e}"),
+                )
+            })?;
+        let identity = hrc_store::derive_identity(string(&session["scopeRef"]).as_str());
+        if legacy["agent_id"] != identity["agentId"]
+            || legacy["project_id"] != identity["projectId"]
+        {
+            return Err(refused(
+                "handoff_scope_mismatch",
+                "legacy handoff belongs to a different agent/project".into(),
+            ));
+        }
+        if legacy["status"] != "pending" {
+            return Err(refused(
+                "handoff_not_pending",
+                "legacy handoff is not pending".into(),
+            ));
+        }
+    }
+
     // Same refusal as fresh-context against a participant: rotation would move
     // the address off a process HRC does not own.
     restart::refuse_participant(server, &session, "self-restart")?;
@@ -302,10 +365,26 @@ async fn execute(server: &Shared, intent: Intent, terminal_seq: i64) -> Result<(
     let next = context::session(server, &rotation)?;
     let prior_generation = session["generation"].as_i64().unwrap_or(0);
     let next_generation = next["generation"].as_i64().unwrap_or(0);
-    let prompt = format!(
-        "Fresh context after self-restart (generation {prior_generation} → {next_generation}). Run `wrkq handoff get {} --json`, absorb it, acknowledge it with `wrkq handoff acknowledge`, then continue the work it describes.",
-        intent.handoff_id
-    );
+    let pending = server.store.lock().unwrap().pending_seat_handoff(
+        next["scopeRef"].as_str().unwrap_or(""),
+        next["laneRef"].as_str().unwrap_or("main"),
+    )?;
+    let prompt = if let Some(value) = pending {
+        format!(
+            "Fresh context after self-restart (generation {prior_generation} → {next_generation}). Pending HRC seat handoff {} (etag {}). Absorb the handoff below, then acknowledge it with `hrc handoff acknowledge {} --if-match {} --note 'Consumed; <retained context>'` and continue the work it describes.\n\n{}\n\n{}",
+            value["id"].as_str().unwrap(),
+            value["etag"],
+            value["id"].as_str().unwrap(),
+            value["etag"],
+            value["title"].as_str().unwrap_or(""),
+            value["body"].as_str().unwrap_or("")
+        )
+    } else {
+        format!(
+            "Fresh context after self-restart (generation {prior_generation} → {next_generation}). Run `wrkq handoff get {} --json`, absorb it, acknowledge it with `wrkq handoff acknowledge`, then continue the work it describes.",
+            intent.handoff_id
+        )
+    };
     let session_ref = format!(
         "{}/lane:{}",
         next["scopeRef"].as_str().unwrap_or(""),

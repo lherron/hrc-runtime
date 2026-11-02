@@ -19,6 +19,9 @@ pub(crate) fn execute(args: &Parsed<'_>) -> Result<()> {
         "start" | "run" | "attach" => crate::launch::command(args),
         "resume" => crate::launch::resume(args),
         "restart" => restart(args),
+        "handoff create" | "handoff list" | "handoff get" | "handoff acknowledge" => {
+            crate::handoff::command(args)
+        }
         "restartme" => crate::restartme::command(args),
         "send" => send(args),
         "summon" => summon(args),

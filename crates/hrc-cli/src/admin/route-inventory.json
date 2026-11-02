@@ -34,6 +34,26 @@
     {
       "listener": "main",
       "method": "GET",
+      "route": "/v1/seat-handoffs"
+    },
+    {
+      "listener": "main",
+      "method": "GET",
+      "route": "/v1/seat-handoffs/get"
+    },
+    {
+      "listener": "main",
+      "method": "POST",
+      "route": "/v1/seat-handoffs"
+    },
+    {
+      "listener": "main",
+      "method": "POST",
+      "route": "/v1/seat-handoffs/acknowledge"
+    },
+    {
+      "listener": "main",
+      "method": "GET",
       "route": "/v1/sessions/annotations"
     },
     {

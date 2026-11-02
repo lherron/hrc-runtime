@@ -34,6 +34,7 @@ pub fn declarations() -> Value {
         "hrcpty",
         "metadata",
         "attention",
+        "handoff",
     ] {
         seat[name] = json!({"kind":"json"});
     }

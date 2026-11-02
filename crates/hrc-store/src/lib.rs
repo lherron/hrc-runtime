@@ -9,6 +9,7 @@ use std::{collections::BTreeSet, path::Path, time::Duration};
 use uuid::Uuid;
 
 mod annotations;
+mod seat_handoffs;
 pub use annotations::{
     ANNOTATION_BODY_MAX, ANNOTATION_QUOTA, Admission, AnnotationFilter, AnnotationKey,
     AnnotationPut, AnnotationRefusal,

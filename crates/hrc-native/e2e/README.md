@@ -132,3 +132,5 @@ summon/attach, ledger wake, startup and shutdown. The historical N3 volume
 and N4 kernel-vs-Bun parity drivers retired too: a Bun owner has no kernel.
 N3 stream transport parity remains in `n3_streams.py`; `front_door.py` asserts
 that front mode hosts no kernel. See migration §8.1 for activation gates.
+
+`seat_handoffs.py --binary <unmanaged rusthrc> --scratch-root <fresh path> --out <artifacts>` drives the native handoff CLI, private owner/store and embedded kernel, including etag refusals and owner-restart durability. Live model rotation is the installed acceptance for T-12248.

@@ -16,6 +16,9 @@ pub fn handle(
     body: &[u8],
     headers: &HeaderMap,
 ) -> Result<Option<Response>, ApiError> {
+    if path.starts_with("/v1/seat-handoffs") {
+        return seat_handoffs(server, method, path, query, body).map(Some);
+    }
     if *method == Method::GET && path == "/v1/sessions" {
         return list(server, query).map(Some);
     }
@@ -468,6 +471,87 @@ fn annotations(
         }
     };
     Ok(Json(answer).into_response())
+}
+
+/// Durable successor handoffs. IDs are local HRC identities; no wrkq rows import.
+fn seat_handoffs(
+    server: &Server,
+    method: &Method,
+    path: &str,
+    query: &HashMap<String, String>,
+    body: &[u8],
+) -> Result<Response, ApiError> {
+    let input = if *method == Method::GET {
+        json!(query)
+    } else {
+        parse_body(body)?
+    };
+    let field = |name: &str| {
+        input[name]
+            .as_str()
+            .ok_or_else(|| ApiError::bad(format!("{name} must be a string"), None))
+    };
+    let fail = |e: anyhow::Error| {
+        let message = e.to_string();
+        let code = match message.split(':').next().unwrap_or("") {
+            "handoff_not_found" => "handoff_not_found",
+            "handoff_pending" => "handoff_pending",
+            "handoff_stale" => "handoff_stale",
+            "handoff_not_pending" => "handoff_not_pending",
+            "handoff_unknown_seat" => "handoff_unknown_seat",
+            "handoff_invalid" => "handoff_invalid",
+            _ => return ApiError::from(e),
+        };
+        let status = match code {
+            "handoff_not_found" => StatusCode::NOT_FOUND,
+            "handoff_pending" | "handoff_stale" | "handoff_not_pending" => StatusCode::CONFLICT,
+            _ => StatusCode::BAD_REQUEST,
+        };
+        ApiError::domain(status, code, &message, Some(json!({})))
+    };
+    let mut db = server.store.lock().unwrap();
+    let value = match (method.as_str(), path) {
+        ("GET", "/v1/seat-handoffs/get") => db
+            .seat_handoff(field("id")?)?
+            .ok_or_else(|| fail(anyhow::anyhow!("handoff_not_found")))?,
+        ("GET", "/v1/seat-handoffs") => {
+            let scope = input["scopeRef"].as_str();
+            let project = input["project"].as_str();
+            if scope.is_none() && project.is_none() {
+                return Err(ApiError::bad("scopeRef or project is required", None));
+            }
+            let rows = db.list_seat_handoffs(
+                scope,
+                input["laneRef"].as_str(),
+                project,
+                input["all"] == "true",
+            )?;
+            json!({"handoffs":rows})
+        }
+        ("POST", "/v1/seat-handoffs") => {
+            let scope = field("scopeRef")?;
+            let lane = input["laneRef"].as_str().unwrap_or("main");
+            let session_ref = format!("{scope}/lane:{}", hrc_store::storage_lane(lane));
+            let (scope, lane) = parse_session_ref(&session_ref)?;
+            db.create_seat_handoff(
+                scope,
+                lane,
+                input["title"].as_str().unwrap_or(""),
+                field("body")?,
+            )
+            .map_err(fail)?
+        }
+        ("POST", "/v1/seat-handoffs/acknowledge") => {
+            let etag = input["ifMatch"]
+                .as_i64()
+                .filter(|n| *n > 0)
+                .ok_or_else(|| ApiError::bad("ifMatch must be a positive integer", None))?;
+            db.acknowledge_seat_handoff(field("id")?, etag, field("note")?)
+                .map_err(fail)?
+        }
+        _ => return Err(ApiError::bad("unknown handoff route", None)),
+    };
+    Ok(Json(value).into_response())
 }
 
 #[cfg(test)]

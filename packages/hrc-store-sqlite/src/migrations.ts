@@ -9,6 +9,7 @@ import { planPolicyTableRemoval } from './migrations/plan-policy-table-removal.j
 import { runtimeLegacyIdentityNullableMigration } from './migrations/runtime-legacy-identity-nullability.js'
 import { schemaMigrations } from './migrations/schema-migrations.js'
 import { seatAnnotations } from './migrations/seat-annotations.js'
+import { seatHandoffs } from './migrations/seat-handoffs.js'
 import { sessionIdentityMetadata } from './migrations/session-identity-metadata.js'
 import { sessionStateDeadFieldRemoval } from './migrations/session-state-dead-field-removal.js'
 import { sessionTitleCascadeMigrations } from './migrations/session-title-cascade-migrations.js'
@@ -33,6 +34,7 @@ export const phase1Migrations: readonly HrcMigration[] = [
   planPolicyTableRemoval,
   permissionAuditRemoval,
   seatAnnotations,
+  seatHandoffs,
 ]
 
 /**

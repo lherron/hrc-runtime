@@ -15,6 +15,10 @@ import { listRequestRouteInventory } from '../../../../packages/hrc-server/src/r
 // metadata PATCH on the main and peer listeners (seat-annotations r1.1 §4).
 // `mainOnly` routes are local: the peer listener does not admit them (T-12212).
 const NATIVE_ONLY_AFTER_METADATA = [
+  { method: 'GET', route: '/v1/seat-handoffs', mainOnly: true },
+  { method: 'GET', route: '/v1/seat-handoffs/get', mainOnly: true },
+  { method: 'POST', route: '/v1/seat-handoffs', mainOnly: true },
+  { method: 'POST', route: '/v1/seat-handoffs/acknowledge', mainOnly: true },
   { method: 'GET', route: '/v1/sessions/annotations' },
   { method: 'PUT', route: '/v1/sessions/annotations' },
   { method: 'POST', route: '/v1/sessions/annotations/delete' },
