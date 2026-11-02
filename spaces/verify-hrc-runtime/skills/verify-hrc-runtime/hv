@@ -31,13 +31,15 @@ with_env() {
 }
 
 cmd_up() {
-  local name="hv"
+  local name="hv" engine="native"
   while [ $# -gt 0 ]; do
     case "$1" in
       --name) name="$2"; shift 2 ;;
-      *) die usage "unknown flag $1" "hv scratch up [--name N]" ;;
+      --engine) engine="$2"; shift 2 ;;
+      *) die usage "unknown flag $1" "hv scratch up [--name N] [--engine native|bun]" ;;
     esac
   done
+  case "$engine" in native|bun) ;; *) die usage "--engine is native or bun, not $engine" "hv scratch up --name N --engine native" ;; esac
   local d; d="$(name_dir "$name")"
   if [ -f "$d/pid" ] && pid_alive "$(cat "$d/pid")"; then
     die already_up "scratch $name is up (pid $(cat "$d/pid"))" "hv scratch down $name"
@@ -48,6 +50,10 @@ cmd_up() {
   bun_bin="$(command -v bun)" || die no_bun "bun is not on PATH" "install bun"
   installed="$(cd "$INSTALLED_LINK" 2>/dev/null && pwd -P)" || die no_release "$INSTALLED_LINK does not resolve" "ls ~/.bun/install"
   [ -f "$installed/packages/hrc-cli/src/cli.ts" ] || die no_release "$installed has no packages/hrc-cli/src/cli.ts" "ls $installed"
+  [ "$engine" = bun ] || [ -x "$installed/bin/rusthrc" ] || die no_release "$installed has no bin/rusthrc" "hv scratch up --name $name --engine bun"
+  # rusthrc reports atomic (pinned to a production release) when its exe sits in a directory named
+  # hrc-runtime-releases or beside an hrc-runtime-current link (crates/hrc-common/src/release.rs).
+  case "$d" in *hrc-runtime-releases*|*hrc-owner*) die atomic_release "scratch root $d names a production release tree" "HV_HOME=/tmp/hv hv scratch up --name $name" ;; esac
   mkdir -p "$d/run" "$d/state" "$d/wrkq"
   rm -f "$d/pid" "$d/exit"
   date -u +%Y-%m-%dT%H:%M:%SZ > "$d/up_at"
@@ -56,6 +62,8 @@ cmd_up() {
   # running release on 2026-10-26 (04:50Z, EN-36056). Run a copy outside it, which reports unmanaged.
   rm -rf "$d/release"
   cp -R "$installed" "$d/release" || die copy_failed "cp -R $installed $d/release failed" "df -h $HV_HOME"
+  [ ! -e "$d/release/hrc-runtime-current" ] || die atomic_release "the copy carries an hrc-runtime-current link; rusthrc would pin it to production" "ls -l $d/release"
+  printf '%s\n' "$engine" > "$d/engine"
   # Its own wrkq store, so nothing the scratch or its seats do reaches the live ledger.
   rm -f "$d/wrkq/wrkq.db"
   wrkqadm migrate --db "$d/wrkq/wrkq.db" >/dev/null 2>&1 || die wrkq_failed "wrkqadm migrate --db $d/wrkq/wrkq.db failed" "wrkqadm migrate --help"
@@ -67,6 +75,11 @@ cmd_up() {
 #!/bin/sh
 cd "$d"
 for v in \$(env | cut -d= -f1 | grep -E '^(HARNESS|TMUX|HRC_|AGENT|ASP_|CLAUDE|CODEX|WRKQ)[A-Za-z0-9_]*\$'); do unset "\$v" 2>/dev/null; done
+# A native daemon whose XPC_SERVICE_NAME equals HRC_LAUNCHD_LABEL (default com.praesidium.hrc-server)
+# answers a granted stop with launchctl bootout of that job (crates/hrc-native/.../actuation.rs): never
+# let a scratch name the production job.
+unset XPC_SERVICE_NAME XPC_FLAGS 2>/dev/null
+export HRC_LAUNCHD_LABEL="hv.scratch.$name"
 export HRC_RUNTIME_DIR="$d/run" HRC_STATE_DIR="$d/state"
 export ASP_HOME="$HOME/praesidium/var/spaces-repo"
 export HRC_ASPD_SOCKET="$LIVE_ASPD_SOCKET"
@@ -74,8 +87,17 @@ export HRC_WRKQ_DB="$d/wrkq/wrkq.db" WRKQ_DB="$d/wrkq/wrkq.db"
 export HRC_HEADLESS_CODEX_BROKER_ENABLED=1 HRC_CLAUDE_CODE_TMUX_BROKER_ENABLED=1 HRC_BROKER_DURABLE_IPC_ENABLED=1
 export HRC_CODEX_CLI_TMUX_BROKER_ENABLED=0 HRC_MAIL_KICKER_ENABLED=0
 echo \$\$ > "$d/pid"
-exec "$bun_bin" "$d/release/packages/hrc-cli/src/cli.ts" server serve >> "$d/serve.log" 2>&1
 SH
+  if [ "$engine" = bun ]; then
+    printf 'exec "%s" "%s" server serve >> "%s" 2>&1\n' "$bun_bin" "$d/release/packages/hrc-cli/src/cli.ts" "$d/serve.log" >> "$d/launch.sh"
+  else
+    # Only Bun migrates (crates/hrc-store/src/lib.rs: native refuses a missing or foreign migration
+    # set), so the copy's Bun store creates the private state.sqlite, then the copy's rusthrc serves it.
+    cat >> "$d/launch.sh" <<SH
+(cd "$d/release" && "$bun_bin" -e "import {openHrcDatabase} from './packages/hrc-store-sqlite/src/database.ts'; openHrcDatabase(process.argv[1]).close()" "$d/state/state.sqlite") >> "$d/serve.log" 2>&1 || { echo "hv: Bun store migration failed" >> "$d/serve.log"; exit 1; }
+exec "$d/release/bin/rusthrc" server serve >> "$d/serve.log" 2>&1
+SH
+  fi
   chmod +x "$d/launch.sh"
   local surface
   surface="$(ghostmux new --tab --title "hv: $name" --cwd "$d" --command "$d/launch.sh" --keep-open --json 2>&1)" \
@@ -103,7 +125,8 @@ SH
   printf '%s' "$status" | jq -c --arg n "$name" --arg root "$d" \
     --arg surface "$(cat "$d/surface")" --arg pid "$(cat "$d/pid" 2>/dev/null)" \
     --argjson manifest "$(jq -c '{releaseId, sourceCommit: .hrcBuild.sourceCommit}' "$d/release/praesidium-release.json")" \
-    '{name:$n, root:$root, pid:($pid|tonumber? // null), surface:$surface, socket:.api.socketPath, stateRoot:.api.stateRoot, releaseMode:.release.mode, copyOf:$manifest.releaseId, sourceCommit:$manifest.sourceCommit}'
+    --arg engine "$engine" \
+    '{name:$n, engine:$engine, root:$root, pid:($pid|tonumber? // null), surface:$surface, socket:.api.socketPath, stateRoot:.api.stateRoot, binaryPath:(.binaryPath // null), releaseMode:.release.mode, copyOf:$manifest.releaseId, sourceCommit:$manifest.sourceCommit}'
 }
 
 cmd_down() {
@@ -140,7 +163,7 @@ cmd_down() {
     pid_alive "$pid" && kill -KILL "$pid" 2>/dev/null
   fi
   [ -n "$surface" ] && ghostmux kill-surface -t "$surface" --force >/dev/null 2>&1
-  rm -rf "$d/run" "$d/state" "$d/release" "$d/wrkq" "$d/pid" "$d/surface"
+  rm -rf "$d/run" "$d/state" "$d/release" "$d/wrkq" "$d/pid" "$d/surface" "$d/engine"
   jq -cn --arg n "$name" --argjson rt "$runtimes" --arg pid "$pid" \
     '{name:$n, terminated:$rt, stopped_pid:($pid|tonumber? // null), removed:true, kept:["serve.log","launch.sh","up_at"]}'
 }
@@ -201,6 +224,11 @@ cmd_evidence() {
   esac
   mkdir -p "$out"
   cp "$d/serve.log" "$out/serve.log" 2>/dev/null || true
+  cp "$d/launch.sh" "$out/launch.sh" 2>/dev/null || true
+  # hrcpty seats log client.attached/detached and supervisor lifecycle here, not in serve.log.
+  if ls "$d/run/logs/hrcpty/"*.log >/dev/null 2>&1; then
+    mkdir -p "$out/hrcpty"; cp "$d/run/logs/hrcpty/"*.log "$out/hrcpty/" 2>/dev/null || true
+  fi
   with_env "$name" hrc server status --json > "$out/status.json" 2>&1 || true
   with_env "$name" hrc runtime list --json > "$out/runtimes.json" 2>&1 || true
   with_env "$name" hrc session list --json > "$out/sessions.json" 2>&1 || true

@@ -52,7 +52,11 @@ also comes from what HRC runs on (ASP and aspd, the harness CLIs, tmux, wrkq), w
 see.
 
 Run `hrc doctor` and `hrc server status` first, and again after any surprise. Note the installed
-`sourceCommit`: the pass grades that build, which may lag HEAD. Drive each feature's "Driving it" **and
+`sourceCommit`: the pass grades that build, which may lag HEAD. Drive the native scratch (`hv scratch up`'s
+default engine, the production owner); a feature driven only on `--engine bun` counts as driven for Bun, not for
+production, and the report says so. Record both release trees (`~/.bun/install/hrc-runtime-releases/` and
+`~/praesidium/var/hrc-owner/hrc-runtime-releases/`) before the first scratch and after the last `down`; they must
+match. Drive each feature's "Driving it" **and
 every drift or new behavior step 2 flagged**, recording with `hv rec`. Check each result against "Proven
 when". Run `hv evidence <name> <artifact_dir>/evidence/<name>` before `hv scratch down <name>`, and confirm no
 process still names `/tmp/hv/<name>`. Count the features you drove to their Proven when (`driven`), and name
