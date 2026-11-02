@@ -661,3 +661,7 @@ fn record_answer(
     })();
     result.map_err(|e| e.to_string())
 }
+
+#[cfg(test)]
+#[path = "literal_replay_tests.rs"]
+mod literal_replay_tests;
