@@ -8,7 +8,7 @@ predicate: >
   kind asks and id open, under hrc-runtime.seat-annotations. HRC owns the
   schema; the namespace grants no writer authority or per-kind admission.
   The body is v 1 with questions in the row grammar of section 3 of
-  docs/proposals/seat-asks.md r1.2 at 7b76e6b7. Row ids are stable across
+  docs/proposals/seat-asks.md r1.3 at 683f6921. Row ids are stable across
   edits and unique within the record. Readers retain valid rows and drop
   invalid rows; an invalid recommended option is dropped independently.
   The seat owns question content and row removal, a reviewer owns review
@@ -16,7 +16,10 @@ predicate: >
   responsibilities, not HRC-enforced field permissions. A dependent row
   is never delivered independently. Answered rows carry the deliverer's
   sent object and remain until the seat removes them; partial answers
-  leave the other rows open. Answer delivery carries the question text.
+  leave the other rows open. sent.runId is optional when HRC accepts
+  delivery without a run. sent.text records the delivered text. Answer
+  delivery carries the question text. Retained rows preserve review,
+  dependsOn and sent through the seat's whole-record rewrites.
   The seat creates the record once and never deletes it. questions: []
   represents no open questions; absence means never created and reads
   as updatedAt = epoch for detector comparison. Unchanged turns perform
@@ -44,17 +47,25 @@ predicate: >
   Declaring a typed node, HRC writer enforcement, text deduplication,
   shared decision records, task-seat adoption and old-card migration
   are outside this contract. The c2 backstop, receipts, hosts and
-  card-contract revision 4 remain separately reviewed consumer work.
+  card-contract revision 4 are governed by the consumer's c2.card-contract
+  record and do not change HRC annotation admission.
 authority: >
   Daedalus approval of the HRC-side seat-asks r1.2 at 7b76e6b7,
   resubmitted in EN-40748 on T-12239, 2026-11-02 UTC. Resolves F1 from
   EN-40695 through the persistent empty record and absent-as-epoch
   detector meaning. Creates this schema and lifecycle contract without
   amending the annotation facility or adopting the kernel campaign.
+  The c2 revision 4 review submitted in EN-40871 records r1.3's
+  optional-runId clarification, installed CLI flag correction and explicit
+  preservation of other writers' fields, as consumed by that design.
+  The producer schema reference advances to 683f6921; no HRC code,
+  admission, storage or operation-fence change is approved here.
 source:
   - wrkq:T-12239
   - wrkc:EN-40695
   - wrkc:EN-40748
+  - wrkc:EN-40786
+  - wrkc:EN-40871
   - docs/proposals/seat-asks.md
   - docs/proposals/praesidium-kernel.md
   - architecture/contracts/seat-annotations.yaml
@@ -72,6 +83,10 @@ last_verified: >
   projection lifetime, kernel operation grammar and reconciliation
   classes, and the revised T-12239 F1 acceptance claim. No build, test,
   install, service operation or product acceptance was run.
+  The r1.3 delta was read during the c2 revision 4 review on the same
+  date. Optional runId agrees with HRC's already accepted no-run delivery
+  response; explicit rewrite preservation follows the existing field
+  ownership and CAS. No product acceptance is claimed for the clarification.
 reopen_when: >
   Record key, row grammar or ownership, non-deletion or empty-state
   meaning, detector absence semantics, write fences, action meaning,
