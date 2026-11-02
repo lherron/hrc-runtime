@@ -456,7 +456,10 @@ fn select(
     if body["continuation"] == "fresh" {
         return Ok((false, "participant_fresh".into(), None));
     }
-    if kind == "bridge" && !(pre_attach && legacy(a)) {
+    // Before attach, preserve the allocation's fixed selection. Once a broker
+    // has run, the session holds its latest conversation; the attempt still
+    // describes the selection made before that conversation existed.
+    if kind == "bridge" && pre_attach && !legacy(a) {
         return Ok((
             a["continuation_carried"] == 1,
             a["continuation_reason"]

@@ -30,6 +30,7 @@ def main():
     for key in ('binary', 'installed-release', 'aspd-socket', 'scratch-root', 'artifacts'):
         p.add_argument('--'+key, type=Path, required=True)
     p.add_argument('--owners', default='bun,native')
+    p.add_argument('--bridge-continuation', action='store_true', help='assert T-12279 native continuation ruling')
     a = p.parse_args()
     a.binary = a.binary.resolve()
     assert not a.scratch_root.exists()
@@ -70,6 +71,12 @@ def main():
                  ('reuse-disabled', body, 'disabled'),
                  ('continuation-invalidated', body, 'invalidated'),
                  ('declaration-mismatch', body, 'seed'), ('active-runs',body,'runs'), ('recover-intent',body,'recover')]
+        if a.bridge_continuation:
+            plans += [
+                 ('bridge-fresh', dict(body,hostIncarnationId=base['hostIncarnationId'],continuation='fresh'), 'seed'),
+                 ('bridge-disabled', dict(body,hostIncarnationId=base['hostIncarnationId']), 'disabled'),
+                 ('bridge-invalidated', dict(body,hostIncarnationId=base['hostIncarnationId']), 'invalidated')
+            ]
         results = {}
         retired_seed = None
         for owner in a.owners.split(','):
@@ -110,6 +117,17 @@ def main():
                     current_request=dict(request,continuation='fresh') if name=='declaration-mismatch' and label.endswith('-retry') else request
                     t=time.time();status,reply,_=node.http('POST','/v1/participants/register',current_request)
                     observed.append({'case':label,'request':current_request,'status':status,'body':reply,'before':t,'after':time.time(),'durable':snapshot(node),'seed':before,'startupRecovered':recovered})
+                    if a.bridge_continuation and owner=='native' and name.startswith('bridge'):
+                        assert status == 200 and reply['status'] == 'registered', reply
+                        assert reply['identity']['runtimeId'] == prior['runtimeId'], reply
+                        selection = reply['continuation']
+                        if name == 'bridge':
+                            assert selection['carried'] is True, reply
+                            assert selection['selected'] == {'provider':'pi','key':'foundry-conversation'}, reply
+                        else:
+                            reason = {'bridge-fresh':'participant_fresh', 'bridge-disabled':'reuse_disabled',
+                                      'bridge-invalidated':'continuation_invalidated'}[name]
+                            assert selection['carried'] is False and selection['reason'] == reason, reply
                     if owner=='bun' and label=='foundry-continue':retired_seed=snapshot(node)
                 node.down(proc);proc=None
             results[owner]=observed
