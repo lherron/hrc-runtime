@@ -2,7 +2,8 @@
 """Inspect seats and runtimes in praesidium:praesidium (r1.9 / T-12360).
 Uses the kernel projection without whole-table HRC owner scans.
 $PRAESIDIUM_KERNEL_SOCKET overrides the read socket.
-  kq.py status | seats [regex] | runtimes [regex] | busy
+  kq.py status [--full]            bounded binding/cursor summary; full opt-in
+  kq.py seats [regex] | runtimes [regex] | busy
   kq.py raw <op> '<json args>'   on the read socket; pass an explicit socket
                                 override to inspect the ops-only HRC provider
 """
@@ -48,13 +49,37 @@ def seat_line(p):
         p.get('status'), p.get('lastActivityAt', ''), le.get('kind', ''), le.get('time', '')))
 
 
+def status_summary(status):
+    def scalars(value, names):
+        if not isinstance(value, dict):
+            return None
+        return {k: (v[:80] if isinstance(v, str) else v)
+                for k in names if (v := value.get(k)) is None or isinstance(v, (str, bool, int, float))}
+
+    bindings = status['bindings']
+    summary = []
+    for binding in bindings[:32]:
+        cursor = binding.get('cursor')
+        cursor_summary = scalars(cursor, ('seq', 'incarnation', 'version')) or {}
+        cursor_summary['fields'] = len(cursor) if isinstance(cursor, dict) else 0
+        entries = cursor.get('entries') if isinstance(cursor, dict) else None
+        if isinstance(entries, (dict, list)):
+            cursor_summary['entries'] = len(entries)
+        summary.append(dict(binding=str(binding.get('binding', ''))[:80],
+                            caught_up=binding.get('caught_up') is True,
+                            cursor=cursor_summary,
+                            resync=scalars(binding.get('resync'), ('every_ms', 'last_at', 'next_at'))))
+    return dict(bindings=summary, total_bindings=len(bindings), omitted_bindings=max(0, len(bindings) - 32))
+
+
 def main():
     cmd = sys.argv[1] if len(sys.argv) > 1 else 'status'
-    pat = re.compile(sys.argv[2]) if len(sys.argv) > 2 and cmd != 'raw' else None
+    pat = re.compile(sys.argv[2]) if len(sys.argv) > 2 and cmd not in ('raw', 'status') else None
     if cmd == 'status':
         st = call('ingest.status', dict(document_id='praesidium'))
-        print(json.dumps([dict(caught_up=b.get('caught_up'), cursor=b.get('cursor'),
-                               resync=b.get('resync')) for b in st['bindings']]))
+        if len(sys.argv) > 2 and sys.argv[2:] != ['--full']:
+            sys.exit('usage: kq.py status [--full]')
+        print(json.dumps(st if '--full' in sys.argv[2:] else status_summary(st)))
     elif cmd == 'seats':
         for r in rows('seat'):
             p = r['payload']

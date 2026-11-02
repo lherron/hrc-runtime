@@ -116,7 +116,9 @@ Deleted entries stay listed to explain their removal; their source remains in gi
 | `transcript_index.py` | T-12013: transcript follower resume from Bun's cursor, late-prose/inversion repair, search, status and rebuild against Bun on one snapshot. (requires explicit scratch/capture inputs; retained qualification) | keep-manual |
 | `turn_no_intent.py` | T-11928: the real `hrc turn` births a session that never applied an intent. (requires explicit scratch/capture inputs; retained qualification) | keep-manual |
 
-## Embedded kernel (T-12141)
+## Embedded kernel history (T-12141)
+
+Historical description, superseded by the 2026-11-02 amendment below:
 
 `kernel_fold.py`, `kernel_projection.py` and `kernel_fd_cost.py` run in
 `just cargo-check` against rusthrc's own socket. `kernel_projection.py`
@@ -137,7 +139,7 @@ and N4 kernel-vs-Bun parity drivers retired too: a Bun owner has no kernel.
 N3 stream transport parity remains in `n3_streams.py`; `front_door.py` asserts
 that front mode hosts no kernel. See migration §8.1 for activation gates.
 
-`seat_handoffs.py --binary <unmanaged rusthrc> --scratch-root <fresh path> --out <artifacts>` drives the native handoff CLI, private owner/store and embedded kernel, including etag refusals and owner-restart durability. Live model rotation is the installed acceptance for T-12248.
+`seat_handoffs.py --binary <unmanaged rusthrc> --scratch-root <fresh path> --out <artifacts>` now drives the native handoff CLI and private owner/store, including etag refusals and owner-restart durability. Live model rotation is the installed acceptance for T-12248.
 
 
 2026-11-02 amendment (praesidium-kernel r1.9 / T-12360): `kernel_projection.py`
@@ -149,3 +151,8 @@ query subscriptions now belong to praesidium-kernel. `seat_handoffs.py` and
 `seat_work.py` keep owner/CLI/ledger durability and fence checks, while their
 projection assertions move to the praesidium kernel. `front_door.py` still
 requires no HRC operator socket on fronts. `kq.py` reads praesidium:praesidium.
+
+The retained `kernel_fold.py` also proves owner clear-context termination:
+one runtime.terminated ledger row with reason clear-context and owner refusal
+when terminating that ended runtime again. `kq.py status` prints a bounded
+Praesidium binding/cursor summary; `status --full` opts into raw ingest details.

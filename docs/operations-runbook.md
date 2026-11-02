@@ -57,9 +57,14 @@ python3 -I crates/hrc-native/e2e/kq.py seats
 python3 -I crates/hrc-native/e2e/kq.py busy
 ```
 
-Check ingest lag in `status`. Seat active/inactive and runtime busy/ready are
-different facts. The kernel shares rusthrc’s lifetime; a daemon restart rebuilds the projection
-and blanks Loggia until catch-up. Follow service restart authority.
+2026-11-02 amendment (praesidium-kernel r1.9 / T-12360): `kq.py` reads
+`praesidium:praesidium`, not rusthrc's ops-only socket. `status` prints at most
+32 bindings with bounded cursor and resync summaries; `status --full` opts into
+raw ingest details, which can include large entry maps. Check `caught_up` and
+the summary's cursor sequence where available. Seat active/inactive and runtime
+busy/ready are different facts. The Praesidium kernel owns this projection;
+a rusthrc restart no longer rebuilds an embedded document. Follow service
+restart authority.
 
 ## Restart doctrine
 

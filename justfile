@@ -236,7 +236,7 @@ e2e:
 # Seat annotations Gate 1 (T-12186): the rusthrc `session annotation` CLI and
 # routes on a private scratch rusthrc with a stub-broker hrcpty seat — put/list,
 # stale_annotation, the 64 KiB body cap, stale_attention across a real turn,
-# delete, act, the SDK, and the session.annotation.* ledger rows. Then Gate 2
+# delete, act, the SDK, and the session.annotation.* ledger rows.
 # 2026-11-02 amendment (praesidium-kernel r1.9 / T-12360): projection and
 # lineage moved to praesidium:praesidium; this suite keeps owner API/CLI and
 # ops-only socket checks. The kernel-fold suite proves all six operations.

@@ -341,6 +341,26 @@ def main():
         r.check('3.annotation-ledger', len(records) == 3 and all(json.loads(e['payload_json'])['updatedBy'] == 'system:hrc-kernel' for e in records if e['event_kind'] == 'session.annotation.changed'), records=records)
         (args.artifacts / 'ops.json').write_text(json.dumps(dict(summon=summoned, put=put, act=act, delete=deleted, send=sent, restart=restarted), indent=2) + '\n')
 
+        # == 9. clear-context owner lifecycle (T-12360 F3) ==================
+        assert restarted['ok'], restarted
+        clear_host = restarted['result']['host_session_id']
+        clear_runtime = restarted['result']['launch']['runtimeId']
+        head = r.rows('SELECT coalesce(max(hrc_seq),0) AS s FROM hrc_events')[0]['s']
+        code, rotated = r.http('POST', '/v1/clear-context', {'hostSessionId': clear_host})
+        r.check('9.clear-context-ok', code == 200 and rotated['hostSessionId'] != clear_host,
+                status=code, body=rotated)
+        ended = r.rows("SELECT runtime_id,host_session_id,event_kind,payload_json FROM hrc_events "
+                       "WHERE hrc_seq>? AND runtime_id=? AND event_kind='runtime.terminated'", (head, clear_runtime))
+        r.check('9.runtime-end-published', len(ended) == 1 and ended[0]['host_session_id'] == clear_host
+                and json.loads(ended[0]['payload_json']).get('reason') == 'clear-context', rows=ended)
+        stored = r.rows('SELECT status FROM runtimes WHERE runtime_id=?', (clear_runtime,))
+        r.check('9.old-runtime-ended', stored == [{'status': 'terminated'}], rows=stored)
+        code, terminated = r.http('POST', '/v1/terminate', {'runtimeId': clear_runtime})
+        r.check('9.owner-confirms-terminated', code == 503
+                and terminated.get('error', {}).get('code') == 'runtime_unavailable'
+                and terminated['error'].get('detail', {}).get('status') == 'terminated',
+                status=code, body=terminated)
+
         # == 5. shutdown order =================================================
         rc = r.down(daemon)
         log = events(r, '1')
