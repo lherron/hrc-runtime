@@ -1,0 +1,79 @@
+id: hrc-runtime.seat-asks
+kind: contract
+status: active
+owner_project: hrc-runtime
+scope: HRC-owned seat asks register and its owner operation mapping
+predicate: >
+  A seat's open questions occupy one seat-scoped annotation with ns hrc,
+  kind asks and id open, under hrc-runtime.seat-annotations. HRC owns the
+  schema; the namespace grants no writer authority or per-kind admission.
+  The body is v 1 with questions in the row grammar of section 3 of
+  docs/proposals/seat-asks.md r1.2 at 7b76e6b7. Row ids are stable across
+  edits and unique within the record. Readers retain valid rows and drop
+  invalid rows; an invalid recommended option is dropped independently.
+  The seat owns question content and row removal, a reviewer owns review
+  and may set dependsOn, and a deliverer owns sent. These are writer
+  responsibilities, not HRC-enforced field permissions. A dependent row
+  is never delivered independently. Answered rows carry the deliverer's
+  sent object and remain until the seat removes them; partial answers
+  leave the other rows open. Answer delivery carries the question text.
+  The seat creates the record once and never deletes it. questions: []
+  represents no open questions; absence means never created and reads
+  as updatedAt = epoch for detector comparison. Unchanged turns perform
+  no write. Rotation changes neither the record nor its updatedAt.
+  All whole-record updates, including reviewer and deliverer updates,
+  use the record's own updatedAt CAS. No attention or generation fence
+  is imposed on this register. HRC retains common annotation admission,
+  the body cap, transaction fences and events unchanged, with no row
+  schema validation or body history. Scope is non-task seats opted in
+  by their controller. Workflow-specific fields belong in the workflow's
+  own annotations, not in this body.
+  The prae seat asks get operation reads the owner, including updatedAt
+  and updatedBy. create maps to a create-only annotation put, using the
+  existing expect.updatedAt null fence; update maps to annotation put
+  with --if-match carrying the existing updatedAt value. These writes
+  have reconciliation class fenced. prae seat ext act maps to the
+  existing annotation action append with row action attributes; its
+  class is unkeyed and it does not mutate the annotation. The kernel
+  forwards caller identity and the fence without granting new authority.
+  No seat-initiated delete operation belongs to this register.
+  The current kernel projection is a generic hrc.annotation, with its
+  projection lifetime following the seat. live_until governs projection
+  visibility; storage retention remains governed by
+  hrc-runtime.seat-annotations, with no age-based storage deletion added.
+  Declaring a typed node, HRC writer enforcement, text deduplication,
+  shared decision records, task-seat adoption and old-card migration
+  are outside this contract. The c2 backstop, receipts, hosts and
+  card-contract revision 4 remain separately reviewed consumer work.
+authority: >
+  Daedalus approval of the HRC-side seat-asks r1.2 at 7b76e6b7,
+  resubmitted in EN-40748 on T-12239, 2026-11-02 UTC. Resolves F1 from
+  EN-40695 through the persistent empty record and absent-as-epoch
+  detector meaning. Creates this schema and lifecycle contract without
+  amending the annotation facility or adopting the kernel campaign.
+source:
+  - wrkq:T-12239
+  - wrkc:EN-40695
+  - wrkc:EN-40748
+  - docs/proposals/seat-asks.md
+  - docs/proposals/praesidium-kernel.md
+  - architecture/contracts/seat-annotations.yaml
+  - crates/hrc-store/src/annotations.rs
+  - crates/hrc-domain/src/projection.rs
+validation_scope: >
+  Requester owns section 8's real-facility round trip and stale CAS
+  refusal, rotation stability, and two-client rendering and answer
+  readback. T-12239's product gate 2 covers the F1 answered, emptied,
+  later-question rearm sequence with the record continuously present.
+  This ruling adds no gate and does not accept implementation or deployment.
+last_verified: >
+  2026-11-02 design read of r1.2, the r1-to-r1.2 source delta, the
+  existing annotation transaction and monotonic updatedAt, generic
+  projection lifetime, kernel operation grammar and reconciliation
+  classes, and the revised T-12239 F1 acceptance claim. No build, test,
+  install, service operation or product acceptance was run.
+reopen_when: >
+  Record key, row grammar or ownership, non-deletion or empty-state
+  meaning, detector absence semantics, write fences, action meaning,
+  scope, schema admission, storage or projection lifetime, typed-node
+  adoption, or operation mapping and reconciliation classes change.
