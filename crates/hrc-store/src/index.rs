@@ -140,41 +140,63 @@ impl Store {
         }
         values.push(SqlValue::Integer(limit as i64 + 1));
         let sql = format!(
-            "SELECT * FROM session_index {clause} ORDER BY last_activity_at DESC, host_session_id DESC LIMIT ?"
+            // Bound the index walk before joining continuity. Exact stored lane
+            // keys preserve historical identities; LEFT JOIN retains orphan rows.
+            // Keep index denormalizations distinct from continuity identity columns.
+            "SELECT page.host_session_id,page.scope_ref,page.lane_ref,page.generation,\
+             page.agent_id AS index_agent_id,page.project_id AS index_project_id,\
+             page.created_at,page.effective_status,page.execution_mode,page.last_activity_at,page.title,\
+             c.scope_kind,c.agent_id,c.project_id,c.task_id,c.role_name,c.seat_kind,c.seat_work_json FROM \
+             (SELECT * FROM session_index {clause} ORDER BY last_activity_at DESC, host_session_id DESC LIMIT ?) page \
+             LEFT JOIN continuities c ON c.scope_ref=page.scope_ref AND c.lane_ref=page.lane_ref \
+             ORDER BY page.last_activity_at DESC,page.host_session_id DESC"
         );
         let mut stmt = self.sqlite.prepare(&sql)?;
         let mut rows = stmt
             .query_map(params_from_iter(values), |r| {
-                fields(
+                let mut row = fields(
                     r,
                     &[
                         ("host_session_id", "hostSessionId"),
                         ("scope_ref", "scopeRef"),
                         ("lane_ref", "laneRef"),
-                        ("agent_id", "agentId"),
+                        ("index_agent_id", "agentId"),
                         ("created_at", "createdAt"),
                         ("effective_status", "effectiveStatus"),
                         ("execution_mode", "executionMode"),
                         ("last_activity_at", "lastActivityAt"),
                     ],
-                    &[("title", "title"), ("project_id", "projectId")],
+                    &[("title", "title"), ("index_project_id", "projectId")],
                     &[],
-                )
+                )?;
+                row["identity"] = if r.get::<_, Option<String>>("scope_kind")?.is_some() {
+                    super::identity_row(r)?
+                } else {
+                    Value::Null
+                };
+                row["kind"] = r.get::<_, Option<String>>("seat_kind")?.into();
+                let work: Option<String> = r.get("seat_work_json")?;
+                row["work"] = work
+                    .map(|raw| {
+                        serde_json::from_str(&raw).map_err(|e| {
+                            rusqlite::Error::FromSqlConversionFailure(
+                                r.as_ref().column_index("seat_work_json").unwrap(),
+                                rusqlite::types::Type::Text,
+                                Box::new(e),
+                            )
+                        })
+                    })
+                    .transpose()?
+                    .unwrap_or(Value::Null);
+                Ok(row)
             })?
             .collect::<rusqlite::Result<Vec<_>>>()?;
         let more = rows.len() > limit;
         rows.truncate(limit);
         for row in &mut rows {
-            // These are exact projection keys. Historical continuities can
-            // store a literal lane: prefix; stripping it loses their identity.
-            let identity = self.stored_identity(
-                row["scopeRef"].as_str().unwrap(),
-                row["laneRef"].as_str().unwrap(),
-            )?;
-            if let Some(task) = identity.as_ref().and_then(|id| id.get("taskId")) {
+            if let Some(task) = row["identity"].get("taskId") {
                 row["taskId"] = task.clone();
             }
-            row["identity"] = identity.unwrap_or(Value::Null);
             row["laneRef"] = canonical_lane(row["laneRef"].as_str().unwrap()).into();
         }
         Ok((rows, more))

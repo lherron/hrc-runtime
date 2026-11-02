@@ -314,6 +314,8 @@ mod tests {
             assert!(item.get("identity").is_some());
             if *missing {
                 assert_eq!(item["identity"], Value::Null);
+                assert_eq!(item.get("kind"), Some(&Value::Null));
+                assert_eq!(item.get("work"), Some(&Value::Null));
             } else {
                 assert_eq!(
                     item["identity"],

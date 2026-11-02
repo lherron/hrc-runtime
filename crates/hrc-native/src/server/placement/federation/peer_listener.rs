@@ -448,6 +448,87 @@ mod tests {
     use crate::server::sessions::{ANNOTATION_ROUTES, is_annotation_route};
     use std::collections::HashSet;
 
+    // Failures: page omits kind/work, derives stale defaults rather than reading
+    // continuity, disagrees with get after a work/policy update, or the peer
+    // route forwards instead of serving the same local page.
+    #[tokio::test]
+    async fn session_page_kind_work_equals_get_locally_and_for_peers() -> anyhow::Result<()> {
+        use crate::server::{dispatch_inner, turns::admission::tests::server};
+        use axum::{
+            body::{Body, to_bytes},
+            extract::Request,
+            http::StatusCode,
+        };
+        use serde_json::{Value, json};
+
+        let (_scratch, server) = server("off", false)?;
+        let cases = [
+            ("T-12262", "task", json!({"kind":"task","taskId":"T-12262"})),
+            (
+                "primary",
+                "standing",
+                json!({"kind":"workstream","workstreamId":"page-work"}),
+            ),
+            ("free", "adhoc", json!({"kind":"none"})),
+        ];
+        {
+            let mut db = server.store.lock().unwrap();
+            for (task, _, work) in &cases {
+                let scope = format!("agent:cody:project:p:task:{task}");
+                db.create_session(&scope, "main")?;
+                assert!(db.set_seat_work(&scope, "main", work, 1)?.is_some());
+            }
+            db.refresh_seat_kinds("cody", &json!({"homes":{"primary":"local"}}))?;
+        }
+        for peer in [false, true] {
+            let request = Request::builder()
+                .uri(if peer {
+                    "/v1/sessions/page?nodes=other&limit=200"
+                } else {
+                    "/v1/sessions/page?nodes=local&limit=200"
+                })
+                .body(Body::empty())?;
+            let response = if peer {
+                super::route_request(&server, "other", request)
+                    .await
+                    .unwrap_or_else(|_| panic!("invalid peer request"))
+            } else {
+                dispatch_inner(&server, request, false).await
+            };
+            assert_eq!(response.status(), StatusCode::OK);
+            let page: Value =
+                serde_json::from_slice(&to_bytes(response.into_body(), usize::MAX).await?)?;
+            let items = page["items"].as_array().unwrap();
+            assert_eq!(items.len(), cases.len());
+            for (task, kind, work) in &cases {
+                let scope = format!("agent:cody:project:p:task:{task}");
+                let row = items.iter().find(|r| r["scopeRef"] == scope).unwrap();
+                let query = form_urlencoded::Serializer::new(String::new())
+                    .append_pair("scopeRef", &scope)
+                    .finish();
+                let request = Request::builder()
+                    .uri(format!("/v1/sessions/get?{query}"))
+                    .body(Body::empty())?;
+                let response = if peer {
+                    super::route_request(&server, "other", request)
+                        .await
+                        .unwrap_or_else(|_| panic!("invalid peer request"))
+                } else {
+                    dispatch_inner(&server, request, false).await
+                };
+                assert_eq!(response.status(), StatusCode::OK);
+                let get: Value =
+                    serde_json::from_slice(&to_bytes(response.into_body(), usize::MAX).await?)?;
+                assert_eq!(get["kind"], *kind);
+                assert_eq!(&get["work"], work);
+                for key in ["kind", "work"] {
+                    assert_eq!(row.get(key), get.get(key), "peer={peer}, {task}, {key}");
+                }
+            }
+        }
+        Ok(())
+    }
+
     #[test]
     fn allowlist_names_the_session_writes_once() {
         assert_eq!(ROUTE_KEYS.len(), 26);
