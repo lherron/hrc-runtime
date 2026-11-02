@@ -1,0 +1,64 @@
+id: hrc-runtime.runtime-created
+kind: contract
+status: active
+owner_project: hrc-runtime
+scope: normal broker runtime insertion through Store.start_broker_graph
+predicate: >
+  Each successful normal broker runtime INSERT through start_broker_graph
+  appends exactly one runtime.created lifecycle event in category runtime
+  inside the same SQLite transaction. The event carries the inserted runtime's
+  runtimeId, hostSessionId, scopeRef, laneRef, generation and transport, with
+  the existing optional runId attribution. Its payload contains creation
+  provenance only, without selection or request secrets. A failed graph
+  transaction persists neither the runtime nor its creation event. Replay or
+  reuse without another runtime INSERT emits no additional creation event.
+  Prompt-bearing birth retains its existing turn.accepted behavior.
+  Creation proves the owner row was created in starting state; it proves
+  neither invocation.start success, broker readiness, attach readiness nor a
+  turn start. Later lifecycle outcomes retain their existing meaning. The
+  existing post-commit ledger_committed wake and lifecycle page/bounded-stream
+  replay, gap and incarnation mechanisms expose the durable creation fact.
+  Its timestamp is sampled inside the transaction, before commit, and is not
+  an exact commit timestamp or a replacement for the separately approved
+  conservative raw runtime.createdAt measurement origin. Readers reread owner
+  presentation/state under existing selected-host, generation, runtime-id and
+  unknown-scope rules; the event does not override membership or publish a
+  partial kernel snapshot. Starting remains presentation-eligible without
+  optional hosting data. This contract covers normal broker graph insertions
+  only, not participant registration or other runtime insertion paths, and
+  changes no latency threshold or acceptance claim.
+authority: Daedalus source-grounded approval of T-12382 hrc-runtime-created-amendment.md revision 1, submitted in EN-42993, 2026-11-02; implementation and deployment authority remain separately held
+source:
+  - wrkq:T-12382
+  - crates/hrc-store/src/broker.rs
+  - crates/hrc-store/src/lib.rs
+  - crates/hrc-store/src/presentation.rs
+  - crates/hrc-store/src/status.rs
+  - crates/hrc-native/src/server/broker/broker.rs
+  - crates/hrc-native/src/server/broker/attached.rs
+  - crates/hrc-native/src/server.rs
+  - crates/hrc-native/src/server/projection/streams.rs
+  - crates/hrc-native/src/server/projection/projection/events.rs
+  - architecture/records/invariants/hrc-runtime.bounded-lifecycle-event-observation.yaml
+validation_scope: >
+  The requester supplies failure-first isolated real-owner evidence: an
+  already-open bounded stream receives the exact committed creation fact
+  while a stub holds invocation.start before finish_broker_start, and raw
+  owner plus keyed presentation expose the selected starting runtime at that
+  seam. Release completes normally. Reconnect replays the same durable
+  sequence and identity. Prompt-bearing birth preserves turn.accepted; reuse
+  adds no creation event. A scratch-only SQLite insertion refusal proves
+  runtime/event rollback in the shared graph transaction. Existing owner
+  verification and stream cursor/gap/incarnation gates remain in force.
+deployment_boundary: >
+  This design approval authorizes no product edit, source reversal, install,
+  restart or early retirement. The proposed forward restoration of the
+  pre-retirement oracle/provider/tests/contracts on the same canonical branch,
+  preserving unrelated ed57a084 deferred-message binding changes, remains a
+  separate explicit Lance or delegated campaign authority decision. Normal
+  committed-HEAD installation must retain the oracle and existing operations
+  for installed latency/rotation/parity validation; later retirement retains
+  its own gates. The approval does not amend hrc-runtime.rust-crate-edges or
+  the retirement contracts, and supplies no authority for that restoration.
+last_verified: 2026-11-02 design approval by source reading at ed57a084 and pre-retirement 54f3a23a; no creation-event implementation, isolated test, build, install, activation or latency acceptance evidence is claimed
+reopen_when: Creation scope or identity, one-event-per-insert semantics, transaction/publication boundary, meaning of starting, presentation selection, timestamp meaning, or consumer membership authority changes.
