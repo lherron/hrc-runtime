@@ -1323,7 +1323,9 @@ _deploy-node ssh-target expected-node target-ref="origin/main" aspd-ref="origin/
       if [[ "$expected_node" == hrcdev ]]; then
         install_env=(env VERDACCIO_REGISTRY=http://127.0.0.1:4873/)
       fi
-      "${install_env[@]}" just install no-sync=1
+      # stdin is the rest of this script (`ssh … bash -s`): any child that reads
+      # it — rbuild's ssh to build1 does — swallows the DEPLOY_* lines below.
+      "${install_env[@]}" just install no-sync=1 </dev/null
       # T-09861: the restart does NOT run here. This ssh shell has no runtime
       # identity, so the daemon would refuse it; the invoking seat restarts this
       # node through the lifecycle endpoint (`--node`) between the two ssh phases.
