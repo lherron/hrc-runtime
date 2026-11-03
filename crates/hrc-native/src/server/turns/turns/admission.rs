@@ -735,6 +735,14 @@ pub(crate) mod tests {
         mode: &str,
         configured: bool,
     ) -> anyhow::Result<(fixture::ScratchStore, Shared)> {
+        server_with(mode, configured, crate::server::store_lock::StoreLock::new)
+    }
+    /// `server` with a caller-built store mutex (an observed one, for hold tests).
+    pub(crate) fn server_with(
+        mode: &str,
+        configured: bool,
+        lock: impl FnOnce(hrc_store::Store) -> crate::server::store_lock::StoreLock,
+    ) -> anyhow::Result<(fixture::ScratchStore, Shared)> {
         let (scratch, store) = fixture::ScratchStore::new()?;
         let runtime = scratch.root.join("run");
         let state = scratch.root.join("state");
@@ -753,7 +761,7 @@ pub(crate) mod tests {
         let started_at = hrc_store::timestamp();
         let server = Arc::new(Server {
             command_targets: Default::default(),
-            store: crate::server::store_lock::StoreLock::new(store),
+            store: lock(store),
             accounting: accounting::Accounting::new(),
             brokers: Default::default(),
             participant_work: Default::default(),

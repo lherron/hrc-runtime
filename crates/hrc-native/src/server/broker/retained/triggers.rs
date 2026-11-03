@@ -2,40 +2,44 @@
 //! every lease-GC tick, and one attempt after a runtime is recorded terminated.
 use super::*;
 
-/// retainedEvidencePassCandidates
-fn candidates(db: &Connection) -> Result<(Vec<String>, usize, usize)> {
+/// retainedEvidencePassCandidates, a slice of runtimes per store hold.
+async fn candidates(server: &Shared) -> Result<(Vec<String>, usize, usize)> {
     let now = now_ms();
     let (mut ids, mut eligible, mut unbound) = (Vec::new(), 0, 0);
-    let mut stmt =
-        db.prepare("SELECT runtime_id FROM runtimes ORDER BY created_at ASC, runtime_id ASC")?;
-    let all: Vec<String> = stmt
-        .query_map([], |r| r.get(0))?
-        .collect::<rusqlite::Result<_>>()?;
-    for id in all {
-        let Some(r) = row(db, &id)? else { continue };
-        if !r.broker() || !r.eligible(now) {
-            continue;
-        }
-        if release(&r.state).is_none() {
-            unbound += 1;
-            continue;
-        }
-        let h = hold(db, &r, now)?;
-        let (true, Some(path)) = (h.held, h.ledger_path.as_deref()) else {
-            continue;
-        };
-        let retryable = h
-            .reason
-            .as_deref()
-            .is_some_and(|o| o == "not_attempted" || classify(o) == "retryable");
-        if !retryable || !Path::new(path).parent().is_some_and(Path::exists) {
-            continue;
-        }
-        eligible += 1;
-        if ids.len() < PASS_LIMIT {
-            ids.push(id);
-        }
-    }
+    let all = runtime_ids(&server.store.lock().unwrap().sqlite)?;
+    each_runtime_sliced(
+        || server.store.lock().unwrap(),
+        &all,
+        |db, id| {
+            let Some(r) = row(db, id)? else {
+                return Ok(());
+            };
+            if !r.broker() || !r.eligible(now) {
+                return Ok(());
+            }
+            if release(&r.state).is_none() {
+                unbound += 1;
+                return Ok(());
+            }
+            let h = hold(db, &r, now)?;
+            let (true, Some(path)) = (h.held, h.ledger_path.as_deref()) else {
+                return Ok(());
+            };
+            let retryable = h
+                .reason
+                .as_deref()
+                .is_some_and(|o| o == "not_attempted" || classify(o) == "retryable");
+            if !retryable || !Path::new(path).parent().is_some_and(Path::exists) {
+                return Ok(());
+            }
+            eligible += 1;
+            if ids.len() < PASS_LIMIT {
+                ids.push(id.to_owned());
+            }
+            Ok(())
+        },
+    )
+    .await?;
     Ok((ids, eligible, unbound))
 }
 static PASS: LazyLock<tokio::sync::Mutex<()>> = LazyLock::new(Default::default);
@@ -43,7 +47,7 @@ static PASS: LazyLock<tokio::sync::Mutex<()>> = LazyLock::new(Default::default);
 /// is unattempted or retryable. Startup and every lease-GC tick.
 pub async fn pass(server: &Shared) {
     let _single = PASS.lock().await;
-    let (ids, eligible, unbound) = match candidates(&server.store.lock().unwrap().sqlite) {
+    let (ids, eligible, unbound) = match candidates(server).await {
         Ok(c) => c,
         Err(e) => {
             log(
@@ -170,4 +174,29 @@ pub fn start_terminal_watch(server: &Shared) {
             }
         }
     });
+}
+
+#[cfg(test)]
+mod tests {
+    use super::super::tests::{holds_at, observed};
+    use super::*;
+
+    // Regression (T-12413 phase 3): the candidate scan hydrated every
+    // runtime's row and holds under ONE store hold (12-14 s on max3) on
+    // startup and every lease-GC tick. Under test the slice is zero, so a
+    // bounded scan takes the store at least once per runtime.
+    #[tokio::test]
+    async fn pass_scans_candidates_a_slice_at_a_time() -> Result<()> {
+        let n = 40;
+        let (_scratch, server, seen) = observed(n)?;
+        seen.lock().unwrap().clear();
+        pass(&server).await;
+        let holds = holds_at(&seen, "triggers.rs");
+        assert!(
+            holds.len() > n,
+            "{} triggers.rs holds for {n} runtimes: {holds:?}",
+            holds.len()
+        );
+        Ok(())
+    }
 }

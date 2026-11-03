@@ -479,123 +479,127 @@ async fn ipc_dir_sweep(
     let mut referenced: Vec<String> = Vec::new();
     let mut owners: HashMap<PathBuf, Value> = HashMap::new();
     let mut held_by_outcome: HashMap<PathBuf, i64> = HashMap::new();
-    {
-        let db = server.store.lock().unwrap();
-        let mut stmt = db
-            .sqlite
-            .prepare("SELECT runtime_id FROM runtimes ORDER BY created_at ASC, runtime_id ASC")?;
-        let ids: Vec<String> = stmt
-            .query_map([], |r| r.get(0))?
-            .collect::<rusqlite::Result<_>>()?;
-        drop(stmt);
-        for id in &ids {
-            let Some(row) = retained::row(&db.sqlite, id)? else {
-                continue;
-            };
-            let hold = retained::hold(&db.sqlite, &row, now)?;
-            let expired = matches!(
-                row.status.as_str(),
-                "crashed" | "dead" | "stale" | "detached"
-            )
-            .then(|| retained::hold_expired_age(row.status_changed_at.as_deref(), now))
-            .flatten();
-            if let (Some(path), Some(age)) = (&hold.ledger_path, expired)
-                && let Some(dir) = Path::new(path).parent().filter(|d| d.exists())
+    let ids = retained::runtime_ids(&server.store.lock().unwrap().sqlite)?;
+    let lock = || server.store.lock().unwrap();
+    // Both passes keep their order: a later runtime, and the claim pass over
+    // the retained pass, overwrites the owner logged for a shared dir.
+    retained::each_runtime_sliced(lock, &ids, |db, id| {
+        let Some(row) = retained::row(db, id)? else {
+            return Ok(());
+        };
+        let hold = retained::hold(db, &row, now)?;
+        let expired = matches!(
+            row.status.as_str(),
+            "crashed" | "dead" | "stale" | "detached"
+        )
+        .then(|| retained::hold_expired_age(row.status_changed_at.as_deref(), now))
+        .flatten();
+        if let (Some(path), Some(age)) = (&hold.ledger_path, expired)
+            && let Some(dir) = Path::new(path).parent().filter(|d| d.exists())
+        {
+            if REVIVABLE_EXPIRY_LOGGED
+                .lock()
+                .unwrap()
+                .insert(id.to_owned())
             {
-                if REVIVABLE_EXPIRY_LOGGED.lock().unwrap().insert(id.clone()) {
-                    log(
-                        "info",
-                        "retained_evidence.revivable_expired",
-                        json!({"runtimeId":id,"status":row.status,"ageMs":age}),
+                log(
+                    "info",
+                    "retained_evidence.revivable_expired",
+                    json!({"runtimeId":id,"status":row.status,"ageMs":age}),
+                );
+            }
+            owners.insert(
+                dir.to_owned(),
+                json!({"runtimeId":id,"reason":"revivable_expired","ageMs":age}),
+            );
+        }
+        if hold.held
+            && let Some(path) = &hold.ledger_path
+        {
+            referenced.push(path.clone());
+            // Incomplete and paused outcomes wait for an operator; keep them visible.
+            if let Some(reason) = hold
+                .reason
+                .as_deref()
+                .filter(|o| *o != "revivable" && *o != "not_attempted")
+                && matches!(retained::classify(reason), "incomplete" | "paused")
+                && let Some(dir) = Path::new(path).parent()
+            {
+                let age = Claim {
+                    rt: row.rt.clone(),
+                    status_changed_at: row.status_changed_at.clone(),
+                    updated_at: String::new(),
+                }
+                .terminal_age(now);
+                held_by_outcome.insert(dir.to_owned(), age);
+            }
+            return Ok(());
+        }
+        if let Some(outcome) = retained::record_unbound(db, &row, now)?
+            && let Some(dir) =
+                retained::ledger_path(&row).and_then(|p| Path::new(&p).parent().map(Path::to_owned))
+        {
+            owners.insert(
+                dir,
+                json!({"runtimeId":id,"reason":"unbound_outcome","outcome":outcome}),
+            );
+        }
+        Ok(())
+    })
+    .await?;
+    retained::each_runtime_sliced(lock, &ids, |db, id| {
+        let Some(c) = claim_in(db, id)? else {
+            return Ok(());
+        };
+        if c.rt.controller_kind.as_deref() != Some("harness-broker") {
+            return Ok(());
+        }
+        let external = controller::is_external_lifecycle_owner(&c.rt);
+        let terminal = lease::unavailable(&c.rt.status);
+        if !external && terminal && c.terminal_age(now) >= ttl {
+            return Ok(());
+        }
+        let Some(h) = rt_hosting(&c.rt) else {
+            return Ok(());
+        };
+        let mut paths: Vec<String> = Vec::new();
+        if h.endpoint["kind"] == "unix-jsonrpc-ndjson" {
+            paths.extend(
+                [
+                    h.endpoint["socketPath"].as_str(),
+                    h.endpoint["attachTokenRef"]["path"].as_str(),
+                ]
+                .into_iter()
+                .flatten()
+                .map(str::to_owned),
+            );
+        }
+        if let Some(l) = h.substrate["eventLedgerPath"]
+            .as_str()
+            .filter(|l| !l.is_empty() && h.substrate["kind"] == "leased-tmux")
+        {
+            paths.push(l.into());
+        }
+        let external_age = (external && terminal)
+            .then(|| retained::hold_expired_age(c.status_changed_at.as_deref(), now))
+            .flatten();
+        if let Some(age) = external_age
+            && !attempt_can_reattach(db, id)
+        {
+            for p in &paths {
+                if let Some(dir) = Path::new(p).parent() {
+                    owners.insert(
+                        dir.to_owned(),
+                        json!({"runtimeId":id,"reason":"external_hold_expired","ageMs":age}),
                     );
                 }
-                owners.insert(
-                    dir.to_owned(),
-                    json!({"runtimeId":id,"reason":"revivable_expired","ageMs":age}),
-                );
             }
-            if hold.held
-                && let Some(path) = &hold.ledger_path
-            {
-                referenced.push(path.clone());
-                // Incomplete and paused outcomes wait for an operator; keep them visible.
-                if let Some(reason) = hold
-                    .reason
-                    .as_deref()
-                    .filter(|o| *o != "revivable" && *o != "not_attempted")
-                    && matches!(retained::classify(reason), "incomplete" | "paused")
-                    && let Some(dir) = Path::new(path).parent()
-                {
-                    let age = Claim {
-                        rt: row.rt.clone(),
-                        status_changed_at: row.status_changed_at.clone(),
-                        updated_at: String::new(),
-                    }
-                    .terminal_age(now);
-                    held_by_outcome.insert(dir.to_owned(), age);
-                }
-                continue;
-            }
-            if let Some(outcome) = retained::record_unbound(&db.sqlite, &row, now)?
-                && let Some(dir) = retained::ledger_path(&row)
-                    .and_then(|p| Path::new(&p).parent().map(Path::to_owned))
-            {
-                owners.insert(
-                    dir,
-                    json!({"runtimeId":id,"reason":"unbound_outcome","outcome":outcome}),
-                );
-            }
+            return Ok(());
         }
-        for id in &ids {
-            let Some(c) = claim_in(&db.sqlite, id)? else {
-                continue;
-            };
-            if c.rt.controller_kind.as_deref() != Some("harness-broker") {
-                continue;
-            }
-            let external = controller::is_external_lifecycle_owner(&c.rt);
-            let terminal = lease::unavailable(&c.rt.status);
-            if !external && terminal && c.terminal_age(now) >= ttl {
-                continue;
-            }
-            let Some(h) = rt_hosting(&c.rt) else { continue };
-            let mut paths: Vec<String> = Vec::new();
-            if h.endpoint["kind"] == "unix-jsonrpc-ndjson" {
-                paths.extend(
-                    [
-                        h.endpoint["socketPath"].as_str(),
-                        h.endpoint["attachTokenRef"]["path"].as_str(),
-                    ]
-                    .into_iter()
-                    .flatten()
-                    .map(str::to_owned),
-                );
-            }
-            if let Some(l) = h.substrate["eventLedgerPath"]
-                .as_str()
-                .filter(|l| !l.is_empty() && h.substrate["kind"] == "leased-tmux")
-            {
-                paths.push(l.into());
-            }
-            let external_age = (external && terminal)
-                .then(|| retained::hold_expired_age(c.status_changed_at.as_deref(), now))
-                .flatten();
-            if let Some(age) = external_age
-                && !attempt_can_reattach(&db.sqlite, id)
-            {
-                for p in &paths {
-                    if let Some(dir) = Path::new(p).parent() {
-                        owners.insert(
-                            dir.to_owned(),
-                            json!({"runtimeId":id,"reason":"external_hold_expired","ageMs":age}),
-                        );
-                    }
-                }
-                continue;
-            }
-            referenced.extend(paths);
-        }
-    }
+        referenced.extend(paths);
+        Ok(())
+    })
+    .await?;
     if !held_by_outcome.is_empty() {
         let bytes: u64 = held_by_outcome.keys().map(|d| directory_bytes(d)).sum();
         log(
@@ -951,6 +955,73 @@ pub(super) fn hrcpty_log_sweep(server: &Server) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::server::retained::tests::{holds_at, observed};
+
+    // Regression (T-12413 phase 3): the bipc GC read every runtime's row,
+    // holds and claim under ONE store hold (18-46 s on max3's 8.2k runtimes,
+    // every ~6 min), stalling every route. Under test the slice is zero, so a
+    // bounded sweep takes the store at least once per runtime per pass.
+    #[tokio::test]
+    async fn ipc_dir_sweep_takes_the_store_a_slice_at_a_time() -> Result<()> {
+        let n = 40;
+        let (_scratch, server, seen) = observed(n)?;
+        std::fs::create_dir_all(server.runtime.join("bipc/orphan"))?;
+        seen.lock().unwrap().clear();
+        let now = chrono::Utc::now().timestamp_millis() + 1_000;
+        let mut r = json!({});
+        ipc_dir_sweep(&server, &mut r, 0, now, 0).await?;
+        let holds = holds_at(&seen, "sweeps.rs");
+        assert!(
+            holds.len() > 2 * n,
+            "{} sweeps.rs holds for {n} runtimes: {holds:?}",
+            holds.len()
+        );
+        Ok(())
+    }
+
+    // Outcome semantics the slicing must keep: a live runtime's socket dir
+    // stays; an unbound terminated runtime records its outcome and its dir
+    // goes; a dir no runtime names goes.
+    #[tokio::test]
+    async fn ipc_dir_sweep_keeps_referenced_and_removes_the_rest() -> Result<()> {
+        let (_scratch, server, _seen) = observed(5)?;
+        let bipc = server.runtime.join("bipc");
+        for leaf in ["keep", "unbound", "orphan"] {
+            std::fs::create_dir_all(bipc.join(leaf))?;
+        }
+        let keep = bipc.join("keep");
+        let live = json!({"broker":{"endpoint":{"kind":"unix-jsonrpc-ndjson","socketPath":keep.join("broker.sock"),"attachTokenRef":{"kind":"file","path":keep.join("attach.token")}}}});
+        let unbound = json!({"broker":{"eventLedgerPath":bipc.join("unbound/events.ndjson")}});
+        {
+            let db = server.store.lock().unwrap();
+            let host: String =
+                db.sqlite
+                    .query_row("SELECT host_session_id FROM sessions LIMIT 1", [], |r| {
+                        r.get(0)
+                    })?;
+            for (id, status, state) in [
+                ("rt-live", "ready", &live),
+                ("rt-unbound", "terminated", &unbound),
+            ] {
+                db.sqlite.execute("INSERT INTO runtimes(runtime_id,host_session_id,scope_ref,lane_ref,generation,transport,status,status_changed_at,supports_inflight_input,controller_kind,runtime_state_json,created_at,updated_at) VALUES(?,?,'agent:test:project:fixture','main',1,'headless',?,'2026-01-01T00:00:00Z',0,'harness-broker',?,'2026-01-02T00:00:00Z','now')", rusqlite::params![id, host, status, state.to_string()])?;
+            }
+            db.sqlite.execute("INSERT INTO broker_invocations(invocation_id,operation_id,runtime_id,broker_protocol,broker_driver,invocation_state,capabilities_json,spec_hash,start_request_hash,selected_profile_hash,spec_projection_json,created_at,updated_at) VALUES('inv-unbound','op','rt-unbound','harness-broker/0.2','test','exited','{}','h','h','h','{}','now','now')", [])?;
+        }
+        let now = chrono::Utc::now().timestamp_millis() + 1_000;
+        let mut r = json!({});
+        ipc_dir_sweep(&server, &mut r, 0, now, 0).await?;
+        assert!(bipc.join("keep").exists(), "live socket dir removed");
+        assert!(!bipc.join("unbound").exists(), "unbound dir kept");
+        assert!(!bipc.join("orphan").exists(), "orphan dir kept");
+        assert_eq!(r["removedBrokerIpcDirs"], 2, "{r}");
+        let outcome: String = server.store.lock().unwrap().sqlite.query_row(
+            "SELECT outcome FROM retained_evidence_outcomes WHERE runtime_id='rt-unbound' AND invocation_id='inv-unbound'",
+            [],
+            |r| r.get(0),
+        )?;
+        assert_eq!(outcome, "offline_reader_unsupported_unbound_release");
+        Ok(())
+    }
 
     #[test]
     fn lsof_names_drop_the_type_suffix() {

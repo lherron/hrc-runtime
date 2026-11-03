@@ -4,7 +4,7 @@
 //! validated page by page, and projected under the retained-evidence fence. A
 //! recovery holds no ACK, opens no control socket and writes nothing under the
 //! ledger directory.
-use super::{Shared, controller, lease, projection, stderr_json};
+use super::{Shared, controller, lease, projection, stderr_json, store_lock::StoreGuard};
 use anyhow::Result;
 use rusqlite::{Connection, OptionalExtension, params};
 use serde_json::{Value, json};
@@ -84,6 +84,50 @@ fn now_ms() -> i64 {
 }
 
 // ── the runtime row this module reads ─────────────────────────────────────────
+
+/// Every runtime id, oldest first: the order both whole-table passes walk.
+pub fn runtime_ids(db: &Connection) -> Result<Vec<String>> {
+    let mut stmt =
+        db.prepare("SELECT runtime_id FROM runtimes ORDER BY created_at ASC, runtime_id ASC")?;
+    let ids = stmt
+        .query_map([], |r| r.get(0))?
+        .collect::<rusqlite::Result<_>>()?;
+    Ok(ids)
+}
+/// The longest one whole-table pass holds the store before yielding it
+/// (T-12413): one hold over every runtime was 12-46 s on max3. Zero under
+/// test, so each runtime takes its own hold.
+const RUNTIME_SLICE: Duration = if cfg!(test) {
+    Duration::ZERO
+} else {
+    Duration::from_millis(50)
+};
+/// Visit `ids` in order, a slice of them per store hold, yielding between
+/// slices so waiting routes take the mutex. `lock` is the caller's, so
+/// `store.lock_held` names the pass, not this helper. A runtime gone by its
+/// turn is the visitor's to skip, as a row missing from one snapshot was.
+pub async fn each_runtime_sliced<'a>(
+    lock: impl Fn() -> StoreGuard<'a>,
+    ids: &[String],
+    mut visit: impl FnMut(&Connection, &str) -> Result<()>,
+) -> Result<()> {
+    let mut next = 0;
+    while next < ids.len() {
+        {
+            let db = lock();
+            let started = std::time::Instant::now();
+            while next < ids.len() {
+                visit(&db.sqlite, &ids[next])?;
+                next += 1;
+                if started.elapsed() >= RUNTIME_SLICE {
+                    break;
+                }
+            }
+        }
+        tokio::task::yield_now().await;
+    }
+    Ok(())
+}
 
 pub struct Row {
     pub runtime_id: String,
@@ -950,3 +994,48 @@ pub async fn recover(server: &Shared, runtime_id: &str, trigger: &str) -> Result
 
 mod triggers;
 pub use triggers::{pass, start};
+
+#[cfg(test)]
+pub(crate) mod tests {
+    use crate::server::{Shared, store_lock::StoreLock, turns::admission::tests::server_with};
+    use anyhow::Result;
+    use serde_json::Value;
+    use std::{
+        sync::{Arc, Mutex},
+        time::Duration,
+    };
+
+    /// An observed server whose every store hold is recorded, with one
+    /// session and `n` terminated, unbound harness-broker runtimes.
+    pub(crate) fn observed(n: usize) -> Result<(impl Sized, Shared, Arc<Mutex<Vec<Value>>>)> {
+        let seen = Arc::new(Mutex::new(Vec::<Value>::new()));
+        let (scratch, server) = server_with("off", false, {
+            let seen = seen.clone();
+            move |store| {
+                StoreLock::observed(store, Duration::ZERO, move |held| {
+                    seen.lock().unwrap().push(held)
+                })
+            }
+        })?;
+        {
+            let mut db = server.store.lock().unwrap();
+            let host = db.create_session("agent:test:project:fixture", "main")?.0["hostSessionId"]
+                .as_str()
+                .unwrap()
+                .to_owned();
+            for i in 0..n {
+                db.sqlite.execute("INSERT INTO runtimes(runtime_id,host_session_id,scope_ref,lane_ref,generation,transport,status,status_changed_at,supports_inflight_input,controller_kind,runtime_state_json,created_at,updated_at) VALUES(?,?,'agent:test:project:fixture','main',1,'headless','terminated','2026-01-01T00:00:00Z',0,'harness-broker','{}','2026-01-01T00:00:00Z','now')", rusqlite::params![format!("filler-{i:04}"), host])?;
+            }
+        }
+        Ok((scratch, server, seen))
+    }
+    /// The recorded holds taken from `file`.
+    pub(crate) fn holds_at(seen: &Mutex<Vec<Value>>, file: &str) -> Vec<Value> {
+        seen.lock()
+            .unwrap()
+            .iter()
+            .filter(|h| h["callerTag"].as_str().is_some_and(|t| t.contains(file)))
+            .cloned()
+            .collect()
+    }
+}
