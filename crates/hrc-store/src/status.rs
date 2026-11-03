@@ -19,15 +19,48 @@ pub const FORENSIC_TERMINAL: [&str; 8] = [
     "exited",
 ];
 
+/// Runtime-list terminal set: `GET /v1/runtimes` hides these unless all=true.
+pub const LISTED_TERMINAL: [&str; 10] = [
+    "archived",
+    "crashed",
+    "dead",
+    "disposed",
+    "exited",
+    "failed",
+    "stale",
+    "stopped",
+    "terminal",
+    "terminated",
+];
+
+fn literals(values: &[&str]) -> String {
+    values
+        .iter()
+        .map(|s| format!("'{s}'"))
+        .collect::<Vec<_>>()
+        .join(",")
+}
+
 /// SQL literals generated from the same vocabulary as in-memory availability.
 pub fn unavailable_sql() -> &'static str {
-    static SQL: LazyLock<String> = LazyLock::new(|| {
-        UNAVAILABLE
-            .iter()
-            .map(|s| format!("'{s}'"))
-            .collect::<Vec<_>>()
-            .join(",")
-    });
+    static SQL: LazyLock<String> = LazyLock::new(|| literals(&UNAVAILABLE));
+    SQL.as_str()
+}
+
+/// `status NOT IN (<unavailable>)`: the predicate of migration 0131's partial
+/// index idx_runtimes_available. The planner matches it textually; keep the
+/// list order identical to the migration.
+pub fn available_sql() -> &'static str {
+    static SQL: LazyLock<String> =
+        LazyLock::new(|| format!("status NOT IN ({})", unavailable_sql()));
+    SQL.as_str()
+}
+
+/// `status NOT IN (<listed terminal>)`: the predicate of migration 0131's
+/// partial index idx_runtimes_live, in the migration's order.
+pub fn live_sql() -> &'static str {
+    static SQL: LazyLock<String> =
+        LazyLock::new(|| format!("status NOT IN ({})", literals(&LISTED_TERMINAL)));
     SQL.as_str()
 }
 

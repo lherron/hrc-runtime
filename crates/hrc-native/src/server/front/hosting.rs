@@ -186,7 +186,7 @@ pub async fn serve(role: Role) -> Result<()> {
     let server = Arc::new(Server {
         command_targets,
         accounting,
-        store: Mutex::new(store),
+        store: store_lock::StoreLock::new(store),
         brokers: Mutex::new(HashMap::new()),
         participant_work: Mutex::new(HashSet::new()),
         projection: Mutex::new(projection::Memory::default()),

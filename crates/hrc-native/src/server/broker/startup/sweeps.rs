@@ -255,7 +255,7 @@ pub(super) async fn lease_sweep(server: &Shared, grace: i64) -> Result<Value> {
     let mut claims: HashMap<String, Vec<String>> = HashMap::new();
     let brokers = {
         let db = server.store.lock().unwrap();
-        db::runtimes_where(&db.sqlite, "controller_kind = 'harness-broker'")?
+        db::broker_lease_rows(&db.sqlite)?
     };
     // An hrcpty supervisor outliving its runtime is ended (T-12046 §4.6); its
     // socket lives in bipc, never in btmux.

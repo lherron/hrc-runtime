@@ -724,7 +724,7 @@ pub fn stale_age(session: &Value, allow_stale: bool) -> Option<(i64, i64)> {
 pub(crate) mod tests {
     use super::*;
     use crate::server::{Server, accounting, federation, lifecycle, release};
-    use std::sync::{Arc, Mutex};
+    use std::sync::Arc;
     mod fixture {
         include!(concat!(
             env!("CARGO_MANIFEST_DIR"),
@@ -753,7 +753,7 @@ pub(crate) mod tests {
         let started_at = hrc_store::timestamp();
         let server = Arc::new(Server {
             command_targets: Default::default(),
-            store: Mutex::new(store),
+            store: crate::server::store_lock::StoreLock::new(store),
             accounting: accounting::Accounting::new(),
             brokers: Default::default(),
             participant_work: Default::default(),

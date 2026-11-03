@@ -16,6 +16,28 @@ pub(crate) fn session_recency() -> &'static str {
     SQL.as_str()
 }
 
+/// `session_recency()` for a whole projection, as a union of indexed lookups
+/// (migration 0131) instead of correlated subqueries over every session
+/// (T-12413: 99 x 650 ms). MAX(a,b,c) >= t holds exactly when one argument
+/// does, so the arms are: created, indexed activity, any runtime activity,
+/// an active run, an available runtime. `active_run_id >= ''` is
+/// `IS NOT NULL` for this TEXT column, in a form the planner indexes. Binds
+/// one named `:since` (the cutoff) at the next positional index.
+pub(crate) fn recent_sessions() -> &'static str {
+    static SQL: std::sync::LazyLock<String> = std::sync::LazyLock::new(|| {
+        format!(
+            "s.host_session_id IN (\
+             SELECT host_session_id FROM sessions WHERE created_at >= :since \
+             UNION SELECT host_session_id FROM session_index WHERE last_activity_at >= :since \
+             UNION SELECT host_session_id FROM runtimes WHERE COALESCE(last_activity_at,created_at) >= :since \
+             UNION SELECT host_session_id FROM runtimes WHERE active_run_id >= '' \
+             UNION SELECT host_session_id FROM runtimes WHERE {})",
+            crate::status::available_sql()
+        )
+    });
+    SQL.as_str()
+}
+
 fn filters(input: &HashMap<String, String>, excluded: &str) -> (String, Vec<SqlValue>) {
     let mut predicates = vec!["scope_ref NOT LIKE 'app:%'".to_owned()];
     let mut values = Vec::new();
@@ -111,7 +133,7 @@ impl Store {
         {
             // Activity clocks exclude sessions.updated_at: housekeeping writes
             // must not bring cold sessions back into the projection.
-            predicates.push(session_recency());
+            predicates.push(recent_sessions());
             values.push(since.to_owned().into());
         }
         let clause = if predicates.is_empty() {

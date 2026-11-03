@@ -65,7 +65,7 @@ const {openHrcDatabase} = await import(`${rel}/packages/hrc-store-sqlite/dist/da
 openHrcDatabase(path).close();
 const {Database} = await import('bun:sqlite');
 const db = new Database(path);
-db.exec("DROP TABLE seat_handoffs; DELETE FROM hrc_migrations WHERE id = '0130_seat_handoffs'");
+db.exec("DROP INDEX idx_runtimes_status; DROP INDEX idx_runtimes_live; DROP INDEX idx_runtimes_available; DROP INDEX idx_runtimes_recent_activity; DROP INDEX idx_runtimes_session_activity; DROP INDEX idx_sessions_created_at; DELETE FROM hrc_migrations WHERE id = '0131_runtime_live_indexes'");
 db.close();
 ''', str(release), str(db)])
 
@@ -76,20 +76,20 @@ def version(path):
 
 
 try:
-    check('fixture schema is 0129', version(db) == '0129_seat_kind_work')
+    check('fixture schema is 0130', version(db) == '0130_seat_handoffs')
     check('installed release sees pending schema', command(['bash', str(repo / 'scripts/hrc-owner.sh'), 'schema-state']).stdout.strip() == 'pending')
     base = ['bash', str(repo / 'scripts/hrc-owner.sh'), 'activate', '--expect-commit', sha]
     command(base + ['--expect-pending', 'wrong', '--prepare-only'], success=False)
-    check('failed preflight leaves schema unchanged', version(db) == '0129_seat_kind_work')
+    check('failed preflight leaves schema unchanged', version(db) == '0130_seat_handoffs')
     check('failed preflight creates no owner or backup', not (root / 'owner').exists() and not (state / 'backups').exists())
-    command(base + ['--expect-pending', '0130_seat_handoffs', '--dry-run'])
-    check('dry run leaves schema unchanged', version(db) == '0129_seat_kind_work')
+    command(base + ['--expect-pending', '0131_runtime_live_indexes', '--dry-run'])
+    check('dry run leaves schema unchanged', version(db) == '0130_seat_handoffs')
     check('dry run creates no owner or backup', not (root / 'owner').exists() and not (state / 'backups').exists())
-    command(base + ['--expect-pending', '0130_seat_handoffs', '--prepare-only'])
-    check('preparation applies pending migration', version(db) == '0130_seat_handoffs')
+    command(base + ['--expect-pending', '0131_runtime_live_indexes', '--prepare-only'])
+    check('preparation applies pending migration', version(db) == '0131_runtime_live_indexes')
     check('installed release sees current schema', command(['bash', str(repo / 'scripts/hrc-owner.sh'), 'schema-state']).stdout.strip() == 'current')
     backups = list((state / 'backups').glob('*.sqlite'))
-    check('one readable backup retains old schema', len(backups) == 1 and version(backups[0]) == '0129_seat_kind_work')
+    check('one readable backup retains old schema', len(backups) == 1 and version(backups[0]) == '0130_seat_handoffs')
     check('owner staged after migration', (root / 'owner/bin/rusthrc').is_file() and (root / 'owner/hrc-runtime-current').is_symlink())
     check('remote preparation starts no daemon', not (run / 'hrc.sock').exists() and not log.read_text())
     command(base + ['--prepare-only'], success=False)

@@ -25,6 +25,8 @@ mod release;
 mod statement_telemetry;
 #[path = "server/front/status_runtime.rs"]
 mod status_runtime;
+#[path = "server/front/store_lock.rs"]
+mod store_lock;
 
 #[path = "server/broker/acp_bridge.rs"]
 mod acp_bridge;
@@ -173,7 +175,7 @@ use tokio::net::UnixListener;
 type Shared = Arc<Server>;
 struct Server {
     command_targets: serde_json::Map<String, Value>,
-    store: Mutex<Store>,
+    store: store_lock::StoreLock,
     accounting: Arc<accounting::Accounting>,
     brokers: Mutex<HashMap<String, rpc::JsonRpc>>,
     participant_work: Mutex<HashSet<String>>,

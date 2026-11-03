@@ -112,6 +112,28 @@ pub fn runtime(db: &Connection, id: &str) -> Result<Option<Rt>> {
         .pop()
         .map(rt_record))
 }
+/// Every harness-broker runtime, with runtime state pruned in SQL to the
+/// `broker` subtree: the lease sweep reads nothing else (hosting, hrcpty
+/// substrate, tmuxJson, active invocation), and the rest of the state was
+/// ~84% of the 92 MB it parsed under the store lock (T-12413). Invalid JSON is
+/// passed through unchanged, as before.
+pub fn broker_lease_rows(db: &Connection) -> Result<Vec<Rt>> {
+    let columns = hrc_store::RUNTIME_COLUMNS
+        .iter()
+        .map(|(column, _)| match *column {
+            "runtime_state_json" => "CASE WHEN json_valid(runtime_state_json) THEN json_object('broker', json_extract(runtime_state_json,'$.broker')) ELSE runtime_state_json END AS runtime_state_json".to_owned(),
+            c => c.to_owned(),
+        })
+        .collect::<Vec<_>>()
+        .join(",");
+    let mut stmt = db.prepare(&format!(
+        "SELECT {columns} FROM runtimes WHERE controller_kind = 'harness-broker' ORDER BY created_at, runtime_id"
+    ))?;
+    let rows = stmt
+        .query_map([], hrc_store::runtime_row)?
+        .collect::<rusqlite::Result<Vec<_>>>()?;
+    Ok(rows.into_iter().map(rt_record).collect())
+}
 /// Runtimes matching a fixed SQL predicate, oldest first.
 pub fn runtimes_where(db: &Connection, filter: &str) -> Result<Vec<Rt>> {
     Ok(hrc_store::runtime_records_where(db, filter, [])?

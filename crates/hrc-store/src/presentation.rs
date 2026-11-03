@@ -258,7 +258,7 @@ fn project(db: &Store, r: &Value) -> Result<Value, anyhow::Error> {
 }
 pub fn runtimes(db: &Store) -> Result<Value> {
     Ok(
-        json!({"ok":true,"runtimes":db.runtimes_where("status NOT IN (SELECT value FROM json_each(?))",[json!(UNAVAILABLE).to_string()])?.iter().filter(|r|available(r)).map(|r|project(db,r)).collect::<Result<Vec<_>>>()?}),
+        json!({"ok":true,"runtimes":db.runtimes_where(crate::status::available_sql(),[])?.iter().filter(|r|available(r)).map(|r|project(db,r)).collect::<Result<Vec<_>>>()?}),
     )
 }
 pub fn seats(db: &Store, keys: Vec<(String, String)>) -> Result<Value> {

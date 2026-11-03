@@ -56,18 +56,7 @@ fn date_ms(v: &Value) -> Option<i64> {
         .ok()
         .map(|d| d.timestamp_millis())
 }
-const TERMINAL: [&str; 10] = [
-    "archived",
-    "crashed",
-    "dead",
-    "disposed",
-    "exited",
-    "failed",
-    "stale",
-    "stopped",
-    "terminal",
-    "terminated",
-];
+use hrc_store::status::LISTED_TERMINAL as TERMINAL;
 fn terminal(v: &Value) -> bool {
     TERMINAL.iter().any(|s| v["status"] == *s)
 }
@@ -252,18 +241,21 @@ pub fn query(
     // SQL only narrows what gets hydrated; `retain` below stays the filter.
     let mut clause = vec!["1"];
     let mut values = Vec::<String>::new();
+    // Literal predicates matching migration 0131's indexes: a json_each list
+    // or an OR across them sends the planner to a full table scan (T-12413).
+    let live = hrc_store::status::live_sql();
     let recent_clause;
     if let Some(since) = recent_since {
         // Second precision compares correctly against stored RFC 3339 text
-        // with or without fractional seconds.
-        recent_clause =
-            format!("(status NOT IN (SELECT value FROM json_each(?)) OR {ACTIVITY_SQL} >= ?)");
+        // with or without fractional seconds. SQLite will not OR-optimize the
+        // two arms, so each arm is its own indexed lookup.
+        recent_clause = format!(
+            "rowid IN (SELECT rowid FROM runtimes INDEXED BY idx_runtimes_live WHERE {live} UNION SELECT rowid FROM runtimes WHERE {ACTIVITY_SQL} >= ?)"
+        );
         clause.push(&recent_clause);
-        values.push(json!(TERMINAL).to_string());
         values.push(since.format("%Y-%m-%dT%H:%M:%S").to_string());
     } else if !all {
-        clause.push("status NOT IN (SELECT value FROM json_each(?))");
-        values.push(json!(TERMINAL).to_string());
+        clause.push(live);
     }
     if !statuses.is_empty() {
         clause.push("status IN (SELECT value FROM json_each(?))");
@@ -274,13 +266,23 @@ pub fn query(
         values.push(host.to_owned());
     }
     if let Some(scope) = optional(q, "scope") {
-        clause.push("substr(scope_ref,1,length(?))=?");
-        values.extend([scope.to_owned(), scope.to_owned()]);
+        // The range reaches idx_runtimes_scope_ref; substr stays the authority.
+        clause.push("scope_ref >= ? AND scope_ref < ? AND substr(scope_ref,1,length(?))=?");
+        values.extend([
+            scope.to_owned(),
+            format!("{scope}{}", char::MAX),
+            scope.to_owned(),
+            scope.to_owned(),
+        ]);
     }
     let db = server.store.lock().unwrap();
     let clause = clause.join(" AND ");
     let mut rows = if paginate {
         list_keys(&db, &clause, values)?
+    } else if recent_since.is_some() {
+        // No inventory reader uses runtime state (the kernel deletes it), so
+        // it is never read or parsed (T-12417).
+        db.runtime_inventory_where(&clause, rusqlite::params_from_iter(values))?
     } else {
         db.runtimes_where(&clause, rusqlite::params_from_iter(values))?
     };
@@ -320,15 +322,6 @@ pub fn query(
         )
     };
     rows.sort_by_key(&key);
-    if recent_since.is_some() {
-        // No inventory reader uses runtime state (the kernel deletes it);
-        // it was 95% of a 102 MB peer health body (T-12417).
-        for row in &mut rows {
-            if let Some(row) = row.as_object_mut() {
-                row.remove("runtimeStateJson");
-            }
-        }
-    }
     if paginate && let Some(cursor) = optional(q, "cursor") {
         let err = || {
             ApiError::bad(
@@ -585,6 +578,85 @@ mod tests {
             query(&server, &live, false, Terminal::Recent).map_err(|e| anyhow::anyhow!("{e:?}"))?;
         assert_eq!(rows.len(), 1);
         assert_eq!(rows[0]["runtimeId"], "live");
+        Ok(())
+    }
+
+    // T-12413 phase 2: every hot runtimes/sessions reader is index-driven.
+    // Without sqlite_stat1 (max3 has none) the planner falls back to a full
+    // SCAN whenever a predicate stops matching an index: a json_each status
+    // list, a partial-index literal drifting from migration 0131, `IS NOT
+    // NULL`, a substr() scope prefix, or a correlated recency subquery.
+    #[test]
+    fn hot_runtime_and_session_reads_are_index_driven() -> anyhow::Result<()> {
+        let (_scratch, server) = server("off", false)?;
+        let seen = std::sync::Arc::new(std::sync::Mutex::new(Vec::<String>::new()));
+        {
+            let mut db = server.store.lock().unwrap();
+            let session = db.create_session("agent:test:project:fixture", "main")?.0;
+            db.sqlite.execute("INSERT INTO runtimes(runtime_id,host_session_id,scope_ref,lane_ref,generation,transport,status,supports_inflight_input,runtime_state_json,last_activity_at,created_at,updated_at) VALUES('live',?,'agent:test:project:fixture','main',1,'hrcpty','busy',0,'{}','2026-01-01T00:00:00Z','2026-01-01T00:00:00Z','2026-01-01T00:00:00Z')", [session["hostSessionId"].as_str()])?;
+            let sink = seen.clone();
+            db.instrument_statements(0.0, move |s| sink.lock().unwrap().push(s.sql))?;
+        }
+        let q = |pairs: &[(&str, &str)]| -> HashMap<String, String> {
+            pairs
+                .iter()
+                .map(|(k, v)| ((*k).into(), (*v).into()))
+                .collect()
+        };
+        let run = |q: HashMap<String, String>, paginate, mode| {
+            query(&server, &q, paginate, mode).map_err(|e| anyhow::anyhow!("{e:?}"))
+        };
+        run(q(&[]), false, Terminal::Recent)?;
+        run(q(&[]), true, Terminal::Exclude)?;
+        // acp-server's holder liveness: scope prefix with all=true.
+        run(
+            q(&[("scope", "agent:test:project:fixture"), ("all", "true")]),
+            true,
+            Terminal::Exclude,
+        )?;
+        {
+            let db = server.store.lock().unwrap();
+            db.live_refs()?;
+            hrc_store::presentation::runtimes(&db)?;
+            db.sessions_for_projection(None, None, Some("2026-01-01T00:00:00Z"))?;
+        }
+        let statements: Vec<String> = seen.lock().unwrap().clone();
+        let db = server.store.lock().unwrap();
+        let mut checked = 0;
+        for sql in statements
+            .iter()
+            .filter(|sql| sql.contains("FROM runtimes") || sql.contains("FROM sessions"))
+        {
+            let mut stmt = db.sqlite.prepare(&format!("EXPLAIN QUERY PLAN {sql}"))?;
+            let unbound = vec![rusqlite::types::Value::Null; stmt.parameter_count()];
+            let plan: Vec<String> = stmt
+                .query_map(rusqlite::params_from_iter(unbound), |r| {
+                    r.get::<_, String>(3)
+                })?
+                .collect::<rusqlite::Result<_>>()?;
+            for line in &plan {
+                let table = line
+                    .strip_prefix("SCAN ")
+                    .and_then(|rest| rest.split_whitespace().next());
+                // SEARCH is a bounded lookup. A SCAN is a full pass, even
+                // through an index, unless the index is one of migration
+                // 0131's partial live-set indexes.
+                let indexed =
+                    line.contains("idx_runtimes_live") || line.contains("idx_runtimes_available");
+                assert!(
+                    !matches!(
+                        table,
+                        Some("runtimes" | "sessions" | "s" | "r" | "r2" | "session_index")
+                    ) || indexed,
+                    "full scan in a hot reader:\n{sql}\n{plan:#?}"
+                );
+            }
+            checked += 1;
+        }
+        assert!(
+            checked >= 6,
+            "expected every hot reader to be observed: {statements:#?}"
+        );
         Ok(())
     }
 }

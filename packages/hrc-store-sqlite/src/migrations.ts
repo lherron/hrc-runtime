@@ -7,6 +7,7 @@ import { participantFreshContinuationReason } from './migrations/participant-fre
 import { permissionAuditRemoval } from './migrations/permission-audit-removal.js'
 import { planPolicyTableRemoval } from './migrations/plan-policy-table-removal.js'
 import { runtimeLegacyIdentityNullableMigration } from './migrations/runtime-legacy-identity-nullability.js'
+import { runtimeLiveIndexes } from './migrations/runtime-live-indexes.js'
 import { schemaMigrations } from './migrations/schema-migrations.js'
 import { seatAnnotations } from './migrations/seat-annotations.js'
 import { seatHandoffs } from './migrations/seat-handoffs.js'
@@ -37,6 +38,7 @@ export const phase1Migrations: readonly HrcMigration[] = [
   seatAnnotations,
   seatKindWork,
   seatHandoffs,
+  runtimeLiveIndexes,
 ]
 
 /**

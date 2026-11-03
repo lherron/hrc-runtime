@@ -341,6 +341,30 @@ impl Store {
             .collect::<rusqlite::Result<_>>()?)
     }
 
+    /// `runtimes_where` without runtime_state_json: the column is never read,
+    /// so inventory listings skip the largest field and its JSON parse.
+    #[track_caller]
+    pub fn runtime_inventory_where(
+        &self,
+        clause: &str,
+        values: impl rusqlite::Params,
+    ) -> Result<Vec<Value>> {
+        let columns = RUNTIME_COLUMNS
+            .iter()
+            .map(|(column, _)| match *column {
+                "runtime_state_json" => "NULL AS runtime_state_json".to_owned(),
+                c => c.to_owned(),
+            })
+            .collect::<Vec<_>>()
+            .join(",");
+        let mut stmt = self.sqlite.prepare(&format!(
+            "SELECT {columns} FROM runtimes WHERE {clause} ORDER BY created_at, runtime_id"
+        ))?;
+        Ok(stmt
+            .query_map(values, runtime_row)?
+            .collect::<rusqlite::Result<_>>()?)
+    }
+
     #[track_caller]
     pub fn runtime(&self, id: &str) -> Result<Option<Value>> {
         Ok(self.runtimes_where("runtime_id=?", [id])?.pop())
@@ -543,36 +567,36 @@ pub fn session_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<Value> {
     Ok(result)
 }
 
+/// Runtime row wire mapping, column order of the runtimes table.
+pub const RUNTIME_COLUMNS: &[(&str, &str)] = &[
+    ("runtime_id", "runtimeId"),
+    ("host_session_id", "hostSessionId"),
+    ("scope_ref", "scopeRef"),
+    ("lane_ref", "laneRef"),
+    ("generation", "generation"),
+    ("transport", "transport"),
+    ("harness", "harness"),
+    ("provider", "provider"),
+    ("status", "status"),
+    ("status_changed_at", "statusChangedAt"),
+    ("tmux_json", "tmuxJson"),
+    ("supports_inflight_input", "supportsInflightInput"),
+    ("active_run_id", "activeRunId"),
+    ("last_activity_at", "lastActivityAt"),
+    ("controller_kind", "controllerKind"),
+    ("active_operation_id", "activeOperationId"),
+    ("active_invocation_id", "activeInvocationId"),
+    ("plan_hash", "planHash"),
+    ("selected_profile_hash", "selectedProfileHash"),
+    ("runtime_state_json", "runtimeStateJson"),
+    ("lifecycle_terminal_reason", "lifecycleTerminalReason"),
+    ("presentation_json", "presentation"),
+    ("created_at", "createdAt"),
+    ("updated_at", "updatedAt"),
+];
+
 pub fn runtime_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<Value> {
-    record_row(
-        row,
-        &[
-            ("runtime_id", "runtimeId"),
-            ("host_session_id", "hostSessionId"),
-            ("scope_ref", "scopeRef"),
-            ("lane_ref", "laneRef"),
-            ("generation", "generation"),
-            ("transport", "transport"),
-            ("harness", "harness"),
-            ("provider", "provider"),
-            ("status", "status"),
-            ("status_changed_at", "statusChangedAt"),
-            ("tmux_json", "tmuxJson"),
-            ("supports_inflight_input", "supportsInflightInput"),
-            ("active_run_id", "activeRunId"),
-            ("last_activity_at", "lastActivityAt"),
-            ("controller_kind", "controllerKind"),
-            ("active_operation_id", "activeOperationId"),
-            ("active_invocation_id", "activeInvocationId"),
-            ("plan_hash", "planHash"),
-            ("selected_profile_hash", "selectedProfileHash"),
-            ("runtime_state_json", "runtimeStateJson"),
-            ("lifecycle_terminal_reason", "lifecycleTerminalReason"),
-            ("presentation_json", "presentation"),
-            ("created_at", "createdAt"),
-            ("updated_at", "updatedAt"),
-        ],
-    )
+    record_row(row, RUNTIME_COLUMNS)
 }
 
 pub fn derive_identity(scope: &str) -> Value {
