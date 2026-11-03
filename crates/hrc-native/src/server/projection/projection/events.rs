@@ -9,6 +9,9 @@ use sha2::{Digest, Sha256};
 pub fn category(kind: &str) -> Option<&'static str> {
     Some(match kind {
         "session.created"
+        // Emitted only 2026-11-03 19:15–20:xxZ (e3a025cc, withdrawn): the
+        // session_index_hrc_event_insert trigger counted it as activity.
+        // Kept so those ledger rows stay a known kind.
         | "session.archived"
         | "session.generation_auto_rotated"
         | "session.continuation_dropped"
