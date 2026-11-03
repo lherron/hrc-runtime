@@ -69,6 +69,11 @@ const sessionTitleCascadeMigration: HrcMigration = {
       END;
     `)
   },
+  // The rename below runs while session_index_projection_source still names
+  // session_titles. SQLite >= 3.53 (Bun's bundled build on Linux) refuses that
+  // under modern rename semantics; the SQL itself is unchanged because existing
+  // stores have already applied it.
+  requiresLegacyAlterTable: true,
 }
 
 export const sessionTitleCascadeMigrations: readonly HrcMigration[] = [sessionTitleCascadeMigration]

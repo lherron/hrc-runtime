@@ -12,6 +12,9 @@ export const runtimeLegacyIdentityNullableMigration: HrcMigration & {
 } = {
   id: '0074_runtime_legacy_identity_nullable',
   requiresForeignKeysDisabled: true,
+  // Its rename runs while a view still names runtimes; SQLite >= 3.53 refuses
+  // that under modern rename semantics (see HrcMigration.requiresLegacyAlterTable).
+  requiresLegacyAlterTable: true,
   apply(db) {
     const columns = db
       .query<{ name: string; notnull: number }, []>('PRAGMA table_info(runtimes)')

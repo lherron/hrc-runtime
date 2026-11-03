@@ -270,18 +270,22 @@ export function runMigrations(db: Database, logger?: HrcStoreLogger): void {
   // Each rebuild must run outside a transaction with FK enforcement disabled.
   // More than one release migration may rebuild a referenced parent.
   let batch: HrcMigration[] = []
+  // A requiresLegacyAlterTable migration also gets its own lane, so legacy
+  // rename semantics never reach any other migration.
   for (const migration of pending) {
-    if (!migration.requiresForeignKeysDisabled) {
+    if (!migration.requiresForeignKeysDisabled && !migration.requiresLegacyAlterTable) {
       batch.push(migration)
       continue
     }
     if (batch.length > 0) applyPending.immediate(batch)
     batch = []
-    db.exec('PRAGMA foreign_keys = OFF;')
+    if (migration.requiresForeignKeysDisabled) db.exec('PRAGMA foreign_keys = OFF;')
+    if (migration.requiresLegacyAlterTable) db.exec('PRAGMA legacy_alter_table = ON;')
     try {
       applyPending.immediate([migration])
     } finally {
-      db.exec('PRAGMA foreign_keys = ON;')
+      if (migration.requiresLegacyAlterTable) db.exec('PRAGMA legacy_alter_table = OFF;')
+      if (migration.requiresForeignKeysDisabled) db.exec('PRAGMA foreign_keys = ON;')
     }
   }
   if (batch.length > 0) applyPending.immediate(batch)
