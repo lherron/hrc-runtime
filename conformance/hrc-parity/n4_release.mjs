@@ -25,7 +25,11 @@ const run = async (command, args, cwd, overrides = {}) => {
   if (exit !== 0)
     throw new Error(`release command failed (${exit}): ${command}; see release-drive.json #${n}`)
 }
-const cargoCount = () => drive.filter((v) => v.command === 'cargo').length
+// A release build is cargo itself, or cargo through rbuild (build1 offload).
+const cargoCount = () =>
+  drive.filter(
+    (v) => v.command === 'cargo' || (v.command.endsWith('/rbuild') && v.args.includes('cargo'))
+  ).length
 await prepareNativeRelease(sourceRoot, first, join(artifacts, 'absent'), run)
 if (cargoCount() !== 2) throw new Error('first release did not build both native binaries')
 await prepareNativeRelease(sourceRoot, second, first, run)

@@ -51,6 +51,58 @@ async function inputDigest(root: string): Promise<string> {
   return hash.digest('hex')
 }
 
+// On Apple silicon the release compiles on build1 through rbuild (arris), to
+// keep that load off this machine: cross-built for aarch64-apple-darwin from
+// the same selected release tree (its praesidium-release.json carries the
+// sourceCommit build.rs stamps; rbuild mirrors it to the same absolute path,
+// so embedded paths match too) and pulled back. rbuild builds here when
+// build1 is down. The target dir is passed as an argument because rbuild does
+// not forward the environment. Without rbuild it builds here the same way;
+// other platforms build natively as before.
+const MAC_TARGET = 'aarch64-apple-darwin'
+
+async function buildReleaseBinary(
+  sourceRoot: string,
+  releasePath: string,
+  crate: string,
+  binary: string,
+  run: (command: string, args: string[], cwd: string, env?: NodeJS.ProcessEnv) => Promise<void>
+): Promise<string> {
+  const targetDir = join(sourceRoot, 'crates', 'target')
+  const cargo = [
+    'build',
+    '--release',
+    '--locked',
+    '--manifest-path',
+    'crates/Cargo.toml',
+    '-p',
+    crate,
+  ]
+  const env = { ...process.env, CARGO_TARGET_DIR: targetDir }
+  if (process.platform !== 'darwin' || process.arch !== 'arm64') {
+    await run('cargo', cargo, releasePath, env)
+    return join(targetDir, 'release', binary)
+  }
+  const built = join(targetDir, MAC_TARGET, 'release', binary)
+  const rbuild = Bun.which('rbuild')
+  if (rbuild === null) {
+    await run(
+      'cargo',
+      [...cargo, '--target', MAC_TARGET, '--target-dir', targetDir],
+      releasePath,
+      env
+    )
+  } else {
+    await run(
+      rbuild,
+      ['--mac', '--pull', built, 'cargo', ...cargo, '--target-dir', targetDir],
+      releasePath,
+      env
+    )
+  }
+  return built
+}
+
 export async function prepareNativeRelease(
   sourceRoot: string,
   releasePath: string,
@@ -78,16 +130,10 @@ export async function prepareNativeRelease(
       console.log(`[install] Rust/shared inputs unchanged; reusing ${binary}`)
     } else {
       console.log(`[install] building ${binary} from selected release inputs`)
-      await run(
-        'cargo',
-        ['build', '--release', '--locked', '--manifest-path', 'crates/Cargo.toml', '-p', crate],
-        releasePath,
-        {
-          ...process.env,
-          CARGO_TARGET_DIR: join(sourceRoot, 'crates', 'target'),
-        }
+      await copyFile(
+        await buildReleaseBinary(sourceRoot, releasePath, crate, binary, run),
+        destination
       )
-      await copyFile(join(sourceRoot, 'crates', 'target', 'release', binary), destination)
     }
     await chmod(destination, 0o755)
     await writeFile(join(releasePath, 'bin', `${binary}.inputs`), `${digest}\n`)
