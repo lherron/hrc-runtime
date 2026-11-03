@@ -181,6 +181,7 @@ cargo-check:
     python3 crates/hrc-cli/e2e/differential.py --binary crates/target/debug/rusthrc --artifacts "${HRC_CLI_E2E_ARTIFACTS:-/tmp/hrc-cli-e2e-$(date +%s)-$$}"
     cargo build --manifest-path crates/Cargo.toml --locked -p hrc-pty
     python3 crates/hrc-native/e2e/kernel_fold.py --binary crates/target/debug/rusthrc --artifacts "${HRC_NATIVE_E2E_ARTIFACTS:-/tmp/hrc-native-e2e-$(date +%s)-$$}/kernel-fold"
+    python3 crates/hrc-native/e2e/runtime_created.py --binary crates/target/debug/rusthrc --artifacts "${HRC_NATIVE_E2E_ARTIFACTS:-/tmp/hrc-native-e2e-$(date +%s)-$$}/runtime-created"
     python3 crates/hrc-native/e2e/kernel_projection.py --binary crates/target/debug/rusthrc --artifacts "${HRC_NATIVE_E2E_ARTIFACTS:-/tmp/hrc-native-e2e-$(date +%s)-$$}/kernel-projection"
     python3 crates/hrc-native/e2e/kernel_fd_cost.py --binary crates/target/debug/rusthrc --artifacts "${HRC_NATIVE_E2E_ARTIFACTS:-/tmp/hrc-native-e2e-$(date +%s)-$$}/kernel-fd-cost"
     python3 crates/hrc-native/e2e/foundation.py --binary crates/target/debug/rusthrc --artifacts "${HRC_NATIVE_E2E_ARTIFACTS:-/tmp/hrc-native-e2e-$(date +%s)-$$}"
@@ -1330,8 +1331,21 @@ _deploy-node ssh-target expected-node target-ref="origin/main" aspd-ref="origin/
       owner_script='{{ justfile_directory() }}/scripts/hrc-owner.sh'
       owner="$(ssh -o BatchMode=yes -o ConnectTimeout=10 "{{ ssh-target }}" bash -s -- kind < "$owner_script")"
       if [[ "$owner" == rusthrc ]]; then
-        ssh -o BatchMode=yes -o ConnectTimeout=10 "{{ ssh-target }}" \
-          bash -s -- stage --expect-commit "$target_sha" < "$owner_script"
+        schema="$(ssh -o BatchMode=yes -o ConnectTimeout=10 "{{ ssh-target }}" \
+          bash -s -- schema-state < "$owner_script")"
+        case "$schema" in
+          current)
+            ssh -o BatchMode=yes -o ConnectTimeout=10 "{{ ssh-target }}" \
+              bash -s -- stage --expect-commit "$target_sha" < "$owner_script" ;;
+          pending)
+            # The remote shell has no runtime credential. Prepare through the
+            # schema activation door; this invoking seat owns the restart below.
+            ssh -o BatchMode=yes -o ConnectTimeout=10 "{{ ssh-target }}" \
+              bash -s -- activate --expect-commit "$target_sha" --dry-run < "$owner_script"
+            ssh -o BatchMode=yes -o ConnectTimeout=10 "{{ ssh-target }}" \
+              bash -s -- activate --expect-commit "$target_sha" --prepare-only < "$owner_script" ;;
+          *) echo "deploy-{{ expected-node }}: installed schema is ${schema}; refusing activation" >&2; exit 1 ;;
+        esac
       fi
       case '{{ restart }}' in
         wait) restart_flags=(--wait --wait-timeout-ms 300000) ;;

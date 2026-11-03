@@ -51,14 +51,19 @@ validation_scope: >
   runtime/event rollback in the shared graph transaction. Existing owner
   verification and stream cursor/gap/incarnation gates remain in force.
 deployment_boundary: >
-  This design approval authorizes no product edit, source reversal, install,
-  restart or early retirement. The proposed forward restoration of the
-  pre-retirement oracle/provider/tests/contracts on the same canonical branch,
-  preserving unrelated ed57a084 deferred-message binding changes, remains a
-  separate explicit Lance or delegated campaign authority decision. Normal
-  committed-HEAD installation must retain the oracle and existing operations
-  for installed latency/rotation/parity validation; later retirement retains
-  its own gates. The approval does not amend hrc-runtime.rust-crate-edges or
-  the retirement contracts, and supplies no authority for that restoration.
-last_verified: 2026-11-02 design approval by source reading at ed57a084 and pre-retirement 54f3a23a; no creation-event implementation, isolated test, build, install, activation or latency acceptance evidence is claimed
+  Daedalus's design approval supplied no source-reversal or activation authority.
+  Mable's delegated campaign ruling C-34228 and EN-43999 (2026-11-03) separately
+  approve the reviewed forward oracle restoration and retirement reapplication.
+  The temporary committed release retains the oracle and existing operations for
+  installed replacement validation. Final retirement removes that oracle after
+  prompt seat visibility and Loggia rotation survival are verified. Only Mable
+  activates shared services. No schema migration is introduced by this event.
+last_verified: >
+  2026-11-03: missing promptless creation reproduced against real isolated
+  rusthrc with invocation.start held; creation E2E passes all nine checks after
+  implementation, including starting owner/keyed presentation, already-open
+  bounded-stream wake and reconnect replay. Two store tests cover promptless
+  and prompted insertion, unchanged turn.accepted, retry/replay and shared
+  transaction rollback through a scratch insertion trigger. Installed proof
+  remains pending activation; prior latency failures remain recorded.
 reopen_when: Creation scope or identity, one-event-per-insert semantics, transaction/publication boundary, meaning of starting, presentation selection, timestamp meaning, or consumer membership authority changes.
