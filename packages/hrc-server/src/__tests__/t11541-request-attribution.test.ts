@@ -13,7 +13,7 @@ import { join } from 'node:path'
 
 import { createMeteredPeerProtocolRequestHandler } from '../federation/peer-protocol.js'
 import { PeerToken } from '../federation/peer-token.js'
-import { L3_SUPPRESSED_SUCCESSFUL_POLL_ROUTES, isSuppressedPollRoute } from '../request-log.js'
+import { logRequestCompletion } from '../request-log.js'
 import {
   ServerRequestMetricSampler,
   flushServerMetrics,
@@ -57,16 +57,22 @@ describe('caller label (L3 client)', () => {
     expect(requestClientLabel(new Request('http://hrc/'))).toBe('unknown')
   })
 
-  test('the suppression table is the only allowlist and names real main routes', () => {
-    const inventory = new Set(
-      listRequestRouteInventory().map((entry) => `${entry.listener} ${entry.method} ${entry.route}`)
-    )
-    expect(L3_SUPPRESSED_SUCCESSFUL_POLL_ROUTES).toHaveLength(16)
-    for (const entry of L3_SUPPRESSED_SUCCESSFUL_POLL_ROUTES) {
-      expect(inventory).toContain(`${entry.listener} ${entry.method} ${entry.route}`)
-      expect(isSuppressedPollRoute(entry.listener, entry.method, entry.route)).toBe(true)
+  test('every inventory route writes a successful non-stream request line', () => {
+    const log = captureServerLog()
+    try {
+      for (const entry of listRequestRouteInventory()) {
+        const before = log.events('http.request').length
+        logRequestCompletion(
+          { ...entry, path: entry.route, client: 'route-probe/1', startedAt: performance.now() },
+          new Response('{}', { headers: { 'content-type': 'application/json' } })
+        )
+        expect(log.events('http.request').slice(before)).toMatchObject([
+          { data: { ...entry, status: 200 } },
+        ])
+      }
+    } finally {
+      log.restore()
     }
-    expect(isSuppressedPollRoute('main', 'GET', '/v1/health')).toBe(false)
   })
 })
 

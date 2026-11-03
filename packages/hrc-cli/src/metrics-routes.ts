@@ -4,7 +4,7 @@ import { join } from 'node:path'
 import { createInterface } from 'node:readline'
 
 import { resolveStateRoot } from 'hrc-core'
-import { isSuppressedPollRoute, listRequestRouteInventory, parseDurationMs } from 'hrc-server'
+import { listRequestRouteInventory, parseDurationMs } from 'hrc-server'
 import type { RequestMetricListener, RequestRouteInventoryEntry } from 'hrc-server'
 
 import { fileCouldContainWindow, parseServerMetric } from './metrics-report.js'
@@ -18,11 +18,6 @@ export type RouteUsageRow = {
   route?: string
   /** `unattributed` for records written before T-11541 added callers. */
   client?: string
-  /**
-   * On `L3_SUPPRESSED_SUCCESSFUL_POLL_ROUTES`: its successful requests write no
-   * `http.request` log line by design, so log silence there is not disuse.
-   */
-  suppressedPoll?: true
   /** Requests represented: a sampled record counts at its `sampleWeight`. */
   count: number
   /** Records actually on disk behind `count`. */
@@ -45,7 +40,7 @@ export type RouteUsageReport = {
   by: RouteUsageDimension[]
   rows: RouteUsageRow[]
   /** Present with `idle`: inventory routes no request reached in the window. */
-  idle?: (RequestRouteInventoryEntry & { suppressedPoll?: true })[]
+  idle?: RequestRouteInventoryEntry[]
 }
 
 export type ReadRouteUsageOptions = {
@@ -164,10 +159,6 @@ export async function readRouteUsage(
     .map(
       (group): RouteUsageRow => ({
         ...group.key,
-        ...(group.key.route !== undefined &&
-        isSuppressedPollRoute(group.key.listener ?? 'main', group.key.method ?? '', group.key.route)
-          ? { suppressedPoll: true as const }
-          : {}),
         count: group.count,
         records: group.records,
         errors: group.errors,
@@ -199,11 +190,6 @@ export async function readRouteUsage(
               (entry) =>
                 (options.listener === undefined || entry.listener === options.listener) &&
                 !seenRoutes.has(`${entry.listener} ${entry.method} ${entry.route}`)
-            )
-            .map((entry) =>
-              isSuppressedPollRoute(entry.listener, entry.method, entry.route)
-                ? { ...entry, suppressedPoll: true as const }
-                : entry
             )
             .sort(
               (a, b) =>

@@ -155,7 +155,7 @@ def compare_accounting(args, checks):
         shape = shape and ids == ['id-' + str(i) for i in range(7)]
         polls = [r for r in logs if r['event'] == 'http.request' and r['data']['route'] == '/v1/sessions' and r['data']['status'] < 400]
         errors = [r for r in logs if r['event'] == 'http.request' and r['data']['client'].endswith('/error')]
-        log_ok = not polls and len(errors) == 13 and all(r['level'] == 'warn' and r['component'] == 'http' and r['data'].get('code') == 'unknown_host_session' and r['data'].get('message') for r in errors)
+        log_ok = len(polls) == 50 and len(errors) == 13 and all(r['level'] == 'warn' and r['component'] == 'http' and r['data'].get('code') == 'unknown_host_session' and r['data'].get('message') for r in errors)
         log_ok = log_ok and all('?' not in r['data']['path'] for r in logs)
         if kind == 'native':
             log_ok = log_ok and all(r.get('server') == 'rusthrc' and r['data'].get('servedBy') == ('bun' if r['data']['route'] == '/v1/targets' else 'native') for r in logs)

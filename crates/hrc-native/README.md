@@ -332,9 +332,9 @@ Bun's normalized route labels, client strata and weighted metric schema in
 `<stateRoot>/metrics/rusthrc-server-<day>.ndjson`, with `servedBy` identifying
 `native` or `bun`. Rust prunes only its own filename prefix. The writer flushes asynchronously and
 on clean shutdown, bounds the queue, caps each day at 128 MiB, and retains 14
-days by file mtime. L3 logs use Bun's successful-poll suppression policy and
+days by file mtime. L3 logs write every completed non-stream request and
 stream open/close events. `HRC_METRICS=0` disables metrics as it does in Bun.
-The exact-route inventory and suppression table are generated from Bun source
+The exact-route inventory is generated from Bun source
 at build time. `e2e/accounting.py` compares a real Bun/native request mix through
 `compare --suite n1-accounting`, then checks failed-writer recovery, retention,
 and the daily cap in independent scratch roots. `e2e/front_accounting.py` checks

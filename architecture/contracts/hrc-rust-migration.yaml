@@ -264,7 +264,9 @@ predicate: >
   Bun's unchanged metrics/server-<day>.ndjson and hrc-server.log. No file
   has both processes as writers. Headers, including User-Agent and supplied
   request IDs, pass verbatim; Rust mints no IDs for forwarded requests.
-  Both retain Bun's schema, sampling, retention and suppression contract.
+  Both retain Bun's schema, sampling and retention contract. Every completed
+  non-stream request writes an L3 line; streams retain open/close events
+  (Lance ruling 2026-11-03, T-12427).
   Exact cross-file joins apply to client-ID requests; ordinary no-ID
   traffic supports per-route hourly weighted-count comparison within
   sampling error, not a universal per-request join or presence guarantee.

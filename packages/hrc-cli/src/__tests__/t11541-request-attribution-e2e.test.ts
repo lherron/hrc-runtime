@@ -4,8 +4,8 @@
  * roots. Requests from the real CLI, a named SDK client, a header-less raw
  * caller and the event ingest listener must each land in the server metric
  * stream AND the daemon log under the same `client` (`<name>/<version>` from
- * User-Agent) and `listener`; successful polls on the suppression table write
- * no line, failing ones and streams do; and `hrc admin metrics routes` must
+ * User-Agent) and `listener`; every completed non-stream request writes
+ * a line and streams log open/close; and `hrc admin metrics routes` must
  * report weighted counts that match both the raw file and the truth.
  * Never the live daemon.
  *
@@ -163,7 +163,6 @@ async function waitForRecords(scratch: Scratch, predicate: (records: RawRecord[]
 }
 
 type RollupRow = {
-  suppressedPoll?: boolean
   listener?: string
   method?: string
   route?: string
@@ -197,7 +196,7 @@ describe('T-11541 caller-attributed request metrics (scratch daemon)', () => {
     })
     expect(seat.status).toBeGreaterThanOrEqual(400)
 
-    // 4b. A FAILING poll on a suppressed route is still logged; so is an unknown path.
+    // 4b. A failing request is logged; so is an unknown path.
     const badPoll = await fetch('http://hrc/v1/runtimes?limit=0', {
       unix: socketOf(scratch),
       headers: { 'user-agent': 't11541-raw/1' },
@@ -209,7 +208,7 @@ describe('T-11541 caller-attributed request metrics (scratch daemon)', () => {
     })
     expect(unknownPath.status).toBe(404)
 
-    // 4c. A stream on a suppressed route still logs its open and close.
+    // 4c. A stream logs its open and close.
     const abort = new AbortController()
     const stream = await fetch('http://hrc/v1/events?follow=true', {
       unix: socketOf(scratch),
@@ -285,10 +284,10 @@ describe('T-11541 caller-attributed request metrics (scratch daemon)', () => {
     })
     expect(typeof sdkLines[0]?.data?.['durationMs']).toBe('number')
     expect(sdkLines[0]?.data).not.toHaveProperty('remote')
-    // The CLI's /v1/status is a successful suppressed poll: counted, never logged.
+    // Successful status requests are counted and logged like health requests.
     const cliLines = lines(cliClient ?? '')
     expect(cliLines.map((line) => line.data?.['path'])).toContain('/v1/health')
-    expect(cliLines.map((line) => line.data?.['path'])).not.toContain('/v1/status')
+    expect(cliLines.map((line) => line.data?.['path'])).toContain('/v1/status')
     expect(
       cliLines.find((line) => line.data?.['path'] === '/v1/health')?.data?.['requestId']
     ).toBeString()
@@ -347,8 +346,6 @@ describe('T-11541 caller-attributed request metrics (scratch daemon)', () => {
     expect(row('t11541-sdk/1.0', '/v1/health')?.count).toBe(sdkWeight)
     expect(row('t11541-sdk/1.0', '/v1/health')?.records).toBe(sdkRecords.length)
     expect(row(cliClient ?? '', '/v1/status')?.count).toBeGreaterThanOrEqual(1)
-    expect(row(cliClient ?? '', '/v1/status')?.suppressedPoll).toBe(true)
-    expect(row('t11541-sdk/1.0', '/v1/health')?.suppressedPoll).toBeUndefined()
     expect(row(`Bun/${Bun.version}`, '/v1/health')?.count).toBe(1)
     expect(row('t11541-raw/1', '/v1/runtimes/:runtimeId/seat')?.errors).toBe(1)
     expect(row('hrc-server/t11541', '/v1/ingest', 'ingest')?.count).toBe(1)
@@ -387,7 +384,7 @@ describe('T-11541 caller-attributed request metrics (scratch daemon)', () => {
     expect(idle.exitCode).toBe(0)
     const idleRows = (
       JSON.parse(idle.stdout) as {
-        idle: { listener: string; route: string; method: string; suppressedPoll?: boolean }[]
+        idle: { listener: string; route: string; method: string }[]
       }
     ).idle
     expect(idleRows).toContainEqual({
@@ -395,12 +392,10 @@ describe('T-11541 caller-attributed request metrics (scratch daemon)', () => {
       method: 'POST',
       route: '/v1/runtimes/sweep',
     })
-    // An idle route on the suppression table is tagged, so it never reads as dead from logs alone.
     expect(idleRows).toContainEqual({
       listener: 'main',
       method: 'GET',
       route: '/v1/presentation/runtimes',
-      suppressedPoll: true,
     })
     expect(idleRows).toContainEqual({
       listener: 'peer',

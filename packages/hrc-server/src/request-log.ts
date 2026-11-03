@@ -11,53 +11,6 @@ import { writeServerLog } from './server-log.js'
  * `http.stream.close`, never per frame.
  */
 
-export type SuppressedPollRoute = {
-  readonly listener: RequestMetricListener
-  readonly method: string
-  readonly route: string
-}
-
-/**
- * THE L3 poll-suppression allowlist: the only routes whose SUCCESSFUL,
- * non-stream responses write no `http.request` line. One entry per listener +
- * method + route template; nothing else may suppress a request line. These are
- * the 16 polling routes behind 53.35M of the 53.66M main-socket requests in the
- * 14 days to 2026-10-23 (T-11541 audit); everything else is ~22k lines a day.
- * A failing poll (>= 400) and a stream are always logged, and the sampled
- * request metrics still count every request, weighted. Consumers (service-API
- * §6 route marking, `hrc admin metrics routes`) read this table, so an absent
- * log line on these routes means "suppressed poll", never "dead route".
- */
-export const L3_SUPPRESSED_SUCCESSFUL_POLL_ROUTES: readonly SuppressedPollRoute[] = [
-  { listener: 'main', method: 'GET', route: '/v1/broker-events/follow' },
-  { listener: 'main', method: 'GET', route: '/v1/events' },
-  { listener: 'main', method: 'POST', route: '/v1/server/subscribers' },
-  { listener: 'main', method: 'GET', route: '/v1/sessions/by-host/:hostSessionId' },
-  { listener: 'main', method: 'GET', route: '/v1/targets/by-session-ref' },
-  { listener: 'main', method: 'GET', route: '/v1/federation/locate' },
-  { listener: 'main', method: 'GET', route: '/v1/broker-events/query' },
-  { listener: 'main', method: 'GET', route: '/v1/runtimes' },
-  { listener: 'main', method: 'POST', route: '/v1/runtimes/inspect' },
-  { listener: 'main', method: 'GET', route: '/v1/sessions' },
-  { listener: 'main', method: 'GET', route: '/v1/events/latest-by-session' },
-  { listener: 'main', method: 'GET', route: '/v1/runs' },
-  { listener: 'main', method: 'POST', route: '/v1/server/subscribers/ack' },
-  { listener: 'main', method: 'GET', route: '/v1/events/page' },
-  { listener: 'main', method: 'GET', route: '/v1/status' },
-  { listener: 'main', method: 'GET', route: '/v1/presentation/runtimes' },
-]
-
-const SUPPRESSED_POLL_KEYS = new Set(
-  L3_SUPPRESSED_SUCCESSFUL_POLL_ROUTES.map(
-    ({ listener, method, route }) => `${listener} ${method} ${route}`
-  )
-)
-
-/** Whether a successful, non-stream request on this route writes no request line. */
-export function isSuppressedPollRoute(listener: string, method: string, route: string): boolean {
-  return SUPPRESSED_POLL_KEYS.has(`${listener} ${method} ${route}`)
-}
-
 export type RequestLogEntry = {
   listener: RequestMetricListener
   method: string
@@ -99,9 +52,7 @@ export function logRequestCompletion(entry: RequestLogEntry, response: Response)
       emit('INFO', 'http.stream.open', base(response.status))
       return wrapStreamClose(response, base)
     }
-    if (!isSuppressedPollRoute(entry.listener, entry.method, entry.route)) {
-      emit('INFO', 'http.request', base(response.status))
-    }
+    emit('INFO', 'http.request', base(response.status))
     return response
   }
 

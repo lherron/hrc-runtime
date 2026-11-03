@@ -3,7 +3,7 @@
 
 Failure modes: route/method/client strata drift, dropped errors/request IDs,
 wrong weights or bytes, metrics in a shared state root, missing forwarded
-traffic, successful-poll L3 leakage, or buffering/cancellation of streams.
+traffic, missing successful-request L3 lines, or buffering/cancellation of streams.
 """
 import argparse
 from collections import Counter
@@ -112,7 +112,7 @@ def main():
         lines=[r for r in lines if r['data']['client'].startswith('n1-accounting/'+kind+'/')]
         request_logs[kind]=lines
         (args.artifacts/(kind+'-metrics.json')).write_text(json.dumps(records,indent=2)+'\n')
-        assert not any(r['event']=='http.request' and r['data']['route']=='/v1/sessions' and r['data']['status']<400 for r in lines),lines
+        assert sum(r['event']=='http.request' and r['data']['route']=='/v1/sessions' and r['data']['status']<400 for r in lines)==50,lines
         assert any(r['event']=='http.request' and r['level']=='warn' and r['data'].get('code')=='unknown_host_session' for r in lines),lines
         assert any(r['event']=='http.stream.open' for r in lines),lines
         assert any(r['event']=='http.stream.close' and r['data']['outcome'] in ('end','cancel') for r in lines),lines

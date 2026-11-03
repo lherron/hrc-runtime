@@ -10,28 +10,10 @@ use std::{cmp::Ordering, collections::HashMap};
 
 const LISTENERS: [&str; 4] = ["main", "ingest", "peer", "registry"];
 
-struct Inventory {
-    entries: Vec<Value>,
-    suppressed: std::collections::HashSet<String>,
-}
-fn inventory() -> Inventory {
+fn inventory() -> Vec<Value> {
     let declaration: Value =
         serde_json::from_str(include_str!("../route-inventory.json")).expect("route inventory");
-    let key = |v: &Value| {
-        format!(
-            "{} {} {}",
-            v["listener"].as_str().unwrap_or_default(),
-            v["method"].as_str().unwrap_or_default(),
-            v["route"].as_str().unwrap_or_default()
-        )
-    };
-    Inventory {
-        suppressed: rows(&declaration, "/suppressedPoll")
-            .iter()
-            .map(key)
-            .collect(),
-        entries: rows(&declaration, "/inventory").to_vec(),
-    }
+    rows(&declaration, "/inventory").to_vec()
 }
 
 struct Accumulator {
@@ -172,22 +154,6 @@ pub(in crate::admin) fn routes(args: &Parsed<'_>) -> Result<()> {
         .into_iter()
         .map(|g| {
             let mut row = g.key.clone();
-            if let Some(route) = g.key.get("route").and_then(Value::as_str) {
-                let suppressed = format!(
-                    "{} {} {route}",
-                    g.key
-                        .get("listener")
-                        .and_then(Value::as_str)
-                        .unwrap_or("main"),
-                    g.key
-                        .get("method")
-                        .and_then(Value::as_str)
-                        .unwrap_or_default()
-                );
-                if inventory.suppressed.contains(&suppressed) {
-                    row.insert("suppressedPoll".into(), true.into());
-                }
-            }
             let max = g.ms.iter().fold(f64::NEG_INFINITY, |m, (v, _)| m.max(*v));
             row.insert("count".into(), num(g.count));
             row.insert("records".into(), g.records.into());
@@ -226,7 +192,6 @@ pub(in crate::admin) fn routes(args: &Parsed<'_>) -> Result<()> {
     if args.flag("idle") {
         let field = |v: &Value, k: &str| v[k].as_str().unwrap_or_default().to_owned();
         let mut idle: Vec<Value> = inventory
-            .entries
             .iter()
             .filter(|e| {
                 listener.is_none_or(|l| e["listener"] == l)
@@ -237,19 +202,7 @@ pub(in crate::admin) fn routes(args: &Parsed<'_>) -> Result<()> {
                         field(e, "route")
                     ))
             })
-            .map(|e| {
-                let mut entry = e.clone();
-                let key = format!(
-                    "{} {} {}",
-                    field(e, "listener"),
-                    field(e, "method"),
-                    field(e, "route")
-                );
-                if inventory.suppressed.contains(&key) {
-                    entry["suppressedPoll"] = true.into();
-                }
-                entry
-            })
+            .cloned()
             .collect();
         idle.sort_by(|a, b| {
             locale_cmp(&field(a, "listener"), &field(b, "listener"))
@@ -312,9 +265,6 @@ fn print_routes(report: &Value) {
         if let Some(client) = row.get("client") {
             key.push(s(client));
         }
-        if row.get("suppressedPoll").is_some() {
-            key.push("(suppressed poll: no log line on success)".into());
-        }
         let rate = row["errorRate"].as_f64().unwrap_or(f64::NAN) * 100.;
         out += &format!(
             "{} {} {} {}  {}  {}\n",
@@ -333,15 +283,10 @@ fn print_routes(report: &Value) {
         out += &format!("\nIdle routes (no request in window): {}\n", idle.len());
         for entry in idle {
             out += &format!(
-                "  {} {} {}{}\n",
+                "  {} {} {}\n",
                 s(&entry["listener"]),
                 s(&entry["method"]),
-                s(&entry["route"]),
-                if entry.get("suppressedPoll").is_some() {
-                    "  (suppressed poll)"
-                } else {
-                    ""
-                }
+                s(&entry["route"])
             );
         }
     }

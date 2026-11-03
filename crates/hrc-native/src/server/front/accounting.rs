@@ -394,9 +394,7 @@ impl Entry {
                 .is_some_and(|v| v.contains("json"));
         if stream && status < 400 {
             emit("info", "http.stream.open", "http", self.base(status));
-        } else if !error_json
-            && (status >= 400 || !SUPPRESSED.contains(&(self.method.as_str(), self.route.as_str())))
-        {
+        } else if !error_json {
             emit(level(status), "http.request", "http", self.base(status));
         }
         let (parts, body) = response.into_parts();

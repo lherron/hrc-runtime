@@ -46,13 +46,12 @@ fn main() {
     accounting_tables();
 }
 
-// Keep the accounting inventory tied to the Bun dispatch and L3 policy.
+// Keep the accounting inventory tied to the Bun dispatch and metrics policy.
 fn accounting_tables() {
     let exact = "../../packages/hrc-server/src/server-exact-routes.ts";
     let restart = "../../packages/hrc-core/src/self-restart.ts";
-    let log = "../../packages/hrc-server/src/request-log.ts";
     let metrics = "../../packages/hrc-server/src/request-metrics.ts";
-    for path in [exact, restart, log, metrics] {
+    for path in [exact, restart, metrics] {
         println!("cargo:rerun-if-changed={path}");
     }
     let mut keys = Vec::new();
@@ -82,18 +81,7 @@ fn accounting_tables() {
     }
     // /v1/runtimes is dispatched outside buildExactRouteHandlers.
     keys.push(("GET".into(), "/v1/runtimes".into()));
-    let mut out = format!("const EXACT: &[(&str, &str)] = &{keys:?};\n");
-    let source = fs::read_to_string(log).unwrap();
-    let mut suppressed = Vec::new();
-    for line in source
-        .lines()
-        .filter(|line| line.contains("{ listener: 'main', method:"))
-    {
-        let parts: Vec<_> = line.split('\'').collect();
-        suppressed.push((parts[3].to_owned(), parts[5].to_owned()));
-    }
-    assert_eq!(suppressed.len(), 16, "review L3 suppression policy changes");
-    out += &format!("const SUPPRESSED: &[(&str, &str)] = &{suppressed:?};\n");
+    let out = format!("const EXACT: &[(&str, &str)] = &{keys:?};\n");
     let source = fs::read_to_string(metrics).unwrap();
     for declaration in [
         "const METRICS_RETENTION_MS = 14 * 24 * 60 * 60 * 1000",

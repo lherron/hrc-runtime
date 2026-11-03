@@ -40,7 +40,7 @@ def compare(args,checks):
         populations[side]=population
         expected_logs=4 if side=='native' else 2
         logs=report['logs']
-        check(side+':L3-population',len(logs)==expected_logs,'each selected unsuppressed request belongs to its owner log stream')
+        check(side+':L3-population',len(logs)==expected_logs,'each selected request belongs to its owner log stream')
         if side=='native':
             check('rust:L3-tags',all(r.get('server')=='rusthrc' and r.get('data',{}).get('servedBy')==('native' if r['data'].get('route')=='/v1/health' else 'bun') for r in logs),'Rust L3 records must identify their stream owner and actual serving branch')
         else:check('bun:L3-owner',all(r.get('server')!='rusthrc' for r in logs),'Rust records must not appear in Bun output')

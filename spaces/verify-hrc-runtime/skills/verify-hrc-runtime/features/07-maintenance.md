@@ -33,9 +33,8 @@ first_turn}.rs`, `broker/startup/sweeps.rs`, `front/accounting.rs` (request log,
 - L3 request line: every listener writes one `component: http`, `event: http.request` line per request with
   `{listener, servedBy, method, route, path, status, durationMs, client, requestId?, remote?, peer?}`; on live
   it lands in `var/logs/hrc-runtime/rusthrc-owner.log` (`hrc-server.log` is the frozen Bun log), on a scratch in
-  `serve.log` (148 `servedBy: "native"` lines, 2026-11-02, T-12291). Successful non-stream requests on the 16
-  `L3_SUPPRESSED_SUCCESSFUL_POLL_ROUTES` routes write no line; native parses that list from the TS source at
-  build (source-only, 2026-11-02: `crates/hrc-native/build.rs:87-96`).
+  `serve.log` (148 `servedBy: "native"` lines, 2026-11-02, T-12291). All completed non-stream
+  requests write a line; streams log open/close.
   `grep '"event":"http.request"' ~/praesidium/var/logs/hrc-runtime/rusthrc-owner.log | tail`
 - `hrc runtime sweep [--dry-run|--yes] [--older-than D] [--json]`: liveness-gates aged ready/busy runtimes
   (summary `matched`, `stale`, `terminated`, `skipped`, `errors`). `hrc runtime prune [--dry-run|--yes]
