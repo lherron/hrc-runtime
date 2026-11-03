@@ -185,6 +185,14 @@ async fn prepare_dispatch(server: &Shared, birth: &Birth<'_>) -> Result<(Value, 
     // placement correlation at turn admission (normalizeDispatchIntent), so a
     // promptless start (a relaunch, the attached door) keeps the intent it was
     // given; the compile request is normalized either way.
+    let mut intent = intent;
+    // T-12419: a carried conversation keeps the harness that produced it.
+    let pin = continuation
+        .as_ref()
+        .and_then(|_| compile::conversation_pin(&intent, session));
+    if let Some(pin) = &pin {
+        compile::record_pin(&mut intent, pin);
+    }
     let given = intent.clone();
     let intent = compile::normalize_placement(intent, session, run);
     let dispatch_env = dispatch_environment(session, &intent, &server.runtime, run)?;
@@ -200,6 +208,10 @@ async fn prepare_dispatch(server: &Shared, birth: &Birth<'_>) -> Result<(Value, 
     let mut intent = intent;
     if run.is_some() {
         intent["initialPrompt"] = prompt.into();
+    }
+    if let Some(pin) = &pin {
+        // The directives reach the compile only: a stored intent never replays them.
+        compile::direct_pin(&mut intent, pin);
     }
     let request = compile::request(
         &intent,

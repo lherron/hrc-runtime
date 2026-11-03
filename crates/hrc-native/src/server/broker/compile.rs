@@ -1,6 +1,7 @@
 //! ASP v2 compilation and admission. This module never launches a process.
 use super::{ApiError, aspc::AspSession};
 use anyhow::{Context, Result, ensure};
+use axum::http::StatusCode;
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
 use std::{fs, os::unix::fs::PermissionsExt, path::PathBuf};
@@ -26,12 +27,7 @@ pub fn continuation_ref(session: &Value, reuse_disabled: bool) -> Option<Value> 
     }
     let c = &session["continuation"];
     let key = c["key"].as_str()?;
-    let provider = match c["provider"].as_str()? {
-        "anthropic" => "anthropic",
-        "openai" | "codex" | "openai-codex" => "openai",
-        "meta" | "muse" => "meta",
-        _ => return None,
-    };
+    let provider = provider_family(c["provider"].as_str()?)?;
     let mut broker = json!({"provider":c["provider"]});
     if let Some(kind) = c.get("kind") {
         broker["kind"] = kind.clone();
@@ -41,6 +37,106 @@ pub fn continuation_ref(session: &Value, reuse_disabled: bool) -> Option<Value> 
     Some(
         json!({"schemaVersion":"runtime-continuation/v1","hrc":{"provider":provider,"continuationId":key,"key":key},"broker":broker,"source":"harness-broker","observedAt":hrc_store::timestamp()}),
     )
+}
+
+/// The continuation provider family, in continuation_ref's vocabulary.
+fn provider_family(provider: &str) -> Option<&'static str> {
+    match provider {
+        "anthropic" => Some("anthropic"),
+        "openai" | "codex" | "openai-codex" => Some("openai"),
+        "meta" | "muse" => Some("meta"),
+        _ => None,
+    }
+}
+
+/// The selection keys a carried conversation pins (T-12419). They are the
+/// harness and the model it ran. A harness pinned without its model would let
+/// a drifted profile's model (opus) refuse under codex-hrcpty.
+const PINNED: [&str; 4] = ["harness", "model_provider", "model", "reasoning_effort"];
+
+/// T-12419: a birth that carries a continuation resumes a conversation that
+/// one harness produced. ASP resolves the harness from the CURRENT profile
+/// unless the request says otherwise, so a profile edit mid-conversation
+/// relaunched a Codex thread under claude-code. Pin the session's applied
+/// provision harness as summon directives. An explicit caller harness
+/// (selection or directive) wins, and `continuation_gate` judges it.
+/// Returns the directives to merge, or None when there is nothing to pin.
+pub fn conversation_pin(intent: &Value, session: &Value) -> Option<Value> {
+    let names_harness = |v: &Value| v.get("harness").is_some_and(|h| !h.is_null());
+    if names_harness(&intent["selection"]) || names_harness(&intent["summonDirectives"]) {
+        return None;
+    }
+    let applied = &session["lastAppliedIntentJson"]["provision"];
+    applied["harness"].as_str()?;
+    let mut pin = json!({});
+    for key in PINNED {
+        if let Some(value) = applied.get(key).filter(|v| v.is_string()) {
+            pin[key] = value.clone();
+        }
+    }
+    Some(pin)
+}
+
+/// Record a conversation pin in the applied provision, so the stored intent
+/// names the harness that ran.
+pub fn record_pin(intent: &mut Value, pin: &Value) {
+    if !intent["provision"].is_object() {
+        intent["provision"] = json!({});
+    }
+    for (key, value) in pin.as_object().into_iter().flatten() {
+        intent["provision"][key] = value.clone();
+    }
+}
+
+/// Direct the compile with a conversation pin, under any explicit caller
+/// directive.
+pub fn direct_pin(intent: &mut Value, pin: &Value) {
+    let mut directives = pin.as_object().cloned().unwrap_or_default();
+    if let Some(explicit) = intent["summonDirectives"].as_object() {
+        directives.extend(explicit.clone());
+    }
+    intent["summonDirectives"] = Value::Object(directives);
+}
+
+/// T-12419: a continuation key belongs to the harness family that produced it.
+/// ASP stamps the carried key with the LAUNCHING harness's provider, so a codex
+/// thread reached claude-code as `--resume <codex key>`, never produced a first
+/// turn, and looped first_turn_missing. Refuse before anything is recorded.
+/// Starting fresh would silently discard the conversation the dispatcher
+/// expects to continue. The remedies are the original harness or an explicit
+/// drop.
+pub(super) fn continuation_gate(response: &Value, request: &Value) -> Result<(), ApiError> {
+    let carried = &request["continuation"]["hrc"];
+    let Some(family) = carried["provider"].as_str().and_then(provider_family) else {
+        return Ok(());
+    };
+    let spec = &response["plan"]["execution"]["dispatchRequest"]["startRequest"]["spec"]["harness"];
+    let Some(launching) = spec["provider"].as_str().and_then(provider_family) else {
+        return Ok(());
+    };
+    if launching == family {
+        return Ok(());
+    }
+    let host = request["identity"]["hostSessionId"].as_str().unwrap_or("");
+    let harness = response["plan"]["selection"]["harness"]
+        .as_str()
+        .unwrap_or("");
+    let key = carried["key"].as_str().unwrap_or("");
+    Err(ApiError::domain(
+        StatusCode::CONFLICT,
+        "continuation_harness_mismatch",
+        format!(
+            "session {host} carries a {family} continuation ({key}) that harness {harness} ({launching}) cannot resume; relaunch it on its original harness, or drop the continuation with `hrc session drop-continuation {host} --reason <why>` to start fresh"
+        ),
+        Some(json!({
+            "hostSessionId": host,
+            "continuationProvider": request["continuation"]["broker"]["provider"],
+            "continuationKey": key,
+            "harness": harness,
+            "frontend": spec["frontend"],
+            "harnessProvider": spec["provider"],
+        })),
+    ))
 }
 
 /// normalizeDispatchIntent's placement, in the key order Bun's compile carries.
@@ -205,6 +301,7 @@ impl Compiled {
             )
             .await?;
         admit(&response, &request, operator).map_err(ApiError::from)?;
+        continuation_gate(&response, &request)?;
         let executable = validate_release(
             &response["executionRelease"],
             &response["plan"]["execution"]["driver"],
