@@ -64,6 +64,18 @@ def main():
                 good = expected.returncode == subject.returncode == 0 and not subject.stderr and subject.stdout == expected.stdout + appendix
                 good = good and all(flag in appendix for flag in ('--front', '--bun-socket', '--listen-socket'))
                 results.append(dict(case='Rust daemon help without Bun', argv=argv, **{'pass': good}, stdout=subject.stdout, stderr=subject.stderr, exit=subject.returncode))
+        # Native grafts are part of the shipped help contract even when the
+        # parent's command action is still postponed to Bun.
+        surface = json.loads((ROOT / 'crates/hrc-cli/surface.json').read_text())
+        for path in ([], ['session']):
+            node = surface
+            for name in path:
+                node = next(child for child in node['children'] if child['name'] == name)
+            for view, field in (('agent', 'help'), ('human', 'humanHelp')):
+                argv = ['--' + view] + path + ['--help']
+                subject = subprocess.run([str(args.binary.resolve())] + argv, env=no_bun, cwd=ROOT, text=True, capture_output=True, timeout=15)
+                good = subject.returncode == 0 and not subject.stderr and subject.stdout == node[field]
+                results.append(dict(case='native graft parent help without Bun', argv=argv, **{'pass': good}, stdout=subject.stdout, stderr=subject.stderr, exit=subject.returncode))
         # The executable named bun is a process seam, not an oracle for CLI behavior.
         # Its PID must be the rusthrc PID: spawn-and-wait does not satisfy exec.
         shim = root / 'tools'

@@ -214,7 +214,12 @@ pub fn run(args: Vec<String>) -> i32 {
     // commands (including their help/grammar failures) receive the original argv.
     let native = passthrough::native_intent(&surface, &args)
         || parsed.as_ref().is_ok_and(|p| {
-            passthrough::native_command(&p.path()) || p.path() == "server" && p.help
+            passthrough::native_command(&p.path())
+                || p.help
+                    && (p.path() == "server"
+                        || p.node["children"].as_array().is_some_and(|children| {
+                            children.iter().any(|child| child["nativeOnly"] == true)
+                        }))
         });
     if native {
         metrics::begin(&args, &surface);
