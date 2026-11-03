@@ -60,6 +60,12 @@ publish the selected release to the fleet registry after the restart readback
 (`just _publish-selected-release`). The svc and hrcdev legs are `no-publish`.
 The recipe refuses canonical publication from any node other than max3.
 
+Deployment preflight status reads retry up to five times, three seconds apart,
+when the CLI fails or reports degraded/malformed status. Only a successful
+healthy snapshot is used; node identity, installed/running coherence and target
+identity checks still apply. The existing post-restart and ASP convergence loops
+keep their longer bounds and tolerate an individual failed status read.
+
 **Restart mode and authority.** The ssh phase only installs. The restart runs
 in the invoking seat as `hrc server restart --node <node> --reason …`, through
 the daemon's lifecycle endpoint (T-09861). An ssh shell has no runtime identity

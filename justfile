@@ -663,7 +663,8 @@ _max3-source-commit:
     set -euo pipefail
     fail() { printf '@max3: %s\n' "$*" >&2; exit 1; }
 
-    status="$(hrc server status --json 2>/dev/null)" || fail 'local HRC daemon is not reachable'
+    source '{{ justfile_directory() }}/scripts/hrc-cli-path.sh'
+    status="$(hrc_healthy_status)" || fail 'local HRC daemon is not reachable or healthy'
     health="$(jq -r '.status // "down"' <<<"$status")"
     [[ "$health" == healthy ]] || fail "local HRC daemon is ${health}, not healthy"
     node="$(jq -r '.node.nodeId // ""' <<<"$status")"
@@ -682,7 +683,8 @@ _max3-aspd-commit:
     set -euo pipefail
     fail() { printf '@max3 aspd: %s\n' "$*" >&2; exit 1; }
 
-    status="$(hrc server status --json 2>/dev/null)" || fail 'local HRC daemon is not reachable'
+    source '{{ justfile_directory() }}/scripts/hrc-cli-path.sh'
+    status="$(hrc_healthy_status)" || fail 'local HRC daemon is not reachable or healthy'
     [[ "$(jq -r '.node.nodeId // ""' <<<"$status")" == max3 ]] ||
       fail 'the @max3 aspd target must be resolved on max3'
     [[ "$(jq -r '.api.aspd.reachable // false' <<<"$status")" == true ]] ||
@@ -699,7 +701,9 @@ _max3-injector-version:
     set -euo pipefail
     fail() { printf '@max3 injector: %s\n' "$*" >&2; exit 1; }
 
-    [[ "$(hrc server status --json 2>/dev/null | jq -r '.node.nodeId // ""')" == max3 ]] ||
+    source '{{ justfile_directory() }}/scripts/hrc-cli-path.sh'
+    status="$(hrc_healthy_status)" || fail 'local HRC daemon is not reachable or healthy'
+    [[ "$(jq -r '.node.nodeId // ""' <<<"$status")" == max3 ]] ||
       fail 'the @max3 injector target must be resolved on max3'
     job="$(launchctl print "gui/$(id -u)/com.praesidium.hrc-mail-injector" 2>/dev/null)" ||
       fail 'launchd job com.praesidium.hrc-mail-injector is not loaded on max3; run just install-mail-injector-launchd <version> first'
@@ -1104,8 +1108,9 @@ _deploy-node ssh-target expected-node target-ref="origin/main" aspd-ref="origin/
     phase1_log="$(mktemp "${TMPDIR:-/tmp}/deploy-{{ expected-node }}.XXXXXX")"
     trap 'rm -f "$phase1_log"' EXIT
     # ---- phase 1 on the node: containment, aspd, install ----------------------
-    ssh -o BatchMode=yes -o ConnectTimeout=10 "{{ ssh-target }}" \
-      bash -s -- "{{ expected-node }}" "$target_ref" "$aspd_ref" "$injector" "{{ restart }}" "{{ publication }}" <<'REMOTE' | tee "$phase1_log"
+    {
+      cat '{{ justfile_directory() }}/scripts/hrc-cli-path.sh'
+      cat <<'REMOTE'
     set -euo pipefail
 
     expected_node="$1"
@@ -1151,7 +1156,7 @@ _deploy-node ssh-target expected-node target-ref="origin/main" aspd-ref="origin/
     [[ -f "$aspd_ns/service/config.json" ]] ||
       fail "aspd namespace not initialised at $aspd_ns (agent-spaces: just aspd-init $aspd_ns)"
 
-    status_before="$(hrc server status --json)" || fail 'HRC daemon is not healthy'
+    status_before="$(hrc_healthy_status)" || fail 'HRC daemon is not healthy'
     actual_node="$(jq -er '.node.nodeId' <<<"$status_before")" ||
       fail 'HRC status did not report a logical node ID'
     [[ "$actual_node" == "$expected_node" ]] ||
@@ -1199,7 +1204,7 @@ _deploy-node ssh-target expected-node target-ref="origin/main" aspd-ref="origin/
           "$running_installed" == 'true' ]]; then
       hrc_current=1
     fi
-    aspd_probe() { hrc server status --json 2>/dev/null | jq -c '.api.aspd // {}'; }
+    aspd_probe() { hrc_healthy_status "${1:-5}" 3 | jq -c '.api.aspd // {}'; }
     aspd_supervisor="$(jq -r '.supervisor.label // ""' "$aspd_ns/service/config.json")"
     aspd_now="$(aspd_probe)"
     aspd_current=0
@@ -1270,13 +1275,15 @@ _deploy-node ssh-target expected-node target-ref="origin/main" aspd-ref="origin/
     fi
     aspd_now=""
     for _ in $(seq 1 20); do
-      aspd_now="$(aspd_probe)"
-      [[ "$(jq -r '.reachable // false' <<<"$aspd_now")" == true &&
-         "$(jq -r '.release.sourceCommit // ""' <<<"$aspd_now")" == "$aspd_sha" ]] && break
+      if aspd_now="$(aspd_probe 1)" &&
+        [[ "$(jq -r '.reachable // false' <<<"$aspd_now")" == true &&
+           "$(jq -r '.release.sourceCommit // ""' <<<"$aspd_now")" == "$aspd_sha" ]]; then
+        break
+      fi
       aspd_now=""
       sleep 3
     done
-    [[ -n "$aspd_now" ]] || fail "HRC does not see aspd serving ${aspd_sha}: $(aspd_probe)"
+    [[ -n "$aspd_now" ]] || fail "HRC does not see aspd serving ${aspd_sha}: $(aspd_probe 1)"
     aspd_job_pid="$(launchctl print "gui/$(id -u)/${aspd_label}" 2>/dev/null |
       awk '$1 == "pid" && $2 == "=" { print $3; exit }' || true)"
     [[ -n "$aspd_job_pid" ]] || fail "aspd is serving but launchd job ${aspd_label} owns no running pid"
@@ -1312,6 +1319,8 @@ _deploy-node ssh-target expected-node target-ref="origin/main" aspd-ref="origin/
     echo "DEPLOY_ASPD_SHA=${aspd_sha}"
     echo "DEPLOY_ASPD_RELEASE=${aspd_release}"
     REMOTE
+    } | ssh -o BatchMode=yes -o ConnectTimeout=10 "{{ ssh-target }}" \
+      bash -s -- "{{ expected-node }}" "$target_ref" "$aspd_ref" "$injector" "{{ restart }}" "{{ publication }}" | tee "$phase1_log"
 
     # ---- restart, from the invoking seat (T-09861) ---------------------------
     # Install and restart stay ONE recipe invocation. The restart runs in THIS
