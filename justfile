@@ -4,6 +4,20 @@
 # through the wrkp `just` shim; `wrkp info` documents it.
 # wrkp: run.settled
 
+# `cargo-check` compiles on build1 through rbuild (installed by arris
+# `just install`) to keep that load off max3. clippy lints for the Mac target
+# there (`--mac`, so the macOS cfg branches are linted as before), fmt and test
+# run there natively on Linux, and the rusthrc/hrc-pty debug binaries are
+# cross-built there and pulled back for the e2e legs, which run here. rbuild
+# runs each step here when build1 is down and prints where it ran; without
+# rbuild, scripts/rbuild-local.sh runs them here the same way. On build1 the
+# test leg first runs `bun install` (store tests migrate scratch stores through
+# Bun; build1 reaches mini's registry over Tailscale). hrc-pty's tests run here:
+# its vendored libghostty-vt.a is arm64-only and cannot link into a Linux test
+# binary.
+rbuild := `command -v rbuild || echo scripts/rbuild-local.sh`
+mac_debug := "crates/target/aarch64-apple-darwin/debug"
+
 # Default recipe
 default:
     @just info
@@ -174,17 +188,17 @@ verify-bun:
 # Rust's path-scoped landing leg. No TS build/import is involved.
 cargo-check:
     python3 scripts/check-rust-crate-edges.py
-    cargo fmt --manifest-path crates/Cargo.toml --all -- --check
-    cargo clippy --manifest-path crates/Cargo.toml --workspace --all-targets --locked -- -D warnings
-    cargo test --manifest-path crates/Cargo.toml --workspace --locked
-    cargo build --manifest-path crates/Cargo.toml --locked -p hrc-native
-    python3 crates/hrc-cli/e2e/differential.py --binary crates/target/debug/rusthrc --artifacts "${HRC_CLI_E2E_ARTIFACTS:-/tmp/hrc-cli-e2e-$(date +%s)-$$}"
-    cargo build --manifest-path crates/Cargo.toml --locked -p hrc-pty
-    python3 crates/hrc-native/e2e/kernel_fold.py --binary crates/target/debug/rusthrc --artifacts "${HRC_NATIVE_E2E_ARTIFACTS:-/tmp/hrc-native-e2e-$(date +%s)-$$}/kernel-fold"
-    python3 crates/hrc-native/e2e/runtime_created.py --binary crates/target/debug/rusthrc --artifacts "${HRC_NATIVE_E2E_ARTIFACTS:-/tmp/hrc-native-e2e-$(date +%s)-$$}/runtime-created"
-    python3 crates/hrc-native/e2e/kernel_fd_cost.py --binary crates/target/debug/rusthrc --artifacts "${HRC_NATIVE_E2E_ARTIFACTS:-/tmp/hrc-native-e2e-$(date +%s)-$$}/kernel-fd-cost"
-    python3 crates/hrc-native/e2e/foundation.py --binary crates/target/debug/rusthrc --artifacts "${HRC_NATIVE_E2E_ARTIFACTS:-/tmp/hrc-native-e2e-$(date +%s)-$$}"
-    python3 crates/hrc-native/e2e/command_runs.py --binary crates/target/debug/rusthrc --scratch-root "/tmp/hrc-command-runs-$(date +%s)-$$" --artifacts "${HRC_NATIVE_E2E_ARTIFACTS:-/tmp/hrc-native-e2e-$(date +%s)-$$}/command-runs"
+    {{rbuild}} cargo fmt --manifest-path crates/Cargo.toml --all -- --check
+    {{rbuild}} --mac cargo clippy --manifest-path crates/Cargo.toml --workspace --all-targets --locked -- -D warnings
+    {{rbuild}} sh -c '[ "$(uname)" = Darwin ] || bun install --frozen-lockfile --silent; exec cargo test --manifest-path crates/Cargo.toml --workspace --locked --exclude hrc-pty'
+    cargo test --manifest-path crates/Cargo.toml --locked -p hrc-pty
+    {{rbuild}} --mac --pull {{mac_debug}}/rusthrc --pull {{mac_debug}}/hrc-pty cargo build --manifest-path crates/Cargo.toml --locked -p hrc-native -p hrc-pty
+    python3 crates/hrc-cli/e2e/differential.py --binary {{mac_debug}}/rusthrc --artifacts "${HRC_CLI_E2E_ARTIFACTS:-/tmp/hrc-cli-e2e-$(date +%s)-$$}"
+    python3 crates/hrc-native/e2e/kernel_fold.py --binary {{mac_debug}}/rusthrc --artifacts "${HRC_NATIVE_E2E_ARTIFACTS:-/tmp/hrc-native-e2e-$(date +%s)-$$}/kernel-fold"
+    python3 crates/hrc-native/e2e/runtime_created.py --binary {{mac_debug}}/rusthrc --artifacts "${HRC_NATIVE_E2E_ARTIFACTS:-/tmp/hrc-native-e2e-$(date +%s)-$$}/runtime-created"
+    python3 crates/hrc-native/e2e/kernel_fd_cost.py --binary {{mac_debug}}/rusthrc --artifacts "${HRC_NATIVE_E2E_ARTIFACTS:-/tmp/hrc-native-e2e-$(date +%s)-$$}/kernel-fd-cost"
+    python3 crates/hrc-native/e2e/foundation.py --binary {{mac_debug}}/rusthrc --artifacts "${HRC_NATIVE_E2E_ARTIFACTS:-/tmp/hrc-native-e2e-$(date +%s)-$$}"
+    python3 crates/hrc-native/e2e/command_runs.py --binary {{mac_debug}}/rusthrc --scratch-root "/tmp/hrc-command-runs-$(date +%s)-$$" --artifacts "${HRC_NATIVE_E2E_ARTIFACTS:-/tmp/hrc-native-e2e-$(date +%s)-$$}/command-runs"
 
 # Standing native workflows, run by hand only. They compare native against a
 # named installed Bun baseline with live model turns (aspd, tmux and model
