@@ -175,8 +175,16 @@ configured so that macOS TCC grants survive releases (T-12224;
 
 - **Deploy.** The `deploy-*` recipes work on either owner. On a rusthrc owner,
   `just install` alone changes nothing that runs, so the lane stages the new
-  release (`hrc-owner.sh stage`) before the restart. Staging refuses a release
-  whose migrations the store lacks: only Bun migrates.
+  release (`hrc-owner.sh stage`) before the restart. If the installed release
+  has pending migrations, the lane first runs the existing schema activation
+  door with `--dry-run`, then `--prepare-only`: it backs up SQLite through its
+  backup API into the owner's state `backups/`, applies migrations with the
+  installed Bun store, verifies the schema, and stages the release. The invoking
+  Mable seat then restarts that node through federation and performs the normal
+  release, schema and broker warmup readback. Preparation never restarts from
+  the credentialless SSH shell. A schema ahead of the release or an unreadable
+  schema refuses deployment. `scripts/hrc-owner-schema-e2e.py` exercises this
+  door against a private store using an installed release.
 - **Switch.** `just switch-owner-rusthrc <node>` is read-only: it prints the
   preflight report and the rendered plist diff against the node's Bun plist. Add
   `apply` to switch. First deploy the node to the target under Bun. Apply then

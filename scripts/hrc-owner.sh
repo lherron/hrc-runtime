@@ -5,14 +5,16 @@
 #
 #   hrc-owner.sh kind [plist]                      print bun | rusthrc
 #   hrc-owner.sh log-path [plist]                  the owner's StandardOutPath
+#   hrc-owner.sh schema-state                     installed release vs owner store, read-only
 #   hrc-owner.sh render <bun-plist> <out>          owner plist from an installed Bun plist
 #   hrc-owner.sh stage --expect-commit <sha> [--dry-run]
 #                                                  copy the installed release to the owner root and
 #                                                  its rusthrc (signed when configured) to the fixed exe
 #   hrc-owner.sh preflight <node> <sha>            read-only switch report (KEY=value lines)
 #   hrc-owner.sh prepare <node> <sha>              stage + render the owner plist to <plist>.rusthrc-owner.next
-#   hrc-owner.sh activate --expect-commit <sha> [--expect-pending <id,id>] [--reason <text>]
+#   hrc-owner.sh activate --expect-commit <sha> [--expect-pending <id,id>] [--reason <text>] [--dry-run|--prepare-only]
 #                                                  migrate the store, stage, request authorized restart, verify
+#                                                  prepare-only backs up/migrates/stages; invoking seat restarts remotely
 #   hrc-owner.sh activate                          after the stop: swap the plist in, bootstrap, wait for health
 #   hrc-owner.sh refresh-plist [--dry-run]         a rusthrc owner plist that still execs the old
 #                                                  release-link path: point it at the fixed exe
@@ -407,6 +409,10 @@ function report() {
   } finally { ro.close() }
 }
 const before = report()
+if (mode === 'state') {
+  console.log(before.schemaAhead ? 'ahead' : before.pending.length ? 'pending' : 'current')
+  process.exit(0)
+}
 console.log(JSON.stringify({ path, before }))
 const pending = [...before.pending].sort()
 if (before.schemaAhead || !pending.length ||
@@ -428,6 +434,7 @@ JS
 
 activate_schema() {
   local expect="" pending="" has_pending=0 reason="" release src id commit env_json db log since status warm attempt
+  local dry=0 prepare_only=0 backup
   while (($#)); do
     case "$1" in
       --expect-commit|--expect-pending|--reason)
@@ -438,6 +445,8 @@ activate_schema() {
           --reason) reason="$2" ;;
         esac
         shift 2 ;;
+      --dry-run) dry=1; shift ;;
+      --prepare-only) prepare_only=1; shift ;;
       *) fail "activate: unknown argument $1; nothing changed" ;;
     esac
   done
@@ -460,10 +469,32 @@ activate_schema() {
   local -a expected_args=()
   if ((has_pending)); then expected_args=("$pending"); fi
   activation_migrations "$src" "$db" report ${expected_args[@]+"${expected_args[@]}"} || fail 'migration preflight failed; nothing changed'
+  if ((dry)); then
+    echo '[activate] dry run: would back up, migrate and stage; no changes made'
+    return
+  fi
+  backup="$HRC_STATE_DIR/backups/pre-activate-$(date -u +%Y%m%dT%H%M%SZ)-$$.sqlite"
+  # SQLite's backup API includes committed WAL pages; copying the live DB does not.
+  python3 - "$db" "$backup" <<'PY'
+import pathlib, sqlite3, sys
+source, target = map(pathlib.Path, sys.argv[1:])
+target.parent.mkdir(parents=True, exist_ok=True)
+with sqlite3.connect(f'file:{source}?mode=ro', uri=True) as src:
+    with sqlite3.connect(target) as dst:
+        src.backup(dst)
+        if dst.execute('PRAGMA quick_check').fetchall() != [('ok',)]:
+            raise SystemExit('activation backup failed SQLite quick_check')
+target.chmod(0o600)
+PY
+  echo "[activate] backup=$backup"
   [[ -n "$reason" ]] || reason="activate schema bump at $expect"
   echo "[activate] migrate -> stage -> restart (restart requires mable@<project>:primary)"
   activation_migrations "$src" "$db" apply ${expected_args[@]+"${expected_args[@]}"}
   stage --expect-commit "$expect"
+  if ((prepare_only)); then
+    echo "[activate] prepared sourceCommit=$commit; invoking Mable seat must restart and read back this node"
+    return
+  fi
   if ! hrc server restart --force --reason "$reason"; then
     fail 'restart failed; migration and stage already applied. HRC permits restart only from an authorized Mable primary seat (or Lance); ask mable@hrc-runtime:primary to finish activation'
   fi
@@ -604,6 +635,12 @@ shift || true
 case "$cmd" in
   kind) owner_kind "$@" ;;
   log-path) plist_value "${1:-$PLIST}" StandardOutPath ;;
+  schema-state)
+    release="$(installed_release)"
+    read -r src id commit <<<"$release"
+    env_json="$(plutil -extract EnvironmentVariables json -o - "$PLIST")"
+    db="$(jq -er '.HRC_STATE_DIR | select(type == "string" and startswith("/"))' <<<"$env_json")/state.sqlite"
+    activation_migrations "$src" "$db" state ;;
   render) render "$@" ;;
   stage) stage "$@" ;;
   preflight) preflight "$@" ;;
@@ -611,5 +648,5 @@ case "$cmd" in
   activate) if (($#)); then activate_schema "$@"; else activate; fi ;;
   refresh-plist) refresh_plist "$@" ;;
   bootstrap) wait_unloaded; bootstrap_owner ;;
-  *) echo "usage: $0 kind|log-path|render|stage|preflight|prepare|activate|refresh-plist|bootstrap ..." >&2; exit 2 ;;
+  *) echo "usage: $0 kind|log-path|schema-state|render|stage|preflight|prepare|activate|refresh-plist|bootstrap ..." >&2; exit 2 ;;
 esac
