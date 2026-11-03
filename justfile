@@ -1534,15 +1534,33 @@ _node-readback ssh-target expected-node target-sha aspd-sha aspd-release injecto
       fail 'post-restart status did not report release.processStartedAt'
     warmup=""
     for _ in $(seq 1 40); do
-      warmup="$(grep -F '"broker.warmup.complete"' "$owner_log" 2>/dev/null |
-        jq -c --arg t "$started" 'select(.ts >= $t) | .data' 2>/dev/null | tail -1)"
+      # A no-restart deploy may follow log rotation; refresh the archive list
+      # each attempt in case rotation also happens during this readback.
+      owner_logs=("$owner_log")
+      warmup="$(
+        { grep -F '"broker.warmup.complete"' "$owner_log" 2>/dev/null || true; } |
+          jq -Rc --arg t "$started" \
+            'fromjson? | select(.event == "broker.warmup.complete" and .ts >= $t) | .data' | tail -1
+      )"
+      # Avoid decompressing history when the current log already proves warmup.
+      if [[ -z "$warmup" ]]; then
+        for archive in "$owner_log".*.gz; do
+          [[ -f "$archive" ]] && owner_logs+=("$archive")
+        done
+        warmup="$(
+          for archive in "${owner_logs[@]:1}"; do
+            zgrep -h -F '"broker.warmup.complete"' "$archive" 2>/dev/null || true
+          done | jq -Rc --arg t "$started" \
+            'fromjson? | select(.event == "broker.warmup.complete" and .ts >= $t) | .data' | tail -1
+        )"
+      fi
       [[ -n "$warmup" ]] && break
       sleep 3
     done
-    [[ -n "$warmup" ]] || fail "no broker.warmup.complete in ${owner_log} since ${started}"
+    [[ -n "$warmup" ]] || fail "no broker.warmup.complete since ${started}; searched: ${owner_logs[*]}"
     [[ "$(jq -r '.attached == .total' <<<"$warmup")" == true ]] ||
-      fail "brokers did not all reattach: ${warmup}"
-    echo "[hrc] brokers reattached: $(jq -c '{total, attached}' <<<"$warmup") (${owner_log})"
+      fail "brokers did not all reattach: ${warmup}; searched: ${owner_logs[*]}"
+    echo "[hrc] brokers reattached: $(jq -c '{total, attached}' <<<"$warmup") (searched: ${owner_logs[*]})"
     # A launchd bootout SIGKILLs the job ExitTimeOut seconds after SIGTERM, and the
     # default is ~5s (measured 4.6s, T-09760) — shorter than the daemon's own 30s
     # stop deadline, so a slow graceful stop dies mid-teardown with no record and

@@ -78,6 +78,10 @@ live agent turn on the node being deployed. The deployment restart uses a bounde
 the wait-mode drain timeout. Max3's observed 33-second broker warmup exceeded
 the CLI's default 30-second proof window on 2026-11-03. A failed proof still
 aborts deployment; the subsequent readback also verifies broker reattachment.
+Readback searches the plist's current owner log and, if needed, its rotated
+`.gz` siblings for a warmup event from the current boot. Missing evidence remains
+a deployment failure and reports the log paths searched, including for a deploy
+that reuses an already-current daemon.
 
 **Cold-start check after a deploy.** "Cold start a :minisvc / :hrcdev clod" means
 prove a fresh birth on that node answers mail. First make the seat cold: `hrc
