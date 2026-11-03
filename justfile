@@ -1360,8 +1360,10 @@ _deploy-node ssh-target expected-node target-ref="origin/main" aspd-ref="origin/
         force) restart_flags=(--force) ;;
         *) echo "deploy-{{ expected-node }}: restart mode must be wait or force" >&2; exit 1 ;;
       esac
+      # Max3 warmup took 33s on 2026-11-03, exceeding the CLI's 30s default.
+      # Keep the healthy/new-process proof bounded while allowing broker recovery.
       hrc server restart --node '{{ expected-node }}' "${restart_flags[@]}" \
-        --reason "deploy {{ expected-node }} to ${target_sha}"
+        --proof-timeout-ms 120000 --reason "deploy {{ expected-node }} to ${target_sha}"
     fi
 
     just _node-readback "{{ ssh-target }}" "{{ expected-node }}" "$target_sha" "$aspd_sha" "$aspd_release" "$injector" "{{ publication }}"

@@ -73,7 +73,11 @@ to authorize it. Running the recipe grants nothing: an unauthorized caller gets
 the install and then a non-zero exit carrying the daemon's refusal. Busy
 runtimes do not block a deploy, because brokers reattach across an HRC restart. `restart=wait` (default) drains in-flight runs first;
 `restart=force` restarts through them and is the only mode that completes from a
-live agent turn on the node being deployed.
+live agent turn on the node being deployed. The deployment restart uses a bounded
+120-second healthy/new-process proof (`--proof-timeout-ms 120000`), separate from
+the wait-mode drain timeout. Max3's observed 33-second broker warmup exceeded
+the CLI's default 30-second proof window on 2026-11-03. A failed proof still
+aborts deployment; the subsequent readback also verifies broker reattachment.
 
 **Cold-start check after a deploy.** "Cold start a :minisvc / :hrcdev clod" means
 prove a fresh birth on that node answers mail. First make the seat cold: `hrc
