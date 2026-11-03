@@ -428,12 +428,6 @@ source:
   - crates/hrc-native/src/server.rs
   - crates/hrc-domain/src/declarations.rs
 validation_scope: >
-  Historical gates below describe T-12067's activation, not current rusthrc
-  read obligations. Amendment 2026-11-02 (praesidium-kernel r1.9 / T-12360):
-  kq.py status now reads the separate praesidium:praesidium document; rusthrc's
-  hrc-kernel.sock gate is ops-only registry discovery with six owner operations
-  and no document. The former svc/hrcdev kq read gate and embedded rebuild-time
-  gate are retired; Praesidium owns projection catch-up and attach verification.
   T-12067's folded implementation supplies section 8.1 item 10's four
   product gates: Loggia attach and cold summon without an hrc-kernel
   process on max3; wire_suite.py against a scratch daemon's kernel socket;

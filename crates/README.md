@@ -12,21 +12,15 @@ store grammars (including terminal statuses and process identity). The sibling
 Its build script derives schema admission from the Bun migration graph; it does
 not execute those migrations.
 
-`hrc-domain` declares HRC's six operator operations and uses an injected
-in-process owner binding. Its only HRC dependency is `hrc-common`; external
-dependencies are `cardo-runtime`, `serde` and `serde_json`. It must not depend
-on the store, CLI or native daemon.
+`hrc-domain` implements the HRC document and operations consumed by cardo. It
+opens its own read-only store connection and uses an injected in-process owner
+binding. It may depend on
+`hrc-store`, `hrc-common`, cardo, and external libraries; it must not depend on
+the CLI, native daemon, or kernel.
 
-2026-11-02 amendment (praesidium-kernel r1.9, T-12360): rusthrc retains
-an ops-only `hrc` provider at `<runtimeRoot>/hrc-kernel.sock` for operator
-summon, restart, send and annotation put/act/delete. The provider has no
-document, observation node types, ingest, read projector or seat attacher.
-The separate Praesidium kernel owns the `praesidium:praesidium` document's
-`seat`, `runtime` and `seat.ext` reads and seat attachment. Cardo requires an
-executor of record for operations; HRC registers a stateless worker that
-refuses all calls, while HrcAdapter dispatches the six owner operations before
-core. The historical standalone kernel crate retired in T-12141 (§8.1);
-T-12360 retires the later embedded read projection.
+The native daemon library embeds the rebuildable cardo projection and exposes
+`<runtimeRoot>/hrc-kernel.sock` for Loggia and `hrc-native/e2e/kq.py`.
+The historical standalone kernel crate retired in T-12141 (§8.1).
 
 `hrc-cli` implements the command surface. It may depend on `hrc-store`,
 `hrc-common`, and external libraries, never the native daemon, domain, or kernel.
@@ -39,8 +33,7 @@ import the CLI. The sibling `crate-graph-hrc-common` task establishes this split
 
 Allowed workspace edges:
 
-- `hrc-common ← {hrc-store, hrc-domain, hrc-cli, hrc-native lib}`
-- `hrc-store ← {hrc-cli, hrc-native lib}`
+- `hrc-common ← hrc-store ← {hrc-domain, hrc-cli, hrc-native lib}`
 - `hrc-domain ← hrc-native lib`
 - `rusthrc bin ← {hrc-native lib, hrc-cli}`
 

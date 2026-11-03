@@ -15,7 +15,7 @@ import time
 import tomllib
 from urllib.parse import urlencode
 
-from kernel_fold import substrate, placement_hint
+from kernel_fold import substrate, placement_hint, rows
 from hrcpty_substrate import AGENT, PROJECT, REPO
 
 
@@ -40,6 +40,7 @@ def main():
         return out
     aspd.handle = declaration
     scope = f'agent:{AGENT}:project:{PROJECT}:task:primary'
+    kernel = root / 'run/hrc-kernel.sock'
     failure = None
 
     def state(target=scope):
@@ -73,8 +74,9 @@ def main():
         r.check('stale-fence', stale.returncode != 0 and state()['work'] == {'kind': 'workstream', 'workstreamId': 'stream-1'}, stderr=stale.stderr)
         events = r.rows("SELECT * FROM hrc_events WHERE scope_ref=? AND event_kind='session.work.changed'", (scope,))
         r.check('failed-write-no-event', len(events) == 1)
-        # T-12360: projection coverage moved to praesidium-kernel; owner
-        # state, stale-fence and ledger assertions remain above.
+        r.wait(lambda: any(n['payload'].get('scopeRef') == scope and n['payload'].get('workEtag') == 2
+                          and n['payload'].get('kind') == 'standing' for n in rows(kernel, 'hrc.seat')), 15, 'work projection')
+        r.check('kernel-work-and-kind', True)
         # Watcher must resolve changed declarations without a new summon.
         time.sleep(.1)
         profile.write_text('[placement.homes]\n')

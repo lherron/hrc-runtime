@@ -40,8 +40,7 @@ predicate: >
   class is unkeyed and it does not mutate the annotation. The kernel
   forwards caller identity and the fence without granting new authority.
   No seat-initiated delete operation belongs to this register.
-  Historical projection contract (T-12239, superseded below on 2026-11-02):
-  the kernel projection was a generic hrc.annotation, with its
+  The current kernel projection is a generic hrc.annotation, with its
   projection lifetime following the seat. live_until governs projection
   visibility; storage retention remains governed by
   hrc-runtime.seat-annotations, with no age-based storage deletion added.
@@ -50,13 +49,6 @@ predicate: >
   are outside this contract. The c2 backstop, receipts, hosts and
   card-contract revision 4 are governed by the consumer's c2.card-contract
   record and do not change HRC annotation admission.
-  Amendment 2026-11-02 (praesidium-kernel r1.9, T-12360): readers now use
-  seat.ext in praesidium:praesidium, with seat and runtime observations
-  owned by the separate Praesidium kernel. Rusthrc exposes no annotation
-  document or observation types and no seat attacher. Its ops-only hrc
-  provider retains seat.summon, seat.restart, seat.send and annotation
-  put/act/delete for operator callers. The asks record key, body grammar,
-  ownership, retention, CAS and action semantics above remain unchanged.
 authority: >
   Daedalus approval of the HRC-side seat-asks r1.2 at 7b76e6b7,
   resubmitted in EN-40748 on T-12239, 2026-11-02 UTC. Resolves F1 from
@@ -68,8 +60,6 @@ authority: >
   preservation of other writers' fields, as consumed by that design.
   The producer schema reference advances to 683f6921; no HRC code,
   admission, storage or operation-fence change is approved here.
-  The 2026-11-02 praesidium-kernel r1.9 step 6 ruling governs the read-owner
-  transfer and ops-only rusthrc provider (T-12360).
 source:
   - wrkq:T-12239
   - wrkc:EN-40695
@@ -80,17 +70,13 @@ source:
   - docs/proposals/praesidium-kernel.md
   - architecture/contracts/seat-annotations.yaml
   - crates/hrc-store/src/annotations.rs
-  - wrkq:T-12360
-  - crates/hrc-domain/src/declarations.rs
-  - crates/hrc-native/src/server/projection/kernel/mod.rs
+  - crates/hrc-domain/src/projection.rs
 validation_scope: >
   Requester owns section 8's real-facility round trip and stale CAS
   refusal, rotation stability, and two-client rendering and answer
   readback. T-12239's product gate 2 covers the F1 answered, emptied,
   later-question rearm sequence with the record continuously present.
   This ruling adds no gate and does not accept implementation or deployment.
-  T-12360 validates rusthrc read retirement and retained operator operations;
-  Praesidium read parity and consumer mount cutover remain separately gated.
 last_verified: >
   2026-11-02 design read of r1.2, the r1-to-r1.2 source delta, the
   existing annotation transaction and monotonic updatedAt, generic
@@ -101,8 +87,6 @@ last_verified: >
   date. Optional runId agrees with HRC's already accepted no-run delivery
   response; explicit rewrite preservation follows the existing field
   ownership and CAS. No product acceptance is claimed for the clarification.
-  2026-11-02 amendment read against praesidium-kernel r1.9 step 6 and
-  T-12360; no implementation, installation or activation claim is added.
 reopen_when: >
   Record key, row grammar or ownership, non-deletion or empty-state
   meaning, detector absence semantics, write fences, action meaning,

@@ -1,10 +1,11 @@
-//! HRC owner operations compose around Cardo's protocol adapter. Each
+//! Kernel-scoped HRC operations compose around Cardo's document adapter. Each
 //! admitted op runs on tokio's blocking pool and completes through the
 //! adapter's completion channel (T-12067 §8.1 item 4).
 use cardo_runtime::service::*;
 use crossbeam_channel::Sender;
 use hrc_domain::{
     annotation::{self, AnnotationAct, AnnotationDelete, AnnotationPut},
+    document::HrcCore,
     owner::OwnerCall,
     restart::{self, Restart},
     send::{self, SeatSend},
@@ -26,7 +27,7 @@ fn owner_operation(operation: &str) -> bool {
 }
 
 pub struct HrcAdapter {
-    pub core: cardo_runtime::core_adapter::CoreAdapter<cardo_core::document::CoreDomain>,
+    pub core: HrcCore,
     pub owner: Arc<dyn OwnerCall>,
     pub pending: BTreeSet<WorkId>,
     pub runtime: tokio::runtime::Handle,
@@ -198,69 +199,5 @@ impl DispatchAdapter for HrcAdapter {
     }
     fn shutdown(&mut self) -> Result<Vec<AdapterChange>, DispatchFailure> {
         self.core.shutdown()
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use cardo_host::HostDefault;
-    use hrc_domain::{HrcError, owner::OwnerReply};
-    use std::{
-        sync::atomic::{AtomicUsize, Ordering},
-        time::Duration,
-    };
-
-    struct Routed(AtomicUsize);
-    impl OwnerCall for Routed {
-        fn call(
-            &self,
-            _: &str,
-            _: &str,
-            _: Option<&serde_json::Value>,
-        ) -> Result<OwnerReply, HrcError> {
-            self.0.fetch_add(1, Ordering::SeqCst);
-            Err(HrcError::new("routing_probe", "owner reached"))
-        }
-    }
-
-    #[tokio::test(flavor = "multi_thread")]
-    async fn all_six_operations_reach_owner_without_core_worker() {
-        let mut core = cardo_runtime::core_adapter::CoreAdapter::new(
-            || cardo_core::document::CoreDomain,
-            |_| Err(cardo_core::Refusal::invalid("edit_rejected", "no edits")),
-            Duration::from_secs(60),
-        );
-        core.in_process_worker("hrc", || Box::new(super::super::AdapterRouted));
-        let owner = Arc::new(Routed(AtomicUsize::new(0)));
-        let runtime = RuntimeOwner::start(
-            HrcAdapter {
-                core,
-                owner: owner.clone(),
-                pending: Default::default(),
-                runtime: tokio::runtime::Handle::current(),
-            },
-            Arc::new(cardo_host::NoWork),
-            Box::new(cardo_host::Idle),
-            RuntimeConfig::host_default(),
-        );
-        let client = runtime.client(ClientRole::Tui);
-        tokio::task::spawn_blocking(move || {
-            cardo_host::send(&client, "registry.enable", hrc_domain::declarations::declarations()).unwrap();
-            let seat = "agent:probe:project:hrc-runtime:task:T-12360/lane:main";
-            for (name, args) in [
-                (summon::OPERATION, json!({"session_ref":seat,"request_id":"probe"})),
-                (restart::OPERATION, json!({"host_session_id":"host","expected_generation":1})),
-                (send::OPERATION, json!({"session_ref":seat,"host_session_id":"host","expected_generation":1,"text":"probe"})),
-                (annotation::PUT, json!({"session_ref":seat,"subject":"seat","ns":"probe","kind":"card","id":"one","body":{}})),
-                (annotation::ACT, json!({"session_ref":seat,"subject":"seat","ns":"probe","kind":"card","id":"one","action":"sent"})),
-                (annotation::DELETE, json!({"session_ref":seat,"subject":"seat","ns":"probe","kind":"card","id":"one"})),
-            ] {
-                let reply = cardo_host::send(&client, name, args).expect_err("probe owner refuses");
-                assert!(format!("{reply:?}").contains("routing_probe"), "{name}: {reply:?}");
-            }
-        }).await.unwrap();
-        assert_eq!(owner.0.load(Ordering::SeqCst), 6);
-        cardo_runtime_tokio::join(runtime).await.unwrap();
     }
 }

@@ -13,7 +13,6 @@ hrc-common = { path = "../hrc-common" }
 hrc-cli = { path = "../hrc-cli" }
 hrc-store = { path = "../hrc-store" }
 hrc-domain = { path = "../hrc-domain" }
-cardo-core.workspace = true
 cardo-runtime.workspace = true
 cardo-runtime-tokio.workspace = true
 cardo-host.workspace = true
