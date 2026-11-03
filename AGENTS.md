@@ -68,26 +68,15 @@ must not assert the other repo's behavior; shared render semantics live in
 
 ## Inspecting live HRC through the kernel
 
-2026-11-02 amendment (praesidium-kernel r1.9, T-12360): read seats,
-runtimes and annotations from the `praesidium:praesidium` document through
-`prae seat`, `prae runtime` and `prae ext list`. The document's types are
-`seat`, `runtime` and `seat.ext`. HRC owns storage and admission; the separate
-Praesidium kernel owns the rebuildable read projection and seat attachment.
-Use `prae describe <type>` and generated `--help` for supported reads.
+Read seats, runtimes and annotations through `prae seat`, `prae runtime` and
+`prae ext list` in `praesidium:praesidium`; use `prae describe <type>` and
+`--help`. Rusthrc's kernel socket is ops-only. See the
+[kernel inspection contract](docs/operations-runbook.md#kernel-inspection-contract)
+for types, operations, attribution and projection ownership.
 
-Rusthrc's `~/praesidium/var/run/hrc/hrc-kernel.sock` is an operator ops mount
-only: it exposes no document, ingest, observation types or attach capability.
-Its six operations are `seat.summon`, `seat.restart`, `seat.send`,
-`seat.annotation.put`, `seat.annotation.act` and `seat.annotation.delete`.
-The legacy `kq.py` observation commands do not read this socket anymore.
-Operator annotation writes retain `updatedBy: system:hrc-kernel`; agent writes
-through `prae` retain their runtime principal. Restarting rusthrc does not
-rebuild a rusthrc read projection; shared service restarts still require the
-authorized operator.
-
-`hrc runtime list`, `/v1/status`, `/v1/runtimes` and `runtimes/inspect` are
-whole-table daemon reads under the store mutex. Use the Praesidium document
-for routine seat and runtime observation to avoid delaying mail and turns.
+`hrc runtime list`, `/v1/status`, `/v1/runtimes` and `runtimes/inspect` scan the
+whole daemon table under the store mutex. Use the Praesidium document for
+routine observation to avoid delaying mail and turns.
 
 ## Runtime gotchas
 
