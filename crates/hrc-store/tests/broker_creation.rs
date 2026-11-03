@@ -96,3 +96,48 @@ fn rejected_creation_event_rolls_back_the_entire_start_graph() {
         Some("prepared")
     );
 }
+/// T-12418: a birth whose preparation names a host session that a rotation
+/// retired while it compiled never commits a runtime on that host.
+#[test]
+fn start_graph_refuses_a_host_session_retired_by_rotation() {
+    let (_scratch, mut db) = fixture::ScratchStore::new().unwrap();
+    let (session, _) = db
+        .create_session("agent:a:project:p:task:retired", "main")
+        .unwrap();
+    let record = prepared(&mut db, &session, true);
+    // context::rotate's commit: archive, successor, continuity moved.
+    let host = session["hostSessionId"].as_str().unwrap();
+    db.sqlite
+        .execute_batch(&format!(
+            "UPDATE sessions SET status='archived' WHERE host_session_id='{host}';
+             INSERT INTO sessions(host_session_id,scope_ref,lane_ref,generation,status,prior_host_session_id,created_at,updated_at) VALUES('hsid-next','agent:a:project:p:task:retired','main',2,'active','{host}','now','now');
+             UPDATE continuities SET active_host_session_id='hsid-next' WHERE scope_ref='agent:a:project:p:task:retired';"
+        ))
+        .unwrap();
+    let error = insert(&mut db, &record, &session).unwrap_err();
+    assert_eq!(error.to_string(), hrc_store::HOST_SESSION_RETIRED);
+    for table in ["runtimes", "broker_invocations", "runs"] {
+        assert_eq!(
+            db.sqlite
+                .query_row(&format!("SELECT count(*) FROM {table}"), [], |r| r
+                    .get::<_, i64>(0))
+                .unwrap(),
+            0,
+            "{table} rolled back"
+        );
+    }
+    assert_eq!(
+        db.sqlite
+            .query_row(
+                "SELECT count(*) FROM hrc_events WHERE event_kind IN ('runtime.created','turn.accepted')",
+                [],
+                |r| r.get::<_, i64>(0)
+            )
+            .unwrap(),
+        0
+    );
+    assert_eq!(
+        db.operation_status("op-create").unwrap().as_deref(),
+        Some("prepared")
+    );
+}

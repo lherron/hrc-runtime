@@ -611,8 +611,14 @@ pub async fn execute(server: &Shared, plan: &Plan, o: &Options<'_>) -> Result<Va
         .as_str()
         .unwrap_or("")
         .to_owned();
+    // T-12418: the reuse check and any birth are one decision per continuity;
+    // a sibling birth in flight or a rotation finishes first, then we re-read.
+    let gate = broker::session_gate(server, &plan.session).await;
+    broker::require_active_host(server, &plan.session)?;
     let body = match reusable(server, &host).await? {
         Some(rt) => {
+            // Delivery into a live seat may wait for the turn; never under the gate.
+            drop(gate);
             if rt.transport == "tmux" {
                 // attachedRunSelected: the attached door marks the seat operator-attach-pending.
                 publish_presentation(server, &rt.runtime_id, o.attach.is_some())?;
@@ -635,7 +641,7 @@ pub async fn execute(server: &Shared, plan: &Plan, o: &Options<'_>) -> Result<Va
             if let (Some(a), Some(i)) = (o.repair, intent.as_object_mut()) {
                 let _ = (a, i);
             }
-            broker::birth(
+            let born = broker::birth(
                 server,
                 broker::Birth {
                     session: plan.session.clone(),
@@ -649,7 +655,9 @@ pub async fn execute(server: &Shared, plan: &Plan, o: &Options<'_>) -> Result<Va
                     attach: o.attach.and_then(|g| g.lock().unwrap().take()),
                 },
             )
-            .await?
+            .await;
+            drop(gate);
+            born?
         }
     };
     enrich(server, body, plan)

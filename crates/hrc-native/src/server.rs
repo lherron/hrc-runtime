@@ -179,6 +179,8 @@ struct Server {
     accounting: Arc<accounting::Accounting>,
     brokers: Mutex<HashMap<String, rpc::JsonRpc>>,
     participant_work: Mutex<HashSet<String>>,
+    /// "scope\0lane" -> the continuity's start gate (broker::seat_gate, T-12418).
+    seat_gates: Mutex<HashMap<String, Arc<tokio::sync::Mutex<()>>>>,
     /// Broker projection memory; lock after `store`.
     projection: Mutex<projection::Memory>,
     subscribers: Mutex<subscribers::Registry>,

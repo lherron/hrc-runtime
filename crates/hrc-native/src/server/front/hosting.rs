@@ -189,6 +189,7 @@ pub async fn serve(role: Role) -> Result<()> {
         store: store_lock::StoreLock::new(store),
         brokers: Mutex::new(HashMap::new()),
         participant_work: Mutex::new(HashSet::new()),
+        seat_gates: Mutex::new(HashMap::new()),
         projection: Mutex::new(projection::Memory::default()),
         subscribers: Mutex::new(subscribers::Registry::default()),
         wrkq: ledger::Client::default(),

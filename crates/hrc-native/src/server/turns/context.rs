@@ -217,6 +217,10 @@ pub async fn rotate(server: &Shared, session: &Value, o: Rotation) -> Result<Val
             )
             .map_err(anyhow::Error::from)?
     };
+    // T-12418: no start decision on this continuity runs while it rotates; a
+    // birth in flight finishes first (and is torn down below), and every later
+    // one re-reads the active host under the same gate.
+    let seat = crate::server::broker::seat_gate(server, &scope, &lane).await;
     let active: Option<String> = {
         let db = server.store.lock().unwrap();
         db.sqlite
@@ -308,6 +312,7 @@ pub async fn rotate(server: &Shared, session: &Value, o: Rotation) -> Result<Val
         tx.commit().map_err(anyhow::Error::from)?;
     }
     server.ledger_committed();
+    drop(seat);
     if o.relaunch {
         let Some(intent) = successor else {
             return Err(ApiError::domain(
@@ -322,7 +327,9 @@ pub async fn rotate(server: &Shared, session: &Value, o: Rotation) -> Result<Val
             db.session(&next)?
         }
         .ok_or_else(|| ApiError::missing_host(&next))?;
-        super::attached::start(server, next_session, intent, true, None).await?;
+        // The successor host is new: the only runtime it can hold is a
+        // concurrent successor birth, which this start reuses (T-12418).
+        super::attached::start(server, next_session, intent, false, None).await?;
     }
     Ok(json!({"hostSessionId":next,"generation":generation + 1,"priorHostSessionId":host}))
 }

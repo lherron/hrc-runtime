@@ -3,6 +3,8 @@ use crate::{Store, timestamp};
 use anyhow::{Context, Result, ensure};
 use rusqlite::{Connection, OptionalExtension, params};
 use serde_json::{Value, json};
+/// start_broker_graph's refusal when the identity's host session is retired.
+pub const HOST_SESSION_RETIRED: &str = "host_session_retired";
 fn s<'a>(v: &'a Value, k: &str) -> Result<&'a str> {
     v[k].as_str().with_context(|| format!("missing {k}"))
 }
@@ -94,6 +96,13 @@ impl Store {
         let tx = self.sqlite.transaction()?;
         let changed = tx.execute("UPDATE runtime_operations SET status='starting',started_at=?,updated_at=?,capability_resolution_json=? WHERE operation_id=? AND status='prepared'",params![now,now,json!({"brokerHello":hello["capabilities"],"drivers":hello["drivers"],"result":{"status":"admitted"}}).to_string(),s(id,"operationId")?])?;
         ensure!(changed == 1, "aspd_preparation_not_prepared");
+        // T-12418: never birth on a host session a rotation already retired.
+        let live_host: bool = tx.query_row(
+            "SELECT EXISTS(SELECT 1 FROM sessions s JOIN continuities c ON c.scope_ref=s.scope_ref AND c.lane_ref=s.lane_ref AND c.active_host_session_id=s.host_session_id WHERE s.host_session_id=? AND s.status='active')",
+            [s(id, "hostSessionId")?],
+            |r| r.get(0),
+        )?;
+        ensure!(live_host, HOST_SESSION_RETIRED);
         tx.execute("INSERT INTO runtimes(runtime_id,host_session_id,scope_ref,lane_ref,generation,transport,status,tmux_json,supports_inflight_input,active_run_id,created_at,updated_at,status_changed_at,controller_kind,active_operation_id,active_invocation_id,plan_hash,selected_profile_hash,runtime_state_json) VALUES (?,?,?,?,?,?,'starting',?,1,?,?,?,?,'harness-broker',?,?,?,?,?)",params![s(id,"runtimeId")?,s(id,"hostSessionId")?,s(session,"scopeRef")?,crate::storage_lane(s(session,"laneRef")?),id["generation"].as_i64(),transport,if tmux.is_object(){Some(tmux.to_string())}else{None},id["runId"].as_str(),now,now,now,s(id,"operationId")?,s(id,"invocationId")?,s(plan,"planHash")?,s(&execution["profile"],"profileHash")?,state.to_string()])?;
         tx.execute("INSERT INTO broker_invocations(invocation_id,operation_id,runtime_id,run_id,broker_protocol,broker_driver,invocation_state,capabilities_json,spec_hash,start_request_hash,selected_profile_hash,spec_projection_json,start_request_projection_json,owner_server_instance_id,created_at,updated_at,lifecycle_policy_hash,execution_format) VALUES (?,?,?,?,?,?,'starting','{}',?,?,?,?,?,?,?,?,?,'format1')",params![s(id,"invocationId")?,s(id,"operationId")?,s(id,"runtimeId")?,id["runId"].as_str(),s(hello,"protocolVersion")?,s(execution,"driver")?,s(&record["admission"],"specHash")?,s(&execution["profile"],"startRequestHash")?,s(&execution["profile"],"profileHash")?,start["spec"].to_string(),start.to_string(),format!("hrc-server:{}",std::process::id()),now,now,record["dispatch"]["lifecyclePolicy"]["policyHash"].as_str()])?;
         // Creation is durable with the starting row, before invocation.start.

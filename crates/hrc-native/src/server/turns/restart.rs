@@ -234,7 +234,9 @@ pub async fn handle(server: &Shared, body: Value) -> Result<Response, ApiError> 
         .filter(|v| !v.is_null())
         .cloned()
         .unwrap_or(intent);
-    let launch = match attached::start(server, successor.clone(), successor_intent, true, None)
+    // Reuse, not fresh_pty: a runtime on the new successor host can only be a
+    // concurrent successor birth (T-12418).
+    let launch = match attached::start(server, successor.clone(), successor_intent, false, None)
         .await
     {
         Ok(started) => json!({"status":"started","runtimeId":started["runtimeId"]}),

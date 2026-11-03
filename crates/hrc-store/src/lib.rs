@@ -18,6 +18,7 @@ pub use annotations::{
 };
 pub mod attention;
 mod broker;
+pub use broker::HOST_SESSION_RETIRED;
 mod broker_reads;
 mod events;
 mod index;

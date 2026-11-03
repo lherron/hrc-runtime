@@ -757,6 +757,7 @@ pub(crate) mod tests {
             accounting: accounting::Accounting::new(),
             brokers: Default::default(),
             participant_work: Default::default(),
+            seat_gates: Default::default(),
             projection: Default::default(),
             subscribers: Default::default(),
             wrkq: Default::default(),

@@ -3,6 +3,7 @@
 use super::{ApiError, Shared, compile, controller, hrcpty, rpc, rpc::JsonRpc};
 use anyhow::{Context, Result, bail, ensure};
 use axum::http::StatusCode;
+use rusqlite::OptionalExtension;
 use serde_json::{Value, json};
 use std::{
     env, fs,
@@ -19,6 +20,72 @@ fn string<'a>(v: &'a Value, key: &str) -> Result<&'a str> {
 }
 fn quote(value: &str) -> String {
     format!("'{}'", value.replace('\'', "'\\''"))
+}
+
+/// One start decision per continuity at a time (T-12418). A birth compiles
+/// for seconds before its start graph commits, so a reuse check outside this
+/// gate cannot see a sibling birth still in flight, and a rotation could
+/// retire the host under it. Every birth door (route::execute,
+/// attached::start) holds the gate from its reuse check through the birth,
+/// and context::rotate holds it while it retires the host. Not reentrant:
+/// release it before anything that may rotate or birth again.
+pub async fn seat_gate(
+    server: &Shared,
+    scope: &str,
+    lane: &str,
+) -> tokio::sync::OwnedMutexGuard<()> {
+    let key = format!("{scope}\0{}", hrc_store::storage_lane(lane));
+    let gate = {
+        let mut gates = server.seat_gates.lock().unwrap();
+        // Forget gates nobody holds or awaits, so the map tracks live starts.
+        gates.retain(|_, g| Arc::strong_count(g) > 1);
+        gates.entry(key).or_default().clone()
+    };
+    gate.lock_owned().await
+}
+
+/// The gate for the continuity `session` belongs to.
+pub async fn session_gate(server: &Shared, session: &Value) -> tokio::sync::OwnedMutexGuard<()> {
+    seat_gate(
+        server,
+        session["scopeRef"].as_str().unwrap_or(""),
+        session["laneRef"].as_str().unwrap_or("main"),
+    )
+    .await
+}
+
+/// Refuse a start on a host session a rotation already retired: its
+/// continuity has moved to a successor (T-12418). Checked under the seat
+/// gate, so no rotation can land between this check and the birth.
+pub fn require_active_host(server: &Shared, session: &Value) -> Result<(), ApiError> {
+    let host = session["hostSessionId"].as_str().unwrap_or("");
+    let row: Option<(String, Option<String>)> = {
+        let db = server.store.lock().unwrap();
+        db.sqlite
+            .query_row(
+                "SELECT s.status, c.active_host_session_id FROM sessions s LEFT JOIN continuities c ON c.scope_ref=s.scope_ref AND c.lane_ref=s.lane_ref WHERE s.host_session_id=?",
+                [host],
+                |r| Ok((r.get(0)?, r.get(1)?)),
+            )
+            .optional()
+            .map_err(anyhow::Error::from)?
+    };
+    match row {
+        None => Err(ApiError::missing_host(host)),
+        Some((status, active)) if status == "active" && active.as_deref() == Some(host) => Ok(()),
+        Some((status, active)) => Err(retired_host(host, &status, active.as_deref())),
+    }
+}
+
+fn retired_host(host: &str, status: &str, active: Option<&str>) -> ApiError {
+    ApiError::domain(
+        StatusCode::CONFLICT,
+        "stale_context",
+        "host session was retired by a rotation; refusing a start on it",
+        Some(
+            json!({"expectedHostSessionId":host,"activeHostSessionId":active,"sessionStatus":status,"reason":"host_session_retired","retryable":true}),
+        ),
+    )
 }
 
 /// The cold-birth route of an admitted turn: compile through ASP, commit the
@@ -199,7 +266,14 @@ pub async fn birth(server: &Shared, birth: Birth<'_>) -> Result<Value, ApiError>
                 &allocation,
                 origin,
                 prompt.encode_utf16().count(),
-            )?;
+            )
+            .map_err(|error| {
+                if error.to_string() == hrc_store::HOST_SESSION_RETIRED {
+                    retired_host(&host, "archived", None)
+                } else {
+                    ApiError::from(error)
+                }
+            })?;
             attempt.graph_committed = true;
             if run.is_some() {
                 crate::server::projection::turns::arm_first_turn(
@@ -971,4 +1045,150 @@ async fn connect(
     let (client, events) = connection.context("broker did not listen")?;
     let hello = hello(&client, release).await?;
     Ok((client, events, hello))
+}
+
+#[cfg(test)]
+mod seat_gate_tests {
+    //! T-12418: one restartme birthed three runtimes. A start decided on a
+    //! host a rotation was retiring (fault 1), and two starts on the new host
+    //! each missed the other's in-flight birth (fault 2). The start decision
+    //! and the rotation now share one gate per continuity.
+    use super::*;
+    use crate::server::turns::admission::tests::server;
+    use rusqlite::params;
+
+    const SCOPE: &str = "agent:test:project:fixture:task:t12418";
+
+    fn seat(server: &Shared) -> Value {
+        server
+            .store
+            .lock()
+            .unwrap()
+            .create_session(SCOPE, "main")
+            .unwrap()
+            .0
+    }
+    fn rotation() -> crate::server::context::Rotation {
+        crate::server::context::Rotation {
+            relaunch: false,
+            drop_continuation: true,
+            runtime_intent: None,
+            reason: Some("self-restart".into()),
+            claim: None,
+        }
+    }
+    fn intent() -> Value {
+        json!({"placement":{"agentRoot":"/nowhere","projectRoot":"/nowhere","cwd":"/nowhere","runMode":"task","bundle":{"kind":"agent-project","agentName":"test","projectRoot":"/nowhere"},"dryRun":false},"harness":{"provider":"anthropic","interactive":true}})
+    }
+    fn assert_retired(error: ApiError, host: &str) {
+        assert_eq!(error.code, "stale_context", "{}", error.message);
+        let detail = error.detail.expect("detail");
+        assert_eq!(detail["reason"], "host_session_retired");
+        assert_eq!(detail["expectedHostSessionId"], host);
+    }
+
+    /// Fault 1: a rotation waits for a start already deciding on the seat,
+    /// and every start after it is refused on the retired host.
+    #[tokio::test]
+    async fn rotation_waits_for_the_gate_and_retires_the_host_for_later_starts() {
+        let (_scratch, server) = server("off", false).unwrap();
+        let old = seat(&server);
+        let host = old["hostSessionId"].as_str().unwrap().to_owned();
+        let held = session_gate(&server, &old).await;
+        let rotating = {
+            let (server, old) = (server.clone(), old.clone());
+            tokio::spawn(
+                async move { crate::server::context::rotate(&server, &old, rotation()).await },
+            )
+        };
+        tokio::time::sleep(Duration::from_millis(200)).await;
+        assert!(
+            !rotating.is_finished(),
+            "rotation must wait for the in-flight start decision"
+        );
+        require_active_host(&server, &old)
+            .expect("the host is live while the start holds the gate");
+        drop(held);
+        let next = rotating.await.unwrap().unwrap();
+        assert_retired(require_active_host(&server, &old).unwrap_err(), &host);
+        let next = crate::server::context::session(&server, &next).unwrap();
+        require_active_host(&server, &next).expect("the successor host is live");
+        // The attached/start door (red-fault1's door) refuses before any compile.
+        let error = crate::server::attached::start(&server, old, intent(), false, None)
+            .await
+            .unwrap_err();
+        assert_retired(error, &host);
+        let on_retired: i64 = server
+            .store
+            .lock()
+            .unwrap()
+            .sqlite
+            .query_row(
+                "SELECT count(*) FROM runtimes WHERE host_session_id=?",
+                [&host],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(on_retired, 0);
+    }
+
+    /// Fault 2: a second start waits for the sibling birth on the same host and
+    /// then selects the runtime it produced instead of birthing again.
+    #[tokio::test]
+    async fn a_concurrent_start_reuses_the_sibling_birth_instead_of_birthing() {
+        let (_scratch, server) = server("off", false).unwrap();
+        let session = seat(&server);
+        let host = session["hostSessionId"].as_str().unwrap().to_owned();
+        let sibling = session_gate(&server, &session).await;
+        let second = {
+            let (server, session) = (server.clone(), session.clone());
+            tokio::spawn(async move {
+                crate::server::attached::start(&server, session, intent(), false, None).await
+            })
+        };
+        tokio::time::sleep(Duration::from_millis(200)).await;
+        assert!(
+            !second.is_finished(),
+            "the second start must wait for the sibling birth"
+        );
+        // The sibling's birth lands its runtime, then releases the gate.
+        server.store.lock().unwrap().sqlite.execute("INSERT INTO runtimes(runtime_id,host_session_id,scope_ref,lane_ref,generation,transport,status,supports_inflight_input,controller_kind,created_at,updated_at) VALUES('rt-sibling',?,?,'main',1,'headless','ready',1,'harness-broker','now','now')", params![host, SCOPE]).unwrap();
+        drop(sibling);
+        let started = second.await.unwrap().unwrap();
+        assert_eq!(started["runtimeId"], "rt-sibling");
+        let live: i64 = server
+            .store
+            .lock()
+            .unwrap()
+            .sqlite
+            .query_row(
+                "SELECT count(*) FROM runtimes WHERE host_session_id=?",
+                [&host],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(live, 1, "exactly one runtime for the seat");
+    }
+
+    /// Gates are per continuity: another seat's start is never held up.
+    #[tokio::test]
+    async fn gates_are_per_continuity() {
+        let (_scratch, server) = server("off", false).unwrap();
+        let _held = seat_gate(&server, SCOPE, "main").await;
+        tokio::time::timeout(
+            Duration::from_millis(200),
+            seat_gate(&server, "agent:test:project:fixture:task:other", "main"),
+        )
+        .await
+        .expect("another continuity's gate is free");
+        assert!(
+            tokio::time::timeout(
+                Duration::from_millis(100),
+                seat_gate(&server, SCOPE, "lane:main")
+            )
+            .await
+            .is_err(),
+            "the same continuity under either lane spelling is one gate"
+        );
+    }
 }

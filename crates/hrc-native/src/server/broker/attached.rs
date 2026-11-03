@@ -143,6 +143,9 @@ pub async fn start(
     // The attached door marks the selected seat operator-attach-pending.
     let attach_door = gate.is_some();
     let host = session["hostSessionId"].as_str().unwrap_or("").to_owned();
+    // T-12418: select-or-birth is one decision per continuity (broker::seat_gate).
+    let seat = broker::session_gate(server, &session).await;
+    broker::require_active_host(server, &session)?;
     let existing = {
         let db = server.store.lock().unwrap();
         let id: Option<String> = db
@@ -173,6 +176,7 @@ pub async fn start(
         None => None,
     };
     if let Some(rt) = live.filter(|_| !fresh_pty) {
+        drop(seat);
         turns::publish_presentation(server, &rt.runtime_id, attach_door)?;
         return start_response(server, &rt.runtime_id);
     }
@@ -192,7 +196,9 @@ pub async fn start(
             attach,
         },
     )
-    .await?;
+    .await;
+    drop(seat);
+    let body = body?;
     let runtime_id = body["runtimeId"].as_str().unwrap_or("").to_owned();
     // The birth published its presentation; the attached door publishes again
     // (attachedRunSelected), an ordinary start does not.
