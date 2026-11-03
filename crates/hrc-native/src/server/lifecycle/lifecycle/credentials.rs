@@ -14,6 +14,9 @@ use std::{
     time::Duration,
 };
 
+/// Window that coalesces ledger commits into one credential reconcile.
+const RECONCILE_COALESCE: Duration = Duration::from_secs(1);
+
 #[derive(Clone)]
 pub struct Binding {
     pub runtime_id: String,
@@ -180,7 +183,15 @@ pub fn start(server: &Shared) -> Result<()> {
         sweep.tick().await;
         loop {
             tokio::select! {
-                changed = committed.changed() => { if changed.is_err() { break; } },
+                changed = committed.changed() => {
+                    if changed.is_err() { break; }
+                    // One reconcile per burst of commits: each run scans the
+                    // runtimes table under the store mutex, and the ledger
+                    // commits several times a second. Callers presenting a
+                    // credential are re-checked for liveness at verify time.
+                    tokio::time::sleep(RECONCILE_COALESCE).await;
+                    committed.borrow_and_update();
+                },
                 _ = sweep.tick() => {},
             }
             let Some(server) = weak.upgrade() else {
