@@ -327,17 +327,28 @@ impl Store {
 
     /// `runtimes()` narrowed in SQL, in the same order. Hot routes read the
     /// rows they need instead of hydrating every runtime's JSON (T-11919).
+    /// Prepared through the instrumented handle so slow-statement telemetry
+    /// names this caller (T-12413).
+    #[track_caller]
     pub fn runtimes_where(
         &self,
         clause: &str,
         values: impl rusqlite::Params,
     ) -> Result<Vec<Value>> {
-        runtime_records_where(&self.sqlite, clause, values)
+        let mut stmt = self.sqlite.prepare(&runtime_records_sql(clause))?;
+        Ok(stmt
+            .query_map(values, runtime_row)?
+            .collect::<rusqlite::Result<_>>()?)
     }
 
+    #[track_caller]
     pub fn runtime(&self, id: &str) -> Result<Option<Value>> {
         Ok(self.runtimes_where("runtime_id=?", [id])?.pop())
     }
+}
+
+fn runtime_records_sql(clause: &str) -> String {
+    format!("SELECT * FROM runtimes WHERE {clause} ORDER BY created_at, runtime_id")
 }
 
 /// Connection-level runtime reads for projections already inside a transaction.
@@ -346,9 +357,7 @@ pub fn runtime_records_where(
     clause: &str,
     values: impl rusqlite::Params,
 ) -> Result<Vec<Value>> {
-    let mut stmt = db.prepare(&format!(
-        "SELECT * FROM runtimes WHERE {clause} ORDER BY created_at, runtime_id"
-    ))?;
+    let mut stmt = db.prepare(&runtime_records_sql(clause))?;
     Ok(stmt
         .query_map(values, runtime_row)?
         .collect::<rusqlite::Result<_>>()?)

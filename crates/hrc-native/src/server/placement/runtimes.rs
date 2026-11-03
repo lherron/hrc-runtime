@@ -135,41 +135,10 @@ fn hydrate_page(db: &hrc_store::Store, rows: &mut [Value]) -> Result<(), ApiErro
     Ok(())
 }
 
-/// runtime-list-handlers.ts `queryRuntimesForProjection`: the filtered,
-/// ordered snapshots with health. `paginate` applies cursor and limit; the
-/// federation projection lists everything, terminal runtimes included.
-pub fn query(
-    server: &Server,
-    q: &HashMap<String, String>,
-    paginate: bool,
-    terminal_by_default: bool,
-) -> Result<(Vec<Value>, Option<String>), ApiError> {
-    let transport = optional(q, "transport");
-    if let Some(v) = transport
-        && !["tmux", "headless", "sdk", "hrcpty"].contains(&v)
-    {
-        return Err(bad(
-            "transport must be one of: tmux, headless, sdk, hrcpty",
-            "transport",
-            json!(v),
-        ));
-    }
-    let statuses: Vec<&str> = optional(q, "status")
-        .unwrap_or("")
-        .split(',')
-        .map(str::trim)
-        .filter(|s| !s.is_empty())
-        .collect();
-    let stale = boolean(q, "stale")?.unwrap_or(false);
-    boolean(q, "json")?;
-    let all = boolean(q, "all")?.unwrap_or(terminal_by_default);
-    let limit = match optional(q, "limit") {
-        Some(raw) => number(raw)
-            .filter(|n| n.is_finite() && n.fract() == 0.0 && *n >= 0.0)
-            .ok_or_else(|| bad("limit must be a non-negative integer", "limit", json!(raw)))?,
-        None => 100.0,
-    };
-    let age = if let Some(raw) = optional(q, "olderThan") {
+/// `olderThan` as milliseconds: a duration like 30m, 2h or 24h, else the
+/// stale-generation threshold.
+fn older_than_ms(q: &HashMap<String, String>) -> Result<f64, ApiError> {
+    Ok(if let Some(raw) = optional(q, "olderThan") {
         let parsed = [
             ("ms", 1.0),
             ("s", 1000.0),
@@ -205,12 +174,94 @@ pub fn query(
         })?
     } else {
         stale_threshold_sec() as f64 * 1000.0
+    })
+}
+
+/// Which terminal runtimes a query returns when the caller sends no `all`.
+/// An explicit `all=true|false` always wins.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum Terminal {
+    /// Live runtimes only (`GET /v1/runtimes`).
+    Exclude,
+    /// Every runtime, terminal history included (`/v1/federation/runtimes`).
+    Include,
+    /// Live runtimes plus those whose activity falls inside
+    /// [`PEER_INVENTORY_WINDOW_SEC`]: the peer inventory a polling kernel
+    /// publishes (praesidium-kernel `window()`: live, or activity + 24 h).
+    /// Long-ended rows are never read and rows omit `runtimeStateJson`
+    /// (T-12413).
+    Recent,
+}
+/// The kernel's 24 h terminal window plus an hour of node clock skew. The
+/// SQL bound is a superset; the kernel applies its own exact window.
+pub const PEER_INVENTORY_WINDOW_SEC: i64 = 25 * 3600;
+/// The activity instant the kernel windows on: its first parseable field of
+/// lastActivityAt, statusChangedAt, updatedAt, createdAt.
+const ACTIVITY_SQL: &str = "COALESCE(last_activity_at,status_changed_at,updated_at,created_at)";
+fn activity_ms(r: &Value) -> Option<i64> {
+    [
+        "lastActivityAt",
+        "statusChangedAt",
+        "updatedAt",
+        "createdAt",
+    ]
+    .iter()
+    .find_map(|k| date_ms(&r[*k]))
+}
+
+/// runtime-list-handlers.ts `queryRuntimesForProjection`: the filtered,
+/// ordered snapshots with health. `paginate` applies cursor and limit;
+/// `mode` picks the default terminal set (see [`Terminal`]).
+pub fn query(
+    server: &Server,
+    q: &HashMap<String, String>,
+    paginate: bool,
+    mode: Terminal,
+) -> Result<(Vec<Value>, Option<String>), ApiError> {
+    let transport = optional(q, "transport");
+    if let Some(v) = transport
+        && !["tmux", "headless", "sdk", "hrcpty"].contains(&v)
+    {
+        return Err(bad(
+            "transport must be one of: tmux, headless, sdk, hrcpty",
+            "transport",
+            json!(v),
+        ));
+    }
+    let statuses: Vec<&str> = optional(q, "status")
+        .unwrap_or("")
+        .split(',')
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .collect();
+    let stale = boolean(q, "stale")?.unwrap_or(false);
+    boolean(q, "json")?;
+    let explicit_all = boolean(q, "all")?;
+    let all = explicit_all.unwrap_or(mode == Terminal::Include);
+    // Recent: the live set plus terminal rows active since `recent_since`.
+    let recent_since = (explicit_all.is_none() && mode == Terminal::Recent)
+        .then(|| chrono::Utc::now() - chrono::Duration::seconds(PEER_INVENTORY_WINDOW_SEC));
+    let limit = match optional(q, "limit") {
+        Some(raw) => number(raw)
+            .filter(|n| n.is_finite() && n.fract() == 0.0 && *n >= 0.0)
+            .ok_or_else(|| bad("limit must be a non-negative integer", "limit", json!(raw)))?,
+        None => 100.0,
     };
+    let age = older_than_ms(q)?;
     let now = chrono::Utc::now().timestamp_millis();
     // SQL only narrows what gets hydrated; `retain` below stays the filter.
     let mut clause = vec!["1"];
     let mut values = Vec::<String>::new();
-    if !all {
+    let recent_clause;
+    if let Some(since) = recent_since {
+        // Second precision compares correctly against stored RFC 3339 text
+        // with or without fractional seconds.
+        recent_clause =
+            format!("(status NOT IN (SELECT value FROM json_each(?)) OR {ACTIVITY_SQL} >= ?)");
+        clause.push(&recent_clause);
+        values.push(json!(TERMINAL).to_string());
+        values.push(since.format("%Y-%m-%dT%H:%M:%S").to_string());
+    } else if !all {
         clause.push("status NOT IN (SELECT value FROM json_each(?))");
         values.push(json!(TERMINAL).to_string());
     }
@@ -238,8 +289,10 @@ pub fn query(
             attach_identity(&db, row);
         }
     }
+    let since_ms = recent_since.map(|t| t.timestamp() * 1000);
     rows.retain(|r| {
-        (all || !terminal(r))
+        (all || !terminal(r)
+            || since_ms.is_some_and(|since| activity_ms(r).is_some_and(|at| at >= since)))
             && transport.is_none_or(|v| r["transport"] == v)
             && (statuses.is_empty() || statuses.iter().any(|s| r["status"] == *s))
             && optional(q, "hostSessionId").is_none_or(|v| r["hostSessionId"] == v)
@@ -267,6 +320,15 @@ pub fn query(
         )
     };
     rows.sort_by_key(&key);
+    if recent_since.is_some() {
+        // No inventory reader uses runtime state (the kernel deletes it);
+        // it was 95% of a 102 MB peer health body (T-12417).
+        for row in &mut rows {
+            if let Some(row) = row.as_object_mut() {
+                row.remove("runtimeStateJson");
+            }
+        }
+    }
     if paginate && let Some(cursor) = optional(q, "cursor") {
         let err = || {
             ApiError::bad(
@@ -349,7 +411,7 @@ pub fn query(
 
 /// `GET /v1/runtimes` (handleListRuntimes): one page, lane refs canonical.
 pub fn list(server: &Server, q: &HashMap<String, String>) -> Result<Response, ApiError> {
-    let (mut rows, next) = query(server, q, true, false)?;
+    let (mut rows, next) = query(server, q, true, Terminal::Exclude)?;
     for r in &mut rows {
         r["laneRef"] = hrc_store::canonical_lane(r["laneRef"].as_str().unwrap_or("main")).into();
     }
@@ -442,7 +504,7 @@ mod tests {
         .map(|(k, v)| (k.into(), v.into()))
         .collect();
         let (rows, cursor) =
-            query(&server, &q, true, false).map_err(|e| anyhow::anyhow!("{e:?}"))?;
+            query(&server, &q, true, Terminal::Exclude).map_err(|e| anyhow::anyhow!("{e:?}"))?;
         assert_eq!(rows.len(), 1);
         assert_eq!(rows[0]["runtimeId"], "b");
         assert_eq!(rows[0]["runtimeStateJson"]["retained"], "state");
@@ -450,12 +512,79 @@ mod tests {
         q.insert("cursor".into(), cursor.unwrap());
         q.insert("agent".into(), "test".into());
         let (rows, cursor) =
-            query(&server, &q, true, false).map_err(|e| anyhow::anyhow!("{e:?}"))?;
+            query(&server, &q, true, Terminal::Exclude).map_err(|e| anyhow::anyhow!("{e:?}"))?;
         assert_eq!(rows[0]["runtimeId"], "c");
         assert_eq!(rows[0]["runtimeStateJson"]["retained"], "next");
         assert!(cursor.is_some());
         // The unpaginated projection still reads the entire matching wire set.
-        assert!(query(&server, &HashMap::new(), false, true).is_err());
+        assert!(query(&server, &HashMap::new(), false, Terminal::Include).is_err());
+        Ok(())
+    }
+
+    // T-12413: peer kernels poll /v1/federation/health?includeRuntimes=true
+    // every few seconds. Reading every terminal row (8,191 rows, 92 MB of
+    // runtime JSON on max3) held the store lock for seconds per probe.
+    // Regressions: an unfiltered `WHERE 1` runtimes scan, hydrating a long-
+    // ended runtime, dropping a live or recently ended runtime, or narrowing
+    // an explicit `all=true` request.
+    #[test]
+    fn peer_inventory_reads_live_and_recent_runtimes_only() -> anyhow::Result<()> {
+        let (_scratch, server) = server("off", false)?;
+        let seen = std::sync::Arc::new(std::sync::Mutex::new(Vec::<String>::new()));
+        {
+            let mut db = server.store.lock().unwrap();
+            let session = db.create_session("agent:test:project:fixture", "main")?.0;
+            let recent = chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Millis, true);
+            for (id, status, activity, state) in [
+                // Hydrating this row fails the read: it must stay unread.
+                (
+                    "old",
+                    "terminated",
+                    "2026-01-01T00:00:00.000Z",
+                    "invalid JSON",
+                ),
+                (
+                    "live",
+                    "busy",
+                    "2026-01-01T00:00:00.000Z",
+                    r#"{"live":true}"#,
+                ),
+                ("ended", "terminated", recent.as_str(), r#"{"ended":true}"#),
+            ] {
+                db.sqlite.execute("INSERT INTO runtimes(runtime_id,host_session_id,scope_ref,lane_ref,generation,transport,status,supports_inflight_input,runtime_state_json,last_activity_at,created_at,updated_at) VALUES(?,?,'agent:test:project:fixture','main',1,'hrcpty',?,0,?,?,'2026-01-01T00:00:00Z',?)", rusqlite::params![id, session["hostSessionId"].as_str(), status, state, activity, recent])?;
+            }
+            let sink = seen.clone();
+            db.instrument_statements(0.0, move |s| sink.lock().unwrap().push(s.sql))?;
+        }
+        let (rows, _) = query(&server, &HashMap::new(), false, Terminal::Recent)
+            .map_err(|e| anyhow::anyhow!("{e:?}"))?;
+        let ids: Vec<_> = rows.iter().map(|r| r["runtimeId"].clone()).collect();
+        // Equal createdAt: runtimeId breaks the tie, as for every list.
+        assert_eq!(ids, [json!("ended"), json!("live")]);
+        assert!(rows.iter().all(|r| r["identity"]["agentId"] == "test"));
+        assert_eq!(rows[0]["status"], "terminated");
+        assert!(rows.iter().all(|r| r.get("runtimeStateJson").is_none()));
+        let scans: Vec<_> = seen
+            .lock()
+            .unwrap()
+            .iter()
+            .filter(|sql| sql.contains("FROM runtimes"))
+            .cloned()
+            .collect();
+        assert!(!scans.is_empty(), "telemetry observed no runtimes read");
+        assert!(
+            scans.iter().all(|sql| sql.contains("status NOT IN")),
+            "unfiltered runtimes scan: {scans:?}"
+        );
+        // Explicit all=true keeps the full projection (it reaches `old`).
+        let all: HashMap<String, String> = [("all".into(), "true".into())].into();
+        assert!(query(&server, &all, false, Terminal::Recent).is_err());
+        // all=false is the live set only.
+        let live: HashMap<String, String> = [("all".into(), "false".into())].into();
+        let (rows, _) =
+            query(&server, &live, false, Terminal::Recent).map_err(|e| anyhow::anyhow!("{e:?}"))?;
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0]["runtimeId"], "live");
         Ok(())
     }
 }

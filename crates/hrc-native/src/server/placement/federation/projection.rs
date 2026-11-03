@@ -66,6 +66,11 @@ async fn probe(
         for (k, v) in query {
             pairs.append_pair(k, v);
         }
+        // This projection lists terminal history by default; peer health
+        // defaults to the recent inventory (T-12413), so ask for it.
+        if !query.iter().any(|(k, _)| k == "all") {
+            pairs.append_pair("all", "true");
+        }
     }
     let call = async {
         let response = node
@@ -123,7 +128,7 @@ pub async fn runtimes(
     let node = &server.federation;
     let checked = timestamp();
     let started = Instant::now();
-    let (local, _) = runtimes::query(server, q, false, true)?;
+    let (local, _) = runtimes::query(server, q, false, runtimes::Terminal::Include)?;
     let answered = timestamp();
     let mut nodes = vec![
         json!({"nodeId":node.node_id(),"state":"answered","checkedAt":checked,"answeredAt":answered,"latencyMs":started.elapsed().as_millis() as u64,"runtimes":local}),

@@ -246,7 +246,12 @@ async fn route_request(server: &Shared, peer: &str, request: Request) -> Result<
                         m
                     });
             if query.get("includeRuntimes").map(String::as_str) == Some("true") {
-                match crate::server::runtimes::query(server, &query, false, true) {
+                match crate::server::runtimes::query(
+                    server,
+                    &query,
+                    false,
+                    crate::server::runtimes::Terminal::Recent,
+                ) {
                     Ok((runtimes, _)) => health["runtimes"] = runtimes.into(),
                     // Bun's health handler throws; the peer protocol answers a generic 500.
                     Err(_) => {

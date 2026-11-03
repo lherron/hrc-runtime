@@ -253,11 +253,13 @@ unsafe extern "C" fn trace(
                     .callers
                     .lock()
                     .unwrap_or_else(std::sync::PoisonError::into_inner);
-                let caller = callers
-                    .by_sql
-                    .get(sql.trim())
-                    .unwrap_or(&callers.fallback)
-                    .clone();
+                // A statement prepared on the bare Connection was never
+                // tagged; the last tagged site is only a neighbour, so say so
+                // (T-12413: four unrelated sites were blamed for one scan).
+                let caller = match callers.by_sql.get(sql.trim()) {
+                    Some(tag) => tag.clone(),
+                    None => format!("untagged; last tagged {}", callers.fallback),
+                };
                 Started {
                     at: Instant::now(),
                     caller,
