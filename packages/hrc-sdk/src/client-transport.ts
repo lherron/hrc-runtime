@@ -95,12 +95,27 @@ export function matchesWatchOptions(
 ): boolean {
   if (!options) return true
   for (const field of EVENT_FILTER_FIELDS) {
+    if (field === 'category' || field === 'eventKind') continue
     const expected = options[field]
     if (expected !== undefined && event[field] !== expected) {
       return false
     }
   }
-  return true
+  // Mirrors the server (T-12422): each is an exact-match set, and when both
+  // are given a row passes if it matches either.
+  const categories = filterList(options.category)
+  const kinds = filterList(options.eventKind)
+  if (categories === undefined && kinds === undefined) return true
+  return (
+    (categories?.includes(event.category) ?? false) || (kinds?.includes(event.eventKind) ?? false)
+  )
+}
+
+function filterList(value: string | readonly string[] | undefined): string[] | undefined {
+  if (value === undefined) return undefined
+  const raw: readonly string[] = typeof value === 'string' ? value.split(',') : value
+  const items = raw.map((item) => item.trim()).filter((item) => item !== '')
+  return items.length > 0 ? items : undefined
 }
 
 let derivedUserAgent: string | undefined

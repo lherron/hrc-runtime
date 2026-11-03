@@ -216,6 +216,17 @@ export type SessionProjectionResult = {
   withheld?: number | undefined
 }
 
+/**
+ * Event category filter (T-12422): one category or a list. Sent as a comma list;
+ * the server keeps rows whose category is in the set.
+ */
+export type HrcEventCategoryFilter = HrcEventCategory | readonly HrcEventCategory[]
+/**
+ * Event kind filter (T-12422): one exact kind or a list. When both `category`
+ * and `eventKind` are given, a row passes if it matches either.
+ */
+export type HrcEventKindFilter = string | readonly string[]
+
 export type WatchOptions = {
   fromSeq?: number | undefined
   follow?: boolean | undefined
@@ -225,8 +236,8 @@ export type WatchOptions = {
   laneRef?: string | undefined
   runtimeId?: string | undefined
   runId?: string | undefined
-  category?: HrcEventCategory | undefined
-  eventKind?: string | undefined
+  category?: HrcEventCategoryFilter | undefined
+  eventKind?: HrcEventKindFilter | undefined
   sourceRef?: string | undefined
   signal?: AbortSignal | undefined
 }
@@ -250,8 +261,8 @@ export type HrcEventTailOptions = {
   laneRef?: string | undefined
   runtimeId?: string | undefined
   runId?: string | undefined
-  category?: HrcEventCategory | undefined
-  eventKind?: string | undefined
+  category?: HrcEventCategoryFilter | undefined
+  eventKind?: HrcEventKindFilter | undefined
   sourceRef?: string | undefined
 }
 
@@ -264,8 +275,8 @@ export type WatchBoundedEventsOptions = {
   laneRef?: string | undefined
   runtimeId?: string | undefined
   runId?: string | undefined
-  category?: HrcEventCategory | undefined
-  eventKind?: string | undefined
+  category?: HrcEventCategoryFilter | undefined
+  eventKind?: HrcEventKindFilter | undefined
   sourceRef?: string | undefined
   signal?: AbortSignal | undefined
 }
@@ -326,8 +337,8 @@ export type LatestEventBySessionFilter = {
   laneRef?: string | undefined
   runtimeId?: string | undefined
   runId?: string | undefined
-  category?: HrcEventCategory | undefined
-  eventKind?: string | undefined
+  category?: HrcEventCategoryFilter | undefined
+  eventKind?: HrcEventKindFilter | undefined
 }
 
 export type SendInFlightInputRequest = {

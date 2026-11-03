@@ -5623,6 +5623,22 @@
     },
     {
       "package": "hrc-sdk",
+      "symbol": "HrcEventCategoryFilter",
+      "kind": "type",
+      "file": "packages/hrc-sdk/src/types.ts",
+      "hash": "hrc-sdk|HrcEventCategoryFilter|type",
+      "count": 1
+    },
+    {
+      "package": "hrc-sdk",
+      "symbol": "HrcEventKindFilter",
+      "kind": "type",
+      "file": "packages/hrc-sdk/src/types.ts",
+      "hash": "hrc-sdk|HrcEventKindFilter|type",
+      "count": 1
+    },
+    {
+      "package": "hrc-sdk",
       "symbol": "HrcEventTail",
       "kind": "type",
       "file": "packages/hrc-core/src/contracts-events.ts",

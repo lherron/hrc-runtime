@@ -61,6 +61,8 @@ export type {
   EnsureRuntimeRequest,
   EnsureRuntimeResponse,
   HealthResponse,
+  HrcEventCategoryFilter,
+  HrcEventKindFilter,
   HrcSubscriberAdmissionSnapshot,
   LatestEventBySessionFilter,
   RestartStyle,

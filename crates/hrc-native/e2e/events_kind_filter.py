@@ -9,13 +9,16 @@ F4 a live follower receives a non-matching row;
 F5 a reconnect from the last delivered seq duplicates a row, or misses one
    written while it was away, when skipped rows sit on both sides of the cut;
 F6 the bounded stream resume does the same;
-F7 a list of only commas silently widens to the whole ledger.
+F7 a list of only commas silently widens to the whole ledger;
+F8 hrc-sdk's watch() drops rows the server sent: its client-side matcher
+   compares a list by equality, or ANDs category with eventKind.
 The baseline is the installed rusthrc on the same seeded ledger; the subject
 is the build under test. Ground truth is the unfiltered history, filtered here.
 """
 import argparse
 import json
 import socket
+import subprocess
 import threading
 import time
 from pathlib import Path
@@ -133,7 +136,7 @@ def main():
     a = p.parse_args()
     a.artifacts.mkdir(parents=True, exist_ok=True)
     node = Node(a.scratch_root, a.installed_release, a.aspd_socket, a.artifacts, 'kind')
-    report = {'failureModes': __doc__.split('\n')[2:11]}
+    report = {'failureModes': [l for l in __doc__.split('\n') if l[:1] == 'F' or l.startswith('   ')]}
     try:
         node.bun_store('seed', seed_js(0, 120), node.db)
 
@@ -169,6 +172,27 @@ def main():
             exp = [r['hrcSeq'] for r in truth if wanted(r, cats, kinds)]
             assert got == exp and got, ('F3', q, got[:10], exp[:10])
             report['lists'][q] = {'rows': len(got), 'matchesGroundTruth': True}
+
+        # F8: the SDK's typed lists, through the server and its client matcher.
+        sdk = Path(__file__).resolve().parents[3] / 'packages/hrc-sdk/src/index.ts'
+        probe = (f'const {{HrcClient}}=await import({json.dumps(str(sdk))});'
+                 'const c=new HrcClient(process.argv[1]);const o=JSON.parse(process.argv[2]);const out=[];'
+                 'for await (const e of c.watch(o)) out.push(e.hrcSeq);console.log(JSON.stringify(out));')
+        report['sdk'] = {}
+        for opts, (cats, kinds) in [
+            ({'category': ['runtime', 'session']}, ({'runtime', 'session'}, None)),
+            ({'category': ['runtime', 'session'], 'eventKind': EVENT_KINDS.split(',')},
+             ({'runtime', 'session'}, set(EVENT_KINDS.split(',')))),
+            ({'category': 'turn', 'eventKind': 'runtime.status'}, ({'turn'}, {'runtime.status'})),
+            ({'eventKind': EVENT_KINDS}, (None, set(EVENT_KINDS.split(',')))),
+        ]:
+            r = subprocess.run(['bun', '-e', probe, str(node.socket), json.dumps({'fromSeq': 1, **opts})],
+                               cwd=sdk.parents[3], capture_output=True, text=True, timeout=60)
+            assert r.returncode == 0, (opts, r.stdout, r.stderr)
+            got = json.loads(r.stdout.strip().splitlines()[-1])
+            exp = [x['hrcSeq'] for x in truth if wanted(x, cats, kinds)]
+            assert got == exp and got, ('F8 sdk', opts, got[:10], exp[:10])
+            report['sdk'][json.dumps(opts)] = {'rows': len(got), 'matchesGroundTruth': True}
 
         # F7: comma-only lists refuse instead of widening.
         report['refusals'] = {}
