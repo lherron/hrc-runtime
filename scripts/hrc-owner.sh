@@ -487,6 +487,14 @@ with sqlite3.connect(f'file:{source}?mode=ro', uri=True) as src:
 target.chmod(0o600)
 PY
   echo "[activate] backup=$backup"
+  # Retention: the backup just written (quick_check ok) is this activation's
+  # rollback point; older pre-activate copies are a full store each (2–25 GiB)
+  # and roll back nothing current, so only the newest is kept.
+  local old
+  for old in "$HRC_STATE_DIR"/backups/pre-activate-*.sqlite; do
+    [[ -f "$old" && "$old" != "$backup" ]] || continue
+    rm -f -- "$old" && echo "[activate] pruned older backup $old"
+  done
   [[ -n "$reason" ]] || reason="activate schema bump at $expect"
   echo "[activate] migrate -> stage -> restart (restart requires mable@<project>:primary)"
   activation_migrations "$src" "$db" apply ${expected_args[@]+"${expected_args[@]}"}
