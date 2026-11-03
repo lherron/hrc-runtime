@@ -37,6 +37,13 @@ Reusable modules: `n2_scratch.py`, `n3_scratch.py`, `n2_aspd_proxy.py`.
 ceiling and local cursor/fence semantics against a private seeded ledger
 (T-12257). It takes the same binary, installed-release, aspd-socket,
 scratch-root and artifacts arguments as the federation drivers.
+`events_kind_filter.py` checks the `category`/`eventKind` list filters (T-12422)
+on a private seeded ledger: every unfiltered and single-value read is
+byte-identical to `--baseline-binary` (the installed rusthrc), lists and the
+category-or-kind union match the unfiltered history, and a filtered follow (and
+bounded stream) cut after skipped rows resumes from the last delivered seq with
+no gap or duplicate. Same arguments as `peer_events_page.py` plus
+`--baseline-binary`.
 Participant `.mjs` files are descriptor assets. `n2_restart_self.md` is an
 operator recipe. Retained CLI helpers are documented in its README.
 

@@ -64,6 +64,17 @@ pub(super) fn number(raw: &str) -> Option<f64> {
 }
 pub(super) fn filters(q: &HashMap<String, String>) -> Result<HashMap<String, String>, ApiError> {
     let mut q = q.clone();
+    // A list of only commas would otherwise drop the filter and widen the read.
+    for field in ["category", "eventKind"] {
+        if let Some(raw) = normalized(&q, field)
+            && raw.split(',').all(|item| item.trim().is_empty())
+        {
+            return Err(ApiError::bad(
+                format!("{field} must name at least one value"),
+                Some(json!({"field":field,"value":raw})),
+            ));
+        }
+    }
     if let Some(raw) = normalized(&q, "generation") {
         let n = number(raw)
             .filter(|v| v.is_finite() && v.fract() == 0.0 && *v >= 0.0 && *v < i64::MAX as f64)

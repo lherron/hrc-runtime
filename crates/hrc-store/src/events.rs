@@ -161,19 +161,52 @@ fn field_predicates(
         ("laneRef", "lane_ref"),
         ("runtimeId", "runtime_id"),
         ("runId", "run_id"),
-        ("category", "category"),
-        ("eventKind", "event_kind"),
     ] {
         if let Some(value) = query.get(key).filter(|s| !s.trim().is_empty()) {
             predicates.push(format!("{col} = ?"));
             values.push(Sql::Text(value.trim().to_owned()));
         }
     }
+    // T-12422: category and eventKind take comma lists. Each is an exact-match
+    // set; when both are given a row passes if it matches either, so a
+    // follower can ask for whole categories plus a few named kinds.
+    let kinds = [("category", "category"), ("eventKind", "event_kind")]
+        .into_iter()
+        .filter_map(|(key, col)| {
+            let items = list(query.get(key)?);
+            (!items.is_empty()).then_some((col, items))
+        })
+        .map(|(col, items)| {
+            let predicate = if items.len() == 1 {
+                format!("{col} = ?")
+            } else {
+                format!("{col} IN ({})", vec!["?"; items.len()].join(", "))
+            };
+            values.extend(items.into_iter().map(Sql::Text));
+            predicate
+        })
+        .collect::<Vec<_>>();
+    match kinds.len() {
+        0 => {}
+        1 => predicates.extend(kinds),
+        _ => predicates.push(format!("({})", kinds.join(" OR "))),
+    }
     if let Some(value) = query.get("generation").filter(|s| !s.trim().is_empty()) {
         predicates.push("generation = ?".into());
         values.push(Sql::Integer(value.trim().parse()?));
     }
     Ok(())
+}
+
+/// Split a comma list into trimmed, non-empty, first-seen-unique items.
+fn list(raw: &str) -> Vec<String> {
+    let mut items: Vec<String> = Vec::new();
+    for item in raw.split(',').map(str::trim).filter(|s| !s.is_empty()) {
+        if !items.iter().any(|seen| seen == item) {
+            items.push(item.to_owned());
+        }
+    }
+    items
 }
 
 /// T-12213: plan and result proof for the scope pin. The scratch store has no

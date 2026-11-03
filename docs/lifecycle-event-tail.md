@@ -16,7 +16,8 @@ advances a consumer's forward position, and nothing here touches it.
 | `limit` | yes | Page size, `1..500`. |
 | `beforeHrcSeq` | no | **Exclusive** upper bound. Selects only matching rows with `hrc_seq < beforeHrcSeq`. Omit for the newest page. |
 | `ledgerIncarnationId` | with `beforeHrcSeq` | The incarnation the cursor was minted against, taken from the previous page's response. |
-| `hostSessionId`, `generation`, `scopeRef`, `laneRef`, `runtimeId`, `runId`, `category`, `eventKind`, `sourceRef` | no | The existing exact event filters, unchanged. |
+| `hostSessionId`, `generation`, `scopeRef`, `laneRef`, `runtimeId`, `runId`, `sourceRef` | no | The existing exact event filters, unchanged. |
+| `category`, `eventKind` | no | Comma lists of exact values (T-12422). Each is a set; when both are given a row passes if it matches either. A list with no values is a 400. The same rule holds on `GET /v1/events` (history and `follow=true`), `bounded-stream` and `latest-by-session`. |
 
 ## Response
 
