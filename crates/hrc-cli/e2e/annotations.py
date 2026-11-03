@@ -15,9 +15,9 @@ Product claims, each a check:
                  (65,536 is admitted: the boundary, not just a big body)
   stale-attn     the seat's live attention lights at A1 on the turn's open
                  question; a put fenced on A1 is admitted; the turn is answered
-                 and completes, the kernel's hrc.seat attention moves off A1,
+                 and completes, the owner's HTTP attention moves off A1,
                  and the same A1 fence now refuses stale_attention
-  http-attention (T-12212) GET /v1/sessions/attention answers the kernel's
+  http-attention (T-12212) GET /v1/sessions/attention answers the owner's
                  lit attention (at == A1) while the question is open and null
                  once the answered turn completes, runtimeLive true throughout
   delete         delete with the current --expect-updated-at succeeds and the
@@ -30,44 +30,14 @@ Product claims, each a check:
   sdk            hrc-sdk putSessionAnnotation/listSessionAnnotations against the
                  same daemon; the principalRef lands as updatedBy
 
-Gate 2, the embedded kernel (T-12187), on the same daemon after Gate 1:
-  kernel-annotation  a generation-scoped put appears as hrc.annotation with the
-                 put's updatedAt; a fenced rewrite reaches the same node at a
-                 higher revision, each within one ingest wake (seconds)
-  kernel-before  hrc.seat.activeGeneration == generation == 1; hrc.generation
-                 for generation 1 is active and lives as long as the seat
-  kernel-rotate  `rusthrc session rotate --relaunch`: hrc.seat.activeGeneration moves to
-                 2; generation 1's hrc.generation is archived with a finite
-                 live_until; generation 2's is active and, with its relaunched
-                 runtime, live (null) like the seat; the generation-scoped
-                 annotations stay under generation 1's hostSessionId and live
-                 exactly as long as it; seat-scoped ones stay under the seat;
-                 no annotation names generation 2
+The former Gate 2 projection lineage checks belong to the praesidium kernel
+campaign suite (T-12361). This suite retains owner CLI rotation and annotation
+scope checks. Gate 3 sends annotation put/act/delete operations through the
+ops-only socket and verifies owner CLI state and the durable event ledger.
 
-Gate 3, the kernel ops and CLI attribution (T-12188), after Gate 2:
-  op-put         seat.annotation.put dispatched on the kernel wire is admitted
-                 (created), appears as an hrc.annotation node with its body and
-                 updatedBy system:hrc-kernel, and a generation-scoped op put
-                 lands under generation 2; a replay of the absent fence refuses
-                 stale_annotation with the store's code
-  op-act         seat.annotation.act returns hrc_seq, which is the
-                 session.annotation.action row in hrc_events with the op's
-                 action and attributes; an absent id refuses unknown_annotation
-  op-delete      (T-12194) seat.annotation.put via op, its node seen in the
-                 kernel (control); seat.annotation.delete with a superseded
-                 updatedAt refuses stale_annotation and leaves the node; with
-                 the current updatedAt returns {deleted: true}, the node is
-                 gone, and session.annotation.changed gains exactly put then
-                 delete for it, the delete by system:hrc-kernel
-  cli-as         `put --as agent:e2e-cli` reads back updatedBy agent:e2e-cli and
-                 its session.annotation.changed row names it; `delete --as`
-                 names it on the delete row; a blank --as records unknown
-
-Failure modes guarded: a vacuous stale_attention (attention never moved, or
-refused for another reason) — the A1 control put must be admitted first and
-the kernel row must show the move; an off-by-N body cap measured on spaced
-JSON — bodies are built from serde's compact serialization; ledger assertions
-read hrc_events, never CLI output.
+Failure modes guarded: attention must light before the control put, then clear
+before the stale fence is checked; compact JSON measures the body cap exactly;
+ledger assertions read hrc_events, never CLI output.
 """
 import argparse
 import json
@@ -77,7 +47,6 @@ import shutil
 import signal
 import subprocess
 import sys
-import time
 import urllib.parse
 import uuid
 
@@ -85,7 +54,7 @@ HERE = Path(__file__).resolve().parent
 REPO = HERE.parents[2]
 sys.path.insert(0, str(REPO / 'crates/hrc-native/e2e'))
 from hrcpty_substrate import FakeAspd, Run, AGENT, PROJECT, LEAK, descendants_of  # noqa: E402
-from kernel_fold import rows as kernel_rows, wire  # noqa: E402
+from kernel_fold import wire  # noqa: E402
 from metrics_isolation import isolated_suite  # noqa: E402
 
 LIVE_STATE = Path.home() / 'praesidium/var'
@@ -117,8 +86,8 @@ def main():
     root.mkdir(parents=True)  # refuse a reused root
     assert not str(root).startswith(str(LIVE_STATE))
     a.artifacts.mkdir(parents=True, exist_ok=True)
-    for stale in ('results.json', 'cli.ndjson', 'ledger.json', 'fake-aspd.ndjson', 'daemon-1.log', 'kernel-seat.json',
-                  'kernel-lineage.json', 'kernel-ops.json'):
+    for stale in ('results.json', 'cli.ndjson', 'ledger.json', 'fake-aspd.ndjson', 'daemon-1.log', 'http-attention.json',
+                  'rotation.json', 'kernel-ops.json'):
         (a.artifacts / stale).unlink(missing_ok=True)
     r = Run(root, a.artifacts, binary)
     transcript = (a.artifacts / 'cli.ndjson').open('w')
@@ -179,9 +148,9 @@ def main():
             e['payload'] = json.loads(e.pop('payload_json'))
         return out
 
-    def seat_attention(ref):
-        seat = next((x for x in kernel_rows(kernel, 'hrc.seat') if x['payload'].get('sessionRef') == ref), None)
-        return seat, (seat or {}).get('payload', {}).get('attention')
+    def attention_state(path, predicate):
+        status, body = r.http('GET', path)
+        return (status, body) if status == 200 and 'attention' in body and predicate(body['attention']) else None
 
     failure = None
     try:
@@ -245,21 +214,23 @@ def main():
         assert status in (200, 202), ('birth', status, born)
         rt, run = born['runtimeId'], born['runId']
         r.wait(lambda: r.rows("SELECT 1 FROM hrc_events WHERE run_id=? AND event_kind='turn.awaiting_input'", (run,)), 60, 'open question')
-        lit_seat, lit = r.wait(lambda: (lambda s: s if s[1] else None)(seat_attention(ref)), 20, 'lit kernel attention')
-        a1 = lit['at']
         attention_path = '/v1/sessions/attention?' + urllib.parse.urlencode({'scopeRef': scope})
-        http_lit = r.http('GET', attention_path)
+        http_lit = r.wait(lambda: attention_state(attention_path, lambda value: value is not None),
+                          20, 'lit owner attention')
+        lit = http_lit[1]['attention']
+        a1 = lit['at']
         awaiting = r.rows("SELECT ts FROM hrc_events WHERE run_id=? AND event_kind='turn.awaiting_input'", (run,))
         control = cli('put', ref, *key, '--id', 'attn', '--body-file', '-', '--expect-attention-at', a1, stdin='{"state":"draft"}')
         status, contrib = r.http('POST', '/v1/active-run-contributions', {
             'inputApplicationId': 'app-' + uuid.uuid4().hex, 'inputAttemptId': 'att-' + uuid.uuid4().hex,
             'prompt': 'E2E-ANSWER', 'selector': {'runtimeId': rt}})
         r.wait(lambda: r.rows("SELECT 1 FROM runs WHERE run_id=? AND status='completed'", (run,)), 60, 'answered turn completed')
-        moved_seat, moved = r.wait(lambda: (lambda s: s if (s[1] or {}).get('at') != a1 else None)(seat_attention(ref)), 20, 'attention moved')
-        http_moved = r.http('GET', attention_path)
+        http_moved = r.wait(lambda: attention_state(attention_path, lambda value: value is None),
+                            20, 'owner attention cleared')
+        moved = http_moved[1]['attention']
         stale_attn = cli('put', ref, *key, '--id', 'attn', '--body-file', '-', '--expect-attention-at', a1, stdin='{"state":"sent"}')
         stored = [x for x in cli('list', ref, '--ns', 'e2e')[1]['annotations'] if x['id'] == 'attn']
-        (a.artifacts / 'kernel-seat.json').write_text(json.dumps({'lit': lit_seat, 'moved': moved_seat}, indent=1) + '\n')
+        (a.artifacts / 'http-attention.json').write_text(json.dumps({'lit': http_lit, 'moved': http_moved}, indent=1) + '\n')
         r.check('stale-attn', [x['ts'] for x in awaiting] == [a1] and control[0] == 0
                 and control[1]['annotation']['fence'] == {'attentionAt': a1}
                 and status == 200 and contrib.get('status') == 'accepted'
@@ -270,7 +241,7 @@ def main():
         r.check('http-attention', http_lit[0] == 200 and http_lit[1] == {**seat_fields, 'attention': lit}
                 and lit['at'] == a1 and moved is None
                 and http_moved[0] == 200 and http_moved[1] == {**seat_fields, 'attention': None},
-                lit=http_lit, moved=http_moved, kernelLit=lit)
+                lit=http_lit, moved=http_moved, ownerLit=lit)
 
         # == delete ===================================================================
         current = next(x for x in cli('list', ref)[1]['annotations'] if x['id'] == 'c1')['updatedAt']
@@ -329,47 +300,8 @@ console.log(JSON.stringify({ put, listed, refusal, acted, attention }))
                 and all(set(e['payload']) == {'scopeRef', 'laneRef', 'subject', 'generation', 'ns', 'kind', 'id', 'op', 'updatedBy'} for e in changed),
                 observed=observed, expected=expected)
 
-        # == Gate 2: the kernel's lineage nodes (T-12187) =============================
-        def node(kind, **payload):
-            return next((x for x in kernel_rows(kernel, kind)
-                         if all(x['payload'].get(k) == v for k, v in payload.items())), None)
-
-        def ingest():
-            reply = wire(kernel, 'ingest.status', {'document_id': 'hrc'})
-            return reply.get('result', reply)
-
-        def visible(id_, updated_at):
-            started = time.monotonic()
-            seen = r.wait(lambda: (lambda n: n if n and n['payload']['updatedAt'] == updated_at else None)(
-                node('hrc.annotation', sessionRef=ref, id=id_)), 10, f'{id_} at {updated_at} in the kernel')
-            return seen, round(time.monotonic() - started, 3)
-
-        ingest_before = ingest()
-        k1 = cli('put', ref, *key, '--id', 'k1', '--subject', 'generation', '--generation', '1', '--body-file', '-', stdin='{"v":1}')
-        u_k1 = k1[1]['annotation']['updatedAt']
-        seen1, lag1 = visible('k1', u_k1)
-        k2 = cli('put', ref, *key, '--id', 'k1', '--subject', 'generation', '--generation', '1', '--body-file', '-',
-                 '--expect-updated-at', u_k1, stdin='{"v":2}')
-        u_k2 = k2[1]['annotation']['updatedAt']
-        seen2, lag2 = visible('k1', u_k2)
-        r.check('kernel-annotation', k1[0] == 0 and k2[0] == 0 and u_k2 != u_k1
-                and seen1['payload']['body'] == {'v': 1} and seen2['payload']['body'] == {'v': 2}
-                and seen1['id'] == seen2['id'] and seen2['revision'] > seen1['revision']
-                and seen2['payload']['hostSessionId'] == host and seen2['payload']['generation'] == 1
-                and seen2['payload']['subject'] == 'generation' and seen2['payload']['fence'] == {'updatedAt': u_k1}
-                and lag1 < 5 and lag2 < 5,
-                first=seen1, second=seen2, lagSeconds=[lag1, lag2], ingestBefore=ingest_before, ingestAfter=ingest())
-
-        seat0 = node('hrc.seat', sessionRef=ref)
-        gen0 = node('hrc.generation', hostSessionId=host)
-        pinned0 = node('hrc.annotation', sessionRef=ref, id='attn')
-        r.check('kernel-before', seat0['payload']['activeGeneration'] == seat0['payload']['generation'] == 1
-                and gen0['payload']['status'] == 'active' and gen0['payload']['sessionRef'] == ref
-                and gen0['payload']['generation'] == 1
-                and gen0['domain']['live_until'] == seat0['domain']['live_until']
-                and pinned0 is not None and pinned0['payload']['hostSessionId'] == '',
-                seat=seat0, generation=gen0, seatAnnotation=pinned0)
-
+        # Projection lineage is tested by the praesidium kernel campaign (T-12361).
+        # Retain the owner CLI rotation and generation scope contract here.
         child = subprocess.run([str(binary), 'session', 'rotate', host, '--relaunch'], env=env, cwd=root / PROJECT,
                                text=True, capture_output=True, timeout=60)
         transcript.write(compact({'argv': ['session', 'rotate', host, '--relaunch'], 'exit': child.returncode,
@@ -377,39 +309,15 @@ console.log(JSON.stringify({ put, listed, refusal, acted, attention }))
         transcript.flush()
         rotated = json.loads(child.stdout) if child.returncode == 0 else {}
         new_host = rotated.get('hostSessionId')
-        seat1 = r.wait(lambda: (lambda n: n if n and n['payload'].get('activeGeneration') == 2
-                                and n['domain']['live_until'] is None else None)(
-            node('hrc.seat', sessionRef=ref)), 30, 'seat activeGeneration 2 with its relaunched runtime')
-        gen1 = r.wait(lambda: (lambda n: n if n and n['payload']['status'] == 'archived' else None)(
-            node('hrc.generation', hostSessionId=host)), 20, 'generation 1 archived')
-        gen2 = node('hrc.generation', hostSessionId=new_host)
-        annotations = [x for x in kernel_rows(kernel, 'hrc.annotation') if x['payload']['sessionRef'] == ref]
-        by_id = {x['payload']['id']: x for x in annotations}
-        generation_scoped = [x for x in annotations if x['payload']['subject'] == 'generation']
-        seat_scoped = [x for x in annotations if x['payload']['subject'] == 'seat']
-        (a.artifacts / 'kernel-lineage.json').write_text(json.dumps({
-            'before': {'seat': seat0, 'generation': gen0, 'seatAnnotation': pinned0},
-            'kernelAnnotation': {'first': seen1, 'second': seen2},
-            'rotate': rotated,
-            'after': {'seat': seat1, 'archived': gen1, 'new': gen2, 'annotations': annotations}}, indent=1) + '\n')
-        r.check('kernel-rotate', child.returncode == 0 and rotated.get('generation') == 2
-                and rotated.get('priorHostSessionId') == host
-                and seat1['payload']['generation'] == 2 and seat1['payload']['hostSessionId'] == new_host
-                and gen1['payload']['status'] == 'archived' and isinstance(gen1['domain']['live_until'], str)
-                and gen2 is not None and gen2['payload']['status'] == 'active' and gen2['payload']['generation'] == 2
-                # The relaunched runtime keeps the seat and generation 2 live (null)
-                # while generation 1 expires, so the two subjects' lifetimes differ.
-                and seat1['domain']['live_until'] is None and gen2['domain']['live_until'] is None
-                and {'k1', 'g1'} <= {x['payload']['id'] for x in generation_scoped}
-                and all(x['payload']['hostSessionId'] == host
-                        and x['domain']['live_until'] == gen1['domain']['live_until'] for x in generation_scoped)
-                and by_id['k1']['payload']['updatedAt'] == u_k2
-                and {'attn', 'cap', 's1'} <= {x['payload']['id'] for x in seat_scoped}
-                and all(x['payload']['hostSessionId'] == ''
-                        and x['domain']['live_until'] == seat1['domain']['live_until'] for x in seat_scoped)
-                and not any(x['payload']['hostSessionId'] == new_host for x in annotations),
-                rotate=rotated, stderr=child.stderr, seat=seat1, archived=gen1, new=gen2,
-                annotations=sorted((x['payload']['id'], x['payload']['hostSessionId']) for x in annotations))
+        rotated_rows = cli('list', ref, '--subject', 'generation', '--generation', '1')
+        r.check('owner-rotate', child.returncode == 0 and rotated.get('generation') == 2
+                and rotated.get('priorHostSessionId') == host and new_host and new_host != host
+                and rotated_rows[0] == 0
+                and [(x['id'], x['hostSessionId'], x['generation'])
+                     for x in rotated_rows[1]['annotations']] == [('g1', host, 1)],
+                rotate=rotated, stderr=child.stderr, priorGenerationAnnotations=rotated_rows)
+        (a.artifacts / 'rotation.json').write_text(json.dumps({
+            'rotate': rotated, 'priorGenerationAnnotations': rotated_rows}, indent=1) + '\n')
 
         # == Gate 3: the kernel ops and CLI --as (T-12188) ==========================
         def op(name, **args):
@@ -418,19 +326,28 @@ console.log(JSON.stringify({ put, listed, refusal, acted, attention }))
             transcript.flush()
             return reply
 
+        def annotation(id_, subject='seat', generation=None, kind='op'):
+            args = ['list', ref, '--ns', 'e2e', '--kind', kind, '--subject', subject]
+            if generation is not None:
+                args += ['--generation', str(generation)]
+            result = cli(*args)
+            assert result[0] == 0, result
+            return next((row for row in result[1]['annotations'] if row['id'] == id_), None)
+
         okey = dict(session_ref=ref, subject='seat', ns='e2e', kind='op')
         o1 = op('seat.annotation.put', **okey, id='o1', body={'via': 'op'}, expect={'updatedAt': None})
-        o1_node = r.wait(lambda: node('hrc.annotation', sessionRef=ref, id='o1'), 10, 'o1 in the kernel')
+        o1_row = annotation('o1')
         o1_replay = op('seat.annotation.put', **okey, id='o1', body={'via': 'lost'}, expect={'updatedAt': None})
         og = op('seat.annotation.put', **{**okey, 'subject': 'generation'}, generation=2, id='og', body={'g': 2})
-        og_node = r.wait(lambda: node('hrc.annotation', sessionRef=ref, id='og'), 10, 'og in the kernel')
+        og_row = annotation('og', subject='generation', generation=2)
         r.check('op-put', o1.get('ok') is True and o1['result']['created'] is True
-                and o1_node['payload']['body'] == {'via': 'op'} and o1_node['payload']['updatedAt'] == o1['result']['updated_at']
-                and o1_node['payload']['updatedBy'] == 'system:hrc-kernel'
+                and o1_row is not None and o1_row['body'] == {'via': 'op'} and o1_row['updatedAt'] == o1['result']['updated_at']
+                and o1_row['updatedBy'] == 'system:hrc-kernel'
                 and o1_replay.get('ok') is False and o1_replay['error']['code'] == 'stale_annotation'
-                and og.get('ok') is True and og_node['payload']['hostSessionId'] == new_host
-                and og_node['payload']['generation'] == 2,
-                put=o1, node=o1_node, replay=o1_replay, generationPut=og, generationNode=og_node)
+                and annotation('o1') == o1_row
+                and og.get('ok') is True and og_row is not None and og_row['hostSessionId'] == new_host
+                and og_row['generation'] == 2,
+                put=o1, annotation=o1_row, replay=o1_replay, generationPut=og, generationAnnotation=og_row)
 
         acted_op = op('seat.annotation.act', **okey, id='o1', action='sent', attributes={'ok': True, 'runId': 'r-op'})
         absent_op = op('seat.annotation.act', **okey, id='o-absent', action='sent')
@@ -439,27 +356,27 @@ console.log(JSON.stringify({ put, listed, refusal, acted, attention }))
                 and [e['hrc_seq'] for e in op_actions] == [acted_op['result']['hrc_seq']]
                 and op_actions[0]['payload']['action'] == 'sent'
                 and op_actions[0]['payload']['attributes'] == {'ok': True, 'runId': 'r-op'}
+                and annotation('o1') == o1_row
                 and absent_op.get('ok') is False and absent_op['error']['code'] == 'unknown_annotation',
                 acted=acted_op, actionRows=op_actions, unknown=absent_op)
 
         dkey = dict(okey, kind='opdel', id='od')
         od1 = op('seat.annotation.put', **dkey, body={'n': 1}, expect={'updatedAt': None})
         od2 = op('seat.annotation.put', **dkey, body={'n': 2}, expect={'updatedAt': od1['result']['updated_at']})
-        od_node = r.wait(lambda: node('hrc.annotation', sessionRef=ref, id='od', updatedAt=od2['result']['updated_at']),
-                         10, 'od in the kernel')
+        od_row = annotation('od', kind='opdel')
         od_stale = op('seat.annotation.delete', **dkey, expect={'updatedAt': od1['result']['updated_at']})
-        od_kept = node('hrc.annotation', sessionRef=ref, id='od') is not None
+        od_kept = annotation('od', kind='opdel')
         od_deleted = op('seat.annotation.delete', **dkey, expect={'updatedAt': od2['result']['updated_at']})
-        od_gone = r.wait(lambda: node('hrc.annotation', sessionRef=ref, id='o1') is not None
-                         and node('hrc.annotation', sessionRef=ref, id='od') is None, 10, 'od removed from the kernel')
+        od_gone = annotation('od', kind='opdel') is None and annotation('o1') is not None
         od_rows = [(e['payload']['op'], e['payload']['updatedBy'], e['hrc_seq'])
                    for e in ledger(scope, ['session.annotation.changed']) if e['payload']['kind'] == 'opdel']
-        r.check('op-delete', od1.get('ok') is True and od2.get('ok') is True and od_node is not None
-                and od_stale.get('ok') is False and od_stale['error']['code'] == 'stale_annotation' and od_kept
+        r.check('op-delete', od1.get('ok') is True and od2.get('ok') is True and od_row is not None
+                and od_row['body'] == {'n': 2} and od_row['updatedAt'] == od2['result']['updated_at']
+                and od_stale.get('ok') is False and od_stale['error']['code'] == 'stale_annotation' and od_kept == od_row
                 and od_deleted.get('ok') is True and od_deleted['result'] == {'deleted': True} and od_gone
                 and [(o, by) for o, by, _ in od_rows] == [('put', 'system:hrc-kernel'), ('put', 'system:hrc-kernel'),
                                                           ('delete', 'system:hrc-kernel')],
-                stale=od_stale, deleted=od_deleted, node=od_node, ledger=od_rows)
+                stale=od_stale, deleted=od_deleted, annotation=od_row, ledger=od_rows)
 
         as_put = cli('put', ref, '--ns', 'e2e', '--kind', 'as', '--id', 'a1', '--as', 'agent:e2e-cli', '--body-file', '-', stdin='{"by":"cli"}')
         blank_put = cli('put', ref, '--ns', 'e2e', '--kind', 'as', '--id', 'a2', '--as', ' ', '--body-file', '-', stdin='{}')
@@ -470,7 +387,7 @@ console.log(JSON.stringify({ put, listed, refusal, acted, attention }))
         op_rows = [(e['payload']['id'], e['payload']['updatedBy'])
                    for e in ledger(scope, ['session.annotation.changed']) if e['payload']['kind'] == 'op']
         (a.artifacts / 'kernel-ops.json').write_text(json.dumps({
-            'opPut': o1, 'opNode': o1_node, 'opReplay': o1_replay, 'opGenerationNode': og_node,
+            'opPut': o1, 'opAnnotation': o1_row, 'opReplay': o1_replay, 'opGenerationAnnotation': og_row,
             'opAct': acted_op, 'opActionRows': op_actions, 'opUnknown': absent_op,
             'opDelete': od_deleted, 'opDeleteStale': od_stale, 'opDeleteLedger': od_rows,
             'cliAsPut': as_put[1], 'cliAsLedger': as_rows, 'opLedger': op_rows}, indent=1) + '\n')

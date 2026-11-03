@@ -57,11 +57,14 @@ python3 -I crates/hrc-native/e2e/kq.py seats
 python3 -I crates/hrc-native/e2e/kq.py busy
 ```
 
-2026-11-03 (T-12382): the embedded `hrc` document is temporarily restored
-for owner creation-wake and Loggia rotation validation. `kq.py` reads that
-oracle; routine product reads remain on `praesidium:praesidium`. The oracle
-projection trails the ledger; check `ingest.status`. A rusthrc restart rebuilds
-it. The final T-12360 activation removes it again after replacement validation.
+2026-11-02 amendment (praesidium-kernel r1.9 / T-12360): `kq.py` reads
+`praesidium:praesidium`, not rusthrc's ops-only socket. `status` prints at most
+32 bindings with bounded cursor and resync summaries; `status --full` opts into
+raw ingest details, which can include large entry maps. Check `caught_up` and
+the summary's cursor sequence where available. Seat active/inactive and runtime
+busy/ready are different facts. The Praesidium kernel owns this projection;
+a rusthrc restart no longer rebuilds an embedded document. Follow service
+restart authority.
 
 ## Kernel inspection contract
 
@@ -72,12 +75,15 @@ runtimes and annotations from the `praesidium:praesidium` document through
 Praesidium kernel owns the rebuildable read projection and seat attachment.
 Use `prae describe <type>` and generated `--help` for supported reads.
 
-During T-12382's temporary oracle restoration, rusthrc's kernel socket serves
-`hrc:hrc` as well as the six operator operations: `seat.summon`, `seat.restart`,
-`seat.send`, `seat.annotation.put`, `seat.annotation.act`, and
-`seat.annotation.delete`. Operator annotation writes retain
-`updatedBy: system:hrc-kernel`; agent writes through `prae` retain their runtime
-principal. Product panes continue reading the Praesidium document.
+Rusthrc's `~/praesidium/var/run/hrc/hrc-kernel.sock` is an operator ops mount
+only: it exposes no document, ingest, observation types or attach capability.
+Its six operations are `seat.summon`, `seat.restart`, `seat.send`,
+`seat.annotation.put`, `seat.annotation.act` and `seat.annotation.delete`.
+The legacy `kq.py` observation commands do not read this socket anymore.
+Operator annotation writes retain `updatedBy: system:hrc-kernel`; agent writes
+through `prae` retain their runtime principal. Restarting rusthrc does not
+rebuild a rusthrc read projection; shared service restarts still require the
+authorized operator.
 
 `hrc runtime list`, `/v1/status`, `/v1/runtimes` and `runtimes/inspect` are
 whole-table daemon reads under the store mutex. Use the Praesidium document
@@ -90,10 +96,13 @@ for routine seat and runtime observation to avoid delaying mail and turns.
 Build, install, publish, and activation are separate states. Follow
 [atomic-install.md](atomic-install.md) for local release selection and its
 pre-cutover entrypoint checks. The historical standalone-kernel bootstrap
-gate retired in T-12141. The T-12360 retirement is temporarily restored for
-T-12382 oracle validation; check the running source commit before applying a
-source contract to a live node. A failed candidate must leave `current`
-unchanged. A local install does not activate the daemon.
+gate retired in T-12141. Since T-12360 (`ed3f866b`), rusthrc carries only an
+ops-only HRC provider; the seat/runtime projection belongs to the Praesidium
+kernel, so installing or restarting rusthrc does not rebuild it. Installed
+releases predating that cutover retain the embedded document; check the running
+source commit before applying this source contract to a live node. A failed
+candidate must leave `current` unchanged. A local install does not activate
+the daemon.
 
 For fleet changes follow [fleet-deployment.md](fleet-deployment.md):
 `just deploy-max3` advances and publishes max3 first; `just deploy-svc` and

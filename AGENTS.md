@@ -70,8 +70,7 @@ must not assert the other repo's behavior; shared render semantics live in
 
 Read seats, runtimes and annotations through `prae seat`, `prae runtime` and
 `prae ext list` in `praesidium:praesidium`; use `prae describe <type>` and
-`--help`. During T-12382 oracle validation, rusthrc also serves its embedded `hrc`
-document; `kq.py` reads that temporary oracle. See the
+`--help`. Rusthrc's kernel socket is ops-only. See the
 [kernel inspection contract](docs/operations-runbook.md#kernel-inspection-contract)
 for types, operations, attribution and projection ownership.
 

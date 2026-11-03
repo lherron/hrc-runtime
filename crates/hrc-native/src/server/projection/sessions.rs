@@ -302,9 +302,10 @@ pub async fn resolve(server: &Shared, body: &[u8]) -> Result<Response, ApiError>
 }
 
 /// `GET /v1/sessions/attention` (T-12212, local only): the continuity's active
-/// generation and its attention by the one rule the annotation fence and the
-/// kernel's `hrc.seat.attention` share (`hrc_store::attention`). `runtimeLive`
-/// is that rule's presence predicate; no second fold lives here.
+/// generation and its attention from `hrc_store::attention`, also used by the
+/// annotation fence. Praesidium ports this fold independently; cross-kernel
+/// parity must be checked against this owner route. `runtimeLive` is the owner rule's
+/// presence predicate.
 fn attention(server: &Server, query: &HashMap<String, String>) -> Result<Response, ApiError> {
     let scope = query.get("scopeRef").ok_or_else(|| {
         ApiError::bad(
@@ -565,13 +566,11 @@ fn seat_handoffs(
 mod tests {
     use crate::server::{Shared, dispatch_inner, turns::admission::tests::server};
     use axum::{body::Body, extract::Request, http::StatusCode};
-    use cardo_runtime::ingest::Projector;
     use chrono::{Duration, SecondsFormat, Utc};
-    use hrc_domain::{projector::SeatProjector, reader::HrcRead};
     use serde_json::{Value, json};
 
-    // Failure cases (T-12212): the route folding attention its own way and
-    // drifting from hrc.seat.attention; reading a generation other than the
+    // Failure cases (T-12212): wrong owner attention values or presence;
+    // reading a generation other than the
     // continuity's active one; runtimeLive disagreeing with the presence the
     // rule gated on; a scope with no continuity answered 200 with null instead
     // of unknown_host_session; the route missing from implemented() and so
@@ -630,10 +629,11 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn route_attention_equals_projected_seat_attention() -> anyhow::Result<()> {
-        let (scratch, server) = server("off", false)?;
-        // case → (runtime status, events after a turn.completed); the cases of
-        // hrc-domain's live_attention equivalence test (T-12185).
+    async fn route_attention_has_expected_owner_values() -> anyhow::Result<()> {
+        let (_scratch, server) = server("off", false)?;
+        // Explicit expected route values replace the retired cross-projector
+        // comparison (T-12360 F1). No call to the function under test supplies
+        // the expected attention. Kernel parity belongs to its owner.
         type Case = (
             &'static str,
             Option<&'static str>,
@@ -698,44 +698,47 @@ mod tests {
                 &ts(1),
                 json!({"turnId":"t1"}),
             );
+            let attention_at = ts(2);
             for (i, (category, kind, payload)) in events.iter().enumerate() {
                 event(
                     &server,
                     &s,
                     category,
                     kind,
-                    &ts(2 + i as i64),
+                    &if i == 0 {
+                        attention_at.clone()
+                    } else {
+                        ts(2 + i as i64)
+                    },
                     payload.clone(),
                 );
             }
             if let Some(status) = rt {
                 runtime(&server, &s, status);
             }
-            seats.push((*name, *rt == Some("ready"), scope, s));
+            let expected = match *name {
+                "lit" | "later-non-turn" => {
+                    json!({"source":"jev","state":"blocking","kind":"decision","excerpt":"Ship it?","at":attention_at})
+                }
+                "awaiting" => {
+                    json!({"source":"tool","state":"blocking","kind":"information","at":attention_at})
+                }
+                _ => Value::Null,
+            };
+            seats.push((*name, *rt == Some("ready"), scope, s, expected));
         }
 
-        let read = HrcRead::open(&scratch.root.join("state/state.sqlite"))?;
-        let edits = SeatProjector::new(read).bootstrap(None, 1000)?.edits;
         let mut lit_seen = 0;
-        for (name, live, scope, s) in &seats {
-            let key = format!("{scope}/lane:main");
-            let seat = edits
-                .iter()
-                .find(|e| e["type"] == "hrc.seat" && e["key"]["sessionRef"] == key.as_str())
-                .unwrap_or_else(|| panic!("no seat for {name}"));
-            let projected = seat["payload"]
-                .get("attention")
-                .cloned()
-                .unwrap_or(Value::Null);
+        for (name, live, scope, s, expected) in &seats {
             let (status, answer) = get(&server, &format!("scopeRef={}", encode(scope))).await;
             assert_eq!(status, StatusCode::OK, "{name}: {answer}");
             assert_eq!(
                 answer,
                 json!({"scopeRef":scope,"laneRef":"main","hostSessionId":s["hostSessionId"],
-                       "generation":1,"runtimeLive":live,"attention":projected}),
+                       "generation":1,"runtimeLive":live,"attention":expected}),
                 "{name}"
             );
-            lit_seen += usize::from(!projected.is_null());
+            lit_seen += usize::from(!expected.is_null());
         }
         // lit, awaiting and later-non-turn carry attention: not vacuous.
         assert_eq!(lit_seen, 3);

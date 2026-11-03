@@ -38,6 +38,8 @@ launched); a turn whose prompt contains `CONT` emits continuation.updated
 `stub.usage` {turnId, usedTokens, windowTokens}, sent on its own connection,
 emits one usage.updated for that turn (kernel_fold.py --serve's turnContext).
 
+`--ops-only 1` enables submission RPCs and truthful idle probes for T-12360.
+
 Every request and emitted event is appended to <ipcDir>/stub.ndjson.
 Release identity comes from release.json two directories above this file.
 """
@@ -286,12 +288,16 @@ def handle(conn, method, params):
         with lock:
             state['acked'] = max(state['acked'], params.get('throughSeq', 0))
             return {'ackedThroughSeq': state['acked']}
-    if method in ('submission.invoke', 'submission.enqueue', 'submission.steer') and state['driver'] == 'codex-app-server':
+    # T-12360: ops-only seat.send submits through the real owner on the
+    # claude hrcpty fixture too; keep the same acknowledgement/event protocol.
+    if method in ('submission.invoke', 'submission.enqueue', 'submission.steer') and (state['driver'] == 'codex-app-server' or ARGS.get('ops-only') == '1'):
         submission = 'sub-' + os.urandom(6).hex()
         body = params.get('body') or {}
         text = json.dumps(body)[:200]
         threading.Thread(target=run_turn, args=(submission, text), daemon=True).start()
         return {'submissionId': submission, 'admission': 'admitted', 'inputId': submission}
+    if method == 'seat.probe' and ARGS.get('ops-only') == '1':
+        return {'seat': {'state': 'idle' if state['state'] == 'ready' else 'turn-active'}}
     if method == 'seat.probe' and state.get('heldInput'):
         # T-12177: only a held turn answers; otherwise the probe stays the
         # unknown method it always was, so the rest of the run is unchanged.

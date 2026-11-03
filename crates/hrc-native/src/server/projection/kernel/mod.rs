@@ -1,6 +1,6 @@
-//! The HRC kernel inside rusthrc (T-12067 §8.1 items 4 and 5): cardo's wire on
-//! `<runtimeRoot>/hrc-kernel.sock`, projecting from its own read-only
-//! connection and entering owner routes through `call_local`. Owner only; a
+//! The ops-only HRC provider (praesidium-kernel r1.9, T-12360): cardo's wire
+//! on `<runtimeRoot>/hrc-kernel.sock`, entering owner routes through
+//! `call_local`. No document, node types, ingest or attacher. Owner only; a
 //! kernel that fails to start is logged and HRC serves without it.
 mod adapter;
 
@@ -12,14 +12,12 @@ use cardo_runtime_tokio::{WireTask, spawn_wire};
 use hrc_domain::{
     HrcError,
     owner::{OwnerCall, OwnerReply},
-    reader::HrcRead,
 };
 use serde_json::{Value, json};
 use std::{
     sync::Arc,
     time::{Duration, Instant},
 };
-use tokio::task::JoinHandle;
 
 /// User-Agent of every kernel request, so accounting meters it (T-11541).
 // Historical client identity retained for accounting continuity across the fold.
@@ -27,14 +25,8 @@ pub(super) const CLIENT: &str = concat!("hrc-kernel/", env!("CARGO_PKG_VERSION")
 /// The principal of every kernel request: a kernel op's caller is not named
 /// on the cardo wire, so its annotation writes record the kernel itself.
 pub(super) const PRINCIPAL: &str = "system:hrc-kernel";
-/// The ledger watch wakes ingest; the interval is only a backstop.
-const INGEST_INTERVAL_MS: u64 = 10_000;
-const RESYNC_EVERY_MS: u64 = 600_000;
-/// An attach blocks the owner thread; it answers in about a millisecond.
-const ATTACH_TIMEOUT: Duration = Duration::from_secs(10);
-
 /// The owner seam over `call_local`. Called off tokio's workers only: from
-/// the cardo owner thread (attach) and from op tasks on the blocking pool.
+/// op tasks on the blocking pool.
 struct LocalOwner {
     server: Shared,
     runtime: tokio::runtime::Handle,
@@ -47,13 +39,7 @@ impl OwnerCall for LocalOwner {
         body: Option<&Value>,
     ) -> Result<OwnerReply, HrcError> {
         let call = call_local(&self.server, method, route, body);
-        let reply = if route.starts_with("/v1/attach") {
-            self.runtime
-                .block_on(async { tokio::time::timeout(ATTACH_TIMEOUT, call).await })
-                .unwrap_or_else(|_| Err(anyhow!("attach exceeded {ATTACH_TIMEOUT:?}")))
-        } else {
-            self.runtime.block_on(call)
-        };
+        let reply = self.runtime.block_on(call);
         reply
             .map(|(status, body)| OwnerReply { status, body })
             .map_err(|e| HrcError::new("hrc_unavailable", format!("{e:#}")))
@@ -63,15 +49,11 @@ impl OwnerCall for LocalOwner {
 pub(super) struct Kernel {
     wire: WireTask,
     owner: RuntimeOwner,
-    tasks: [JoinHandle<()>; 2],
     _lock: SingleInstance,
 }
 impl Kernel {
     /// After the HTTP listener stops: the wire, then the owner (§8.1 item 5).
     pub(super) async fn stop(self) -> anyhow::Result<()> {
-        for task in &self.tasks {
-            task.abort();
-        }
         self.wire.stop().await.context("kernel wire")?;
         cardo_runtime_tokio::join(self.owner)
             .await
@@ -97,18 +79,41 @@ pub(super) async fn start(server: &Shared) -> Option<Kernel> {
         }
     }
 }
+// Cardo core_adapter.rs:1007–1015 requires an executor of record for every
+// provider with operations. HrcAdapter intercepts all six; this stateless
+// executor has no document or ingest and makes a routing defect explicit.
+struct AdapterRouted;
+impl cardo_runtime::core_adapter::WorkerCall for AdapterRouted {
+    fn call(&mut self, _: &str, _: Value, _: Duration) -> Result<Value, DispatchFailure> {
+        Err(DispatchFailure {
+            code: "adapter_routed".into(),
+            message: "hrc owner operations are dispatched by HrcAdapter; reaching the core worker is a routing defect".into(),
+            details: json!({}),
+        })
+    }
+    fn shutdown(&mut self) {}
+}
+
 async fn try_start(server: &Shared) -> anyhow::Result<Kernel> {
     let started = Instant::now();
     let socket = server.runtime.join("hrc-kernel.sock");
     let lock = SingleInstance::acquire(&socket).map_err(|e| anyhow!("{e}"))?;
-    let read = HrcRead::open(&server.state.join("state.sqlite"))?;
     let runtime = tokio::runtime::Handle::current();
     let owner_call: Arc<dyn OwnerCall> = Arc::new(LocalOwner {
         server: server.clone(),
         runtime: runtime.clone(),
     });
-    let core = hrc_domain::document::core(read, owner_call.clone());
-    let waker = core.ingest_waker();
+    let mut core = cardo_runtime::core_adapter::CoreAdapter::new(
+        || cardo_core::document::CoreDomain,
+        |_| {
+            Err(cardo_core::Refusal::invalid(
+                "edit_rejected",
+                "HRC declares no edits",
+            ))
+        },
+        Duration::from_secs(60),
+    );
+    core.in_process_worker("hrc", || Box::new(AdapterRouted));
     let owner = RuntimeOwner::start(
         adapter::HrcAdapter {
             core,
@@ -128,21 +133,12 @@ async fn try_start(server: &Shared) -> anyhow::Result<Kernel> {
     let setup = {
         let (client, socket) = (client.clone(), socket.clone());
         tokio::task::spawn_blocking(move || -> anyhow::Result<wire::WireServer> {
-            for (operation, arguments) in [
-                ("registry.enable", hrc_domain::declarations::declarations()),
-                (
-                    "document.open",
-                    json!({"document_id":"hrc","rebuildable":true,"ingest_only":true,"durability":{"mode":"none"}}),
-                ),
-                (
-                    "ingest.attach",
-                    json!({"document_id":"hrc","binding":"hrc","operation":"hrc.project","config":{},
-                        "interval_ms":INGEST_INTERVAL_MS,"resync_every_ms":RESYNC_EVERY_MS}),
-                ),
-            ] {
-                send(&client, operation, arguments)
-                    .map_err(|failed| anyhow!("{operation}: {failed:?}"))?;
-            }
+            send(
+                &client,
+                "registry.enable",
+                hrc_domain::declarations::declarations(),
+            )
+            .map_err(|failed| anyhow!("registry.enable: {failed:?}"))?;
             Ok(wire::bind(client, &socket)?)
         })
         .await?
@@ -154,16 +150,6 @@ async fn try_start(server: &Shared) -> anyhow::Result<Kernel> {
             return Err(error);
         }
     };
-    // Every committed ledger write bumps the watch; each change is a wake hint.
-    let mut ledger = server.ledger.subscribe();
-    let wake = tokio::spawn(async move {
-        while ledger.changed().await.is_ok() {
-            if !waker.wake("hrc", "hrc") {
-                break;
-            }
-        }
-    });
-    let errors = tokio::spawn(watch_errors(client));
     stderr_json(
         "info",
         "kernel",
@@ -173,56 +159,8 @@ async fn try_start(server: &Shared) -> anyhow::Result<Kernel> {
     Ok(Kernel {
         wire,
         owner,
-        tasks: [wake, errors],
         _lock: lock,
     })
-}
-
-/// The hrc binding's last ingest error as `ingest.status` reports it, as
-/// `code: message`; None while its runs settle cleanly.
-fn binding_error(client: &KernelClient) -> Option<String> {
-    let status = match send(client, "ingest.status", json!({"document_id":"hrc"})) {
-        Ok(status) => status,
-        Err(failed) => return Some(format!("ingest.status: {failed:?}")),
-    };
-    status["bindings"]
-        .as_array()?
-        .iter()
-        .filter_map(|binding| binding.get("last_error").filter(|e| !e.is_null()))
-        .map(|e| {
-            format!(
-                "{}: {}",
-                e["code"].as_str().unwrap_or("error"),
-                e["message"].as_str().unwrap_or_default()
-            )
-        })
-        .next()
-}
-/// An ingest error is the reason the seat set is wrong: log each new one,
-/// repeat a persisting one once a minute, and log the recovery.
-async fn watch_errors(client: KernelClient) {
-    let (mut current, mut logged) = (None, Instant::now());
-    loop {
-        tokio::time::sleep(Duration::from_secs(2)).await;
-        let probe = client.clone();
-        let Ok(error) = tokio::task::spawn_blocking(move || binding_error(&probe)).await else {
-            continue;
-        };
-        let repeat = error.is_some() && logged.elapsed() >= Duration::from_secs(60);
-        if error != current || repeat {
-            match &error {
-                Some(e) => stderr_json(
-                    "error",
-                    "kernel",
-                    "kernel.ingest.error",
-                    json!({"error":e,"persisting":error == current}),
-                ),
-                None => stderr_json("info", "kernel", "kernel.ingest.recovered", json!({})),
-            }
-            logged = Instant::now();
-            current = error;
-        }
-    }
 }
 
 #[cfg(test)]
@@ -234,7 +172,7 @@ mod tests {
     use std::{
         io::{BufRead, BufReader, Write},
         os::unix::net::UnixStream,
-        time::{Duration, Instant},
+        time::Duration,
     };
 
     /// The fixture's runtime root is under $TMPDIR, too long for a socket
@@ -254,6 +192,69 @@ mod tests {
         Arc::get_mut(server).expect("unshared test server").runtime = root.clone();
         ShortRoot(root)
     }
+    #[test]
+    fn executor_of_record_refuses_direct_calls() {
+        use cardo_runtime::core_adapter::WorkerCall;
+        let failure = AdapterRouted
+            .call("seat.summon", json!({}), Duration::from_secs(1))
+            .expect_err("only HrcAdapter may dispatch owner operations");
+        assert_eq!(failure.code, "adapter_routed");
+        assert!(
+            failure
+                .message
+                .contains("reaching the core worker is a routing defect")
+        );
+        assert_eq!(failure.details, json!({}));
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn ops_only_provider() -> anyhow::Result<()> {
+        let (_scratch, mut server) = server("off", false)?;
+        let _root = short_root(&mut server);
+        let kernel = try_start(&server).await?;
+        let socket = server.runtime.join("hrc-kernel.sock");
+        let discovery = wire(&socket, "registry.discover", json!({}));
+        let result = &discovery["result"];
+        let ops: std::collections::BTreeSet<_> = result["operations"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter(|o| o["provider"] == "hrc")
+            .map(|o| o["name"].as_str().unwrap())
+            .collect();
+        assert_eq!(
+            ops,
+            [
+                "seat.summon",
+                "seat.restart",
+                "seat.send",
+                "seat.annotation.put",
+                "seat.annotation.act",
+                "seat.annotation.delete"
+            ]
+            .into_iter()
+            .collect()
+        );
+        assert!(
+            result["node_types"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .all(|t| t["provider"] != "hrc")
+        );
+        assert!(result["node_families"].as_array().unwrap().is_empty());
+        assert_eq!(discovery["ok"], true, "{discovery}");
+        let docs = wire(&socket, "resync", json!({}));
+        eprintln!("OPS_ONLY_DOCUMENTS={docs}");
+        assert_eq!(docs["ok"], true, "{docs}");
+        assert_eq!(docs["result"]["documents"], json!({}), "{docs}");
+        let unknown = wire(&socket, "seat.unknown", json!({}));
+        assert_eq!(unknown["ok"], false, "{unknown}");
+        assert_eq!(unknown["error"]["code"], "unknown_declaration", "{unknown}");
+        kernel.stop().await?;
+        Ok(())
+    }
+
     fn generation(server: &Shared) -> u64 {
         *server.ledger.borrow()
     }
@@ -270,21 +271,6 @@ mod tests {
         BufReader::new(stream).read_line(&mut line).unwrap();
         serde_json::from_str(&line).unwrap()
     }
-    fn seat_refs(socket: &std::path::Path) -> Vec<String> {
-        let reply = wire(
-            socket,
-            "document.query",
-            json!({"document_id":"hrc","type":"hrc.seat","limit":1000}),
-        );
-        assert_eq!(reply["ok"], true, "{reply}");
-        reply["result"]["rows"]
-            .as_array()
-            .unwrap()
-            .iter()
-            .map(|r| r["payload"]["sessionRef"].as_str().unwrap_or("").to_owned())
-            .collect()
-    }
-
     // Failure cases: call_local entering dispatch_local (a read would bump the
     // ledger, a scope homed elsewhere would be created locally, accounting
     // would see nothing), or naming no client (metered as `unknown`).
@@ -369,51 +355,6 @@ mod tests {
         Ok(())
     }
 
-    // Failure cases: no socket at <runtimeRoot>/hrc-kernel.sock, a seat
-    // written after bootstrap waiting for the 10 s backstop instead of the
-    // ledger wake, or a stop that leaves the socket answering.
-    #[tokio::test(flavor = "multi_thread")]
-    async fn kernel_serves_the_wire_wakes_on_commit_and_stops() -> anyhow::Result<()> {
-        let (_scratch, mut server) = server("off", false)?;
-        let _root = short_root(&mut server);
-        let socket = server.runtime.join("hrc-kernel.sock");
-        let kernel = start(&server).await.expect("kernel starts");
-        let status = wire(&socket, "ingest.status", json!({"document_id":"hrc"}));
-        assert_eq!(status["ok"], true, "{status}");
-        let deadline = Instant::now() + Duration::from_secs(5);
-        while wire(&socket, "ingest.status", json!({"document_id":"hrc"}))["result"]["bindings"][0]
-            ["caught_up"]
-            != true
-        {
-            assert!(Instant::now() < deadline, "bootstrap catches up");
-            tokio::time::sleep(Duration::from_millis(25)).await;
-        }
-
-        let seat = "agent:kq:project:fold:task:woken/lane:main";
-        let written = Instant::now();
-        call_local(
-            &server,
-            "POST",
-            "/v1/sessions/resolve",
-            Some(&json!({"sessionRef":seat,"create":true})),
-        )
-        .await?;
-        while !seat_refs(&socket).iter().any(|r| r == seat) {
-            assert!(
-                written.elapsed() < Duration::from_secs(3),
-                "the ledger wake projects the seat before the 10 s backstop"
-            );
-            tokio::time::sleep(Duration::from_millis(25)).await;
-        }
-
-        kernel.stop().await?;
-        assert!(
-            UnixStream::connect(&socket).is_err(),
-            "stopped kernel is gone"
-        );
-        Ok(())
-    }
-
     /// A wire call off the test's tokio worker: an owner op's work blocks
     /// on the server's runtime until HRC answers.
     async fn op(socket: &std::path::Path, name: &'static str, args: Value) -> Value {
@@ -442,9 +383,9 @@ mod tests {
     // operation) or rejected by registry.enable; a store refusal answered as
     // hrc_refused or a success; a write attributed `unknown`; a put that
     // appends no session.annotation.changed or an act no
-    // session.annotation.action; the put not reaching the hrc.annotation node;
+    // session.annotation.action;
     // (T-12194) a delete not reaching the route, attributed unknown, or
-    // leaving the node behind.
+    // leaving the owner annotation behind.
     #[tokio::test(flavor = "multi_thread")]
     async fn annotation_ops_dispatch_in_process_to_the_store() -> anyhow::Result<()> {
         let (_scratch, mut server) = server("off", false)?;
@@ -542,29 +483,6 @@ mod tests {
             (&json!("sent"), &json!({"ok":true}))
         );
 
-        let deadline = Instant::now() + Duration::from_secs(5);
-        let node = loop {
-            let reply = wire(
-                &socket,
-                "document.query",
-                json!({"document_id":"hrc","type":"hrc.annotation","limit":100}),
-            );
-            let found = reply["result"]["rows"].as_array().and_then(|rows| {
-                rows.iter()
-                    .find(|r| r["payload"]["id"] == "k1" && r["payload"]["body"] == json!({"v":2}))
-                    .cloned()
-            });
-            if let Some(node) = found {
-                break node;
-            }
-            assert!(
-                Instant::now() < deadline,
-                "the put projects as hrc.annotation: {reply}"
-            );
-            tokio::time::sleep(Duration::from_millis(25)).await;
-        };
-        assert_eq!(node["payload"]["updatedBy"], PRINCIPAL, "{node}");
-
         // T-12194: seat.annotation.delete. A superseded updatedAt keeps the
         // store's stale_annotation and appends nothing; the current one
         // deletes, appends the op=delete row and removes the node.
@@ -602,26 +520,6 @@ mod tests {
             ),
             (&json!("delete"), &json!("k1"), &json!(PRINCIPAL))
         );
-        let deadline = Instant::now() + Duration::from_secs(5);
-        loop {
-            let reply = wire(
-                &socket,
-                "document.query",
-                json!({"document_id":"hrc","type":"hrc.annotation","limit":100}),
-            );
-            let rows = reply["result"]["rows"]
-                .as_array()
-                .cloned()
-                .unwrap_or_default();
-            if reply["ok"] == true && !rows.iter().any(|r| r["payload"]["id"] == "k1") {
-                break;
-            }
-            assert!(
-                Instant::now() < deadline,
-                "the delete removes the hrc.annotation node: {reply}"
-            );
-            tokio::time::sleep(Duration::from_millis(25)).await;
-        }
         kernel.stop().await?;
         Ok(())
     }

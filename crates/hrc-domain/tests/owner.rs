@@ -1,8 +1,6 @@
-use cardo_core::doms::Node;
 use hrc_domain::{
     HrcError,
     annotation::{self, AnnotationAct, AnnotationDelete, AnnotationPut},
-    attach::attach,
     owner::{OwnerCall, OwnerReply},
     restart::Restart,
     send::SeatSend,
@@ -369,78 +367,4 @@ fn annotation_ops_are_declared_unfenced_writes() {
                 .contains(&json!(output))
         );
     }
-}
-
-fn hrcpty_seat(runtime: &str) -> Node {
-    serde_json::from_value(
-        json!({"id":"n1","type":"hrc.seat","schema_version":1,"provider":"hrc",
-        "created_revision":1,"updated_revision":1,"domain_attributes":{},
-        "payload":{"runtimeId":runtime,"hrcpty":{"socketPath":"/tmp/p.sock"}}}),
-    )
-    .unwrap()
-}
-
-// Failure cases: attach that drops the runtime id or fails to encode it asks
-// HRC about another runtime; a down HRC reported as the seat ending; a
-// read-only attach without --read-only gives the viewer a writable pty.
-#[test]
-fn hrcpty_attach_reads_the_attach_route_through_the_seam() {
-    let owner = Scripted::new(vec![ok(
-        json!({"transport":"hrcpty","argv":["hrcpty","attach"],"bindingFence":"f"}),
-    )]);
-    let attached = attach(&owner, &hrcpty_seat("rt 1/x"), "read-only").unwrap();
-    assert_eq!(
-        owner.calls(),
-        [("GET".into(), "/v1/attach?runtimeId=rt%201%2Fx".into(), None)]
-    );
-    assert_eq!(
-        attached.descriptor["argv"],
-        json!(["hrcpty", "attach", "--read-only"])
-    );
-    assert_eq!(attached.descriptor["bindingFence"], "f");
-
-    let owner = Scripted::new(vec![Err(HrcError::new("hrc_unavailable", "down"))]);
-    let Err(down) = attach(&owner, &hrcpty_seat("rt"), "interactive") else {
-        panic!("a down HRC attached")
-    };
-    assert_eq!(down.details["reason"], "no_tty");
-    let owner = Scripted::new(vec![Ok(OwnerReply {
-        status: 404,
-        body: json!({"error":{"code":"runtime_not_found","message":"gone"}}),
-    })]);
-    let Err(gone) = attach(&owner, &hrcpty_seat("rt"), "interactive") else {
-        panic!("a refused runtime attached")
-    };
-    assert_eq!(gone.details["reason"], "ended");
-}
-
-fn seat(payload: Value) -> Node {
-    serde_json::from_value(
-        json!({"id":"n2","type":"hrc.seat","schema_version":1,"provider":"hrc",
-        "created_revision":1,"updated_revision":1,"domain_attributes":{},
-        "payload":payload}),
-    )
-    .unwrap()
-}
-
-// A seat whose runtime was terminated keeps no runtime and no surface. Attach
-// must say the seat ended, not that its terminal is unavailable: Loggia reads
-// `no_tty` as a seat still coming up and waits on it.
-#[test]
-fn attach_to_a_seat_without_a_runtime_reports_ended() {
-    let owner = Scripted::new(vec![]);
-    let Err(ended) = attach(&owner, &seat(json!({"status":"inactive"})), "interactive") else {
-        panic!("a seat without a runtime attached")
-    };
-    assert_eq!(ended.details["reason"], "ended");
-    assert!(owner.calls().is_empty());
-
-    let Err(no_tty) = attach(
-        &owner,
-        &seat(json!({"status":"active","runtimeId":"rt"})),
-        "interactive",
-    ) else {
-        panic!("a surfaceless live seat attached")
-    };
-    assert_eq!(no_tty.details["reason"], "no_tty");
 }

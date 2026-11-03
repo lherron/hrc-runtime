@@ -64,6 +64,10 @@ last_verified: >
   implementation, including starting owner/keyed presentation, already-open
   bounded-stream wake and reconnect replay. Two store tests cover promptless
   and prompted insertion, unchanged turn.accepted, retry/replay and shared
-  transaction rollback through a scratch insertion trigger. Installed proof
-  remains pending activation; prior latency failures remain recorded.
+  transaction rollback through a scratch insertion trigger. Installed release 47ae30fb on max3 independently verified runtime.created
+  through an already-open stream and the new keyed runtime row. External
+  rotation preserved the same Loggia leaf and attached generation 2 with the
+  exact new runtime/host identity (T-12382/resume-installed-rotation/report.json).
+  Seat visibility was 2003ms and runtime visibility 1891ms under host load;
+  prior timing failures remain recorded without a 100ms acceptance claim.
 reopen_when: Creation scope or identity, one-event-per-insert semantics, transaction/publication boundary, meaning of starting, presentation selection, timestamp meaning, or consumer membership authority changes.

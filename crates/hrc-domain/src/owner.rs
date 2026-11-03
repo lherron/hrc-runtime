@@ -60,25 +60,3 @@ pub fn call(
         "HRC refused the request",
     )
 }
-
-/// rusthrc's operator attach surface (`GET /v1/attach`) for one runtime,
-/// which the `hrc.seat` attacher passes through for an hrc-pty seat. Like
-/// every operator attach it reconciles that runtime's liveness first; it is
-/// called on `resource.attach` only, never while projecting.
-pub fn attach_surface(owner: &dyn OwnerCall, runtime_id: &str) -> Result<Value, HrcError> {
-    let route = format!("/v1/attach?runtimeId={}", encode(runtime_id));
-    reply(owner.call("GET", &route, None)?, "HRC refused the attach")
-}
-
-/// Percent-encodes everything outside RFC 3986's unreserved set.
-fn encode(value: &str) -> String {
-    value
-        .bytes()
-        .map(|b| match b {
-            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'.' | b'_' | b'~' => {
-                (b as char).to_string()
-            }
-            _ => format!("%{b:02X}"),
-        })
-        .collect()
-}
