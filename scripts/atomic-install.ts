@@ -508,7 +508,7 @@ async function copySourceSnapshot(sourceRoot: string, releasePath: string): Prom
   )
 }
 
-async function copyCanonicalSourceSnapshot(
+export async function copyCanonicalSourceSnapshot(
   sourceRoot: string,
   releasePath: string,
   sourceCommit: string
@@ -522,7 +522,9 @@ async function copyCanonicalSourceSnapshot(
       sourceRoot,
       environmentWithoutGitOverrides()
     )
-    await runCommand('tar', ['-xf', archivePath, '-C', releasePath], sourceRoot)
+    // Commit timestamps can predate a cached Cargo artifact from another
+    // snapshot. Use extraction time so changed selected inputs invalidate it.
+    await runCommand('tar', ['-m', '-xf', archivePath, '-C', releasePath], sourceRoot)
   } finally {
     await rm(archiveRoot, { recursive: true, force: true })
   }
