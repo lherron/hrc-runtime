@@ -512,7 +512,14 @@ export function registerRuntimeCommands(program: Command): void {
     })
 
   annotateCommand(runtime, { audience: 'human' })
-  annotateCommand(index, { audience: 'agent' })
+  annotateCommand(index, {
+    audience: 'agent',
+    agentUsage: {
+      example: 'hrc index --help',
+      exitCodes: '0 help; 2 usage',
+      output: 'status and rebuild subcommand help for the transcript search index',
+    },
+  })
   annotateCommand(capture, { audience: 'human' })
   annotateChild(runtime, 'list', {
     audience: 'agent',
