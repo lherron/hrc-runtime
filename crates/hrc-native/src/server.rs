@@ -515,6 +515,8 @@ async fn dispatch_inner(server: &Shared, request: Request, local_only: bool) -> 
                 && query.get("follow").map(String::as_str) == Some("true")))
     {
         streams::open(server, uri.path(), &query)
+    } else if method == Method::GET && uri.path() == "/v1/events" {
+        events::history(server, &query)
     } else if method == Method::POST && uri.path() == "/v1/events/append" {
         attention::append(server, &body)
     } else if method == Method::POST && uri.path() == "/v1/internal/mail/stop-decision" {

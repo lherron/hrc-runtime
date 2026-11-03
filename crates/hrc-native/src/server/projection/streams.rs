@@ -241,30 +241,20 @@ enum Source {
     },
 }
 fn read(server: &Shared, source: &Source, after: i64) -> Result<(i64, Vec<Value>), ApiError> {
-    let db = server.store.lock().unwrap();
     match source {
         Source::Lifecycle(q) => {
-            let tx = db
-                .sqlite
-                .unchecked_transaction()
-                .map_err(anyhow::Error::from)?;
-            let head = db.max_hrc_seq()?;
-            let rows = db.event_history(
-                q,
-                after.saturating_add(1),
-                Some(head.saturating_add(1)),
-                None,
-                false,
-                true,
-            )?;
-            tx.commit().map_err(anyhow::Error::from)?;
-            Ok((head, rows))
+            // Follow replay from an old cursor is the whole ledger: a chunk
+            // per store hold, fenced at the head captured first (T-12413).
+            let history = events::History::new(server, q.clone(), after.saturating_add(1), None)?;
+            let head = history.head();
+            Ok((head, history.collect()?))
         }
         Source::Broker {
             runtime,
             invocation,
             run,
         } => {
+            let db = server.store.lock().unwrap();
             let mut sql = "WHERE runtime_id=? AND invocation_id=? AND seq>?".to_owned();
             let mut values = vec![
                 Sql::Text(runtime.clone()),
