@@ -413,7 +413,9 @@ fn idle_archive_days() -> f64 {
         .unwrap_or(7.0)
 }
 
-/// archiveIdleSessions: writes sessions.status and nothing else; never deletes.
+/// archiveIdleSessions: writes sessions.status plus one `session.archived`
+/// lifecycle event per archived session (same transaction), so event-driven
+/// consumers see the archive without polling; never deletes.
 pub fn archive_idle_sessions(server: &Shared, days: f64) -> anyhow::Result<Value> {
     let since = chrono::Utc::now() - chrono::Duration::milliseconds((days * 86_400_000.0) as i64);
     let since = since.to_rfc3339_opts(chrono::SecondsFormat::Millis, true);
@@ -424,13 +426,14 @@ pub fn archive_idle_sessions(server: &Shared, days: f64) -> anyhow::Result<Value
         .prepare(&format!("SELECT s.host_session_id FROM sessions s WHERE s.status = 'active' AND {SESSION_RECENCY} < ? AND NOT {SESSION_HAS_RUNNING_RUNTIME}"))?
         .query_map([&since], |r| r.get(0))?
         .collect::<rusqlite::Result<_>>()?;
-    let rows: Vec<(String, String, String, Option<String>)> = db
+    type Row = (String, String, String, Option<String>, String, i64);
+    let rows: Vec<Row> = db
         .sqlite
-        .prepare("SELECT host_session_id, scope_ref, status, continuation_json FROM sessions ORDER BY created_at ASC, host_session_id ASC")?
-        .query_map([], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)))?
+        .prepare("SELECT host_session_id, scope_ref, status, continuation_json, lane_ref, generation FROM sessions ORDER BY created_at ASC, host_session_id ASC")?
+        .query_map([], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?, r.get(5)?)))?
         .collect::<rusqlite::Result<_>>()?;
     let (mut archived, mut primary, mut not_idle, mut no_continuation, mut app) = (0, 0, 0, 0, 0);
-    for (host, scope, status, continuation) in rows {
+    for (host, scope, status, continuation, lane, generation) in rows {
         if status != "active" {
             continue;
         }
@@ -457,10 +460,22 @@ pub fn archive_idle_sessions(server: &Shared, days: f64) -> anyhow::Result<Value
             no_continuation += 1;
             continue;
         }
-        db.sqlite.execute(
+        let tx = db.sqlite.unchecked_transaction()?;
+        tx.execute(
             "UPDATE sessions SET status='archived', updated_at=? WHERE host_session_id=?",
             params![now, host],
         )?;
+        let ev = events::Ev {
+            ts: now.clone(),
+            host_session_id: host.clone(),
+            scope_ref: scope,
+            lane_ref: lane,
+            generation,
+            ..Default::default()
+        };
+        let payload = json!({"hostSessionId":host,"reason":"idle","idleThresholdDays":days});
+        events::append(&tx, "session.archived", &ev, &payload)?;
+        tx.commit()?;
         archived += 1;
     }
     Ok(

@@ -9,6 +9,7 @@ use sha2::{Digest, Sha256};
 pub fn category(kind: &str) -> Option<&'static str> {
     Some(match kind {
         "session.created"
+        | "session.archived"
         | "session.generation_auto_rotated"
         | "session.continuation_dropped"
         | "session.restart_armed"
