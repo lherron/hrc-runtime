@@ -152,10 +152,16 @@ pub fn start(server: &Shared) {
     let owned = server.clone();
     let mut wake = server.ledger.subscribe();
     let task = tokio::spawn(async move {
-        let mut timer = tokio::time::interval(Duration::from_secs(1));
+        let mut retry = false;
         let mut cursor = None;
         loop {
-            tokio::select! {_=timer.tick()=>{},r=wake.changed()=>{if r.is_err(){return;}}}
+            if retry {
+                tokio::select! {
+                    _ = tokio::time::sleep(Duration::from_secs(1)) => {},
+                    r = wake.changed() => { if r.is_err() { return; } }
+                }
+            }
+            wake.borrow_and_update();
             if owned
                 .controller
                 .shutting_down
@@ -163,13 +169,18 @@ pub fn start(server: &Shared) {
             {
                 return;
             }
-            if let Err(error) = pump(&owned, &mut cursor) {
+            let result = pump(&owned, &mut cursor);
+            retry = result.is_err();
+            if let Err(error) = result {
                 stderr_json(
                     "warn",
                     "messages",
                     "semantic_turn_handoff.finalize_failed",
                     json!({"error":error.to_string()}),
                 );
+            }
+            if !retry && wake.changed().await.is_err() {
+                return;
             }
         }
     });

@@ -35,6 +35,7 @@ struct Queue {
 }
 pub(super) struct Accounting {
     queue: Mutex<Queue>,
+    ready: tokio::sync::Notify,
     samples: Mutex<HashMap<String, Sample>>,
     enabled: bool,
 }
@@ -42,6 +43,7 @@ impl Accounting {
     pub fn new() -> Arc<Self> {
         Arc::new(Self {
             queue: Mutex::new(Queue::default()),
+            ready: tokio::sync::Notify::new(),
             samples: Mutex::new(HashMap::new()),
             enabled: std::env::var("HRC_METRICS").as_deref() != Ok("0"),
         })
@@ -56,9 +58,13 @@ impl Accounting {
             q.dropped += 1;
             return;
         }
+        let was_empty = q.lines.is_empty();
         q.bytes += line.len();
         q.lines
             .push((record["ts"].as_str().unwrap()[..10].into(), line));
+        if was_empty {
+            self.ready.notify_one();
+        }
     }
     fn weight(&self, entry: &Entry, status: u16, ms: f64, now: i64) -> u32 {
         if !entry.request_id.is_empty() || status >= 400 || ms >= 25.0 {
@@ -109,6 +115,33 @@ pub(super) struct Writer {
     warned: Option<String>,
 }
 impl Writer {
+    pub async fn run(mut self, mut stopped: tokio::sync::oneshot::Receiver<()>) {
+        loop {
+            tokio::select! {
+                _ = &mut stopped => break,
+                _ = self.accounting.ready.notified() => {}
+            }
+            // Coalesce only after work arrives. Idle queues have no timer.
+            tokio::select! {
+                _ = &mut stopped => break,
+                _ = tokio::time::sleep(Duration::from_secs(1)) => {}
+            }
+            self = tokio::task::spawn_blocking(move || {
+                self.flush();
+                // A failed write leaves a dropped counter pending. Retry it
+                // through the same bounded coalescing delay, even without traffic.
+                if self.accounting.queue.lock().unwrap().dropped > 0 {
+                    self.accounting.ready.notify_one();
+                }
+                self
+            })
+            .await
+            .expect("metrics writer failed");
+        }
+        tokio::task::spawn_blocking(move || self.flush())
+            .await
+            .expect("metrics shutdown flush failed");
+    }
     pub fn flush(&mut self) {
         let mut batch = {
             let mut q = self.accounting.queue.lock().unwrap();

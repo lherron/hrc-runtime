@@ -308,38 +308,44 @@ fn high_water(server: &Shared) -> Result<i64, ApiError> {
 /// returning); any other terminal leaves it armed.
 fn claim(server: &Shared) -> anyhow::Result<Vec<(Intent, i64)>> {
     let state = &server.self_restart;
-    if state.intents.lock().unwrap().is_empty() {
-        return Ok(Vec::new());
-    }
-    let after = *state.cursor.lock().unwrap();
-    let rows: Vec<(i64, String, Option<String>, Option<String>)> = {
-        let db = server.store.lock().unwrap();
-        let mut stmt = db.sqlite.prepare(
+    loop {
+        if state.intents.lock().unwrap().is_empty() {
+            return Ok(Vec::new());
+        }
+        let after = *state.cursor.lock().unwrap();
+        let rows: Vec<(i64, String, Option<String>, Option<String>)> = {
+            let db = server.store.lock().unwrap();
+            let mut stmt = db.sqlite.prepare(
             "SELECT hrc_seq, host_session_id, runtime_id, payload_json FROM hrc_events WHERE hrc_seq > ? AND event_kind IN ('turn.completed','turn.failed','turn.interrupted') AND (evidence_origin IS NULL OR evidence_origin != 'retained') ORDER BY hrc_seq ASC LIMIT 500",
         )?;
-        stmt.query_map(params![after], |r| {
-            Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?))
-        })?
-        .collect::<Result<_, _>>()?
-    };
-    let mut claimed = Vec::new();
-    let mut intents = state.intents.lock().unwrap();
-    let mut cursor = state.cursor.lock().unwrap();
-    for (seq, host, runtime, payload) in rows {
-        *cursor = seq;
-        let payload: Value = payload
-            .and_then(|p| serde_json::from_str(&p).ok())
-            .unwrap_or(Value::Null);
-        let matches = intents.get(&host).is_some_and(|i| {
-            runtime.as_deref() == Some(i.runtime_id.as_str())
-                && payload["invocationId"].as_str() == Some(i.invocation_id.as_str())
-                && payload["turnId"].as_str() == Some(i.turn_id.as_str())
-        });
-        if matches && let Some(intent) = intents.remove(&host) {
-            claimed.push((intent, seq));
+            stmt.query_map(params![after], |r| {
+                Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?))
+            })?
+            .collect::<Result<_, _>>()?
+        };
+        let drained = rows.len() < 500;
+        let mut claimed = Vec::new();
+        let mut intents = state.intents.lock().unwrap();
+        let mut cursor = state.cursor.lock().unwrap();
+        for (seq, host, runtime, payload) in rows {
+            *cursor = seq;
+            let payload: Value = payload
+                .and_then(|p| serde_json::from_str(&p).ok())
+                .unwrap_or(Value::Null);
+            let matches = intents.get(&host).is_some_and(|i| {
+                runtime.as_deref() == Some(i.runtime_id.as_str())
+                    && payload["invocationId"].as_str() == Some(i.invocation_id.as_str())
+                    && payload["turnId"].as_str() == Some(i.turn_id.as_str())
+            });
+            if matches && let Some(intent) = intents.remove(&host) {
+                claimed.push((intent, seq));
+            }
         }
+        if drained || !claimed.is_empty() {
+            return Ok(claimed);
+        }
+        // No match in this full page: drain the next page without a timer.
     }
-    Ok(claimed)
 }
 
 /// executeSelfRestart: rotate (no relaunch, continuation dropped), deliver the
@@ -414,9 +420,16 @@ pub fn start(server: &Shared) {
     let owned = server.clone();
     let mut wake = server.ledger.subscribe();
     let task = tokio::spawn(async move {
-        let mut timer = tokio::time::interval(Duration::from_secs(1));
+        let mut retry = false;
         loop {
-            tokio::select! {_=timer.tick()=>{},r=wake.changed()=>{if r.is_err(){return;}}}
+            if retry {
+                tokio::select! {
+                    _ = tokio::time::sleep(Duration::from_secs(1)) => {},
+                    r = wake.changed() => { if r.is_err() { return; } }
+                }
+            }
+            wake.borrow_and_update();
+            retry = false;
             if owned
                 .controller
                 .shutting_down
@@ -433,11 +446,13 @@ pub fn start(server: &Shared) {
                         "session.restart_claim_failed",
                         json!({"error":error.to_string()}),
                     );
+                    retry = true;
                     continue;
                 }
             };
             // Detached so the projection that produced the terminal is never
             // held up by (or re-entered from) its own teardown.
+            let had_claims = !claimed.is_empty();
             for (intent, seq) in claimed {
                 let server = owned.clone();
                 tokio::spawn(async move {
@@ -451,6 +466,13 @@ pub fn start(server: &Shared) {
                         );
                     }
                 });
+            }
+            // A full terminal page may have more intents behind the claims.
+            if had_claims {
+                continue;
+            }
+            if !retry && wake.changed().await.is_err() {
+                return;
             }
         }
     });

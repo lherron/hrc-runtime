@@ -173,16 +173,9 @@ pub async fn serve(role: Role) -> Result<()> {
     if !front {
         statement_telemetry::install(&mut store, accounting.clone())?;
     }
-    let mut writer = accounting.writer(state.clone());
-    let (stop_writer, mut writer_stopped) = tokio::sync::oneshot::channel::<()>();
-    let writer_task = tokio::task::spawn_blocking(move || {
-        while let Err(tokio::sync::oneshot::error::TryRecvError::Empty) = writer_stopped.try_recv()
-        {
-            std::thread::sleep(std::time::Duration::from_secs(1));
-            writer.flush();
-        }
-        writer.flush();
-    });
+    let writer = accounting.writer(state.clone());
+    let (stop_writer, writer_stopped) = tokio::sync::oneshot::channel::<()>();
+    let writer_task = tokio::spawn(writer.run(writer_stopped));
     let server = Arc::new(Server {
         command_targets,
         accounting,

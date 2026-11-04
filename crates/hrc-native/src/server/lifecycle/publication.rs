@@ -160,7 +160,7 @@ async fn pump_server(server: &Shared, node: &str) -> Result<()> {
                         "server_project_event.post_failed",
                         json!({"type":fact["type"],"hrcSeq":e["hrcSeq"],"idempotencyKey":fact["idempotencyKey"],"error":error.to_string()}),
                     );
-                    return Ok(());
+                    return Err(error);
                 }
             }
             // The post has finished. Fence only the cursor commit; if closed,
@@ -440,7 +440,7 @@ fn turn_fact(
         line,
     ))
 }
-async fn post_session(server: &Shared, mut fact: Value) {
+async fn post_session(server: &Shared, mut fact: Value) -> Result<()> {
     let project = fact.as_object_mut().unwrap().remove("project").unwrap();
     let task = fact["attributes"]["task"].as_str().map(str::to_owned);
     let mut attempts = Vec::new();
@@ -463,10 +463,14 @@ async fn post_session(server: &Shared, mut fact: Value) {
                 "session_project_event.post_failed",
                 json!({"type":params["type"],"seat":params["scopeRef"],"idempotencyKey":params["idempotencyKey"],"fallingBack":index+1<attempts.len(),"error":error.to_string()}),
             );
+            if index + 1 == attempts.len() {
+                return Err(error);
+            }
         } else {
-            return;
+            return Ok(());
         }
     }
+    Ok(())
 }
 async fn pump_session(server: &Shared, node: &str) -> Result<()> {
     let _serial = server.publication.session.lock().await;
@@ -482,10 +486,10 @@ async fn pump_session(server: &Shared, node: &str) -> Result<()> {
             }
             if e["eventKind"] == "session.created" {
                 if let Some(fact) = birth_fact(server, e, node)? {
-                    post_session(server, fact).await;
+                    post_session(server, fact).await?;
                 }
             } else if let Some(fact) = runtime_fact(e, node) {
-                post_session(server, fact).await;
+                post_session(server, fact).await?;
             }
             if let Some(runtime) = e["runtimeId"].as_str().filter(|_| {
                 e["identity"]["projectId"]
@@ -511,13 +515,13 @@ async fn pump_session(server: &Shared, node: &str) -> Result<()> {
                             _ => "runtime_ended",
                         };
                         if let Some(fact) = turn_fact(&start, e, runtime, node, Some(end)) {
-                            post_session(server, fact).await;
+                            post_session(server, fact).await?;
                         }
                     }
                     if kind == "turn.started"
                         && let Some(fact) = turn_fact(e, e, runtime, node, None)
                     {
-                        post_session(server, fact).await;
+                        post_session(server, fact).await?;
                     }
                 }
             }
@@ -549,22 +553,22 @@ pub fn start(server: &Shared) -> Result<()> {
         db.publication_initialize(SESSION)?;
     }
     let node = node_id(server);
-    for (stream, seconds) in [(SERVER, 5), (SESSION, 1)] {
+    for stream in [SERVER, SESSION] {
         let server = server.clone();
         let node = node.clone();
         let mut wake = server.ledger.subscribe();
         let state = server.clone();
         let task = tokio::spawn(async move {
-            let mut timer = tokio::time::interval_at(
-                tokio::time::Instant::now() + Duration::from_secs(seconds),
-                Duration::from_secs(seconds),
-            );
+            // Subscribe before the startup drain, so racing commits stay pending.
+            let mut retry = false;
             loop {
-                if stream == SESSION {
-                    tokio::select! {_=timer.tick()=>{},r=wake.changed()=>{if r.is_err(){return;}}}
-                } else {
-                    timer.tick().await;
+                if retry {
+                    tokio::select! {
+                        _ = tokio::time::sleep(Duration::from_secs(5)) => {},
+                        r = wake.changed() => { if r.is_err() { return; } }
+                    }
                 }
+                wake.borrow_and_update();
                 if server
                     .controller
                     .shutting_down
@@ -577,6 +581,7 @@ pub fn start(server: &Shared) -> Result<()> {
                 } else {
                     pump_session(&server, &node).await
                 };
+                retry = result.is_err();
                 if let Err(error) = result {
                     stderr_json(
                         "warn",
@@ -588,6 +593,9 @@ pub fn start(server: &Shared) -> Result<()> {
                         },
                         json!({"error":error.to_string()}),
                     );
+                }
+                if !retry && wake.changed().await.is_err() {
+                    return;
                 }
             }
         });
