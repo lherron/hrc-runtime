@@ -22,6 +22,11 @@ when each rule is broken: [rule-enforcers.md](rule-enforcers.md). Day-to-day com
   (`aspd-prepared-execution-release` and `asp-toolchain-selection`), and
   amending only one drew a rejection (T-08554 F1).
 
+Every HRC owner-surface change must state in its delivery evidence:
+"projected in the praesidium kernel or declared human-only" (strangler rule S3).
+Include the concrete `prae describe <type>` or document readback showing the
+changed field/operation; for human-only coverage, cite the explicit ruling and scope.
+
 ## Finding code
 
 Prefer live-code discovery over static prose:
