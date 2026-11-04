@@ -94,7 +94,7 @@ for routine seat and runtime observation to avoid delaying mail and turns.
 ### Install and deploy
 
 Build, install, publish, and activation are separate states. Follow
-[atomic-install.md](atomic-install.md) for local release selection and its
+[atomic-install.md](https://github.com/lherron/hrc-runtime/blob/main/docs/atomic-install.md) for local release selection and its
 pre-cutover entrypoint checks. The historical standalone-kernel bootstrap
 gate retired in T-12141. Since T-12360 (`ed3f866b`), rusthrc carries only an
 ops-only HRC provider; the seat/runtime projection belongs to the Praesidium
@@ -104,7 +104,7 @@ source commit before applying this source contract to a live node. A failed
 candidate must leave `current` unchanged. A local install does not activate
 the daemon.
 
-For fleet changes follow [fleet-deployment.md](fleet-deployment.md):
+For fleet changes follow [fleet-deployment.md](https://github.com/lherron/hrc-runtime/blob/main/docs/fleet-deployment.md):
 `just deploy-max3` advances and publishes max3 first; `just deploy-svc` and
 `just deploy-hrcdev` consume `@max3` without publication. `just deploy-fleet`
 resolves targets from what max3 is running. Use `just fleet-status` for the
@@ -204,7 +204,7 @@ producer is published and the consumer lock advances.
 manifests, or individual package publication to advance a synced set. The dev
 workspace's source links are for editing; release bytes come from the lock.
 ACP advances its own producer pins; an HRC install does not release ACP.
-See [development-workflow.md](development-workflow.md) for the cross-repo flow.
+See [development-workflow.md](https://github.com/lherron/hrc-runtime/blob/main/docs/development-workflow.md) for the cross-repo flow.
 
 ## Validation and isolation
 
@@ -229,7 +229,7 @@ shell; never start another daemon directly from an atomic installed release.
 Never copy the live multi-GB store to seed a probe. Keep non-production daemons
 viewer-free. Clean up every runtime, process, socket, and scratch root you
 create and disclose any remaining debris. The historical Bun smoke recipe
-[isolated-daemon-smoke-recipe.md](isolated-daemon-smoke-recipe.md) must not be
+[isolated-daemon-smoke-recipe.md](https://github.com/lherron/hrc-runtime/blob/main/docs/isolated-daemon-smoke-recipe.md) must not be
 counted as proof of native-owner behavior.
 
 The native foreground path retains the harness guard against
@@ -245,7 +245,7 @@ The native zombie sweeper defaults to 1800 seconds of event silence
 (`crates/hrc-native/src/server/broker/sweeps.rs`); process liveness alone does
 not protect a headless run. Account for this during long tool calls.
 
-[state-retention.md](state-retention.md) owns the retention policy and
+[state-retention.md](https://github.com/lherron/hrc-runtime/blob/main/docs/state-retention.md) owns the retention policy and
 exemptions. Observation history defaults to three days and completed runtime
 buffers to one day. Terminated runtime rows and retirement fences are permanent
 history, not TTL candidates. Before a bulk prune require a full backup; if it
@@ -267,7 +267,7 @@ There is exactly one viewer per GUI user, bound to that user's production
 HRC. Non-production daemons never receive a viewer. HRC publishes durable
 presentation facts; the sidecar alone actuates Ghostty and must not mutate
 runtime lifecycle. The shipped boundary is recorded in
-[the active invariant](../architecture/records/invariants/hrc-runtime.viewer-presentation-sidecar.yaml).
+[the active invariant](https://github.com/lherron/hrc-runtime/blob/main/architecture/records/invariants/hrc-runtime.viewer-presentation-sidecar.yaml).
 The completed extraction's approved rev 3 design is preserved on T-07595
 (sidecar build and production validation), attachment ATT-00414; its phase
 plans and historical TS call sites are not current operating instructions.
@@ -279,11 +279,11 @@ The mail injector also belongs to ACP (`packages/hrc-mail-injector`,
 `var/state/acp/hrc-mail-injector.sqlite` (`HRC_MAIL_INJECTOR_STATE_PATH`).
 Old `hrcmail_*` tables in HRC's state DB are pre-split leftovers, not current
 mail state. For deployment and supervision use
-[fleet-deployment.md](fleet-deployment.md).
+[fleet-deployment.md](https://github.com/lherron/hrc-runtime/blob/main/docs/fleet-deployment.md).
 
 ## ASP preparation and runtime events
 
-[aspd-headless-codex-integration.md](aspd-headless-codex-integration.md) records
+[aspd-headless-codex-integration.md](https://github.com/lherron/hrc-runtime/blob/main/docs/aspd-headless-codex-integration.md) records
 the ASP preparation integration; it does not make its original Codex opt-in
 rollout instructions a current native routing policy. The active producer
 chooses execution preparation. Read back `.api.aspd.release` independently

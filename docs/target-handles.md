@@ -61,7 +61,7 @@ or a wrkq ID such as `T-12345` or `T-12345.render`.
 Managed scope inputs also accept `agentId:taskId` when a project can be
 inferred, and a `+key=value` provisioning directive block. Directives are
 request options, outside the canonical identity; they are not accepted as
-part of a monitor handle. See [CLI surface](cli-surface.md) for provisioning.
+part of a monitor handle. See [CLI surface](/docs/hrc-runtime/cli-surface) for provisioning.
 
 ### Resolution rules
 
@@ -145,7 +145,7 @@ selectors use plain `--until`. `show` accepts one exact selector.
 - TypeScript consumers use ASP's `agent-scope` package and HRC's
   `packages/hrc-cli/src/cli/scope.ts`, `profile-aware-selector.ts`, and
   `selector-resolve.ts`; monitor families use `monitor/selector-shape.ts`.
-- Command-level detail is in [CLI surface](cli-surface.md).
+- Command-level detail is in [CLI surface](/docs/hrc-runtime/cli-surface).
 
 ## Federation note
 
