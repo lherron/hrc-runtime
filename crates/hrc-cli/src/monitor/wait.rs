@@ -196,7 +196,13 @@ fn run(args: &Parsed<'_>, json: bool) -> Result<i32> {
         stall_ms: stall,
         edge_from: since.map(|_| live.event_from),
     };
-    let (code, event) = engine::run(initial, &plan, &specs, &mut || live.refresh(), &options)?;
+    let (code, event) = engine::run(
+        initial,
+        &plan,
+        &specs,
+        &mut |wait| live.wait_refresh(wait),
+        &options,
+    )?;
     write_final(&event, json);
     Ok(code)
 }

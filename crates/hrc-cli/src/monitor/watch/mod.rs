@@ -222,12 +222,12 @@ fn run(a: &Args, filters: Option<MonitorFilters>) -> Result<i32> {
         .unwrap_or_else(|| spec::label(&specs));
     let writer = || Writer::new(&label, format, a.max_lines, a.scope_width);
 
-    // A live follow reads through the targeted incremental source; a replay
-    // (or a non-follow condition) materializes the status listing per read.
+    // Blocking conditions and live follows use the targeted incremental source.
+    // A one-shot replay materializes the status listing once.
     let mut live: Option<Live> = None;
     let mut delivered = false;
-    let build = |live: &mut Option<Live>, delivered: &mut bool| -> Result<State> {
-        let state = if a.follow {
+    let build = |live: &mut Option<Live>, delivered: &mut bool, wait| -> Result<State> {
+        let state = if a.follow || plan.is_some() {
             if live.is_none() {
                 *live = Some(Live::open(
                     &specs,
@@ -240,7 +240,7 @@ fn run(a: &Args, filters: Option<MonitorFilters>) -> Result<i32> {
                 *delivered = true;
                 source.initial.clone()
             } else {
-                source.refresh()?
+                source.wait_refresh(wait)?
             }
         } else {
             build_full(filters.as_ref(), a.from_seq, a.last)?
@@ -248,7 +248,7 @@ fn run(a: &Args, filters: Option<MonitorFilters>) -> Result<i32> {
         Ok(filtered(state, a, &specs))
     };
 
-    let initial = build(&mut live, &mut delivered);
+    let initial = build(&mut live, &mut delivered, Some(Duration::ZERO));
     let state = match initial {
         Ok(state) => state,
         Err(e) => {
@@ -300,7 +300,7 @@ fn run(a: &Args, filters: Option<MonitorFilters>) -> Result<i32> {
             state,
             plan,
             &specs,
-            &mut || build(&mut live, &mut delivered),
+            &mut |wait| build(&mut live, &mut delivered, wait),
             &options,
         )?;
         let mut w = writer();
@@ -338,7 +338,7 @@ fn run(a: &Args, filters: Option<MonitorFilters>) -> Result<i32> {
         return Ok(0);
     }
 
-    // runPollingFollow (--follow --forever).
+    // Stream-driven follow (--follow --forever).
     let deadline = deadline.or_else(|| {
         a.timeout_ms
             .map(|t| Instant::now() + Duration::from_millis(t.max(0) as u64))
@@ -391,7 +391,8 @@ fn run(a: &Args, filters: Option<MonitorFilters>) -> Result<i32> {
             w.flush();
             return Ok(20);
         }
-        let state = match build(&mut live, &mut delivered) {
+        let wait = deadline.map(|d| d.saturating_duration_since(Instant::now()));
+        let state = match build(&mut live, &mut delivered, wait) {
             Ok(s) => s,
             Err(e) => {
                 eprintln!("monitor follow failed: {}", e.message);
@@ -426,12 +427,5 @@ fn run(a: &Args, filters: Option<MonitorFilters>) -> Result<i32> {
             }
         }
         last_state = state;
-        if events.is_empty() {
-            let wait = deadline.map_or(engine::POLL_MS, |d| {
-                (d.saturating_duration_since(Instant::now()).as_millis() as u64)
-                    .min(engine::POLL_MS)
-            });
-            std::thread::sleep(Duration::from_millis(wait));
-        }
     }
 }

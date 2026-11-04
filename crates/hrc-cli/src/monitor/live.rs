@@ -1,5 +1,5 @@
 //! `createLiveMonitorStateSource`: a selector-targeted initial state and an
-//! incremental store cursor refreshed on every poll.
+//! incremental store cursor refreshed by committed-event wakes.
 use super::reader::{State, s};
 use super::spec::{Spec, parse_duration};
 use super::state::{self, Ctx, Flavor, Selected};
@@ -7,7 +7,131 @@ use crate::{Error, Result, client::Daemon};
 use hrc_store::{MonitorFilters, Store};
 use serde_json::Value;
 
+/// One coalesced wake per committed stream record. Heartbeats do no store work.
+/// The worker owns only transport; Live's page cursors remain authoritative.
+struct Wake {
+    rx: std::sync::mpsc::Receiver<()>,
+    cancel: Option<tokio::sync::oneshot::Sender<()>>,
+    worker: Option<std::thread::JoinHandle<()>>,
+}
+impl Drop for Wake {
+    fn drop(&mut self) {
+        if let Some(cancel) = self.cancel.take() {
+            let _ = cancel.send(());
+        }
+        if let Some(worker) = self.worker.take() {
+            let _ = worker.join();
+        }
+    }
+}
+impl Wake {
+    fn open(incarnation: String, mut after: i64) -> Result<Self> {
+        let socket = crate::client::runtime_root().join("hrc.sock");
+        let (tx, rx) = std::sync::mpsc::sync_channel(1);
+        let (cancel, mut cancelled) = tokio::sync::oneshot::channel();
+        let worker = std::thread::Builder::new()
+            .name("monitor-events".into())
+            .spawn(move || {
+                let runtime = tokio::runtime::Builder::new_current_thread()
+                    .enable_all()
+                    .build()
+                    .unwrap();
+                runtime.block_on(async move {
+                    let client = reqwest::Client::builder()
+                        .unix_socket(socket)
+                        .build()
+                        .unwrap();
+                    let follow = async move {
+                        let mut retry = 100;
+                        loop {
+                            let request = client
+                                .get("http://localhost/v1/events/bounded-stream")
+                                .query(&[
+                                    ("ledgerIncarnationId", incarnation.clone()),
+                                    ("afterSeq", after.to_string()),
+                                    ("follow", "true".into()),
+                                ])
+                                .send()
+                                .await;
+                            if let Ok(response) = request {
+                                // A replaced ledger cannot be reconciled with this Live snapshot.
+                                if response.status().as_u16() == 409 {
+                                    return;
+                                }
+                                if let Ok(mut response) = response.error_for_status() {
+                                    let mut pending = Vec::new();
+                                    while let Ok(Some(chunk)) = response.chunk().await {
+                                        pending.extend_from_slice(&chunk);
+                                        while let Some(end) =
+                                            pending.iter().position(|b| *b == b'\n')
+                                        {
+                                            let line = pending.drain(..=end).collect::<Vec<_>>();
+                                            if line.iter().all(u8::is_ascii_whitespace) {
+                                                continue;
+                                            }
+                                            let Ok(record) = serde_json::from_slice::<Value>(&line)
+                                            else {
+                                                return;
+                                            };
+                                            retry = 100;
+                                            match record["type"].as_str() {
+                                                Some("event") => {
+                                                    after = after.max(
+                                                        record["event"]["hrcSeq"]
+                                                            .as_i64()
+                                                            .unwrap_or(after),
+                                                    );
+                                                }
+                                                Some("ready" | "gap") => {}
+                                                Some("ledger_replaced") => return,
+                                                _ => return,
+                                            }
+                                            if let Err(
+                                                std::sync::mpsc::TrySendError::Disconnected(_),
+                                            ) = tx.try_send(())
+                                            {
+                                                return;
+                                            }
+                                        }
+                                        if pending.len() > 32 * 1024 * 1024 {
+                                            return;
+                                        }
+                                    }
+                                }
+                            }
+                            // Retry only a failed/closed transport, with bounded backoff.
+                            tokio::time::sleep(std::time::Duration::from_millis(retry)).await;
+                            retry = (retry * 2).min(5_000);
+                        }
+                    };
+                    tokio::select! { _ = follow => {}, _ = &mut cancelled => {} }
+                });
+            })
+            .map_err(state::store_err)?;
+        Ok(Self {
+            rx,
+            cancel: Some(cancel),
+            worker: Some(worker),
+        })
+    }
+    fn wait(&self, duration: Option<std::time::Duration>) -> Result<bool> {
+        use std::sync::mpsc::RecvTimeoutError;
+        match duration {
+            Some(duration) => match self.rx.recv_timeout(duration) {
+                Ok(()) => Ok(true),
+                Err(RecvTimeoutError::Timeout) => Ok(false),
+                Err(RecvTimeoutError::Disconnected) => {
+                    Err(Error::failure("monitor event stream ended"))
+                }
+            },
+            None => self.rx.recv().map(|()| true).map_err(state::store_err),
+        }
+    }
+}
+
 pub(crate) struct Live {
+    wake: Wake,
+    pending: bool,
     pub initial: State,
     pub event_from: i64,
     db_path: String,
@@ -74,10 +198,22 @@ impl Live {
         let responses = state::correlated(&store, &targets, 0, message_high)?;
         let mut initial = state::state_from(selected);
         merge_messages(&mut initial, &responses);
+        let logged_responses = raw
+            .iter()
+            .filter(|e| e["eventKind"] == "message.response")
+            .filter_map(|e| e["payload"]["messageId"].as_str())
+            .collect::<Vec<_>>();
         let mut events = raw
             .iter()
             .map(state::to_monitor_event)
-            .chain(responses.iter().map(state::to_response_event))
+            .chain(
+                responses
+                    .iter()
+                    .filter(|m| {
+                        !logged_responses.contains(&m["messageId"].as_str().unwrap_or_default())
+                    })
+                    .map(state::to_response_event),
+            )
             .collect::<Vec<_>>();
         events.sort_by_key(|e| e["seq"].as_i64().unwrap_or(0));
         let (daemon, socket) = state::daemon_blocks(&status);
@@ -87,13 +223,15 @@ impl Live {
         initial.event_high = Some(high);
         initial.session_count = status["sessionCount"].as_i64();
         initial.runtime_count = status["runtimeCount"].as_i64();
-        let retained = initial
-            .events
+        let retained = responses
             .iter()
-            .filter(|e| e["event"] == "message.response")
-            .cloned()
+            .filter(|m| !logged_responses.contains(&m["messageId"].as_str().unwrap_or_default()))
+            .map(state::to_response_event)
             .collect();
+        let incarnation = store.ledger_incarnation().map_err(state::store_err)?;
         Ok(Live {
+            wake: Wake::open(incarnation, high)?,
+            pending: false,
             state: initial.clone(),
             initial,
             event_from,
@@ -106,7 +244,14 @@ impl Live {
         })
     }
 
-    pub fn refresh(&mut self) -> Result<State> {
+    pub fn wait_refresh(&mut self, wait: Option<std::time::Duration>) -> Result<State> {
+        if !self.pending && !self.wake.wait(wait)? {
+            return Ok(self.state.clone());
+        }
+        self.refresh()
+    }
+
+    fn refresh(&mut self) -> Result<State> {
         let store =
             Store::open_readonly(std::path::Path::new(&self.db_path)).map_err(state::store_err)?;
         let high = store.max_hrc_seq().map_err(state::store_err)?;
@@ -150,7 +295,20 @@ impl Live {
         }
         state::apply_projection(&mut self.state.sessions, &mut self.state.runtimes, &raw);
         merge_messages(&mut self.state, &responses);
-        for event in responses.iter().map(state::to_response_event) {
+        // New responses have lifecycle cursors. Keep the message-sequence
+        // fallback only for legacy responses without a committed ledger row.
+        let logged_responses = raw
+            .iter()
+            .filter(|e| e["eventKind"] == "message.response")
+            .filter_map(|e| e["payload"]["messageId"].as_str())
+            .collect::<Vec<_>>();
+        self.retained
+            .retain(|m| !logged_responses.contains(&m["messageId"].as_str().unwrap_or_default()));
+        for event in responses
+            .iter()
+            .filter(|m| !logged_responses.contains(&m["messageId"].as_str().unwrap_or_default()))
+            .map(state::to_response_event)
+        {
             match self
                 .retained
                 .iter_mut()
@@ -172,6 +330,7 @@ impl Live {
         events.sort_by_key(|e| e["seq"].as_i64().unwrap_or(0));
         self.state.events = events;
         self.state.event_high = Some(high);
+        self.pending = next <= high;
         self.next_hrc = next;
         self.next_message = message_high + 1;
         Ok(self.state.clone())

@@ -7,8 +7,6 @@ use crate::{Error, Result};
 use serde_json::{Map, Value, json};
 use std::time::{Duration, Instant};
 
-pub(crate) const POLL_MS: u64 = 100;
-
 pub(crate) mod exit {
     pub const MATCHED: i32 = 0;
     pub const ALREADY_TRUE: i32 = 10;
@@ -376,7 +374,7 @@ pub(crate) fn run(
     initial: State,
     plan: &Plan,
     input_specs: &[Spec],
-    build: &mut dyn FnMut() -> Result<State>,
+    build: &mut dyn FnMut(Option<Duration>) -> Result<State>,
     options: &Options,
 ) -> Result<(i32, Value)> {
     let selector = spec::label(input_specs);
@@ -558,11 +556,12 @@ pub(crate) fn run(
                 "after-arm",
             ));
         }
-        let wait = deadline.map_or(POLL_MS, |d| {
-            (d.saturating_duration_since(now).as_millis() as u64).clamp(1, POLL_MS)
-        });
-        std::thread::sleep(Duration::from_millis(wait));
-        state = match build() {
+        let stall_deadline = options
+            .stall_ms
+            .map(|s| last_progress + Duration::from_millis(s.max(0) as u64));
+        let wake_at = deadline.into_iter().chain(stall_deadline).min();
+        let wait = wake_at.map(|d| d.saturating_duration_since(now));
+        state = match build(wait) {
             Ok(next) => next,
             Err(_) => {
                 let e = evaluate(&state, plan, &specs, frozen.as_deref());

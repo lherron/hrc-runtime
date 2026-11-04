@@ -1,6 +1,9 @@
 //! Status probes and an observed scheduler-lag window (never synthetic zeroes).
 use super::*;
 use std::{collections::VecDeque, time::Duration};
+// One-second resolution: short scheduler spikes can be missed; the stall
+// threshold remains 1,000 ms of lateness beyond the scheduled sample.
+const SAMPLE_INTERVAL_MS: u64 = 1000;
 #[derive(Default)]
 pub struct Lag {
     buckets: VecDeque<(i64, f64, String)>,
@@ -14,7 +17,7 @@ impl Lag {
             self.buckets.pop_front();
         }
         let max = self.buckets.iter().max_by(|a, b| a.1.total_cmp(&b.1));
-        let mut v = json!({"intervalMs":250,"stallThresholdMs":1000,"windowMs":300000,"maxLagMs":max.map_or(0.0,|b|b.1.round()) as u64});
+        let mut v = json!({"intervalMs":SAMPLE_INTERVAL_MS,"stallThresholdMs":1000,"windowMs":300000,"maxLagMs":max.map_or(0.0,|b|b.1.round()) as u64});
         if let Some(b) = max {
             v["maxLagAt"] = b.2.clone().into();
         }
@@ -29,7 +32,7 @@ pub fn start(server: &Shared) {
     let weak = Arc::downgrade(server);
     tokio::spawn(async move {
         loop {
-            let expected = Instant::now() + Duration::from_millis(250);
+            let expected = Instant::now() + Duration::from_millis(SAMPLE_INTERVAL_MS);
             tokio::time::sleep_until(expected.into()).await;
             let Some(server) = weak.upgrade() else {
                 break;

@@ -670,6 +670,11 @@ pub(crate) fn monitor_event_name(kind: &str) -> &str {
 
 /// wait-projection `toMonitorEvent`.
 pub(crate) fn to_monitor_event(event: &Value) -> Value {
+    if event["eventKind"] == "message.response" {
+        let mut response = to_response_event(&event["payload"]);
+        response["seq"] = event["hrcSeq"].clone();
+        return response;
+    }
     let name = monitor_event_name(s(event, "eventKind").unwrap_or_default()).to_owned();
     let mut m = Map::new();
     put(&mut m, "seq", event, "hrcSeq");
