@@ -341,7 +341,10 @@ async fn route_request(server: &Shared, peer: &str, request: Request) -> Result<
             if method != Method::GET {
                 return Ok(read_only());
             }
-            if !query_has_scope() {
+            // An unscoped bounded follow is receiving-node observation, like
+            // events/page: projectors wake on commits instead of polling
+            // (T-12432). Tail and runs remain scope-home reads only.
+            if !query_has_scope() && path != "/v1/events/bounded-stream" {
                 return Err(Invalid);
             }
             Ok(local(server, method, uri, &headers, Body::empty()).await)

@@ -29,7 +29,7 @@ availability is discovered from health capabilities and route presence.
 | `POST` | `/v1/sessions/resolve` | Read-only resolve on the scope home (T-10418). The body must be exactly `{ sessionRef, create?: false }`; `create: true`, `summonIntent` or `runtimeIntent` is `403 peer_read_only` before any create path. |
 | `GET` | `/v1/events/tail` | Scope-filtered bounded tail page from the home ledger (T-10418); `scopeRef` required. |
 | `GET` | `/v1/events/page` | Node-local covering event page (T-12257); required `afterSeq` and `limit`, valid limits clamped to 200. |
-| `GET` | `/v1/events/bounded-stream` | Scope-filtered bounded follow on the home ledger (T-10418); `scopeRef` required. |
+| `GET` | `/v1/events/bounded-stream` | With `scopeRef`: scope-filtered bounded follow on the home ledger (T-10418). Without: bounded follow of the receiving node's own ledger (T-12432), same validation as the local route. |
 | `GET` | `/v1/runs` | Scope-filtered run list on the home (T-10418); `scopeRef` required. |
 | `POST` | `/v1/federation/history/replicate` | Replicate one collective-history record. |
 | `POST` | `/v1/federation/history/query` | Query collective history. |
@@ -43,12 +43,15 @@ stream record by record (see `hrc-runtime.bounded-lifecycle-event-observation`)
 and tags forwarded answers with `x-hrc-home-node`. Health advertises the
 `federatedSessionRead` capability.
 
-Per-peer session pages/facets and event pages answer only the receiving node;
+Per-peer session pages/facets, event pages and unscoped bounded follows answer
+only the receiving node;
 they do not fan out or route to another home. Event pages keep the local
 exclusive `afterSeq`, optional `ledgerIncarnationId` fence and response fields
 `ledgerIncarnationId`, `head`, `rows`, `scannedThrough`. The local socket's
 event-page limit remains 1,000; the peer ceiling is 200. These bounded reads
-support per-node projector polling without granting write or input authority.
+support per-node projectors without granting write or input authority: the
+unscoped follow is the projector's commit wake, and the event page remains its
+cursor-authoritative read.
 
 The old federation message accept routes are deleted. Cross-node agent talk is
 carried by the shared wrkq ledger; the peer surface retains placement, birth,

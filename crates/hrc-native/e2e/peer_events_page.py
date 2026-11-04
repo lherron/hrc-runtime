@@ -1,18 +1,50 @@
 #!/usr/bin/env python3
-"""Real peer HTTP regression for T-12257, using a private native ledger.
+"""Real peer HTTP regression for T-12257 and T-12432, using a private native ledger.
 
 Failure modes: missing route, missing bearer enforcement, an unbounded peer
 page, changed exclusive cursor/fence semantics, or forwarding a node page.
 Seed more than the cap through the real repository so a missing clamp fails.
+T-12432: an unscoped peer bounded-stream must follow the receiving node's own
+ledger (ready, then the rows after afterSeq, exclusive) with the local route's
+incarnation fence, still require the bearer, and leave tail/runs scope-only.
 """
 import argparse
 import json
 from pathlib import Path
 import secrets
+import socket
 from urllib.error import HTTPError
 from urllib.request import Request, urlopen
 
 from n4_federation import Node, free_port, local_tailnet_address
+
+
+def follow(endpoint, path, token, want):
+    """Read `want` NDJSON records from a held-open follow, then hang up."""
+    host, port = endpoint.removeprefix('http://').rsplit(':', 1)
+    with socket.create_connection((host, int(port)), timeout=10) as conn:
+        conn.sendall(f'GET {path} HTTP/1.1\r\nHost: {host}\r\nAuthorization: Bearer {token}\r\n\r\n'.encode())
+        reader = conn.makefile('rb')
+        status = reader.readline().split()[1]
+        assert status == b'200', status
+        chunked = False
+        while (line := reader.readline().strip()):
+            chunked |= line.lower() == b'transfer-encoding: chunked'
+        records, buffer = [], b''
+        while len(records) < want:
+            if chunked:
+                size = int(reader.readline().strip(), 16)
+                buffer += reader.read(size)
+                reader.readline()
+            else:
+                buffer += reader.read1(65536)
+            while b'\n' in buffer:
+                line, buffer = buffer.split(b'\n', 1)
+                if line.strip():
+                    record = json.loads(line)
+                    if record.get('type') != 'keepalive':
+                        records.append(record)
+        return records
 
 
 def main():
@@ -70,6 +102,20 @@ db.close();''', node.db)
         for query in ('limit=0', 'limit=1.5', 'limit=-1', 'limit=bad', 'limit=2', 'afterSeq=0'):
             status, body = peer('invalid:' + query, '/v1/events/page?' + query + ('&afterSeq=0' if query.startswith('limit=') and query != 'limit=2' else ''))
             assert status == 400, (query, status, body)
+        incarnation, head = page['ledgerIncarnationId'], page['head']
+        stream = f'/v1/events/bounded-stream?ledgerIncarnationId={incarnation}&afterSeq={head - 2}&follow=true'
+        status, body = peer('stream-unauth', stream, None)
+        assert status == 401 and body['error']['code'] == 'unauthorized', (status, body)
+        records = follow(endpoint, stream, token, want=3)
+        results['stream'] = records
+        assert records[0]['type'] == 'ready' and records[0]['ledgerIncarnationId'] == incarnation, records
+        seqs = [r['event']['hrcSeq'] for r in records[1:] if r['type'] == 'event']
+        assert seqs == [head - 1, head], records
+        status, body = peer('stream-fence', f'/v1/events/bounded-stream?ledgerIncarnationId=wrong&afterSeq=0&follow=true')
+        assert status == 409, (status, body)
+        for route in ('/v1/events/tail?limit=2', '/v1/runs'):
+            status, body = peer('scope-only:' + route, route)
+            assert status == 400 and body['error']['code'] == 'invalid_request', (route, status, body)
         print(json.dumps({'pass': True, 'cases': len(results)}))
     finally:
         (args.artifacts / 'peer-events-page.json').write_text(json.dumps(results, indent=2) + '\n')
