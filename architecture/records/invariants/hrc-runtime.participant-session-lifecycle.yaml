@@ -22,6 +22,16 @@ predicate: >
   `ParticipantBrokerDescriptor`
   and environment, transitions to PREPARED and arms existing durable work;
   duplicate attachment does not reset a running or exhausted retry budget.
+  Runtime inspection reports HTTP 409 participant_establishment_exhausted when
+  the participant attempt for the queried runtime has exhausted establishment
+  work, including when a partial runtime row exists. The error detail includes
+  runtimeId, attemptId, invocationId, attemptCount and lastError. Unknown runtime
+  identity without such an exhausted attempt remains 404 unknown_runtime. This
+  lookup is indexed by runtime_id, never a table scan. The refusal reports
+  establishment work exhaustion only; it grants no retirement, succession,
+  reservation-release or native-outcome authority. Non-started ensure errors
+  retain receipt state, failure and indeterminateReason while preserving receipt
+  identity checks and existing retry budgets.
   Replacement-intent work remains independently discoverable. ASP preparation
   is optional post-join driver configuration, not authority to register. It
   returns only the participant descriptor and optional dispatch environment,
@@ -167,8 +177,12 @@ predicate: >
   Legacy `prepared_profile_json` reconnect is drained or retired before v2
   cutover. HRC B precedes ASP B, and main aspd remains on ASP A until that
   coordinated cutover.
-authority: Lance direct instruction 2026-09-15 to complete protocol join without another Daedalus round, Astra revision 7 resolves EN-12457 functional gaps and supersedes prior admission clauses; retained Daedalus approvals of T-08344 DESIGN.md rev 6 (C-21192 / EN-08780) and ADAPTER-SEAM.md rev 2 (C-21247 / EN-08846), 2026-09-09; host participant lifecycle revision 5 at 0c1fecaaebfc231f9335057504f193e58d3c6d65 (reply to EN-12283), 2026-09-15; wrkq:T-08207 revision 11 participant F1 fence, Daedalus approval 2026-09-26; Lance ruling 2026-10-20 on participant-owned direct-join continuity, T-11435 contract amendment at a0312402d2bdbd156f7db1af8266a2dd6a5de6c8 approved by Daedalus on resubmission EN-32589, contract approval only
+authority: T-12431 exhausted-establishment inspect contract approved by Daedalus in reply to EN-44893, 2026-11-03 (design approval only); Lance direct instruction 2026-09-15 to complete protocol join without another Daedalus round, Astra revision 7 resolves EN-12457 functional gaps and supersedes prior admission clauses; retained Daedalus approvals of T-08344 DESIGN.md rev 6 (C-21192 / EN-08780) and ADAPTER-SEAM.md rev 2 (C-21247 / EN-08846), 2026-09-09; host participant lifecycle revision 5 at 0c1fecaaebfc231f9335057504f193e58d3c6d65 (reply to EN-12283), 2026-09-15; wrkq:T-08207 revision 11 participant F1 fence, Daedalus approval 2026-09-26; Lance ruling 2026-10-20 on participant-owned direct-join continuity, T-11435 contract amendment at a0312402d2bdbd156f7db1af8266a2dd6a5de6c8 approved by Daedalus on resubmission EN-32589, contract approval only
 source:
+  - wrkq:T-12431
+  - crates/hrc-native/src/server/placement/runtime_views.rs
+  - crates/hrc-native/src/server/broker/participants/establishment.rs
+  - crates/hrc-store/src/participants.rs
   - wrkq:T-11435
   - commit:a0312402d2bdbd156f7db1af8266a2dd6a5de6c8
   - wrkq:T-08207
@@ -186,6 +200,7 @@ source:
   - packages/hrc-server/src/broker-interactive-handlers/substrate-allocator.ts
   - packages/hrc-server/src/participant-registration-handlers.ts
 required_tests:
+  - T-12431 isolated real broker and native daemon distinguish unknown runtime from exhausted establishment with and without a partial runtime row; installed Foundry waiter observes terminal refusal with bounded inspect calls in the native owner log
   - T-08504 classless join persists before attachment with no admit call or file prerequisite
   - T-10146 a request without registrationMode direct is refused before any durable effect and the dropped key-scoped registration columns are absent
   - T-08504 unprepared boot consumes no retries and attachment atomically arms establishment without duplicate retry-budget resets
