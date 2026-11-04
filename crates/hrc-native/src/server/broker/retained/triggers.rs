@@ -1,5 +1,5 @@
 //! The automatic triggers (SPEC §3.4.3): the bounded pass at startup and on
-//! every lease-GC tick, and one attempt after a runtime is recorded terminated.
+//! eligible pending retries at 900 s, and an immediate terminal attempt.
 use super::*;
 
 /// retainedEvidencePassCandidates, a slice of runtimes per store hold.
@@ -44,8 +44,8 @@ async fn candidates(server: &Shared) -> Result<(Vec<String>, usize, usize)> {
 }
 static PASS: LazyLock<tokio::sync::Mutex<()>> = LazyLock::new(Default::default);
 /// runRetainedEvidencePass: at most 20 bound terminal runtimes whose evidence
-/// is unattempted or retryable. Startup and every lease-GC tick.
-pub async fn pass(server: &Shared) {
+/// is unattempted or retryable. Returns whether eligible work is still pending.
+pub async fn pass(server: &Shared) -> bool {
     let _single = PASS.lock().await;
     let (ids, eligible, unbound) = match candidates(server).await {
         Ok(c) => c,
@@ -55,7 +55,7 @@ pub async fn pass(server: &Shared) {
                 "retained_evidence.pass_failed",
                 json!({"error":format!("{e:#}")}),
             );
-            return;
+            return true;
         }
     };
     let mut outcomes = serde_json::Map::new();
@@ -77,13 +77,43 @@ pub async fn pass(server: &Shared) {
         outcomes.insert(key, (n + 1).into());
     }
     if ids.is_empty() && eligible == 0 && unbound == 0 {
-        return;
+        return false;
     }
     log(
         "info",
         "retained_evidence.pass_complete",
         json!({"attempted":ids.len(),"eligible":eligible,"limit":PASS_LIMIT,"outcomes":outcomes,"unboundTerminalRuntimes":unbound}),
     );
+    // Successful recovery/budget exhaustion must disarm the retry, rather
+    // than leave another full-table scan scheduled when nothing can change.
+    if eligible == 0 {
+        return false;
+    }
+    candidates(server)
+        .await
+        .map_or(true, |(_, remaining, _)| remaining > 0)
+}
+
+const RETRY_INTERVAL: Duration = Duration::from_secs(900);
+
+fn pending_runtime(server: &Shared, id: &str) -> Result<bool> {
+    let db = server.store.lock().unwrap();
+    let now = now_ms();
+    let Some(r) = row(&db.sqlite, id)? else {
+        return Ok(false);
+    };
+    if !r.broker() || !r.eligible(now) || release(&r.state).is_none() {
+        return Ok(false);
+    }
+    let h = hold(&db.sqlite, &r, now)?;
+    Ok(h.held
+        && h.reason
+            .as_deref()
+            .is_some_and(|reason| reason == "not_attempted" || classify(reason) == "retryable")
+        && h.ledger_path
+            .as_deref()
+            .and_then(|p| Path::new(p).parent())
+            .is_some_and(Path::exists))
 }
 /// scheduleRetainedEvidenceRecovery: one background attempt after a
 /// harness-broker runtime is recorded terminated; delayed so the exiting
@@ -100,41 +130,66 @@ pub fn schedule_terminal(server: &Shared, runtime_id: &str) {
         {
             return;
         }
-        let Some(_write) = server.owner_writes.enter() else {
-            return;
-        };
-        if let Err(error) = recover(&server, &runtime_id, "terminal").await {
-            log(
-                "warn",
-                "retained_evidence.terminal_attempt_failed",
-                json!({"runtimeId":runtime_id,"error":format!("{error:#}")}),
-            );
+        loop {
+            let Some(write) = server.owner_writes.enter() else {
+                return;
+            };
+            if let Err(error) = recover(&server, &runtime_id, "terminal").await {
+                log(
+                    "warn",
+                    "retained_evidence.terminal_attempt_failed",
+                    json!({"runtimeId":runtime_id,"error":format!("{error:#}")}),
+                );
+            }
+            if !pending_runtime(&server, &runtime_id).unwrap_or(true) {
+                return;
+            }
+            drop(write);
+            tokio::time::sleep(RETRY_INTERVAL).await;
+            if server
+                .controller
+                .shutting_down
+                .load(std::sync::atomic::Ordering::SeqCst)
+            {
+                return;
+            }
         }
     });
 }
 /// Boot: the bounded pass off the request path, and the terminal hook.
 pub fn start(server: &Shared) {
-    let pass_server = server.clone();
-    tokio::spawn(async move { pass(&pass_server).await });
     start_terminal_watch(server);
+    let pass_server = server.clone();
+    tokio::spawn(async move {
+        while pass(&pass_server).await {
+            tokio::time::sleep(RETRY_INTERVAL).await;
+            if pass_server
+                .controller
+                .shutting_down
+                .load(std::sync::atomic::Ordering::SeqCst)
+            {
+                return;
+            }
+        }
+    });
 }
 /// The notifyEvent hook: every committed runtime.terminated row of a
 /// harness-broker runtime (live origin) schedules one attempt.
 pub fn start_terminal_watch(server: &Shared) {
+    let mut watch = server.ledger.subscribe();
+    let mut after: i64 = server
+        .store
+        .lock()
+        .unwrap()
+        .sqlite
+        .query_row(
+            "SELECT COALESCE(MAX(hrc_seq), 0) FROM hrc_events",
+            [],
+            |r| r.get(0),
+        )
+        .unwrap_or(0);
     let server = server.clone();
     tokio::spawn(async move {
-        let mut after: i64 = server
-            .store
-            .lock()
-            .unwrap()
-            .sqlite
-            .query_row(
-                "SELECT COALESCE(MAX(hrc_seq), 0) FROM hrc_events",
-                [],
-                |r| r.get(0),
-            )
-            .unwrap_or(0);
-        let mut watch = server.ledger.subscribe();
         loop {
             if watch.changed().await.is_err()
                 || server
@@ -190,7 +245,7 @@ mod tests {
         let n = 40;
         let (_scratch, server, seen) = observed(n)?;
         seen.lock().unwrap().clear();
-        pass(&server).await;
+        assert!(!pass(&server).await, "unbound rows armed a retry");
         let holds = holds_at(&seen, "triggers.rs");
         assert!(
             holds.len() > n,

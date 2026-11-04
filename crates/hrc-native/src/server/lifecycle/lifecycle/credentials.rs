@@ -173,16 +173,30 @@ pub fn reconcile(server: &Server) -> Result<()> {
     }
     Ok(())
 }
+/// Runtime lifecycle rows are the dirty source. Turn/message/annotation
+/// commits cannot change a credential binding. verify_caller still checks the
+/// current runtime row authoritatively on every presentation.
+fn lifecycle_dirty(server: &Server, after: &mut i64) -> Result<bool> {
+    let db = server.store.lock().unwrap();
+    let head = db.allocated_hrc_seq()?;
+    let dirty = db.sqlite.query_row(
+        "SELECT EXISTS(SELECT 1 FROM hrc_events WHERE hrc_seq>?1 AND hrc_seq<=?2 AND event_kind GLOB 'runtime.*' AND evidence_origin IS NULL)",
+        [*after, head], |r| r.get(0),
+    )?;
+    *after = head;
+    Ok(dirty)
+}
 pub fn start(server: &Shared) -> Result<()> {
     // Subscribe before the snapshot, so no runtime commit can fall in a gap.
     let mut committed = server.ledger.subscribe();
+    let mut after = server.store.lock().unwrap().allocated_hrc_seq()?;
     reconcile(server)?;
     let weak = Arc::downgrade(server);
     tokio::spawn(async move {
-        let mut sweep = tokio::time::interval(Duration::from_secs(60));
+        let mut sweep = tokio::time::interval(Duration::from_secs(300));
         sweep.tick().await;
         loop {
-            tokio::select! {
+            let dirty = tokio::select! {
                 changed = committed.changed() => {
                     if changed.is_err() { break; }
                     // One reconcile per burst of commits: each run scans the
@@ -191,9 +205,10 @@ pub fn start(server: &Shared) -> Result<()> {
                     // credential are re-checked for liveness at verify time.
                     tokio::time::sleep(RECONCILE_COALESCE).await;
                     committed.borrow_and_update();
+                    true
                 },
-                _ = sweep.tick() => {},
-            }
+                _ = sweep.tick() => false,
+            };
             let Some(server) = weak.upgrade() else {
                 break;
             };
@@ -203,6 +218,13 @@ pub fn start(server: &Shared) -> Result<()> {
                 .load(std::sync::atomic::Ordering::SeqCst)
             {
                 break;
+            }
+            if dirty {
+                match lifecycle_dirty(&server, &mut after) {
+                    Ok(false) => continue,
+                    Ok(true) => {}
+                    Err(error) => warning("server.lifecycle.credential_sweep_failed", None, &error),
+                }
             }
             if let Err(error) = reconcile(&server) {
                 warning("server.lifecycle.credential_sweep_failed", None, &error);
@@ -312,4 +334,99 @@ pub fn verify_caller(server: &Server, headers: &HeaderMap) -> Result<Binding, Re
         ));
     }
     Ok(binding)
+}
+
+#[cfg(test)]
+mod worker_tests {
+    use super::*;
+    use crate::server::retained::tests::observed;
+
+    fn lifecycle(server: &Server, status: &str, kind: &str, generation: i64) -> Result<()> {
+        let db = server.store.lock().unwrap();
+        db.sqlite.execute(
+            "UPDATE runtimes SET status=?,generation=? WHERE runtime_id='filler-0000'",
+            rusqlite::params![status, generation],
+        )?;
+        let host: String = db.sqlite.query_row(
+            "SELECT host_session_id FROM runtimes WHERE runtime_id='filler-0000'",
+            [],
+            |r| r.get(0),
+        )?;
+        hrc_store::append_event(
+            &db.sqlite,
+            &hrc_store::EventWrite {
+                ts: &hrc_store::timestamp(),
+                host_session_id: Some(&host),
+                scope_ref: Some("agent:test:project:fixture"),
+                lane_ref: Some("main"),
+                generation: Some(generation),
+                category: "runtime",
+                event_kind: kind,
+                runtime_id: Some("filler-0000"),
+                payload_json: "{}",
+                ..Default::default()
+            },
+        )?;
+        drop(db);
+        server.ledger_committed();
+        Ok(())
+    }
+
+    async fn delivered(path: &Path, previous: Option<&str>) -> Result<String> {
+        Ok(tokio::time::timeout(Duration::from_secs(5), async {
+            loop {
+                if let Ok(value) = fs::read_to_string(path)
+                    && previous != Some(value.as_str())
+                {
+                    return value;
+                }
+                tokio::time::sleep(Duration::from_millis(20)).await;
+            }
+        })
+        .await?)
+    }
+
+    /// Drive the real worker/store/files together: a lifecycle commit mints,
+    /// generation change rotates, verify-time liveness refuses before cleanup,
+    /// and the terminal dirty wake subsequently removes the file.
+    #[tokio::test]
+    async fn lifecycle_dirty_drives_mint_rotate_and_revoke() -> Result<()> {
+        let (_scratch, server, _) = observed(1)?;
+        start(&server)?;
+        let path = server.runtime.join("lifecycle/filler-0000.credential");
+        assert!(!path.exists());
+        lifecycle(&server, "ready", "runtime.ready", 1)?;
+        let first = delivered(&path, None).await?;
+        lifecycle(&server, "ready", "runtime.resumed", 2)?;
+        let second = delivered(&path, Some(&first)).await?;
+        assert_ne!(first, second);
+        // Refusal precedes any cleanup wake: stale files never grant authority.
+        server.store.lock().unwrap().sqlite.execute(
+            "UPDATE runtimes SET status='terminated' WHERE runtime_id='filler-0000'",
+            [],
+        )?;
+        let mut headers = HeaderMap::new();
+        headers.insert("x-hrc-lifecycle-runtime-id", "filler-0000".parse()?);
+        headers.insert("x-hrc-lifecycle-credential", second.trim().parse()?);
+        headers.insert(
+            "x-hrc-lifecycle-session-ref",
+            "agent:test:project:fixture/lane:main".parse()?,
+        );
+        let refusal = verify_caller(&server, &headers)
+            .err()
+            .expect("terminal runtime authorized");
+        assert_eq!(refusal.code, "credential_revoked");
+        lifecycle(&server, "terminated", "runtime.terminated", 2)?;
+        tokio::time::timeout(Duration::from_secs(5), async {
+            while path.exists() {
+                tokio::time::sleep(Duration::from_millis(20)).await;
+            }
+        })
+        .await?;
+        server
+            .controller
+            .shutting_down
+            .store(true, std::sync::atomic::Ordering::SeqCst);
+        Ok(())
+    }
 }

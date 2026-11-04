@@ -507,6 +507,9 @@ async fn ipc_dir_sweep(
                     "retained_evidence.revivable_expired",
                     json!({"runtimeId":id,"status":row.status,"ageMs":age}),
                 );
+                // Time made this one bound runtime eligible. Wake its
+                // immediate attempt once; do not restore a full-table timer.
+                retained::schedule_terminal(server, id);
             }
             owners.insert(
                 dir.to_owned(),
@@ -871,8 +874,8 @@ pub(super) async fn gc_once(server: &Shared) {
             data,
         );
     }
-    // The bounded retained-evidence pass runs before the orphan sweep.
-    super::super::retained::pass(server).await;
+    // Retained evidence owns its startup/terminal attempts and pending-only
+    // 900 s retries; an unrelated lease-GC tick must not enumerate its rows.
     match lease_sweep(server, DEFAULT_ORPHAN_GRACE_MS).await {
         Ok(broker) => {
             let n = |v: &Value, k: &str| v[k].as_i64().unwrap_or(0);

@@ -35,6 +35,7 @@ hyper-util.workspace = true
 reqwest.workspace = true
 toml.workspace = true
 futures-util.workspace = true
+notify = "8"
 
 [build-dependencies]
 serde_json.workspace = true

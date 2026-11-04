@@ -5,7 +5,7 @@
 //!
 //! Bun observes each message change in-process. This owner has no message
 //! writes yet, so it backfills every row at start (which also catches any row
-//! a previous owner changed), tails inserts by `message_seq` on each poll, and
+//! a previous owner changed), tails inserts by `message_seq` on ledger wakes, and
 //! offers [`observe`] for message write sites as they land.
 use super::transport_text;
 use crate::server::{ApiError, Shared, messages, stderr_json};
@@ -26,7 +26,9 @@ use std::{
 };
 
 pub const AUTHORITY: &str = "svc";
-const POLL: Duration = Duration::from_millis(1_000);
+const RETRY_MIN: Duration = Duration::from_secs(1);
+const RETRY_MAX: Duration = Duration::from_secs(60);
+const CHECKPOINT_SAFETY: Duration = Duration::from_secs(300);
 const REQUEST_TIMEOUT: Duration = Duration::from_millis(3_000);
 const DUE_BATCH: i64 = 100;
 
@@ -34,12 +36,19 @@ const DUE_BATCH: i64 = 100;
 pub struct Coordinator {
     /// Peers whose last checkpoint reported nothing pending.
     confirmed: Mutex<BTreeSet<String>>,
-    last_checkpoint: Mutex<Option<Instant>>,
+    last_checkpoint: Mutex<Option<((i64, i64), Instant)>>,
+    checkpoint_retry: Mutex<Option<CheckpointRetry>>,
     /// Highest `message_seq` observed; the tail reads past it.
     cursor: Mutex<i64>,
     /// One drain at a time; a caller that finds one running waits for it.
     drain: tokio::sync::Mutex<()>,
     stopped: AtomicBool,
+}
+
+struct CheckpointRetry {
+    state: (i64, i64),
+    due: Instant,
+    delay: Duration,
 }
 
 fn log(event: &str, data: Value) {
@@ -155,6 +164,7 @@ pub fn observe(server: &Shared, message_id: &str) {
     if coordinator(server).stopped.load(Ordering::SeqCst) {
         return;
     }
+    *coordinator(server).last_checkpoint.lock().unwrap() = None;
     let observed = {
         let db = server.store.lock().unwrap();
         db.message_query(&json!({"messageId":message_id}))
@@ -171,18 +181,17 @@ pub fn observe(server: &Shared, message_id: &str) {
         );
     }
     request_drain(server, "message_observed", Some(message_id));
+    server.ledger_committed();
 }
 
 pub fn start(server: &Shared) {
+    // Subscribe before startup catch-up so a concurrent insert cannot be lost.
+    let mut committed = server.ledger.subscribe();
     let server = server.clone();
     tokio::spawn(async move {
         let history = coordinator(&server);
-        let mut ticks = tokio::time::interval(POLL);
-        ticks.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
-        // The first tick is immediate: the startup backfill and drain.
-        let mut trigger = "startup";
+        let mut delay = RETRY_MIN;
         loop {
-            ticks.tick().await;
             if history.stopped.load(Ordering::SeqCst)
                 || server.controller.shutting_down.load(Ordering::SeqCst)
             {
@@ -192,28 +201,63 @@ pub fn start(server: &Shared) {
                 let server = server.clone();
                 tokio::task::spawn_blocking(move || tail(&server, coordinator(&server))).await
             };
-            match tailed {
-                Ok(Ok(_)) => {}
-                Ok(Err(error)) => log(
-                    "federation.collective_history.observe_failed",
-                    json!({"localNodeId":server.federation.node_id(),"error":error.to_string()}),
-                ),
-                Err(error) => log(
-                    "federation.collective_history.observe_failed",
-                    json!({"localNodeId":server.federation.node_id(),"error":error.to_string()}),
-                ),
-            }
-            if !is_authority(&server)
-                && let Err(error) = drain_due(&server).await
-            {
+            let failed = !matches!(tailed, Ok(Ok(())));
+            if failed {
                 log(
-                    "federation.collective_history.drain_failed",
-                    json!({"localNodeId":server.federation.node_id(),"trigger":trigger,"error":error.to_string()}),
+                    "federation.collective_history.observe_failed",
+                    json!({"localNodeId":server.federation.node_id(),"error":format!("{tailed:?}")}),
                 );
             }
-            trigger = "poll";
+            let mut retry = failed;
+            if !is_authority(&server) {
+                retry |= match drain_due(&server).await {
+                    Ok((pending, progressed)) => {
+                        // A healthy backlog keeps the original one-second
+                        // drain cadence; only failures increase backoff.
+                        if progressed {
+                            delay = RETRY_MIN;
+                        }
+                        pending
+                    }
+                    Err(error) => {
+                        log(
+                            "federation.collective_history.drain_failed",
+                            json!({"localNodeId":server.federation.node_id(),"error":error.to_string()}),
+                        );
+                        true
+                    }
+                };
+            }
+            tokio::select! {
+                changed = committed.changed() => {
+                    if changed.is_err() { return; }
+                    delay = RETRY_MIN;
+                }
+                _ = tokio::time::sleep(delay), if retry => {
+                    delay = (delay * 2).min(RETRY_MAX);
+                }
+                _ = tokio::time::sleep(checkpoint_wait(history)),
+                    if !is_authority(&server) && server.federation.peer(AUTHORITY).is_some() && !retry => {}
+            }
         }
     });
+}
+
+/// svc's confirmation set is in-memory with no TTL and resets on restart.
+/// No existing checkpoint response identifies that authority instance. Keep
+/// a 300 s safety renewal: a quiet restarted authority gets a new attempt
+/// within five minutes, plus request/scheduling latency (request budget 3 s).
+/// Outages extend this bound; failures retry up to 60 s apart. This is not a
+/// liveness/freshness lease.
+fn checkpoint_wait(history: &Coordinator) -> Duration {
+    history
+        .last_checkpoint
+        .lock()
+        .unwrap()
+        .as_ref()
+        .map_or(CHECKPOINT_SAFETY, |(_, at)| {
+            CHECKPOINT_SAFETY.saturating_sub(at.elapsed())
+        })
 }
 
 pub fn stop(server: &Shared) {
@@ -273,22 +317,16 @@ async fn post(server: &Shared, path: &str, body: String) -> Result<Value, String
 }
 
 /// `drainDue`: send due rows in source order; stop at the first failure.
-async fn drain_due(server: &Shared) -> anyhow::Result<()> {
+async fn drain_due(server: &Shared) -> anyhow::Result<(bool, bool)> {
     let history = coordinator(server);
     if is_authority(server) || history.stopped.load(Ordering::SeqCst) {
-        return Ok(());
+        return Ok((false, false));
     }
-    let _drain = match history.drain.try_lock() {
-        Ok(guard) => guard,
-        Err(_) => {
-            // Join the drain in flight rather than starting a second one.
-            drop(history.drain.lock().await);
-            return Ok(());
-        }
-    };
+    let _drain = history.drain.lock().await;
     if server.federation.peer(AUTHORITY).is_none() {
-        return Ok(());
+        return Ok((false, false));
     }
+    let mut changed = false;
     let due = server
         .store
         .lock()
@@ -312,11 +350,12 @@ async fn drain_due(server: &Shared) -> anyhow::Result<()> {
             })
         });
         let Some(_write) = server.owner_writes.enter() else {
-            return Ok(());
+            return Ok((false, false));
         };
         let db = server.store.lock().unwrap();
         match sent {
             Ok(()) => {
+                changed = true;
                 db.history_delivered(
                     &replication.message_id,
                     &replication.fingerprint,
@@ -331,8 +370,12 @@ async fn drain_due(server: &Shared) -> anyhow::Result<()> {
             }
         }
     }
-    checkpoint_if_due(server, history).await;
-    Ok(())
+    if changed {
+        *history.last_checkpoint.lock().unwrap() = None;
+    }
+    let checkpoint_ok = checkpoint_if_due(server, history).await;
+    let pending = server.store.lock().unwrap().local_history_pending()?;
+    Ok((pending > 0 || !checkpoint_ok, changed))
 }
 
 fn retry(
@@ -356,26 +399,34 @@ fn retry(
 }
 
 /// `sendCheckpointIfDue`: tell the authority this node has caught up.
-async fn checkpoint_if_due(server: &Shared, history: &Coordinator) {
+async fn checkpoint_if_due(server: &Shared, history: &Coordinator) -> bool {
     let (pending, max_seq) = {
         let db = server.store.lock().unwrap();
         match (db.local_history_pending(), db.max_message_seq()) {
             (Ok(p), Ok(m)) => (p, m),
-            _ => return,
+            _ => return false,
         }
     };
-    if pending != 0 || server.federation.peer(AUTHORITY).is_none() {
-        return;
+    if server.federation.peer(AUTHORITY).is_none() {
+        return true;
     }
-    let now = Instant::now();
     if history
         .last_checkpoint
         .lock()
         .unwrap()
-        .is_some_and(|at| now.duration_since(at) < POLL.max(Duration::from_millis(100)))
+        .as_ref()
+        .is_some_and(|(seq, at)| *seq == (max_seq, pending) && at.elapsed() < CHECKPOINT_SAFETY)
     {
-        return;
+        return true;
     }
+    let retry_delay = {
+        let retry = history.checkpoint_retry.lock().unwrap();
+        match retry.as_ref().filter(|r| r.state == (max_seq, pending)) {
+            Some(r) if Instant::now() < r.due => return false,
+            Some(r) => (r.delay * 2).min(RETRY_MAX),
+            None => RETRY_MIN,
+        }
+    };
     let body = json!({"checkpoint":{"maxMessageSeq":max_seq,"pendingReplicationCount":pending}});
     let node = server.federation.node_id();
     let result = post(
@@ -393,11 +444,23 @@ async fn checkpoint_if_due(server: &Shared, history: &Coordinator) {
             })
     });
     match result {
-        Ok(()) => *history.last_checkpoint.lock().unwrap() = Some(now),
-        Err(error) => log(
-            "federation.collective_history.checkpoint_failed",
-            json!({"localNodeId":node,"error":error}),
-        ),
+        Ok(()) => {
+            *history.last_checkpoint.lock().unwrap() = Some(((max_seq, pending), Instant::now()));
+            *history.checkpoint_retry.lock().unwrap() = None;
+            true
+        }
+        Err(error) => {
+            *history.checkpoint_retry.lock().unwrap() = Some(CheckpointRetry {
+                state: (max_seq, pending),
+                due: Instant::now() + retry_delay,
+                delay: retry_delay,
+            });
+            log(
+                "federation.collective_history.checkpoint_failed",
+                json!({"localNodeId":node,"error":error}),
+            );
+            false
+        }
     }
 }
 

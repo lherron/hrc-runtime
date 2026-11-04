@@ -993,7 +993,7 @@ pub async fn recover(server: &Shared, runtime_id: &str, trigger: &str) -> Result
 }
 
 mod triggers;
-pub use triggers::{pass, start};
+pub use triggers::{schedule_terminal, start};
 
 #[cfg(test)]
 pub(crate) mod tests {
