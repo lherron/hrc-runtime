@@ -55,8 +55,11 @@ class Wire:
         self.sock.connect(str(path))
         self.file = self.sock.makefile('rwb', buffering=0)
 
-    def raw(self, op, args=None):
-        self.file.write((json.dumps(dict(id=op, op=op, args=args or {})) + '\n').encode())
+    def raw(self, op, args=None, caller=None):
+        request = dict(id=op, op=op, args=args or {})
+        if caller is not None:
+            request['caller'] = caller
+        self.file.write((json.dumps(request) + '\n').encode())
         return json.loads(self.file.readline())
 
     def close(self):
@@ -288,6 +291,26 @@ def main():
         discovery = wire(kernel, 'registry.discover')
         (args.artifacts / 'discovery.json').write_text(json.dumps(discovery, indent=2) + '\n')
         assert discovery['ok'], discovery
+        # Caller is additive only after the Cardo caller-standard bump.
+        # Old kernels refuse the top-level field; accepted requests must also
+        # retain it in rpc.request attribution, independent of authentication.
+        caller = 'kernel-fold/caller-proof'
+        w = Wire(kernel)
+        try:
+            attributed = w.raw('registry.discover', caller=caller)
+        finally:
+            w.close()
+        r.check('2.caller-accepted', attributed.get('ok') is True, reply=attributed)
+        def caller_logs():
+            return [e for e in r.daemon_log('1') if isinstance(e, dict)
+                    and e.get('event') == 'rpc.request'
+                    and e.get('data', {}).get('caller') == caller
+                    and e['data'].get('op') == 'registry.discover'
+                    and e['data'].get('outcome') == 'ok']
+        deadline = time.monotonic() + 2
+        while not caller_logs() and time.monotonic() < deadline:
+            time.sleep(.01)
+        r.check('2.caller-logged', bool(caller_logs()), records=caller_logs())
         d = discovery['result']
         expected = {'seat.summon', 'seat.send', 'seat.restart', 'seat.annotation.put',
                     'seat.annotation.act', 'seat.annotation.delete'}

@@ -2,6 +2,7 @@ use hrc_native::server;
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
+    cardo_host::declare_component("rusthrc").expect("declare component");
     let args = std::env::args().skip(1).collect::<Vec<_>>();
     if args == ["--build-info"] {
         println!(
