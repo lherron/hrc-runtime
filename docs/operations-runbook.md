@@ -299,7 +299,9 @@ turn evidence; an accepted start response does not prove completion.
 
 Runtime inspect returns HTTP 409 `participant_establishment_exhausted` when the
 latest participant attempt for that runtime has exhausted its establishment
-budget, including attempts that failed before creating a runtime row. Its detail
+budget and no runtime row exists. Existing runtime rows retain their normal
+inspect view, including terminal and partial rows; consumers such as the mail
+injector use that view for lifecycle reconciliation. Its refusal detail
 names `runtimeId`, `attemptId`, `invocationId`, `attemptCount`, and `lastError`.
 An unrelated missing runtime still returns 404 `unknown_runtime`. Exhaustion is
 an establishment outcome; it does not retire the participant or release its
