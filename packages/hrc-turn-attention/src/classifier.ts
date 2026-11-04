@@ -53,7 +53,15 @@ export async function classify(turn: TurnText, key: string, request = fetch) {
   const p = Object.fromEntries(
     STATES.map((s) => [s, probability(a.ask.probabilities[s])])
   ) as Record<State, number>
-  const state = STATES.reduce((best, s) => (p[s] > p[best] ? s : best))
+  const lit = p.blocking + p.decision >= 0.5
+  // A lit turn must carry a lit state: blocking and decision can split the
+  // vote so that none wins the argmax while their sum lights the turn, and
+  // consumers act on state, not on p.
+  const state: State = lit
+    ? p.decision > p.blocking
+      ? 'decision'
+      : 'blocking'
+    : STATES.reduce((best, s) => (p[s] > p[best] ? s : best))
   if (
     !['decision', 'approval', 'information', 'human_action', 'review', 'none'].includes(
       a.kind.choice
@@ -63,7 +71,7 @@ export async function classify(turn: TurnText, key: string, request = fetch) {
   }
   if (typeof out.model !== 'string' || !out.model) throw new Error('missing classifier model')
   return {
-    lit: p.blocking + p.decision >= 0.5,
+    lit,
     state,
     kind: a.kind.choice,
     p,

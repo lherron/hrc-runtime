@@ -29,7 +29,9 @@ predicate: >
   lit, state, kind, four ask probabilities, confidence, toLance,
   waitingOnOther, excerpt, model, classifierVersion and latencyMs. The
   subscriber computes lit as p.blocking plus p.decision at least 0.5;
-  state is the argmax and excerpt is at most the last 240 characters of
+  when lit, state is the larger of blocking and decision (ties go to
+  blocking), otherwise the argmax of the four, so a lit event never carries
+  state offer or none; excerpt is at most the last 240 characters of
   the classified message, never a generated summary. attention-v3 freezes
   the task's questions and threshold; wording changes require a version
   bump and G1 quality acceptance. Idle requests for new work and conditional
