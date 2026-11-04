@@ -22,9 +22,11 @@ predicate: >
   `ParticipantBrokerDescriptor`
   and environment, transitions to PREPARED and arms existing durable work;
   duplicate attachment does not reset a running or exhausted retry budget.
-  Runtime inspection reports HTTP 409 participant_establishment_exhausted when
-  the participant attempt for the queried runtime has exhausted establishment
-  work, including when a partial runtime row exists. The error detail includes
+  Runtime inspection reports HTTP 409 participant_establishment_exhausted only
+  when no runtime row exists and the participant attempt for the queried runtime
+  has exhausted establishment work. When a runtime row exists, inspection
+  preserves its previous runtime view regardless of establishment work state;
+  exhaustion must not suppress the view consumed by reconciliation. The error detail includes
   runtimeId, attemptId, invocationId, attemptCount and lastError. Unknown runtime
   identity without such an exhausted attempt remains 404 unknown_runtime. This
   lookup is indexed by runtime_id, never a table scan. The refusal reports
@@ -177,7 +179,7 @@ predicate: >
   Legacy `prepared_profile_json` reconnect is drained or retired before v2
   cutover. HRC B precedes ASP B, and main aspd remains on ASP A until that
   coordinated cutover.
-authority: T-12431 exhausted-establishment inspect contract approved by Daedalus in reply to EN-44893, 2026-11-03 (design approval only); Lance direct instruction 2026-09-15 to complete protocol join without another Daedalus round, Astra revision 7 resolves EN-12457 functional gaps and supersedes prior admission clauses; retained Daedalus approvals of T-08344 DESIGN.md rev 6 (C-21192 / EN-08780) and ADAPTER-SEAM.md rev 2 (C-21247 / EN-08846), 2026-09-09; host participant lifecycle revision 5 at 0c1fecaaebfc231f9335057504f193e58d3c6d65 (reply to EN-12283), 2026-09-15; wrkq:T-08207 revision 11 participant F1 fence, Daedalus approval 2026-09-26; Lance ruling 2026-10-20 on participant-owned direct-join continuity, T-11435 contract amendment at a0312402d2bdbd156f7db1af8266a2dd6a5de6c8 approved by Daedalus on resubmission EN-32589, contract approval only
+authority: T-12431 absence-only exhausted-establishment inspect amendment approved by Daedalus in reply to EN-44920, 2026-11-03, following Mable fix-forward direction and failed production acceptance EN-44918; supersedes the existing-row refusal approved in EN-44895 / bb66cd24 (design approval only); Lance direct instruction 2026-09-15 to complete protocol join without another Daedalus round, Astra revision 7 resolves EN-12457 functional gaps and supersedes prior admission clauses; retained Daedalus approvals of T-08344 DESIGN.md rev 6 (C-21192 / EN-08780) and ADAPTER-SEAM.md rev 2 (C-21247 / EN-08846), 2026-09-09; host participant lifecycle revision 5 at 0c1fecaaebfc231f9335057504f193e58d3c6d65 (reply to EN-12283), 2026-09-15; wrkq:T-08207 revision 11 participant F1 fence, Daedalus approval 2026-09-26; Lance ruling 2026-10-20 on participant-owned direct-join continuity, T-11435 contract amendment at a0312402d2bdbd156f7db1af8266a2dd6a5de6c8 approved by Daedalus on resubmission EN-32589, contract approval only
 source:
   - wrkq:T-12431
   - crates/hrc-native/src/server/placement/runtime_views.rs
@@ -200,7 +202,8 @@ source:
   - packages/hrc-server/src/broker-interactive-handlers/substrate-allocator.ts
   - packages/hrc-server/src/participant-registration-handlers.ts
 required_tests:
-  - T-12431 isolated real broker and native daemon distinguish unknown runtime from exhausted establishment with and without a partial runtime row; installed Foundry waiter observes terminal refusal with bounded inspect calls in the native owner log
+  - T-12431 isolated real broker and native daemon prove exhausted attempt without runtime row returns 409 participant_establishment_exhausted, exhausted attempt with runtime row retains the previous runtime inspect view, and unrelated unknown runtime returns 404 unknown_runtime; installed Foundry waiter observes no-row terminal refusal with bounded inspect calls in the native owner log
+  - T-12431 after activation observe ten full minutes with zero injector inspect 409s and zero periodic_sweep_failed, comparing inspect and broker-event query rates with the pre-activation 2026-11-04 01:20:54-01:30:54Z baseline; no ACP change
   - T-08504 classless join persists before attachment with no admit call or file prerequisite
   - T-10146 a request without registrationMode direct is refused before any durable effect and the dropped key-scoped registration columns are absent
   - T-08504 unprepared boot consumes no retries and attachment atomically arms establishment without duplicate retry-budget resets
@@ -231,6 +234,7 @@ last_verified:
   date: 2026-09-15
   evidence: Revision 7 records Lance operator direction and Astra functional resolutions of EN-12457; not Daedalus approval. T-08349 accepted at 0e5a0557 under its previous contract; T-08504 implementation and installed proof remain pending. Phase 5 completeness remains withheld.
 reopen_when:
+  - exhausted-establishment inspect refusal admission or preservation of existing runtime views changes
   - protocol join optional post-join preparation or the pre-hosting post-realization and pre-ensure persistence boundaries change
   - registration policy or session identity changes, or any adapter or producer evidence path is reintroduced
   - resident-invocation receipt idempotency hosting rediscovery uncertain-start recovery or explicit participant execution-format fence changes
