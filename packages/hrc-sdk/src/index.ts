@@ -1,6 +1,10 @@
 export { discoverSocket } from './discover.js'
 export { HrcClient } from './client.js'
 export {
+  type HrcClientTransportOptions,
+  resolvePraesidiumCaller,
+} from './client-transport.js'
+export {
   formatAgentNotFound,
   renderCommandRoster,
   writePlacementWarnings,

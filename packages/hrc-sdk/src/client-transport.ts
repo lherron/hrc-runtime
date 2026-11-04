@@ -160,20 +160,40 @@ function deriveUserAgent(): string {
   return basename(entry).replace(/\.[cm]?[jt]sx?$/, '') || 'hrc-sdk'
 }
 
+/**
+ * service-api rev 4 §3: the first-party component behind a request, sent as
+ * `X-Praesidium-Caller`. Resolved once: the component's own name, else
+ * `PRAESIDIUM_CALLER`, else `ASP_HANDLE` (the agent seat), else `tty` when
+ * stdin is a terminal, else `unknown`. The server validates the value.
+ */
+export function resolvePraesidiumCaller(component?: string | undefined): string {
+  const explicit = component?.trim()
+  if (explicit) return explicit
+  const fromEnv = process.env['PRAESIDIUM_CALLER']?.trim()
+  if (fromEnv) return fromEnv
+  const seat = process.env['ASP_HANDLE']?.trim()
+  if (seat) return seat
+  return process.stdin?.isTTY ? 'tty' : 'unknown'
+}
+
 export type HrcClientTransportOptions = {
   socketPath: string
   /** L3 client name `<name>/<version>` sent as `User-Agent`; defaults to {@link defaultHrcUserAgent}. */
   userAgent?: string | undefined
+  /** The calling component's own name (e.g. `hrc-mail-injector`); see {@link resolvePraesidiumCaller}. */
+  caller?: string | undefined
 }
 
 export class HrcClientTransport {
   protected readonly socketPath: string
   protected readonly userAgent: string
+  protected readonly caller: string
 
   constructor(socketPath: string | HrcClientTransportOptions) {
+    const options = typeof socketPath === 'string' ? undefined : socketPath
     this.socketPath = typeof socketPath === 'string' ? socketPath : socketPath.socketPath
-    this.userAgent =
-      (typeof socketPath === 'string' ? undefined : socketPath.userAgent) ?? defaultHrcUserAgent()
+    this.userAgent = options?.userAgent ?? defaultHrcUserAgent()
+    this.caller = resolvePraesidiumCaller(options?.caller)
   }
 
   // -- HTTP primitives -------------------------------------------------------
@@ -187,6 +207,7 @@ export class HrcClientTransport {
   protected unixFetch(path: string, init: BunRequestInit = {}): Promise<Response> {
     const headers = new Headers(init.headers)
     headers.set('user-agent', this.userAgent)
+    headers.set('x-praesidium-caller', this.caller)
     const metrics = getHrcCliRpcMetricsHook()
     if (!metrics) {
       return fetch(`${BASE_URL}${path}`, { ...init, headers, unix: this.socketPath })

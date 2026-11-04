@@ -5623,6 +5623,14 @@
     },
     {
       "package": "hrc-sdk",
+      "symbol": "HrcClientTransportOptions",
+      "kind": "type",
+      "file": "packages/hrc-sdk/src/client-transport.ts",
+      "hash": "hrc-sdk|HrcClientTransportOptions|type",
+      "count": 1
+    },
+    {
+      "package": "hrc-sdk",
       "symbol": "HrcEventCategoryFilter",
       "kind": "type",
       "file": "packages/hrc-sdk/src/types.ts",
@@ -5891,6 +5899,14 @@
       "kind": "value",
       "file": "packages/hrc-sdk/src/project-placement.ts",
       "hash": "hrc-sdk|resolvePlacementObservation|value",
+      "count": 1
+    },
+    {
+      "package": "hrc-sdk",
+      "symbol": "resolvePraesidiumCaller",
+      "kind": "value",
+      "file": "packages/hrc-sdk/src/client-transport.ts",
+      "hash": "hrc-sdk|resolvePraesidiumCaller|value",
       "count": 1
     },
     {
