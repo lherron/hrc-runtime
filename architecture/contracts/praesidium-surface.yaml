@@ -1,0 +1,84 @@
+id: hrc-runtime.praesidium-surface
+kind: contract
+status: active
+owner_project: hrc-runtime
+scope: HRC owner boundary and the adopted Praesidium projection and discovery contract
+predicate: >
+  Praesidium kernel r1.10 sections 12.1 through 12.3 at f84658c7,
+  with taxonomy r2.3 M1 through M3, define the approved remediation
+  contract. This record elevates those sections, not the historical
+  audit's assumptions or the implementation filing list.
+  HRC remains authoritative for seat asks, work and handoffs. Asks use
+  the hrc/asks/open annotation projected as seat.ext; work and workEtag
+  are seat payload fields; handoff id/state is seat payload metadata
+  while pending and for 24 hours after acknowledgement. Bodies and
+  history remain owner reads. These operation namespaces introduce no
+  separate seat.asks, seat.work or seat.handoff document node types.
+  The whole-seat pane presents these together with their related
+  subjects. Legacy handoff import, manual assignment and shim retirement
+  remain held under T-12380; the existing HRC legacy fallback remains.
+  A projected relationship has one canonical join field whose value
+  equals its target natural key. Agent references use agentRef with
+  agent:<id>; projectRef uses the wrkq root slug matching project.projectId,
+  not the owner's P-id. Identity node keys remain unchanged. Seat scope
+  fields are canonical full forms without lane; sessionRef is lane-qualified
+  where meaningful. Task and workstream references use public T-ids;
+  container/group references use public P-ids. roomRef matches the
+  projected room's public id, including task/campaign-backed locators.
+  Workstream owner is an agent principal. Ext subjects use subjectType
+  and subjectKey, with ns, kind and id completing the natural key.
+  An absent project target is explicitly unresolved/orphan and relinks
+  when present; its slug is never rewritten to a P-id. Other missing
+  parents follow the submitted unresolved/relink policy. Projection
+  translation changes no owner DTO, store wire form or admission.
+  Migration publishes canonical fields, migrates readers, then removes
+  deprecated join fields after reader census and installed acceptance.
+  Surviving display forms are explicitly named; opaque extension bodies
+  and genuine owner read-through DTOs retain their owner contract.
+  Persisted projections upgrade while unavailable-source snapshots remain
+  readable and visibly stale. No HRC owner-to-kernel dependency is added.
+  Discovery ownerContract and prae guidance derive from the same catalog,
+  including argument-selected owner, fence and reconciliation variants
+  and replay meaning. Type writable capabilities summarize owner writes
+  as none, fenced, unfenced or mixed; the operation contract takes precedence.
+  Related ledgerTypes include owner read-through kinds without declaring
+  them projected node types. Operation-only namespaces remain discoverable.
+  Native Cardo addressing fences and host idempotency controls retain their
+  meaning and fields. Owner discovery enrichment uses the existing adapter
+  response boundary and changes neither owner admission nor kernel write
+  repetition: the kernel never repeats a write. An upstream Cardo schema
+  change is outside this approval and returns for review.
+authority: >
+  Daedalus APPROVE of the r1.10 sections 12.1 through 12.3 and taxonomy
+  r2.3 M1 through M3 resubmission in EN-45079, T-12245, 2026-11-04.
+  f84658c7 resolves F1 from EN-45078 by matching the existing project
+  slug key, superseding the rejected P-valued reference proposal.
+source:
+  - wrkq:T-12245
+  - wrkc:EN-45074
+  - wrkc:EN-45078
+  - wrkc:EN-45079
+  - docs/proposals/praesidium-kernel.md
+  - docs/proposals/praesidium-document.md
+  - architecture/contracts/seat-asks.yaml
+  - architecture/contracts/seat-annotations.yaml
+  - architecture/records/invariants/hrc-runtime.self-restart-turn-boundary.yaml
+validation_scope: >
+  The submitted producer, reader, snapshot and whole-seat acceptance
+  obligations remain the requester's. This approval adds no gate and
+  establishes no implementation, installation, activation or product acceptance.
+last_verified: >
+  2026-11-04 design read of f84658c7 and its two-line F1 correction;
+  source read of kernel ca2756b project key emission, canonical agent
+  keys, seat representation, argument-dependent owner classes, projection
+  versioning and adapter response dispatch, and Cardo registry semantics.
+  Independently counted the complete T-12438 audit capture at revision
+  277671, cursor 12664: all 150 project keys are slugs and all 112 seat
+  project slugs match a project target. No build, test, install, restart
+  or live mutation was run for this ruling.
+reopen_when: >
+  Project or other identity keys, canonical reference values, unresolved
+  or snapshot preservation semantics, owner/projection authority, seat
+  record representation, the legacy cutover hold, catalog authority,
+  owner reconciliation meaning, native Cardo execution controls or the
+  no-kernel-write-repetition boundary changes.
