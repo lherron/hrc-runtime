@@ -364,7 +364,10 @@ async fn establish(server: &Shared, reg: &Value, attempt: &Value) -> Result<()> 
         );
         ensure!(
             receipt["state"] == "started",
-            "participant ensure did not return a started receipt for this attach call"
+            "participant ensure did not return a started receipt for this attach call: state={}, failure={}, indeterminateReason={}",
+            receipt["state"],
+            receipt["failure"],
+            receipt["indeterminateReason"]
         );
         if a["state"] == "INSTALL_CONFIRMED" {
             server.store.lock().unwrap().participant_transition(

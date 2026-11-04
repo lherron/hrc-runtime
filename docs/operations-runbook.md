@@ -294,3 +294,17 @@ Harness runtimes execute through the broker in the selected ASP preparation
 release. Native HRC owns execution/lifecycle and consumes broker events. Use
 `hrc monitor` and the durable `turn.message` / `turn.completed` events for
 turn evidence; an accepted start response does not prove completion.
+
+### Exhausted participant establishment
+
+Runtime inspect returns HTTP 409 `participant_establishment_exhausted` when the
+latest participant attempt for that runtime has exhausted its establishment
+budget, including attempts that failed before creating a runtime row. Its detail
+names `runtimeId`, `attemptId`, `invocationId`, `attemptCount`, and `lastError`.
+An unrelated missing runtime still returns 404 `unknown_runtime`. Exhaustion is
+an establishment outcome; it does not retire the participant or release its
+reservation. Non-started ensure errors include the broker receipt state, failure,
+and indeterminate reason; consult the participant's durable ensure ledger for
+the original startup error. Foundry waits back off from 250 ms to 5 s and stop
+on this 409. Regression driver: `crates/hrc-native/e2e/participant_waiter.mjs`
+against a scratch native owner and an installed Foundry `app/` directory.

@@ -460,6 +460,13 @@ impl Store {
             )
             .optional()?)
     }
+    /// Runtime identity is reserved before establishment creates a runtime row.
+    pub fn participant_attempt_for_runtime(&self, runtime: &str) -> Result<Option<Value>> {
+        Ok(self.sqlite.query_row(
+            "SELECT * FROM participant_registration_attempts WHERE runtime_id=? ORDER BY attach_epoch DESC LIMIT 1",
+            [runtime], raw_row,
+        ).optional()?)
+    }
     pub fn participant_resume_unsupported(&self, attempt: &Value, reason: &str) -> Result<bool> {
         Ok(self.sqlite.execute("UPDATE participant_registration_attempts SET continuation_resume_state='unsupported',continuation_resume_reason=?,updated_at=? WHERE attempt_id=? AND attach_epoch=?",params![reason,timestamp(),attempt["attempt_id"].as_str(),attempt["attach_epoch"].as_i64()])?==1)
     }

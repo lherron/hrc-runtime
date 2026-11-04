@@ -141,6 +141,24 @@ pub async fn inspect(server: &Shared, body: Value) -> Result<Response, ApiError>
             Some(json!({"field":"ownerRunId"})),
         ));
     }
+    // The attempt can exhaust before it ever materializes a runtime row.
+    // Check it first, including reconnect failures with a partial runtime.
+    if let Some(attempt) = server
+        .store
+        .lock()
+        .unwrap()
+        .participant_attempt_for_runtime(id)?
+        && attempt["establishment_work_state"] == "exhausted"
+    {
+        return Err(ApiError::domain(
+            StatusCode::CONFLICT,
+            "participant_establishment_exhausted",
+            "participant establishment exhausted its retry budget",
+            Some(json!({"runtimeId":id,"attemptId":attempt["attempt_id"],
+                "invocationId":attempt["invocation_id"],"attemptCount":attempt["establishment_attempt_count"],
+                "lastError":attempt["establishment_last_error"]})),
+        ));
+    }
     let runtime = runtimes::runtime(server, id)?;
     let now = chrono::Utc::now().timestamp_millis();
     let session = server
