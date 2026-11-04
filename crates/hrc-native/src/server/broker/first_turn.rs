@@ -291,6 +291,7 @@ async fn harness_version(command: &str, budget: Duration) -> Result<Option<Strin
         .arg("--version")
         .stdin(std::process::Stdio::null())
         .kill_on_drop(true)
+        .env("PRAESIDIUM_CALLER", "rusthrc")
         .output();
     match tokio::time::timeout(budget, probe).await {
         Err(_) => Err("harness_version_timeout".into()),

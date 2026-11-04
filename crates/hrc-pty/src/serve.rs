@@ -455,6 +455,7 @@ fn spawn_broker(
         .stdin(Stdio::null())
         .stdout(Stdio::null())
         .stderr(stderr)
+        .env("PRAESIDIUM_CALLER", "hrc-pty")
         .spawn()
         .with_context(|| format!("spawn broker {}", argv[0]))?;
     let pid = child.id();
@@ -843,7 +844,10 @@ fn terminfo_present(env: &HashMap<String, String>) -> bool {
             cmd.env(key, v);
         }
     }
-    cmd.status().map(|s| s.success()).unwrap_or(false)
+    cmd.env("PRAESIDIUM_CALLER", "hrc-pty")
+        .status()
+        .map(|s| s.success())
+        .unwrap_or(false)
 }
 
 fn child_env(params: &Value) -> HashMap<String, String> {
@@ -941,7 +945,7 @@ fn spawn(shared: &Arc<Shared>, params: &Value) -> anyhow::Result<Value> {
     // One login shell whose only job is to exec the argv: Claude inherits the
     // login environment with no interactive shell under it (§4.2).
     cmd.arg("-lc").arg("exec \"$@\"").arg("hrc-pty").args(&argv);
-    cmd.env_clear().envs(&env);
+    cmd.env_clear().envs(&env).env_remove("PRAESIDIUM_CALLER");
     if let Some(cwd) = &cwd {
         cmd.current_dir(cwd);
     }

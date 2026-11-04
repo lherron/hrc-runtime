@@ -32,11 +32,13 @@ pub(super) async fn tmux(socket: &str, args: &[&str], timeout: Option<Duration>)
     let mut cmd = Command::new("tmux");
     cmd.arg("-S").arg(socket).args(args).kill_on_drop(true);
     let out = match timeout {
-        Some(t) => match tokio::time::timeout(t, cmd.output()).await {
-            Ok(out) => out?,
-            Err(_) => return Ok(Tmux::TimedOut),
-        },
-        None => cmd.output().await?,
+        Some(t) => {
+            match tokio::time::timeout(t, cmd.env("PRAESIDIUM_CALLER", "rusthrc").output()).await {
+                Ok(out) => out?,
+                Err(_) => return Ok(Tmux::TimedOut),
+            }
+        }
+        None => cmd.env("PRAESIDIUM_CALLER", "rusthrc").output().await?,
     };
     if out.status.success() {
         return Ok(Tmux::Ok(String::from_utf8_lossy(&out.stdout).into_owned()));
@@ -164,7 +166,7 @@ pub(super) async fn bounded(
 ) -> Result<Option<std::process::Output>> {
     let mut cmd = Command::new(argv[0]);
     cmd.args(&argv[1..]).kill_on_drop(true);
-    match tokio::time::timeout(timeout, cmd.output()).await {
+    match tokio::time::timeout(timeout, cmd.env("PRAESIDIUM_CALLER", "rusthrc").output()).await {
         Ok(out) => Ok(Some(out?)),
         Err(_) => Ok(None),
     }

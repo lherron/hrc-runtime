@@ -15,6 +15,7 @@ fn envelope_show(id: &str) -> std::result::Result<Value, String> {
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .process_group(0)
+        .env("PRAESIDIUM_CALLER", "hrc-cli")
         .spawn()
         .map_err(|e| e.to_string())?;
     if let Some(mut stdin) = child.stdin.take() {

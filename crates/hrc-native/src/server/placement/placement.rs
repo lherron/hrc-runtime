@@ -463,7 +463,12 @@ async fn list_worktrees(root: &Path) -> Result<Vec<Worktree>, String> {
     }
     let cannot =
         |detail: String| format!("cannot inspect worktrees for {}: {detail}", root.display());
-    let output = match tokio::time::timeout(WORKTREE_LIST_TIMEOUT, command.output()).await {
+    let output = match tokio::time::timeout(
+        WORKTREE_LIST_TIMEOUT,
+        command.env("PRAESIDIUM_CALLER", "rusthrc").output(),
+    )
+    .await
+    {
         Err(_) => {
             return Err(cannot(format!(
                 "subprocess timed out after {}ms",

@@ -329,6 +329,7 @@ pub(super) async fn broker_pane_alive(server: &Server, runtime_id: &str) -> bool
             pane,
             "#{pane_pid} #{pane_dead}",
         ])
+        .env("PRAESIDIUM_CALLER", "rusthrc")
         .output()
         .await;
     let Ok(out) = out else { return false };

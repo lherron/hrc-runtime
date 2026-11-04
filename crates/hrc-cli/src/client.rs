@@ -22,6 +22,7 @@ impl Daemon {
             )));
         }
         let mut builder = Client::builder()
+            .default_headers(caller_headers(None))
             .unix_socket(socket)
             .user_agent(concat!("rusthrc/", env!("CARGO_PKG_VERSION")));
         if let Some(timeout) = timeout {
@@ -289,4 +290,15 @@ pub(crate) fn path_segment(value: &str) -> String {
         }
     }
     out
+}
+
+/// Resolve once for each client, shared by blocking, stream and ingest clients.
+pub(crate) fn caller_headers(component: Option<&str>) -> reqwest::header::HeaderMap {
+    use reqwest::header::{HeaderMap, HeaderValue};
+    let caller = hrc_common::caller::resolve(component);
+    let mut headers = HeaderMap::new();
+    // A malformed environment hint must not break otherwise valid requests.
+    let value = HeaderValue::from_str(&caller).unwrap_or(HeaderValue::from_static("invalid"));
+    headers.insert("x-praesidium-caller", value);
+    headers
 }

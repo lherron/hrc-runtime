@@ -52,7 +52,7 @@ fn capture(command: &str, args: &[&str], timeout: Option<Duration>, process_grou
             }
         }
     }
-    let mut child = match child.spawn() {
+    let mut child = match child.env("PRAESIDIUM_CALLER", "hrc-cli").spawn() {
         Ok(child) => child,
         Err(e) => {
             let code = if e.kind() == std::io::ErrorKind::NotFound {

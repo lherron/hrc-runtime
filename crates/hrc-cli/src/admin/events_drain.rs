@@ -567,6 +567,7 @@ pub(super) fn command(args: &Parsed<'_>) -> Result<()> {
         .join("ingest")
         .join("events.sock");
     let client = reqwest::blocking::Client::builder()
+        .default_headers(crate::client::caller_headers(Some("hrc-events-drain")))
         .unix_socket(socket.clone())
         .build()
         .map_err(|e| Error::failure(e.to_string()))?;

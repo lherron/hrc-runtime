@@ -33,7 +33,7 @@ fn failed(outcome: &str, detail: Value, stdout_bytes: usize) -> Call {
 pub async fn bounded(argv: &[&str], timeout: Duration) -> Result<Option<std::process::Output>> {
     let mut cmd = Command::new(argv[0]);
     cmd.args(&argv[1..]).kill_on_drop(true);
-    match tokio::time::timeout(timeout, cmd.output()).await {
+    match tokio::time::timeout(timeout, cmd.env("PRAESIDIUM_CALLER", "rusthrc").output()).await {
         Ok(out) => Ok(Some(out?)),
         Err(_) => Ok(None),
     }
@@ -74,7 +74,7 @@ pub async fn call(
             cmd.env(key, v);
         }
     }
-    let mut child = match cmd.spawn() {
+    let mut child = match cmd.env("PRAESIDIUM_CALLER", "rusthrc").spawn() {
         Ok(c) => c,
         Err(e) => return failed("reader_failed", json!({"error":e.to_string()}), 0),
     };

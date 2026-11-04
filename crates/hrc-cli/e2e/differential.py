@@ -207,10 +207,11 @@ def main():
     metrics = subprocess.run(metric_args, cwd=ROOT)
     daemon = subprocess.run(['python3', str(ROOT / 'crates/hrc-cli/e2e/daemon_entrypoints.py'), '--binary', str(args.binary.resolve()), '--artifacts', str(args.artifacts / 'daemon-entrypoints')], cwd=ROOT)
     transport = subprocess.run(['python3', str(ROOT / 'crates/hrc-cli/e2e/client_errors.py'), '--binary', str(args.binary.resolve()), '--oracle', str(args.oracle.resolve()), '--artifacts', str(args.artifacts / 'client-errors')], cwd=ROOT)
+    caller = subprocess.run(['python3', str(ROOT / 'crates/hrc-cli/e2e/caller.py'), '--binary', str(args.binary.resolve()), '--artifacts', str(args.artifacts / 'caller')], cwd=ROOT)
     disagree = bool(agreement['contractOnly'] or agreement['driverOnly'])
     if disagree:
         print('FAIL contract/driver UNSUPPORTED disagreement', json.dumps(agreement))
-    return int(bool(report['fail']) or disagree or any(p.returncode != 0 for p in (status, passthrough, metrics, daemon, transport)))
+    return int(bool(report['fail']) or disagree or any(p.returncode != 0 for p in (status, passthrough, metrics, daemon, transport, caller)))
 
 
 if __name__ == '__main__':

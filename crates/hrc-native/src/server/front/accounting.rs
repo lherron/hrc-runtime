@@ -73,8 +73,8 @@ impl Accounting {
         let mut samples = self.samples.lock().unwrap();
         let s = samples
             .entry(format!(
-                "main {} {} {}",
-                entry.method, entry.route, entry.client
+                "{} {} {} {} {}",
+                entry.listener, entry.method, entry.route, entry.client, entry.caller
             ))
             .or_default();
         let minute = now / 60_000;
@@ -295,6 +295,7 @@ pub(super) struct Entry {
     route: String,
     path: String,
     client: String,
+    caller: String,
     request_id: String,
     started: Instant,
 }
@@ -334,6 +335,15 @@ impl Entry {
             } else {
                 label
             },
+            caller: match request.headers().get("x-praesidium-caller") {
+                None => "unknown".into(),
+                Some(value) => value
+                    .to_str()
+                    .ok()
+                    .filter(|v| hrc_common::caller::valid(v))
+                    .unwrap_or("invalid")
+                    .into(),
+            },
             request_id: request
                 .headers()
                 .get("x-hrc-request-id")
@@ -358,7 +368,7 @@ impl Entry {
         }
     }
     fn base(&self, status: u16) -> Value {
-        let mut v = json!({"listener":self.listener,"servedBy":self.served_by,"method":self.method,"route":self.route,"path":self.path,"status":status,"durationMs":(self.started.elapsed().as_secs_f64()*10000.0).round()/10.0,"client":self.client});
+        let mut v = json!({"listener":self.listener,"servedBy":self.served_by,"method":self.method,"route":self.route,"path":self.path,"status":status,"durationMs":(self.started.elapsed().as_secs_f64()*10000.0).round()/10.0,"client":self.client,"caller":self.caller});
         if !self.request_id.trim().is_empty() {
             v["requestId"] = utf16_prefix(self.request_id.trim(), 128).into();
         }
@@ -394,7 +404,7 @@ impl Entry {
             .and_then(|v| v.parse::<u64>().ok())
             .filter(|n| *n <= 9_007_199_254_740_991);
         let weight = accounting.weight(&self, status, ms, now.timestamp_millis());
-        let mut metric = json!({"v":1,"kind":"server","servedBy":self.served_by,"ts":now.to_rfc3339_opts(SecondsFormat::Millis,true),"route":self.route,"method":self.method,"client":self.client,"ms":ms,"status":status});
+        let mut metric = json!({"v":1,"kind":"server","servedBy":self.served_by,"ts":now.to_rfc3339_opts(SecondsFormat::Millis,true),"route":self.route,"method":self.method,"client":self.client,"caller":self.caller,"ms":ms,"status":status});
         if !self.request_id.trim().is_empty() {
             metric["reqId"] = self.request_id.clone().into();
         }

@@ -69,6 +69,7 @@ fn probe(args: &[&str]) -> Probe {
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
+        .env("PRAESIDIUM_CALLER", "hrc-cli")
         .spawn();
     let Ok(mut child) = child else {
         // execFile spawn failure: a string errno code, so exitCode 1, no output.

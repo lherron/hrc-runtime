@@ -308,6 +308,7 @@ async fn tmux(socket: &str, args: &[&str]) -> Result<Option<String>> {
             .arg(socket)
             .args(args)
             .kill_on_drop(true)
+            .env("PRAESIDIUM_CALLER", "rusthrc")
             .output(),
     )
     .await

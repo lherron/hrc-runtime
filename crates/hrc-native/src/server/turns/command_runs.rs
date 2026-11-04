@@ -328,7 +328,7 @@ async fn execute(
             cmd.env(key, value.as_str().context("env must be a string")?);
         }
     }
-    let mut child = cmd.spawn()?;
+    let mut child = cmd.env("PRAESIDIUM_CALLER", "rusthrc").spawn()?;
     let pid = child.id();
     let mut input = child.stdin.take().context("command stdin missing")?;
     let mut stderr = child.stderr.take().context("command stderr missing")?;

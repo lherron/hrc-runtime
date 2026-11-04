@@ -150,7 +150,10 @@ pub(super) fn spawn_attach(
         }
     }
     before_spawn();
-    command.spawn().map_err(|e| Error::failure(e.to_string()))
+    command
+        .env("PRAESIDIUM_CALLER", "hrc-cli")
+        .spawn()
+        .map_err(|e| Error::failure(e.to_string()))
 }
 pub(super) fn wait_attach(
     child: &mut Child,

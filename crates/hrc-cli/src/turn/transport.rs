@@ -9,6 +9,7 @@ pub(super) struct AsyncDaemon {
 impl AsyncDaemon {
     pub fn new() -> Result<Self> {
         let client = Client::builder()
+            .default_headers(crate::client::caller_headers(None))
             .unix_socket(crate::client::runtime_root().join("hrc.sock"))
             .user_agent(concat!("rusthrc/", env!("CARGO_PKG_VERSION")))
             .build()

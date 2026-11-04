@@ -63,7 +63,12 @@ pub fn start(server: &Shared) {
 pub async fn tmux() -> Value {
     let mut command = tokio::process::Command::new("tmux");
     command.arg("-V").kill_on_drop(true);
-    let Ok(Ok(out)) = tokio::time::timeout(Duration::from_secs(5), command.output()).await else {
+    let Ok(Ok(out)) = tokio::time::timeout(
+        Duration::from_secs(5),
+        command.env("PRAESIDIUM_CALLER", "rusthrc").output(),
+    )
+    .await
+    else {
         return json!({"available":false});
     };
     let text = format!(

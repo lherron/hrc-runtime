@@ -25,6 +25,7 @@ pub fn execute(server: &Shared, grant: Value) {
             .stdin(Stdio::null())
             .stdout(Stdio::null())
             .stderr(Stdio::null())
+            .env("PRAESIDIUM_CALLER", "rusthrc")
             .spawn();
         match spawned {
             Ok(mut child) => {
@@ -93,6 +94,6 @@ pub fn successor(server: &Server) -> anyhow::Result<()> {
             Ok(())
         });
     }
-    child.spawn()?;
+    child.env("PRAESIDIUM_CALLER", "rusthrc").spawn()?;
     Ok(())
 }

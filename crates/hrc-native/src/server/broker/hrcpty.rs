@@ -145,6 +145,7 @@ pub async fn serve(
         .arg("--broker-argv")
         .args(broker_argv)
         .stdin(std::process::Stdio::null())
+        .env("PRAESIDIUM_CALLER", "rusthrc")
         .output()
         .await
         .with_context(|| format!("spawn {}", bin.display()))?;

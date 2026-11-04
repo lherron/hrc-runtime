@@ -103,6 +103,7 @@ async fn tmux(socket: &Path, args: &[&str]) -> Result<String> {
             .arg("-S")
             .arg(socket)
             .args(args)
+            .env("PRAESIDIUM_CALLER", "rusthrc")
             .output(),
     )
     .await??;

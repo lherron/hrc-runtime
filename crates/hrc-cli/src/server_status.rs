@@ -56,6 +56,7 @@ fn probe(program: &str, args: &[&str], budget: Duration) -> (i32, String, String
         .args(args)
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
+        .env("PRAESIDIUM_CALLER", "hrc-cli")
         .spawn();
     let Ok(mut child) = child else {
         return (1, String::new(), String::new(), false);

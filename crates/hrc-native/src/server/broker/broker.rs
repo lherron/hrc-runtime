@@ -843,6 +843,7 @@ async fn tmux(socket: &str, args: &[&str]) -> Result<String> {
     let output = Command::new("tmux")
         .args(["-S", socket])
         .args(args)
+        .env("PRAESIDIUM_CALLER", "rusthrc")
         .output()
         .await?;
     ensure!(

@@ -328,7 +328,10 @@ pub(super) fn prepare(args: &Parsed<'_>) -> Result<bool> {
             }
         });
     }
-    let child = command.spawn().map_err(|e| Error::failure(e.to_string()))?;
+    let child = command
+        .env("PRAESIDIUM_CALLER", "hrc-cli")
+        .spawn()
+        .map_err(|e| Error::failure(e.to_string()))?;
     fs::write(runtime.join("server.pid"), format!("{}\n", child.id()))
         .map_err(|e| Error::failure(e.to_string()))?;
     if !wait_until(timeout, || socket_up(&runtime.join("hrc.sock"))) {

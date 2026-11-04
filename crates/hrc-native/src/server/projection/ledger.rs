@@ -95,7 +95,10 @@ impl Client {
                         .env("WRKQD_TOKEN", "")
                         .env("WRKQD_TOKEN_FILE", token.trim());
                 }
-                let mut child = command.spawn().context("spawn wrkq RPC")?;
+                let mut child = command
+                    .env("PRAESIDIUM_CALLER", "rusthrc")
+                    .spawn()
+                    .context("spawn wrkq RPC")?;
                 let input = child.stdin.take().context("wrkq RPC stdin")?;
                 let output =
                     BufReader::new(child.stdout.take().context("wrkq RPC stdout")?).lines();
