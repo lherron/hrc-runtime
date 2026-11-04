@@ -24,7 +24,8 @@ use std::{
 
 const BATCH_SIZE: i64 = 1_000;
 const COLUMN_MAX_BYTES: usize = 256 * 1024;
-const DEFAULT_TICK_MS: u64 = 2_000;
+const DEFAULT_RETRY_MS: u64 = 2_000;
+const MAX_RETRY: Duration = Duration::from_secs(30);
 
 #[derive(Default)]
 pub struct State {
@@ -33,15 +34,20 @@ pub struct State {
     reindexed: AtomicI64,
 }
 
-/// TranscriptIndexer.start: one tick at boot, then every tick interval.
+/// Catch up once at boot, then follow committed ledger generations. Subscribe
+/// before spawning and mark the generation seen before each snapshot so commits
+/// at either seam remain pending. Only actual failures schedule a timed retry.
 pub fn start(server: &Shared) {
     if super::sweeps::falsy(std::env::var("HRC_TRANSCRIPT_INDEX_ENABLED").ok()) {
         return;
     }
-    let interval = tick_interval();
+    let interval = retry_interval();
+    let mut commits = server.ledger.subscribe();
     let server = server.clone();
     tokio::spawn(async move {
+        let mut backoff = interval;
         while !stopping(&server) {
+            commits.borrow_and_update();
             if let Err(error) = tick(&server).await {
                 stderr_json(
                     "warn",
@@ -49,19 +55,27 @@ pub fn start(server: &Shared) {
                     "transcript.index.tick_failed",
                     json!({"error":format!("{error:#}")}),
                 );
+                tokio::time::sleep(backoff).await;
+                backoff = backoff.saturating_mul(2).min(MAX_RETRY);
+                continue;
             }
-            tokio::time::sleep(interval).await;
+            backoff = interval;
+            if commits.changed().await.is_err() {
+                break;
+            }
         }
     });
 }
 
-fn tick_interval() -> Duration {
+// Retain the existing setting as the initial failure-retry delay. It no longer
+// schedules successful empty reads.
+fn retry_interval() -> Duration {
     let ms = std::env::var("HRC_TRANSCRIPT_INDEX_TICK_MS")
         .ok()
         .and_then(|raw| raw.trim().parse::<f64>().ok())
         .filter(|ms| ms.is_finite() && *ms > 0.0)
-        .map_or(DEFAULT_TICK_MS, |ms| (ms.floor() as u64).max(10));
-    Duration::from_millis(ms)
+        .map_or(DEFAULT_RETRY_MS, |ms| (ms.floor() as u64).max(10));
+    Duration::from_millis(ms).min(MAX_RETRY)
 }
 
 fn stopping(server: &Server) -> bool {

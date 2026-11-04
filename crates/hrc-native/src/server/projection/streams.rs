@@ -1,5 +1,6 @@
 //! Native NDJSON follows. A watch wake is only a hint; the committed ledger and
-//! exclusive read cursor are authority. Polling is a missed-wake backstop.
+//! exclusive read cursor are authority. Heartbeats are transport-only; every
+//! owner writer publishes a watch generation after committing.
 use super::{ApiError, Shared, events};
 use axum::{
     body::{Body, Bytes},
@@ -294,7 +295,6 @@ fn bounded_append(
     state: &Arc<Mutex<Queue>>,
     filters: &HashMap<String, String>,
     after: i64,
-    heartbeat: bool,
 ) -> Result<Option<i64>, ApiError> {
     let db = server.store.lock().unwrap();
     let tx = db
@@ -325,10 +325,6 @@ fn bounded_append(
         },
     )?;
     tx.commit().map_err(anyhow::Error::from)?;
-    if heartbeat && q.records.is_empty() && q.ready.is_none() {
-        q.keepalive = true;
-        q.wake();
-    }
     Ok(Some(head))
 }
 
@@ -583,7 +579,13 @@ pub fn open(
             Duration::from_secs(5),
         );
         loop {
-            let heartbeat = tokio::select! {r=wakes.changed()=>{if r.is_err(){break}false},_=tokio::time::sleep(Duration::from_secs(2))=>false,_=keepalive.tick()=>true};
+            let heartbeat = tokio::select! {
+                result = wakes.changed() => {
+                    if result.is_err() { break; }
+                    false
+                }
+                _ = keepalive.tick() => true,
+            };
             if state.lock().unwrap().closed {
                 break;
             }
@@ -597,11 +599,19 @@ pub fn open(
                 q.wake();
                 break;
             }
+            if heartbeat {
+                let mut q = state.lock().unwrap();
+                if q.records.is_empty() && q.ready.is_none() {
+                    q.keepalive = true;
+                    q.wake();
+                }
+                continue;
+            }
             if bounded {
                 let Source::Lifecycle(filters) = &source else {
                     unreachable!()
                 };
-                match bounded_append(&owner, &state, filters, cursor, heartbeat) {
+                match bounded_append(&owner, &state, filters, cursor) {
                     Ok(Some(head)) => cursor = head.max(cursor),
                     Ok(None) => break,
                     Err(error) => {
@@ -639,10 +649,6 @@ pub fn open(
                         q.append(record);
                     }
                     cursor = head.max(cursor);
-                    if heartbeat && q.records.is_empty() && q.ready.is_none() {
-                        q.keepalive = true;
-                        q.wake();
-                    }
                 }
                 Err(error) => {
                     super::stderr_json(
@@ -711,3 +717,7 @@ fn receipt(q: &HashMap<String, String>) -> Result<&'static str, ApiError> {
         )),
     }
 }
+
+#[cfg(test)]
+#[path = "streams_idle_tests.rs"]
+mod idle_tests;
