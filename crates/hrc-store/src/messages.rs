@@ -120,8 +120,38 @@ impl Store {
         {
             return Ok(false);
         }
-        insert(&tx, response)?;
+        let row = insert(&tx, response)?;
         update_execution(&tx, request, patch)?;
+        // The stream must observe a row after the response becomes durable.
+        // Keep both in this transaction: a failed wake append must roll back
+        // the response too, so the finalizer can retry without losing the wake.
+        let execution = &row["execution"];
+        let session = execution["sessionRef"].as_str().unwrap_or_default();
+        let (scope, lane) = session.split_once("/lane:").unwrap_or((session, "main"));
+        crate::append_event(
+            &tx,
+            &crate::EventWrite {
+                ts: row["createdAt"].as_str().unwrap(),
+                host_session_id: execution["hostSessionId"].as_str(),
+                scope_ref: (!scope.is_empty()).then_some(scope),
+                lane_ref: Some(lane),
+                generation: execution["generation"].as_i64(),
+                runtime_id: execution["runtimeId"].as_str(),
+                run_id: execution["runId"].as_str(),
+                launch_id: None,
+                app_id: None,
+                app_session_key: None,
+                category: "message",
+                event_kind: "message.response",
+                transport: execution["transport"].as_str(),
+                error_code: execution["errorCode"].as_str(),
+                replayed: false,
+                evidence_origin: None,
+                source_ref: None,
+                origin_seq: None,
+                payload_json: &serde_json::to_string(&row)?,
+            },
+        )?;
         tx.commit()?;
         Ok(true)
     }
