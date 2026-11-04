@@ -4,6 +4,7 @@
 use anyhow::Result;
 use rusqlite::{Connection, OptionalExtension, params, params_from_iter, types::Value as Sql};
 use serde_json::{Map, Value};
+use std::collections::HashMap;
 
 pub const TERMINALS: [&str; 3] = ["turn.completed", "turn.failed", "turn.interrupted"];
 pub const PROSE: [&str; 2] = ["user.message", "assistant.message.completed"];
@@ -292,6 +293,10 @@ pub fn truncate(conn: &Connection, at: &str) -> Result<()> {
 /// BM25 search over the projection. `per_runtime_cap` selects discovery
 /// ranking (score order, capped per runtime); otherwise hits come in seq order.
 /// Hits are serialized in TranscriptSearchHit key order.
+///
+/// T-12457: only the score is computed per FTS match. The full row, snippet()
+/// and scopeGenerationCount are fetched for the hits that survive the limit,
+/// so a broad term costs one ranking pass instead of matches × rows.
 pub fn search(
     conn: &Connection,
     query: &str,
@@ -311,30 +316,75 @@ pub fn search(
            SELECT *, ROW_NUMBER() OVER (PARTITION BY runtime_id ORDER BY score DESC) AS rank_in_runtime
            FROM scored
          )
-         SELECT * FROM ranked WHERE rank_in_runtime <= ? ORDER BY score DESC LIMIT ?"
+         SELECT turn_rowid, score FROM ranked WHERE rank_in_runtime <= ? ORDER BY score DESC LIMIT ?"
     } else {
-        " SELECT * FROM scored ORDER BY seq_from ASC LIMIT ?"
+        " SELECT turn_rowid, score FROM scored ORDER BY seq_from ASC LIMIT ?"
     };
     values.push(Sql::Integer(limit));
     let sql = format!(
         "WITH scored AS (
-           SELECT t.*, -bm25(transcript_turns_fts, {BM25_WEIGHTS}) AS score,
-                  snippet(transcript_turns_fts, -1, '[', ']', '…', 12) AS snippet
-                  , (SELECT COUNT(DISTINCT sibling.generation)
-                     FROM transcript_turns sibling
-                     WHERE sibling.scope_ref = t.scope_ref) AS scope_generation_count
+           SELECT t.turn_rowid, t.runtime_id, t.seq_from,
+                  -bm25(transcript_turns_fts, {BM25_WEIGHTS}) AS score
            FROM transcript_turns_fts
            JOIN transcript_turns t ON t.turn_rowid = transcript_turns_fts.rowid
            WHERE {}
          ){ranked}",
         predicates.join(" AND ")
     );
-    let mut stmt = conn.prepare(&sql)?;
-    let rows = stmt.query_map(params_from_iter(values), hit)?;
-    rows.collect()
+    let survivors = conn
+        .prepare(&sql)?
+        .query_map(params_from_iter(values), |r| {
+            Ok((r.get::<_, i64>(0)?, r.get::<_, f64>(1)?))
+        })?
+        .collect::<rusqlite::Result<Vec<_>>>()?;
+    if survivors.is_empty() {
+        return Ok(Vec::new());
+    }
+    // snippet() needs the MATCH context; a rowid-pinned match is one lookup.
+    let mut document = conn.prepare(
+        "SELECT t.*, snippet(transcript_turns_fts, -1, '[', ']', '…', 12) AS snippet
+         FROM transcript_turns_fts
+         JOIN transcript_turns t ON t.turn_rowid = transcript_turns_fts.rowid
+         WHERE transcript_turns_fts MATCH ?1 AND transcript_turns_fts.rowid = ?2",
+    )?;
+    let mut hits = Vec::with_capacity(survivors.len());
+    for (rowid, score) in survivors {
+        if let Some(found) = document
+            .query_row(params![query, rowid], |r| hit(r, score))
+            .optional()?
+        {
+            hits.push(found);
+        }
+    }
+    // scopeGenerationCount: one grouped count over the survivors' scopes.
+    let scopes: Vec<&str> = hits.iter().filter_map(|h| h["scopeRef"].as_str()).collect();
+    let mut counts: HashMap<String, i64> = HashMap::new();
+    if !scopes.is_empty() {
+        let mut stmt = conn.prepare(
+            "SELECT scope_ref, COUNT(DISTINCT generation) FROM transcript_turns
+             WHERE scope_ref IN (SELECT CAST(value AS TEXT) FROM json_each(?))
+             GROUP BY scope_ref",
+        )?;
+        let selected = Value::from(scopes).to_string();
+        for row in stmt.query_map([selected], |r| Ok((r.get(0)?, r.get(1)?)))? {
+            let (scope, count) = row?;
+            counts.insert(scope, count);
+        }
+    }
+    for h in &mut hits {
+        let count = h["scopeRef"]
+            .as_str()
+            .and_then(|s| counts.get(s))
+            .copied()
+            .unwrap_or(0);
+        if let Value::Object(m) = h {
+            m.insert("scopeGenerationCount".into(), count.into());
+        }
+    }
+    Ok(hits)
 }
 
-fn hit(r: &rusqlite::Row<'_>) -> rusqlite::Result<Value> {
+fn hit(r: &rusqlite::Row<'_>, score: f64) -> rusqlite::Result<Value> {
     let mut m = Map::new();
     m.insert("turnRowid".into(), r.get::<_, i64>("turn_rowid")?.into());
     m.insert(
@@ -379,13 +429,9 @@ fn hit(r: &rusqlite::Row<'_>) -> rusqlite::Result<Value> {
     ] {
         m.insert(key.into(), r.get::<_, String>(column)?.into());
     }
-    m.insert("score".into(), r.get::<_, f64>("score")?.into());
+    m.insert("score".into(), score.into());
     m.insert("snippet".into(), r.get::<_, String>("snippet")?.into());
-    m.insert(
-        "scopeGenerationCount".into(),
-        r.get::<_, Option<i64>>("scope_generation_count")?
-            .unwrap_or(0)
-            .into(),
-    );
+    // Filled in by search() once the survivors' scopes are known.
+    m.insert("scopeGenerationCount".into(), 0.into());
     Ok(Value::Object(m))
 }
