@@ -25,6 +25,8 @@
 	<true/>
 	<key>Label</key>
 	<string>com.praesidium.hrc-mail-injector</string>
+	<key>ProcessType</key>
+	<string>Interactive</string>
 	<key>ProgramArguments</key>
 	<array>
 		<string>__BUNX__</string>
