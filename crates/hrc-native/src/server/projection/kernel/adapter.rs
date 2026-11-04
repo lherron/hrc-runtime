@@ -30,6 +30,7 @@ pub struct HrcAdapter {
     pub owner: Arc<dyn OwnerCall>,
     pub pending: BTreeSet<WorkId>,
     pub runtime: tokio::runtime::Handle,
+    pub owner_waker: Option<OwnerWaker>,
 }
 
 fn complete(outcome: CommandOutcome) -> AdapterDispatchReport {
@@ -41,6 +42,13 @@ fn complete(outcome: CommandOutcome) -> AdapterDispatchReport {
 }
 
 impl DispatchAdapter for HrcAdapter {
+    fn set_owner_waker(&mut self, waker: OwnerWaker) {
+        self.owner_waker = Some(waker.clone());
+        self.core.set_owner_waker(waker);
+    }
+    fn next_deadline(&self) -> Option<std::time::Instant> {
+        self.core.next_deadline()
+    }
     fn configure(&mut self, config: &RuntimeConfig) {
         self.core.configure(config);
     }
@@ -160,12 +168,16 @@ impl DispatchAdapter for HrcAdapter {
                 let args = Summon::parse(work.input).map_err(refused)?;
                 Box::new(move || args.run(owner.as_ref()))
             };
+        let waker = self.owner_waker.clone();
         self.runtime.spawn_blocking(move || {
             let _ = completion.send(WorkCompletion {
                 work_id: work.work_id,
                 command_id: work.command_id,
                 result: run(),
             });
+            if let Some(waker) = waker {
+                waker.wake();
+            }
         });
         Ok(())
     }
@@ -224,6 +236,172 @@ mod tests {
         }
     }
 
+    // Failure modes: the wrapper swallows CoreAdapter's waker (a completed
+    // ingest waits for the 1 s safety tick), or its deadline (scheduled ingest
+    // waits for that tick). No other request may substitute for the wake.
+    struct GatedIngest(crossbeam_channel::Receiver<()>);
+    impl cardo_runtime::core_adapter::WorkerCall for GatedIngest {
+        fn call(
+            &mut self,
+            _: &str,
+            _: serde_json::Value,
+            _: Duration,
+        ) -> Result<serde_json::Value, DispatchFailure> {
+            self.0.recv().unwrap();
+            Ok(json!({"cursor": 1, "edits": [], "more": false}))
+        }
+        fn shutdown(&mut self) {}
+    }
+
+    fn ingest_declarations() -> serde_json::Value {
+        json!({
+            "provider":"probe", "version":"1",
+            "node_families":[{"name":"probe.fact","domain_attributes":{
+                "kind":"object","fields":{"source":{"kind":"string","nonblank":true}},
+                "required":["source"]}}],
+            "node_types":[{
+                "name":"probe.fact", "schema_version":1, "family":"probe.fact", "root":true,
+                "validate":false, "natural_key":["key"], "observation":true,
+                "payload":{"kind":"object","required":["key"],
+                           "fields":{"key":{"kind":"string"}}}
+            }], "operations":[{
+                "name":"probe.read", "kind":"ingest", "writes":["probe.fact"],
+                "input":{"kind":"object","fields":{}},
+                "output":{"kind":"object","fields":{}}
+            }]
+        })
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn embedded_adapter_forwards_ingest_deadline() {
+        let mut adapter = HrcAdapter {
+            core: cardo_runtime::core_adapter::CoreAdapter::new(
+                || cardo_core::document::CoreDomain,
+                |_| Err(cardo_core::Refusal::invalid("edit_rejected", "no edits")),
+                Duration::from_secs(60),
+            ),
+            owner: Arc::new(Routed(AtomicUsize::new(0))),
+            pending: Default::default(),
+            runtime: tokio::runtime::Handle::current(),
+            owner_waker: None,
+        };
+        let (release, gate) = crossbeam_channel::unbounded();
+        release.send(()).unwrap();
+        adapter
+            .core
+            .in_process_worker("probe", move || Box::new(GatedIngest(gate.clone())));
+        for (operation, arguments) in [
+            ("registry.enable", ingest_declarations()),
+            (
+                "document.open",
+                json!({"document_id":"probe", "durability":{"mode":"explicit_save"}}),
+            ),
+            (
+                "ingest.attach",
+                json!({"document_id":"probe", "binding":"probe", "operation":"probe.read", "config":{}}),
+            ),
+        ] {
+            adapter
+                .dispatch(
+                    uuid::Uuid::new_v4(),
+                    KernelCommand {
+                        operation: operation.into(),
+                        arguments,
+                        persistence: None,
+                        cause: None,
+                    },
+                )
+                .unwrap();
+        }
+        let started = std::time::Instant::now();
+        while adapter.core.next_deadline().is_none() {
+            adapter.poll_changes().unwrap();
+            assert!(started.elapsed() < Duration::from_secs(2));
+            std::thread::sleep(Duration::from_millis(1));
+        }
+        let deadline = adapter
+            .core
+            .next_deadline()
+            .expect("settled binding has a safety deadline");
+        assert_eq!(adapter.next_deadline(), Some(deadline));
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn ingest_completion_wakes_embedded_owner_before_safety_tick() {
+        let mut core = cardo_runtime::core_adapter::CoreAdapter::new(
+            || cardo_core::document::CoreDomain,
+            |_| Err(cardo_core::Refusal::invalid("edit_rejected", "no edits")),
+            Duration::from_secs(60),
+        );
+        let (release, gate) = crossbeam_channel::unbounded();
+        core.in_process_worker("probe", move || Box::new(GatedIngest(gate.clone())));
+        let runtime = RuntimeOwner::start(
+            HrcAdapter {
+                core,
+                owner: Arc::new(Routed(AtomicUsize::new(0))),
+                pending: Default::default(),
+                runtime: tokio::runtime::Handle::current(),
+                owner_waker: None,
+            },
+            Arc::new(cardo_host::NoWork),
+            Box::new(cardo_host::Idle),
+            RuntimeConfig::host_default(),
+        );
+        let client = runtime.client(ClientRole::Tui);
+        let elapsed = tokio::task::spawn_blocking(move || {
+            cardo_host::send(&client, "registry.enable", ingest_declarations()).unwrap();
+            cardo_host::send(
+                &client,
+                "document.open",
+                json!({
+                    "document_id":"probe", "durability":{"mode":"explicit_save"}
+                }),
+            )
+            .unwrap();
+            cardo_host::send(
+                &client,
+                "ingest.attach",
+                json!({
+                    "document_id":"probe", "binding":"probe", "operation":"probe.read",
+                    "config":{}, "interval_ms":60000
+                }),
+            )
+            .unwrap();
+            // ingest.attach starts the worker. Hold its answer until the
+            // owner has parked, then release it without another command.
+            std::thread::sleep(Duration::from_millis(50));
+            let started = std::time::Instant::now();
+            release.send(()).unwrap();
+            loop {
+                let status = cardo_host::send(
+                    &client,
+                    "ingest.status",
+                    json!({
+                        "document_id":"probe"
+                    }),
+                )
+                .unwrap();
+                if status["bindings"][0]["cursor"] == json!(1) {
+                    break;
+                }
+                assert!(started.elapsed() < Duration::from_secs(3), "{status}");
+                std::thread::sleep(Duration::from_millis(5));
+            }
+            started.elapsed()
+        })
+        .await
+        .unwrap();
+        cardo_runtime_tokio::join(runtime).await.unwrap();
+        eprintln!(
+            "embedded_ingest_commit_ms={:.3}",
+            elapsed.as_secs_f64() * 1000.0
+        );
+        assert!(
+            elapsed < Duration::from_millis(200),
+            "ingest commit waited {elapsed:?}"
+        );
+    }
+
     #[tokio::test(flavor = "multi_thread")]
     async fn all_six_operations_reach_owner_without_core_worker() {
         let mut core = cardo_runtime::core_adapter::CoreAdapter::new(
@@ -239,6 +417,7 @@ mod tests {
                 owner: owner.clone(),
                 pending: Default::default(),
                 runtime: tokio::runtime::Handle::current(),
+                owner_waker: None,
             },
             Arc::new(cardo_host::NoWork),
             Box::new(cardo_host::Idle),

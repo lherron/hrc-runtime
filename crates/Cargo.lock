@@ -147,7 +147,7 @@ checksum = "fc652a48c352aef3ea3aed32080501cf3ef6ed5da78602a020c991775b0aff04"
 [[package]]
 name = "cardo-core"
 version = "0.1.0"
-source = "git+https://github.com/lherron/cardo?rev=2d6281909854fb3025f57d5c15c1fc833abe15e6#2d6281909854fb3025f57d5c15c1fc833abe15e6"
+source = "git+https://github.com/lherron/cardo?rev=02c5d3870a5a249680d5b26c701df0d5a944c2c8#02c5d3870a5a249680d5b26c701df0d5a944c2c8"
 dependencies = [
  "im",
  "regex",
@@ -158,7 +158,7 @@ dependencies = [
 [[package]]
 name = "cardo-execution"
 version = "0.1.0"
-source = "git+https://github.com/lherron/cardo?rev=2d6281909854fb3025f57d5c15c1fc833abe15e6#2d6281909854fb3025f57d5c15c1fc833abe15e6"
+source = "git+https://github.com/lherron/cardo?rev=02c5d3870a5a249680d5b26c701df0d5a944c2c8#02c5d3870a5a249680d5b26c701df0d5a944c2c8"
 dependencies = [
  "cardo-core",
  "serde_json",
@@ -167,7 +167,7 @@ dependencies = [
 [[package]]
 name = "cardo-host"
 version = "0.1.0"
-source = "git+https://github.com/lherron/cardo?rev=2d6281909854fb3025f57d5c15c1fc833abe15e6#2d6281909854fb3025f57d5c15c1fc833abe15e6"
+source = "git+https://github.com/lherron/cardo?rev=02c5d3870a5a249680d5b26c701df0d5a944c2c8#02c5d3870a5a249680d5b26c701df0d5a944c2c8"
 dependencies = [
  "cardo-runtime",
  "crossbeam-channel",
@@ -178,7 +178,7 @@ dependencies = [
 [[package]]
 name = "cardo-runtime"
 version = "0.1.0"
-source = "git+https://github.com/lherron/cardo?rev=2d6281909854fb3025f57d5c15c1fc833abe15e6#2d6281909854fb3025f57d5c15c1fc833abe15e6"
+source = "git+https://github.com/lherron/cardo?rev=02c5d3870a5a249680d5b26c701df0d5a944c2c8#02c5d3870a5a249680d5b26c701df0d5a944c2c8"
 dependencies = [
  "cardo-core",
  "cardo-execution",
@@ -193,10 +193,11 @@ dependencies = [
 [[package]]
 name = "cardo-runtime-tokio"
 version = "0.1.0"
-source = "git+https://github.com/lherron/cardo?rev=2d6281909854fb3025f57d5c15c1fc833abe15e6#2d6281909854fb3025f57d5c15c1fc833abe15e6"
+source = "git+https://github.com/lherron/cardo?rev=02c5d3870a5a249680d5b26c701df0d5a944c2c8#02c5d3870a5a249680d5b26c701df0d5a944c2c8"
 dependencies = [
  "cardo-runtime",
  "cardo-store",
+ "crossbeam-channel",
  "futures-core",
  "tokio",
 ]
@@ -204,7 +205,7 @@ dependencies = [
 [[package]]
 name = "cardo-store"
 version = "0.1.0"
-source = "git+https://github.com/lherron/cardo?rev=2d6281909854fb3025f57d5c15c1fc833abe15e6#2d6281909854fb3025f57d5c15c1fc833abe15e6"
+source = "git+https://github.com/lherron/cardo?rev=02c5d3870a5a249680d5b26c701df0d5a944c2c8#02c5d3870a5a249680d5b26c701df0d5a944c2c8"
 dependencies = [
  "crossbeam-channel",
  "rusqlite",

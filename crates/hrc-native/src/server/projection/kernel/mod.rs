@@ -120,6 +120,7 @@ async fn try_start(server: &Shared) -> anyhow::Result<Kernel> {
             owner: owner_call,
             pending: Default::default(),
             runtime,
+            owner_waker: None,
         },
         Arc::new(NoWork),
         Box::new(Idle),
