@@ -216,6 +216,9 @@ pub async fn retire_task_seats(server: &Shared) -> anyhow::Result<Value> {
             }
         }
         drop(_write);
+        // This iteration passed close(): its stopping-state transaction
+        // committed even if retire subsequently failed. Empty/skipped passes
+        // never reach this notification.
         server.ledger_committed();
     }
     let skipped_total: u64 = skipped.values().sum();

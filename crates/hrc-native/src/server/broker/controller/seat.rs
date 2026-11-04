@@ -104,6 +104,20 @@ pub fn record(
             *transitions.last_mut().unwrap() = t.clone();
         }
     }
+    // A fresh RPC result still gates dispatch, but timestamps and causes alone
+    // do not change durable seat state. Preserve recovery and one-shot warnings.
+    let unchanged = [
+        "availability",
+        "state",
+        "invocationId",
+        "turnId",
+        "brokerHeldDepth",
+    ]
+    .iter()
+    .all(|key| previous[*key] == observation[*key]);
+    if unchanged && !warn {
+        return Ok(observation);
+    }
     d["liveSeatProbe"] = observation.clone();
     d["seatTransitions"] = bounded(transitions);
     state["brokerDispatchDiagnostics"] = d;
@@ -292,44 +306,52 @@ pub async fn probe(server: &Shared, runtime_id: &str, cause: &str) -> Result<Val
     };
     let observed = hrc_store::timestamp();
     let current = active(server, runtime_id).map(|(i, _)| i);
-    let recorded: Result<()> = (|| {
+    let (recorded, changed) = {
         let db = server.store.lock().unwrap();
-        match (&result, &current) {
-            (Ok((invocation, response)), Some(active_invocation))
-                if active_invocation == invocation =>
-            {
-                let observation = record(
-                    &db.sqlite, runtime_id, invocation, response, &observed, cause,
-                )?;
-                let state = observation["state"]
-                    .as_str()
-                    .unwrap_or("unknown")
-                    .to_owned();
-                if state == "idle" {
-                    settle_idle(&db.sqlite, runtime_id, invocation, &observed)?;
+        let before = db.sqlite.total_changes();
+        let recorded: Result<()> = (|| {
+            match (&result, &current) {
+                (Ok((invocation, response)), Some(active_invocation))
+                    if active_invocation == invocation =>
+                {
+                    let observation = record(
+                        &db.sqlite, runtime_id, invocation, response, &observed, cause,
+                    )?;
+                    let state = observation["state"]
+                        .as_str()
+                        .unwrap_or("unknown")
+                        .to_owned();
+                    if state == "idle" {
+                        settle_idle(&db.sqlite, runtime_id, invocation, &observed)?;
+                    }
+                    warn_stalled(&db.sqlite, runtime_id, invocation, &observed, &state)?;
                 }
-                warn_stalled(&db.sqlite, runtime_id, invocation, &observed, &state)?;
+                (Ok(_), _) => record_unavailable(
+                    &db.sqlite,
+                    runtime_id,
+                    current.as_deref(),
+                    &observed,
+                    cause,
+                    "active broker binding changed during probe",
+                )?,
+                (Err(e), _) => record_unavailable(
+                    &db.sqlite,
+                    runtime_id,
+                    current.as_deref(),
+                    &observed,
+                    cause,
+                    &e.message,
+                )?,
             }
-            (Ok(_), _) => record_unavailable(
-                &db.sqlite,
-                runtime_id,
-                current.as_deref(),
-                &observed,
-                cause,
-                "active broker binding changed during probe",
-            )?,
-            (Err(e), _) => record_unavailable(
-                &db.sqlite,
-                runtime_id,
-                current.as_deref(),
-                &observed,
-                cause,
-                &e.message,
-            )?,
-        }
-        Ok(())
-    })();
-    server.ledger_committed();
+            Ok(())
+        })();
+        (recorded, db.sqlite.total_changes() != before)
+    };
+    // Settlement and stall warnings can write even when the probe is equal.
+    // Also notify on a partial write followed by a recording error.
+    if changed {
+        server.ledger_committed();
+    }
     if let Err(error) = recorded {
         log(
             "warn",

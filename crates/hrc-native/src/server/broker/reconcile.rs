@@ -522,6 +522,7 @@ pub async fn once(
             Ok(p) => {
                 let db = server.store.lock().unwrap();
                 (|| {
+                    let before = db.sqlite.total_changes();
                     let tx = db.sqlite.unchecked_transaction()?;
                     let r = if p.action == "finalize" {
                         finalize(&tx, c, &p)?
@@ -529,6 +530,9 @@ pub async fn once(
                         reap(&tx, c, &p, threshold)?
                     };
                     tx.commit()?;
+                    if db.sqlite.total_changes() != before {
+                        server.ledger_committed();
+                    }
                     anyhow::Ok(r)
                 })()
             }
@@ -539,6 +543,7 @@ pub async fn once(
     }
     {
         let db = server.store.lock().unwrap();
+        let before = db.sqlite.total_changes();
         let tx = db
             .sqlite
             .unchecked_transaction()
@@ -546,9 +551,12 @@ pub async fn once(
         results.extend(abandoned(&tx, cutoff, dry_run)?);
         results.extend(corrupt_awaiting(&tx)?);
         tx.commit().map_err(anyhow::Error::from)?;
-    }
-    if !dry_run {
-        server.ledger_committed();
+        // Compare while holding the store lock: unrelated concurrent writes
+        // must not turn a read-only pass into a ledger wake. Notify each
+        // committed write even if a later transaction in this pass fails.
+        if db.sqlite.total_changes() != before {
+            server.ledger_committed();
+        }
     }
     let count = |s: &str| results.iter().filter(|r| r["status"] == s).count();
     let summary = json!({"type":"summary","matched":count("matched"),"reaped":count("reaped"),"repaired":count("repaired"),"suspect":count("suspect"),"skipped":count("skipped"),"errors":count("error")});

@@ -4,7 +4,7 @@
 //! disarming live with the broker projection (projection/turns.rs).
 //!
 //! A trip is recorded no earlier than the deadline and no later than deadline
-//! plus the evaluation interval. The trip fact, the watch stamp and the run's
+//! plus scheduler/diagnostic latency. The trip fact, the watch stamp and the run's
 //! terminal state commit in one transaction; diagnostics come after, under a
 //! hard budget, and can never delay or rewrite that record.
 use super::{
@@ -662,18 +662,35 @@ async fn evaluate_once(server: &Shared) -> Result<Value> {
     Ok(json!({"scanned":due.len(),"tripped":tripped,"errors":errors}))
 }
 
-/// startFirstTurnWatchdog: a pass at boot, then every
-/// HRC_FIRST_TURN_EVAL_INTERVAL_SECONDS (default 30). The 300s zombie-sweep
-/// cadence cannot honor a 120s deadline, so this has its own timer. A tick
-/// that finds the previous pass still running is skipped.
+/// The next armed deadline, including already-due rows at startup. Re-read
+/// after a ledger wake so newly armed, cleared and disarmed watches take effect.
+fn next_deadline(db: &Connection) -> Result<Option<i64>> {
+    let at: Option<String> = db.query_row(
+        "SELECT MIN(first_turn_deadline_at) FROM runtime_first_turn_watch
+          WHERE first_turn_deadline_at IS NOT NULL
+            AND first_turn_at IS NULL
+            AND first_turn_missing_tripped_at IS NULL
+            AND disarmed_at IS NULL",
+        [],
+        |r| r.get(0),
+    )?;
+    at.map(|at| {
+        pdb::parse_ms(&at).ok_or_else(|| anyhow::anyhow!("invalid first-turn deadline: {at}"))
+    })
+    .transpose()
+}
+
+/// startFirstTurnWatchdog: startup catch-up, then ledger changes or the nearest
+/// pending deadline. With no watches it has no timer. The former evaluation
+/// interval is retained only as bounded retry delay after a failed pass.
 pub fn start(server: &Shared) {
     let server = server.clone();
-    let every = Duration::from_secs(positive_env("HRC_FIRST_TURN_EVAL_INTERVAL_SECONDS", 30));
+    let retry = Duration::from_secs(positive_env("HRC_FIRST_TURN_EVAL_INTERVAL_SECONDS", 30));
+    // Subscribe before catch-up; a commit between the query and wait stays seen.
+    let mut wake = server.ledger.subscribe();
     tokio::spawn(async move {
-        let mut ticks = tokio::time::interval(every);
-        ticks.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
         loop {
-            ticks.tick().await;
+            wake.borrow_and_update();
             if server
                 .controller
                 .shutting_down
@@ -681,16 +698,64 @@ pub fn start(server: &Shared) {
             {
                 return;
             }
-            match evaluate_once(&server).await {
-                Ok(summary) if summary["scanned"] != 0 => {
-                    log("info", "runtime.first_turn_eval_complete", summary);
+            let next = {
+                let db = server.store.lock().unwrap();
+                next_deadline(&db.sqlite)
+            };
+            let delay = match next {
+                Ok(Some(deadline)) => {
+                    let now = pdb::parse_ms(&timestamp()).expect("valid current timestamp");
+                    if deadline > now {
+                        Some(Duration::from_millis((deadline - now) as u64))
+                    } else {
+                        match evaluate_once(&server).await {
+                            Ok(summary) => {
+                                if summary["scanned"] != 0 {
+                                    log(
+                                        "info",
+                                        "runtime.first_turn_eval_complete",
+                                        summary.clone(),
+                                    );
+                                }
+                                if summary["errors"] == 0 {
+                                    continue;
+                                }
+                            }
+                            Err(error) => log(
+                                "warn",
+                                "runtime.first_turn_eval_failed",
+                                json!({"error":error.to_string()}),
+                            ),
+                        }
+                        // Do not spin on a due row whose trip failed, including
+                        // commits made by other rows in the same partial pass.
+                        tokio::time::sleep(retry).await;
+                        continue;
+                    }
                 }
-                Ok(_) => {}
-                Err(error) => log(
-                    "warn",
-                    "runtime.first_turn_eval_failed",
-                    json!({"error":error.to_string()}),
-                ),
+                Ok(None) => None,
+                Err(error) => {
+                    log(
+                        "warn",
+                        "runtime.first_turn_eval_failed",
+                        json!({"error":error.to_string()}),
+                    );
+                    tokio::time::sleep(retry).await;
+                    continue;
+                }
+            };
+            match delay {
+                Some(delay) => {
+                    tokio::select! {
+                        result = wake.changed() => if result.is_err() { return; },
+                        () = tokio::time::sleep(delay) => {},
+                    }
+                }
+                None => {
+                    if wake.changed().await.is_err() {
+                        return;
+                    }
+                }
             }
         }
     });
