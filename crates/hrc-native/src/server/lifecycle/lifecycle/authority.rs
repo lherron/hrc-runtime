@@ -64,6 +64,57 @@ pub fn mable_primary(scope: &str) -> bool {
         p.agent == "mable" && p.project.is_some() && p.task == Some("primary") && p.role.is_none()
     })
 }
+/// Operator routes preserve the legacy headerless contract. Any lifecycle
+/// header opts into verified owner authority, including partial credentials.
+/// Termination additionally permits another runtime belonging to this seat.
+pub fn authorize_operator(
+    server: &Server,
+    headers: &HeaderMap,
+    action: &str,
+    own_runtime: Option<&str>,
+) -> Result<(), ApiError> {
+    if !headers
+        .keys()
+        .any(|key| key.as_str().starts_with("x-hrc-lifecycle-"))
+    {
+        return Ok(());
+    }
+    let refusal = |code, scope: Option<&str>, detail: &str| {
+        error(
+            action,
+            server.federation.node_id(),
+            code,
+            format!(
+                "only mable@<project>:primary{} may {action}; request it from mable@{}:primary ({detail})",
+                if own_runtime.is_some() {
+                    " or the runtime's own seat"
+                } else {
+                    ""
+                },
+                project(scope),
+            ),
+        )
+    };
+    let binding = credentials::verify_caller(server, headers)
+        .map_err(|e| refusal(e.code, e.scope_ref.as_deref(), &e.detail))?;
+    if mable_primary(&binding.scope_ref) {
+        return Ok(());
+    }
+    if let Some(id) = own_runtime {
+        let store = server.store.lock().unwrap();
+        if crate::server::projection::db::runtime(&store.sqlite, id)?
+            .is_some_and(|runtime| runtime.scope_ref == binding.scope_ref)
+        {
+            return Ok(());
+        }
+    }
+    Err(refusal(
+        "not_authorized",
+        Some(&binding.scope_ref),
+        &format!("caller {} is not authorized", binding.scope_ref),
+    ))
+}
+
 pub fn authorize(
     server: &Server,
     headers: &HeaderMap,

@@ -1,0 +1,35 @@
+id: hrc-runtime.operator-owner-authority
+kind: invariant
+status: active
+owner_project: hrc-runtime
+scope: credentialed callers of native HRC protected operator writes
+predicate: >
+  POST /v1/runtimes/prune, /v1/runtimes/sweep,
+  /v1/runs/reconcile-active, /v1/sessions/drop-continuation,
+  /v1/federation/retire and /v1/terminate preserve their existing behavior
+  when no lifecycle header is presented. Any x-hrc-lifecycle-* header
+  requires verification through the daemon's existing lifecycle credential
+  binding and a Mable primary scope, using the same predicate as restart.
+  Terminate additionally admits a verified caller whose scope matches the
+  target runtime's stored scope, including other lanes of the same seat.
+  Partial, invalid, mismatched and revoked credentials fail closed with HTTP
+  403, server_lifecycle_refused and the lifecycle refusal detail before
+  route side effects. Claimed caller headers alone confer no authority.
+  Restart and stop retain their existing authority contract. The unserved
+  native tmux kill route is excluded. This is an honest-caller rule, not a
+  security boundary against deliberately headerless callers.
+authority: wrkq:T-12662 etag 4 (Daedalus approved); wrkq:T-12664 (Mable dispatch and tmux exclusion, 2026-11-05)
+source:
+  - wrkq:T-12662
+  - wrkq:T-12664
+  - crates/hrc-native/src/server.rs
+  - crates/hrc-native/src/server/lifecycle/lifecycle/authority.rs
+  - crates/hrc-native/src/server/lifecycle/lifecycle/credentials.rs
+  - crates/hrc-native/src/server/lifecycle/lifecycle/operator_tests.rs
+required_tests:
+  - cargo test --manifest-path crates/Cargo.toml -p hrc-native --locked operator_authority_tests
+  - just architecture-records
+last_verified: 2026-11-05 T-12664 dispatcher fixture; installed activation explicitly deferred to Mable
+reopen_when: The protected route set, headerless compatibility, credential verification, Mable-primary predicate or terminate scope ownership changes.
+supersedes: []
+superseded_by: []

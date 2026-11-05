@@ -475,6 +475,32 @@ async fn dispatch_inner(server: &Shared, request: Request, local_only: bool) -> 
         Ok(body) => body,
         Err(_) => return ApiError::bad("request body must be valid JSON", None).into_response(),
     };
+    if method == Method::POST {
+        let action = match uri.path() {
+            "/v1/runtimes/prune" => Some("prune runtimes"),
+            "/v1/runtimes/sweep" => Some("sweep runtimes"),
+            "/v1/runs/reconcile-active" => Some("reconcile active runs"),
+            "/v1/sessions/drop-continuation" => Some("drop a session continuation"),
+            "/v1/federation/retire" => Some("retire a federation binding"),
+            "/v1/terminate" => Some("terminate a runtime"),
+            _ => None,
+        };
+        if let Some(action) = action {
+            let value = serde_json::from_slice::<Value>(&body).ok();
+            let own_runtime = if uri.path() == "/v1/terminate" {
+                value
+                    .as_ref()
+                    .and_then(|v| v["runtimeId"].as_str())
+                    .map(str::trim)
+            } else {
+                None
+            };
+            if let Err(error) = lifecycle::authorize_operator(server, &headers, action, own_runtime)
+            {
+                return error.into_response_for(&headers);
+            }
+        }
+    }
     // T-12362: the local projector observes this node's session data even
     // when placement refuses current home continuity. The peer listener
     // refuses this explicit flag before its internal local dispatch.
@@ -1055,3 +1081,7 @@ async fn status(
     }
     Ok(value)
 }
+
+#[cfg(test)]
+#[path = "server/lifecycle/lifecycle/operator_tests.rs"]
+mod operator_authority_tests;
