@@ -27,19 +27,25 @@ predicate: >
   Successful classifications append category-turn turn.attention, including
   none. Absence means unclassified. The event carries turnId, invocationId,
   lit, state, kind, four ask probabilities, confidence, toLance,
-  waitingOnOther, excerpt, model, classifierVersion and latencyMs. The
+  waitingOnOther, excerpt, text, model, classifierVersion and latencyMs. The
   subscriber computes lit as p.blocking plus p.decision at least 0.5;
   when lit, state is the larger of blocking and decision (ties go to
   blocking), otherwise the argmax of the four, so a lit event never carries
   state offer or none; excerpt is at most the last 240 characters of
-  the classified message, never a generated summary. attention-v3 freezes
+  the classified message, never a generated summary. text is the turn's
+  whole final message, at most 16384 UTF-8 bytes; a longer message keeps
+  its tail behind a leading "…". The route accepts an event without text
+  (an older subscriber) and refuses a non-string or longer one. text is
+  display only; the hosted call still sends at most 2500 characters.
+  attention-v3 freezes
   the task's questions and threshold; wording changes require a version
   bump and G1 quality acceptance. Idle requests for new work and conditional
   offers stay dark; direct next-action questions about work in hand light.
   The seat projector derives attention solely from the same selected display
   event as latestEvent, using existing generation and turn.* selection.
   With a live runtime, selected turn.attention with lit true projects source
-  jev, state, kind, excerpt and at; selected turn.awaiting_input projects
+  jev, state, kind, excerpt, text (when the event has it) and at;
+  selected turn.awaiting_input projects
   source tool, state blocking, kind information and at. All other selections
   and absence of a live runtime yield no attention. A later selected turn
   event clears the field, and generation rotation inherits no older signal.
@@ -47,6 +53,8 @@ predicate: >
   change. Empty bootstrap and keyed refresh reconstruct the same predicate.
   turn.attention preview uses its excerpt. Loggia consumes this producer
   field for Needs input, with needs-input urgency 5 above busy urgency 4.
+  c2 renders text as Markdown in its cards and falls back to excerpt
+  when text is absent (T-12644).
   T-12183 r1.1 moves display-event selection and the attention fold into
   hrc-store's shared live_attention reader, consumed by annotation admission
   and the projector. The existing selected-event, generation and live-runtime
@@ -58,8 +66,11 @@ authority: >
   that specification.
   Shared-reader ownership amendment approved under T-12183 r1.1 at e2f87751
   on the EN-39516 review thread, 2026-10-31.
+  Additive text field (whole final message, 16 KB cap) by Lance's
+  direction under T-12644, 2026-11-05.
 source:
   - wrkq:T-12015
+  - wrkq:T-12644
   - architecture/contracts/hrc-rust-migration.yaml
   - crates/hrc-domain/src/projector.rs
   - crates/hrc-domain/src/projection.rs

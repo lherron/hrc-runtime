@@ -12,6 +12,23 @@ export type TurnText = {
 }
 // Array.from preserves Unicode code points, matching Python's frozen harness slices.
 export const tail = (text: string, limit: number) => Array.from(text).slice(-limit).join('')
+/** turn.attention `text`: the whole final message, at most TEXT_BYTES of UTF-8. A longer message
+ * keeps its tail (the ask is usually at the end) behind a leading "…". */
+export const TEXT_BYTES = 16384
+const utf8 = new TextEncoder()
+export function capText(text: string): string {
+  if (utf8.encode(text).length <= TEXT_BYTES) return text
+  const points = Array.from(text)
+  let bytes = utf8.encode('…').length
+  let start = points.length
+  while (start > 0) {
+    const next = utf8.encode(points[start - 1]!).length
+    if (bytes + next > TEXT_BYTES) break
+    bytes += next
+    start--
+  }
+  return `…${points.slice(start).join('')}`
+}
 export function buildRequest(turn: TurnText) {
   return {
     model: 'jev-latest',
@@ -79,6 +96,7 @@ export async function classify(turn: TurnText, key: string, request = fetch) {
     toLance: probability(a.to_lance.noul),
     waitingOnOther: probability(a.waiting_on_other.noul),
     excerpt: tail(turn.final_text, 240),
+    text: capText(turn.final_text),
     model: out.model,
     classifierVersion: CLASSIFIER_VERSION,
     latencyMs: Math.round(performance.now() - started),

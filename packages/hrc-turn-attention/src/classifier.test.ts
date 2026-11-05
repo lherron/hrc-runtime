@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test'
-import { classify } from './classifier.js'
+import { TEXT_BYTES, buildRequest, capText, classify } from './classifier.js'
 
 const turn = {
   agent: 'mable',
@@ -56,5 +56,32 @@ describe('classify lit/state agreement', () => {
     )
     expect(out.lit).toBe(false)
     expect(out.state).toBe('offer')
+  })
+})
+
+describe('turn.attention text', () => {
+  test('a message within the cap is the whole message', async () => {
+    const final_text = `${'Context paragraph. '.repeat(40)}\n\nShould I ship it?`
+    const out = await classify(
+      { ...turn, final_text },
+      'k',
+      fakeJev({ blocking: 0.9, decision: 0, offer: 0, none: 0.1 })
+    )
+    expect(out.text).toBe(final_text)
+    expect(Array.from(out.excerpt).length).toBe(240)
+  })
+
+  test('a longer message keeps its tail behind an ellipsis, within 16 KB of UTF-8', () => {
+    const final_text = `${'é'.repeat(9000)}🚀 tail ask?`
+    const out = capText(final_text)
+    expect(new TextEncoder().encode(out).length).toBeLessThanOrEqual(TEXT_BYTES)
+    expect(out.startsWith('…')).toBe(true)
+    expect(final_text.endsWith(out.slice(1))).toBe(true)
+    expect(capText(out)).toBe(out)
+  })
+
+  test('the jev request still sends at most 2500 characters', () => {
+    const req = buildRequest({ ...turn, final_text: 'x'.repeat(10000) })
+    expect(req.state.final_text.length).toBe(2500)
   })
 })

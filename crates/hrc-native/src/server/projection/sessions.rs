@@ -609,7 +609,7 @@ mod tests {
             .unwrap();
     }
     fn lit(lit: bool) -> Value {
-        json!({"turnId":"t1","lit":lit,"state":"blocking","kind":"decision","excerpt":"Ship it?","classifierVersion":"attention-v3"})
+        json!({"turnId":"t1","lit":lit,"state":"blocking","kind":"decision","excerpt":"Ship it?","text":"All green.\n\nShip it?","classifierVersion":"attention-v3"})
     }
     async fn get(server: &Shared, query: &str) -> (StatusCode, Value) {
         let request = Request::builder()
@@ -718,7 +718,7 @@ mod tests {
             }
             let expected = match *name {
                 "lit" | "later-non-turn" => {
-                    json!({"source":"jev","state":"blocking","kind":"decision","excerpt":"Ship it?","at":attention_at})
+                    json!({"source":"jev","state":"blocking","kind":"decision","excerpt":"Ship it?","text":"All green.\n\nShip it?","at":attention_at})
                 }
                 "awaiting" => {
                     json!({"source":"tool","state":"blocking","kind":"information","at":attention_at})

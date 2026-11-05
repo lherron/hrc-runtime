@@ -96,6 +96,9 @@ export type SessionAttention = {
   at: string
   /** Present for `jev` (null when the classifier sent none). */
   excerpt?: string | null | undefined
+  /** `jev` only: the turn's whole final message, at most 16 KB of UTF-8 with the tail kept
+   * behind "…". Absent when the classifying subscriber predates it; show `excerpt` then. */
+  text?: string | undefined
 }
 
 /** `GET /v1/sessions/attention` (local only): the continuity's active generation. */

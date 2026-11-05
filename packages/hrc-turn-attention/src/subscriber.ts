@@ -2,7 +2,7 @@ import { chmod, mkdir, readFile, rename, writeFile } from 'node:fs/promises'
 import { dirname } from 'node:path'
 import type { HrcEventPage, HrcLifecycleEvent } from 'hrc-core'
 import { HrcClient } from 'hrc-sdk'
-import { type TurnText, classify, tail } from './classifier.js'
+import { type TurnText, capText, classify, tail } from './classifier.js'
 
 export type OpenTurn = { user: string; final: string }
 export type Cursor = {
@@ -59,7 +59,7 @@ export class Subscriber {
       }
       if (event.eventKind === 'turn.message') {
         const final = text(event.payload, 'assistant')
-        if (final !== undefined) turn.final = tail(final, 2500)
+        if (final !== undefined) turn.final = capText(final)
         this.cursor.turns[slot] = turn
       }
       if (event.eventKind === 'turn.completed') {

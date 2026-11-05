@@ -47,9 +47,14 @@ pub fn fold_attention(display: &Value, runtime_present: bool) -> Option<Value> {
     }
     let p = &display["payload"];
     match display["eventKind"].as_str().unwrap_or("") {
-        "turn.attention" if p["lit"] == true => Some(
-            json!({"source":"jev","state":p["state"],"kind":p["kind"],"excerpt":p["excerpt"],"at":display["ts"]}),
-        ),
+        "turn.attention" if p["lit"] == true => {
+            let mut a = json!({"source":"jev","state":p["state"],"kind":p["kind"],"excerpt":p["excerpt"],"at":display["ts"]});
+            // The whole final message; absent from an older subscriber's event.
+            if p["text"].is_string() {
+                a["text"] = p["text"].clone();
+            }
+            Some(a)
+        }
         "turn.awaiting_input" => Some(
             json!({"source":"tool","state":"blocking","kind":"information","at":display["ts"]}),
         ),

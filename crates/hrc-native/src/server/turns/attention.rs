@@ -20,6 +20,8 @@ const KINDS: [&str; 6] = [
     "none",
 ];
 const EXCERPT_CHARS: usize = 240;
+/// The turn's whole final message, tail kept behind "…" past this many UTF-8 bytes.
+const TEXT_BYTES: usize = 16384;
 
 pub fn append(server: &Server, body: &[u8]) -> Result<Response, ApiError> {
     let request = parse_body(body)?;
@@ -148,6 +150,16 @@ fn classification(payload: Option<&Value>, turn: &str) -> Result<Map<String, Val
             &format!("must be a string of at most {EXCERPT_CHARS} characters"),
         ));
     }
+    // Optional: an older subscriber sends no text and consumers fall back to excerpt.
+    if payload
+        .get("text")
+        .is_some_and(|t| !t.as_str().is_some_and(|t| t.len() <= TEXT_BYTES))
+    {
+        return Err(malformed(
+            "text",
+            &format!("must be a string of at most {TEXT_BYTES} UTF-8 bytes"),
+        ));
+    }
     if !payload.get("latencyMs").is_some_and(Value::is_u64) {
         return Err(malformed("latencyMs", "must be a non-negative integer"));
     }
@@ -241,7 +253,11 @@ mod tests {
     async fn accepts_once_and_replays_the_existing_event() -> anyhow::Result<()> {
         let (_scratch, server) = server("off", false)?;
         let seq = completed(&server, SCOPE, "turn_inv-a_1");
-        let (status, first) = post(&server, &body("turn_inv-a_1", "attention-v3")).await;
+        // The full final message rides along, up to exactly 16 KB of UTF-8.
+        let text = format!("…{}", "é".repeat((16384 - 3) / 2));
+        let mut with_text = body("turn_inv-a_1", "attention-v3");
+        with_text["payload"]["text"] = json!(text);
+        let (status, first) = post(&server, &with_text).await;
         assert_eq!(status, StatusCode::OK, "{first}");
         assert_eq!(first["appended"], true);
         let event = &first["event"];
@@ -260,6 +276,7 @@ mod tests {
         assert_eq!(event["payload"]["turnId"], "turn_inv-a_1");
         assert_eq!(event["payload"]["lit"], true);
         assert_eq!(event["payload"]["classifierVersion"], "attention-v3");
+        assert_eq!(event["payload"]["text"], json!(text));
         let (status, replay) = post(&server, &body("turn_inv-a_1", "attention-v3")).await;
         assert_eq!(status, StatusCode::OK, "{replay}");
         assert_eq!(replay["appended"], false);
@@ -340,6 +357,16 @@ mod tests {
             {
                 let mut b = body("turn_inv-a_1", "attention-v3");
                 b["payload"]["excerpt"] = json!("x".repeat(241));
+                b
+            },
+            {
+                let mut b = body("turn_inv-a_1", "attention-v3");
+                b["payload"]["text"] = json!("é".repeat(8193));
+                b
+            },
+            {
+                let mut b = body("turn_inv-a_1", "attention-v3");
+                b["payload"]["text"] = json!(42);
                 b
             },
             {
