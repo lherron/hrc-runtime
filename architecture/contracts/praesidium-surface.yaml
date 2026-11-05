@@ -48,13 +48,41 @@ predicate: >
   response boundary and changes neither owner admission nor kernel write
   repetition: the kernel never repeats a write. An upstream Cardo schema
   change is outside this approval and returns for review.
+  T-12662 specification etag 4 extends the prae operator surface to live
+  legacy CLI forms within its named exclusions; it is a parity extension,
+  not new owner or peer authority. The catalog declares credential: required
+  for operations protected by the new owner rule. If credential discovery
+  fails, prae refuses those operations with credential_unavailable before
+  dispatch. This is a client presence precondition, not credential verification
+  or operator authorization in the kernel. The kernel forwards caller identity
+  and lifecycle headers verbatim and never substitutes its own authority.
+  HRC verifies credential-present callers on other operator writes as Mable
+  primaries; terminate additionally admits the runtime's own seat. Callers
+  presenting no credential retain existing owner behavior for these routes.
+  Restart and stop retain their existing authorization unchanged, with no
+  credential-free branch; peer lifecycle retains local authorization and the
+  peer-validated lifecycle grant. Cross-node summon and interrupt use the
+  existing local HRC forwarding routes and HRC-owned peer connections.
+  This extension gives the kernel no new peer control connection and adds no
+  federated owner route. Foreign send and archive remain refused. Ordinary
+  operator acknowledgement, wrkf, daemon callers, interactive TTY entry points
+  and server serve remain excluded. Deliberately headerless calls and older
+  clients without the precondition are outside the supported caller model;
+  this compatibility boundary is not adversarial agent isolation. Rebuilding
+  Mable's agent profile and retiring her legacy CLI space require a separate
+  decision and are not authorized by this extension.
 authority: >
   Daedalus APPROVE of the r1.10 sections 12.1 through 12.3 and taxonomy
   r2.3 M1 through M3 resubmission in EN-45079, T-12245, 2026-11-04.
   f84658c7 resolves F1 from EN-45078 by matching the existing project
   slug key, superseding the rejected P-valued reference proposal.
+  Operator parity extension approved by Daedalus in EN-47463 on T-12662
+  specification etag 4, 2026-11-05, following Lance's direct scope ruling
+  recorded there; this supersedes the proposal's operator-surface exclusion
+  and remote-seat restriction only within the extension's stated scope.
 source:
   - wrkq:T-12245
+  - wrkq:T-12662
   - wrkc:EN-45074
   - wrkc:EN-45078
   - wrkc:EN-45079
@@ -67,6 +95,9 @@ validation_scope: >
   The submitted producer, reader, snapshot and whole-seat acceptance
   obligations remain the requester's. This approval adds no gate and
   establishes no implementation, installation, activation or product acceptance.
+  T-12662 parity, replacement, authority and legacy-compatibility acceptance,
+  and the implementation task's credential-discovery-failure regression,
+  remain the requester's work. The operator extension adds no product gate.
 last_verified: >
   2026-11-04 design read of f84658c7 and its two-line F1 correction;
   source read of kernel ca2756b project key emission, canonical agent
@@ -82,3 +113,17 @@ reopen_when: >
   record representation, the legacy cutover hold, catalog authority,
   owner reconciliation meaning, native Cardo execution controls or the
   no-kernel-write-repetition boundary changes.
+  Reopen the operator extension when credential-required coverage, refusal
+  before dispatch, owner admission, credential-free compatibility, restart
+  authority, peer-control routing, exclusions or the supported caller model
+  changes.
+design_review: >
+  2026-11-05 T-12662 specification etag 4 APPROVE, EN-47463. Source read of
+  prae credential discovery and write dispatch, the bridge's optional-header
+  forwarding, HRC local literal-input and terminate resolution, claim-start
+  and explicit-node interrupt forwarding, lifecycle credential verification
+  and peer grants, and wrkq's ordinary acknowledgement admission. F1 and F2
+  resolved by scope exclusions; F3 resolved by the proposed catalog-driven
+  client presence precondition. This verifies the design only. No build,
+  test, install, restart or live mutation was run; prior last_verified
+  evidence is unchanged.
