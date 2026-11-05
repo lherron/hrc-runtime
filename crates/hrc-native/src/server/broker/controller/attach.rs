@@ -71,9 +71,18 @@ pub async fn attach_and_replay(
         }
         let replay = client.request("invocation.eventsSince", json!({"invocationId":invocation,"afterSeq":last})).await?;
         let mut replayed = last;
-        // Publish the client before replay so ACK and capture refresh reach it.
+        // Publish under the same store lock as eviction: a candidate whose
+        // proof was in flight when detach committed cannot regain observation.
+        {
+            let db = server.store.lock().unwrap();
+            let rt = db::runtime(&db.sqlite, &runtime_id)?.context("runtime vanished during attach")?;
+            if rt.state_object()["terminalReason"] == "operator_evict" {
+                client.close();
+                bail!("participant_operator_evicted");
+            }
+            set_active(server, &runtime_id, &invocation, client.clone());
+        }
         // The seat monitor starts after reattach completes (below).
-        set_active(server, &runtime_id, &invocation, client.clone());
         for envelope in replay["events"].as_array().cloned().unwrap_or_default() {
             let outcome = apply_one(server, &envelope)?;
             replayed = replayed.max(envelope["seq"].as_i64().unwrap_or(0));
@@ -137,6 +146,13 @@ pub async fn attach_and_replay(
         let db = server.store.lock().unwrap();
         let tx = db.sqlite.unchecked_transaction()?;
         let rt = db::runtime(&tx, &runtime_id)?.context("runtime vanished during attach")?;
+        // A detach may commit while broker proof RPCs are in flight. Never
+        // publish their stale snapshot over the durable eviction fence.
+        if rt.state_object()["terminalReason"] == "operator_evict" {
+            delete_active(server, &runtime_id);
+            client.close();
+            bail!("participant_operator_evicted");
+        }
         let status =
             if projection::turns::any_open_ask(&tx, &rt)? && (base == "busy" || base == "ready") {
                 "awaiting_input"

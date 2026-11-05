@@ -4,7 +4,7 @@
 use super::{
     ApiError, Shared, control, controller, lease,
     projection::{db, events},
-    turns::{admission::unavailable, parse},
+    turns::parse,
 };
 use axum::{
     Json,
@@ -130,10 +130,9 @@ async fn invalidate(server: &Shared, host: &str, reason: &str) -> Result<(i64, i
     let mut terminated = 0;
     for rt in runtimes.iter().filter(|r| !lease::unavailable(&r.status)) {
         if controller::is_external_lifecycle_owner(rt) {
-            return Err(unavailable(
-                "external participant eviction is not yet served natively",
-                json!({"runtimeId":rt.runtime_id,"reason":"participant_native_unsupported"}),
-            ));
+            control::evict_external(server, rt)?;
+            terminated += 1;
+            continue;
         }
         let _terminating = controller::begin_terminating(server, &rt.runtime_id);
         if rt.controller_kind.as_deref() == Some("harness-broker") {

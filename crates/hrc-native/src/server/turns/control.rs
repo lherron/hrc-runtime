@@ -532,10 +532,10 @@ async fn terminate_runtime(
     o: Terminate,
 ) -> Result<Response, ApiError> {
     if controller::is_external_lifecycle_owner(rt) {
-        return Err(unavailable(
-            "external participant terminate is not yet served natively",
-            json!({"runtimeId":rt.runtime_id}),
-        ));
+        evict_external(server, rt)?;
+        let mut response = action_response(rt);
+        response["droppedContinuation"] = false.into();
+        return Ok(Json(response).into_response());
     }
     let tmux = rt.transport == "tmux";
     let broker = rt.controller_kind.as_deref() == Some("harness-broker");
@@ -640,6 +640,78 @@ async fn terminate_runtime(
         Ok(())
     })?;
     Ok(Json(response).into_response())
+}
+
+/// Contract §8.5: detach only HRC's observation. The participant retains its
+/// process, presentation, continuation and held address. Repeated calls finish
+/// token cleanup after a crash without appending a second audit.
+pub(super) fn evict_external(server: &Shared, snapshot: &db::Rt) -> Result<(), ApiError> {
+    let now = hrc_store::timestamp();
+    commit(server, |db| {
+        let rt = db::runtime(db, &snapshot.runtime_id)?.unwrap_or_else(|| snapshot.clone());
+        if rt.status == "terminated" && rt.state_object()["terminalReason"] == "operator_evict" {
+            return Ok(());
+        }
+        if let Some(invocation) = &rt.active_invocation_id {
+            db::update_invocation(
+                db,
+                invocation,
+                &[
+                    ("invocation_state", db::text("disposed")),
+                    ("lifecycle_terminal_reason", db::text("operator_evict")),
+                    ("updated_at", db::text(now.as_str())),
+                ],
+            )?;
+        }
+        // An absorbing attempt is the durable reconnect fence, including on a
+        // later owner. Eviction never retires/releases the address reservation.
+        db.execute("UPDATE participant_registration_attempts SET state='ABANDONED',disposition_reason='operator_evict',establishment_work_state='exhausted',establishment_next_attempt_at=NULL,updated_at=? WHERE runtime_id=? AND state NOT IN ('ABANDONED','TERMINAL','SUPERSEDED')", params![now, rt.runtime_id])?;
+        db::settle_terminal_runtime_runs(
+            db,
+            &rt.runtime_id,
+            &now,
+            &format!(
+                "runtime {} was evicted by operator: operator_evict",
+                rt.runtime_id
+            ),
+        )?;
+        let mut state = rt.state_object();
+        state["status"] = "terminated".into();
+        state["updatedAt"] = now.as_str().into();
+        state["terminalReason"] = "operator_evict".into();
+        state["control"] = json!({"mode":"broker-ipc","brokerAttached":false});
+        let mut cols = vec![
+            ("status", db::text("terminated")),
+            ("status_changed_at", db::text(now.as_str())),
+            ("lifecycle_terminal_reason", db::text("operator_evict")),
+            ("runtime_state_json", db::text(state.to_string())),
+        ];
+        cols.extend(db::activity_cols(db, &rt.runtime_id, &now, &now)?);
+        db::update_runtime(db, &rt.runtime_id, &cols)?;
+        let mut ev = session_event(db, &rt, &now).map_err(|e| anyhow::anyhow!(e.message))?;
+        ev.transport = Some("headless".into());
+        let mut payload = json!({"reason":"operator_evict","droppedContinuation":false});
+        if let Some(invocation) = &rt.active_invocation_id {
+            payload["invocationId"] = invocation.as_str().into();
+        }
+        events::append(db, "runtime.terminated", &ev, &payload)?;
+        Ok(())
+    })?;
+    controller::mark_closing(server, &snapshot.runtime_id, "operator_evict");
+    if let Some((_, client)) = controller::active(server, &snapshot.runtime_id) {
+        controller::delete_active(server, &snapshot.runtime_id);
+        client.close(); // Local transport close, never a broker lifecycle RPC.
+    }
+    if let Some(hosting) = super::startup::hosting(&snapshot.state_object(), snapshot.generation)
+        && let Some(path) = hosting.endpoint["attachTokenRef"]["path"].as_str()
+    {
+        match std::fs::remove_file(path) {
+            Ok(()) => {}
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+            Err(e) => return Err(anyhow::Error::from(e).into()),
+        }
+    }
+    Ok(())
 }
 
 /// Whether the runtime ever ran: its active run started or its invocation

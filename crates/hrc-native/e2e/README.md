@@ -45,6 +45,17 @@ hrc-sdk `watch()` with typed lists), and a filtered follow (and
 bounded stream) cut after skipped rows resumes from the last delivered seq with
 no gap or duplicate. Same arguments as `peer_events_page.py` plus
 `--baseline-binary`.
+`participant_eviction.py` drives external termination and context invalidation
+against a native scratch daemon and the real ASP broker with its exported idle
+`noop-driver` fixture. It proves finalization, HRC token removal, the old-attempt
+reattachment fence before and after owner restart, idempotent audit, settled runs,
+and preserved process, presentation, continuation, placement and held reservation.
+It takes the standard binary/release/socket/scratch/artifacts arguments plus
+`--broker-module <absolute path to harness-broker/dist/index.js>` for the ASP
+broker module. `participant_eviction_broker.mjs` runs that module's real CLI and
+records any fixture-driver stop/dispose call. `result.json` and `steps.json` are
+the repeatable evidence. Broker-side saved-token invalidation is unsupported.
+
 Participant `.mjs` files are descriptor assets. `n2_restart_self.md` is an
 operator recipe. Retained CLI helpers are documented in its README.
 

@@ -359,6 +359,13 @@ pub async fn attach(server: &super::Shared, body: Value) -> Result<Response, Api
             ),
         ));
     }
+    if attempt["disposition_reason"] == "operator_evict" {
+        return Ok(attachment_reply(
+            "rejected",
+            "participant_operator_evicted",
+            "HRC evicted this attachment; its old credentials cannot re-establish the attempt",
+        ));
+    }
     if body["resumeUnsupported"] == true {
         server
             .store

@@ -65,7 +65,14 @@ predicate: >
   designation-mismatched establishment writes nothing locally. An address
   reservation is independent of any incarnation, is not free in any runtime or
   binding state, transfers rather than releases at succession, survives operator
-  eviction, and is freed only by explicit attributed release. Mail to an absent
+  eviction, and is freed only by explicit attributed release. External operator
+  eviction atomically finalizes HRC runtime and open runs, makes its participant
+  attempt absorbing and audits operator_evict, then removes HRC's attach-token
+  file and disconnects local observation without broker lifecycle RPCs, signals,
+  presentation teardown, continuation loss or placement mutation. The fence
+  survives owner restart and rejects old-attempt attachment. Saved-token
+  revocation inside the external broker is unsupported without an ASP protocol
+  extension; the retired Bun reference did not provide it either. Mail to an absent
   bound host remains pending and never births a substitute. processToken is opaque
   compatibility input ignored for joining, not persisted HRC identity, an HRC
   comparison key, or replacement authority. Registration remains durable when observation is
@@ -185,6 +192,7 @@ source:
   - crates/hrc-native/src/server/placement/runtime_views.rs
   - crates/hrc-native/src/server/broker/participants/establishment.rs
   - crates/hrc-store/src/participants.rs
+  - wrkq:T-12619
   - wrkq:T-11435
   - commit:a0312402d2bdbd156f7db1af8266a2dd6a5de6c8
   - wrkq:T-08207
@@ -202,6 +210,7 @@ source:
   - packages/hrc-server/src/broker-interactive-handlers/substrate-allocator.ts
   - packages/hrc-server/src/participant-registration-handlers.ts
 required_tests:
+  - T-12619 crates/hrc-native/e2e/participant_eviction.py proves both terminate and context eviction with a real ASP broker fixture, HRC token removal, old-attempt refusal after owner restart, idempotent audit, preserved external process and presentation, continuation, placement and held reservation
   - T-12431 isolated real broker and native daemon prove exhausted attempt without runtime row returns 409 participant_establishment_exhausted, exhausted attempt with runtime row retains the previous runtime inspect view, and unrelated unknown runtime returns 404 unknown_runtime; installed Foundry waiter observes no-row terminal refusal with bounded inspect calls in the native owner log
   - T-12431 after activation observe ten full minutes with zero injector inspect 409s and zero periodic_sweep_failed, comparing inspect and broker-event query rates with the pre-activation 2026-11-04 01:20:54-01:30:54Z baseline; no ACP change
   - T-08504 classless join persists before attachment with no admit call or file prerequisite

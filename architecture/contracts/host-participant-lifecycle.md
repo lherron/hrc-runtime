@@ -2089,12 +2089,24 @@ advances the generation.
 
 HRC may detach or evict its own attachment and nothing more. The existing
 `evictExternalParticipant` semantics are unchanged: durable detach/finalize,
-attach-token revocation, audit event — **no broker lifecycle RPC, no process
+HRC-side attach-token revocation, audit event — **no broker lifecycle RPC, no process
 signal, no substrate teardown, no continuation drop, no placement mutation**
 (`external-participant-lifecycle.ts:36-120`). Owner policy cannot change because
 a broker restarted, a controller reconnected, or an epoch advanced. The
 no-kill/no-substitute-birth behavior remains an acceptance requirement **after**
 managed provisioning lands, not only before it.
+
+HRC-side revocation removes HRC's attach-token file and durably fences the
+participant attempt against HRC reestablishment and reattachment, including
+across owner restart. The runtime is finalized with `operator_evict`, open runs
+are settled, and the address reservation remains held (§4.3.4). Repeated eviction
+is idempotent and may finish token-file cleanup after a partial failure.
+
+**Unsupported:** invalidating a saved token inside the participant-owned broker.
+That would require an ASP protocol extension; no broker revoke/rotate operation
+exists. The retired Bun reference never revoked broker credentials either.
+HRC's detach grants no authority over the external process; the participant
+host owns its broker disposal (including Foundry's retirement path).
 
 ---
 
