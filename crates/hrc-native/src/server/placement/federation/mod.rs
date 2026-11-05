@@ -42,6 +42,38 @@ pub fn user_agent() -> String {
     format!("hrc-server/{}", env!("HRC_API_VERSION"))
 }
 
+tokio::task_local! {
+    // Attribution only. Never used for authentication or principal selection.
+    static INBOUND_CALLER: Option<axum::http::HeaderValue>;
+}
+
+/// Scope attribution to this request's future, including joined peer calls.
+/// Detached background work does not inherit the request's caller.
+pub fn with_caller<F: Future>(
+    headers: &axum::http::HeaderMap,
+    future: F,
+) -> impl Future<Output = F::Output> + use<F> {
+    // Box the handler before scoping it: dispatch futures are already large.
+    INBOUND_CALLER.scope(
+        headers.get("x-praesidium-caller").cloned(),
+        Box::pin(future),
+    )
+}
+
+/// Keep the hop's client identity and the original caller as separate labels.
+/// Copy the raw header so the receiver retains absent/invalid accounting.
+pub fn request_headers() -> axum::http::HeaderMap {
+    let mut headers = axum::http::HeaderMap::new();
+    headers.insert(
+        "user-agent",
+        user_agent().parse().expect("server user agent"),
+    );
+    if let Ok(Some(caller)) = INBOUND_CALLER.try_with(Clone::clone) {
+        headers.insert("x-praesidium-caller", caller);
+    }
+    headers
+}
+
 /// registry-client.ts `RegistryRefusedError` / `RegistryUnreachableError`.
 #[derive(Debug)]
 pub enum RegistryError {
@@ -484,7 +516,7 @@ impl Node {
         self.http
             .request(Method::GET, url)
             .header("authorization", format!("Bearer {token}"))
-            .header("user-agent", user_agent())
+            .headers(request_headers())
             .send()
             .await
             .map_err(|e| RegistryError::Transport(transport_text(&e)))
@@ -962,7 +994,7 @@ impl Node {
         self.http
             .post(url)
             .header("authorization", format!("Bearer {token}"))
-            .header("user-agent", user_agent())
+            .headers(request_headers())
             .header("content-type", "application/json")
             .body(body.to_string())
             .send()

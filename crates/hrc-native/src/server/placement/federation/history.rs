@@ -297,7 +297,7 @@ async fn post(server: &Shared, path: &str, body: String) -> Result<Value, String
         .http_client()
         .post(url)
         .header("authorization", format!("Bearer {}", peer.token))
-        .header("user-agent", super::user_agent())
+        .headers(super::request_headers())
         .header("content-type", "application/json")
         .body(body);
     let exchange = async {

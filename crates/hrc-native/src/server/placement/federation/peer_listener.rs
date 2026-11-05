@@ -114,7 +114,12 @@ async fn handle(State(server): State<Shared>, request: Request) -> Response {
     let entry = accounting::Entry::listener(&request, "peer", route, peer.clone());
     let response = match peer {
         None => refusal(StatusCode::UNAUTHORIZED, "unauthorized", json!({})),
-        Some(ref peer) => match route_request(&server, peer, request).await {
+        Some(ref peer) => match super::with_caller(
+            &request.headers().clone(),
+            route_request(&server, peer, request),
+        )
+        .await
+        {
             Ok(response) => response,
             Err(Invalid) => refusal(StatusCode::BAD_REQUEST, "invalid_request", json!({})),
         },

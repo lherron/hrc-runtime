@@ -405,7 +405,8 @@ impl Server {
 async fn dispatch(State(server): State<Shared>, request: Request) -> Response {
     let entry = accounting::Entry::new(&request);
     let mutating = request.method() != Method::GET;
-    let response = dispatch_inner(&server, request, false).await;
+    let headers = request.headers().clone();
+    let response = federation::with_caller(&headers, dispatch_inner(&server, request, false)).await;
     // Every request-path transaction has committed once its response exists.
     if mutating {
         server.ledger_committed();

@@ -95,6 +95,7 @@ async fn handle(State(server): State<Shared>, request: Request) -> Response {
         "unmatched".to_owned()
     };
     let entry = accounting::Entry::listener(&request, "registry", route, peer.clone());
+    let headers = request.headers().clone();
     let response = match peer {
         None => reply(
             json!({"ok":false,"error":"unauthorized"}),
@@ -112,7 +113,12 @@ async fn handle(State(server): State<Shared>, request: Request) -> Response {
             let body = to_bytes(request.into_body(), usize::MAX)
                 .await
                 .unwrap_or_default();
-            match route_request(&server, &peer, &method, &path, &query, &body).await {
+            match super::with_caller(
+                &headers,
+                route_request(&server, &peer, &method, &path, &query, &body),
+            )
+            .await
+            {
                 Ok(response) => response,
                 Err(Failure::Invalid) => reply(
                     json!({"ok":false,"error":"invalid_request"}),

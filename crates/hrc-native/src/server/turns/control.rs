@@ -240,7 +240,7 @@ async fn forward_interrupt(
         .http_client()
         .post(url)
         .bearer_auth(&peer.token)
-        .header("user-agent", federation::user_agent())
+        .headers(federation::request_headers())
         .json(&forwarded)
         .timeout(FORWARD_TIMEOUT)
         .send()

@@ -3,7 +3,7 @@
 //! node's runtimes plus every peer's, each peer probed through its health
 //! route with the same filter. A peer that cannot answer reports why and
 //! serves its last good projection for that filter.
-use super::{Node, log, transport_text, user_agent};
+use super::{Node, log, request_headers, transport_text};
 use crate::server::{ApiError, Server, runtimes};
 use axum::{
     Json,
@@ -78,7 +78,7 @@ async fn probe(
             .http_client()
             .get(url)
             .header("authorization", format!("Bearer {}", peer.token))
-            .header("user-agent", user_agent())
+            .headers(request_headers())
             .send()
             .await?;
         let status = response.status();

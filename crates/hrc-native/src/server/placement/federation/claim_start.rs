@@ -1,7 +1,7 @@
 //! peer-claim-start-client.ts sendPeerClaimStart: one synchronous,
 //! capability-gated claim-and-start on the scope's home peer. The origin sends
 //! only the canonical request; the home re-derives placement and owns the claim.
-use super::user_agent;
+use super::request_headers;
 use crate::server::{ApiError, Shared};
 use axum::{
     http::{HeaderValue, StatusCode},
@@ -76,7 +76,7 @@ pub async fn send(
     let health = client
         .get(url("/v1/federation/health")?)
         .bearer_auth(&peer.token)
-        .header("user-agent", user_agent())
+        .headers(request_headers())
         .timeout(TIMEOUT)
         .send()
         .await
@@ -104,7 +104,7 @@ pub async fn send(
     let response = client
         .post(url(path)?)
         .bearer_auth(&peer.token)
-        .header("user-agent", user_agent())
+        .headers(request_headers())
         .header("content-type", "application/json")
         .body(request.to_string())
         .timeout(TIMEOUT)

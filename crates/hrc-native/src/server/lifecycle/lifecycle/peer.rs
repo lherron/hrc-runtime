@@ -23,7 +23,7 @@ async fn started_at(server: &Server, peer: &FederationPeer) -> Option<String> {
         .http_client()
         .get(url(peer, "/v1/federation/health"))
         .bearer_auth(&peer.token)
-        .header("user-agent", federation::user_agent())
+        .headers(federation::request_headers())
         .timeout(Duration::from_secs(5))
         .send()
         .await
@@ -64,7 +64,7 @@ pub async fn forward(
         .http_client()
         .post(url(peer, "/v1/federation/server-lifecycle"))
         .bearer_auth(&peer.token)
-        .header("user-agent", federation::user_agent())
+        .headers(federation::request_headers())
         .json(&attestation)
         .timeout(Duration::from_millis(budget))
         .send()

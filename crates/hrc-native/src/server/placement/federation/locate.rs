@@ -3,8 +3,8 @@
 //! and `GET /v1/federation/designations` (placement-federation-handlers.ts).
 use super::policy::{Policy, policy_for, scope_parts};
 use super::{
-    Authority, Binding, Designation, Node, ledger_row, log, resolve_home, transport_text,
-    user_agent,
+    Authority, Binding, Designation, Node, ledger_row, log, request_headers, resolve_home,
+    transport_text,
 };
 use crate::server::{ApiError, Server, stderr_json};
 use axum::{
@@ -161,7 +161,7 @@ async fn locate_peer(node: &Node, peer: &FederationPeer, scope: &str) -> Value {
             .http_client()
             .post(url)
             .header("authorization", format!("Bearer {}", peer.token))
-            .header("user-agent", user_agent())
+            .headers(request_headers())
             .header("content-type", "application/json")
             .body(json!({"scopeRef":scope}).to_string())
             .send()

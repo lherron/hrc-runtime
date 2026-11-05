@@ -2,7 +2,7 @@
 //! (federation/scope-read-routing.ts, T-10418). Home authority decides before
 //! any local continuity read; a foreign scope is forwarded to its home's peer
 //! listener, which answers localOnly so a forwarded read never takes a second hop.
-use super::{Authority, ledger_row, log, resolve_home, transport_text, user_agent};
+use super::{Authority, ledger_row, log, request_headers, resolve_home, transport_text};
 use crate::server::{ApiError, Server};
 use axum::{
     body::{Body, Bytes},
@@ -221,7 +221,7 @@ async fn open(
         .http_client()
         .request(scoped.method.clone(), url)
         .header("authorization", format!("Bearer {}", peer.token))
-        .header("user-agent", user_agent());
+        .headers(request_headers());
     if let Some(body) = &scoped.body {
         request = request
             .header("content-type", "application/json")
