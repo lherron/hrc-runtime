@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test'
-import { TEXT_BYTES, buildRequest, capText, classify } from './classifier.js'
+import { type JevRequest, TEXT_BYTES, buildRequest, capText, classify } from './classifier.js'
 
 const turn = {
   agent: 'mable',
@@ -9,7 +9,7 @@ const turn = {
   final_text: 'Ship it?',
 }
 
-function fakeJev(probabilities: Record<string, number>) {
+function fakeJev(probabilities: Record<string, number>): JevRequest {
   return (async () =>
     new Response(
       JSON.stringify({
@@ -22,7 +22,7 @@ function fakeJev(probabilities: Record<string, number>) {
         },
       }),
       { status: 200 }
-    )) as unknown as typeof fetch
+    )) as unknown as JevRequest
 }
 
 describe('classify lit/state agreement', () => {

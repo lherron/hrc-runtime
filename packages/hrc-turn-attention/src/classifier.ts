@@ -48,7 +48,9 @@ const probability = (value: unknown): number => {
   }
   return value
 }
-export async function classify(turn: TurnText, key: string, request = fetch) {
+/** The hosted jev transport: `fetch`, or a test's stand-in for it. */
+export type JevRequest = typeof fetch
+export async function classify(turn: TurnText, key: string, request: JevRequest = fetch) {
   const started = performance.now()
   const response = await request('https://api.typesafe.ai/v1/systemone', {
     method: 'POST',
