@@ -25,6 +25,17 @@ the agent digest of the published references `/a/hrc-build-deploy-guide` and
   `mable@<project>:primary`), then read back `runningEqualsInstalled` and the new
   release in `binaryPath` / `packagePath`
   ([docs/operations-runbook.md](docs/operations-runbook.md#restart-doctrine)).
+- On a rusthrc owner node, `just install` only cuts over the CLI release
+  (`~/.bun/install/hrc-runtime-current`). The daemon runs the owner release
+  under `~/praesidium/var/hrc-owner/`, which only `just deploy-max3` stages. So
+  `just install` plus `hrc server restart` relaunches the OLD daemon build, and
+  `runningEqualsInstalled` still reads true because it compares against the
+  owner release. To activate a daemon change, push it and ask Mable for
+  `just deploy-max3`. Read back `release.hrcBuild.sourceCommit` in
+  `hrc server status --json` (T-12644 cost an extra restart cycle on this).
+  The turn-attention subscriber is `bunx hrc-turn-attention@<version>`: it needs
+  `just publish` plus `just install-turn-attention-launchd <version>`, or
+  deploy-max3, which re-points it to latest.
 - An HRC install before `just pull-deps` ships the OLD agent-spaces tuple, and
   so does one after a `pull-deps` that did not move `bun.lock`, so read back
   `git log -1 -- bun.lock` before installing. Editing the agent-spaces checkout has
