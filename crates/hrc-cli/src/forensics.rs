@@ -1,7 +1,7 @@
 //! monitor events/transcript/stats: the durable broker invocation ledger.
 use crate::js::{display, member, one_line, utf16_len, utf16_prefix};
 use crate::{Error, Result, client::Daemon, parse::Parsed};
-use serde_json::{Map, Value, json};
+use serde_json::Value;
 
 const HUMAN_CLIP_CHARS: usize = 1_000;
 use hrc_store::status::FORENSIC_TERMINAL;
@@ -169,13 +169,18 @@ fn previous_runtime(raw: &str, client: &Daemon, n: u64) -> Result<String> {
     )))
 }
 
-fn get(client: &Daemon, key: &str, value: &str) -> Result<Value> {
-    client.get("/v1/broker-forensics", &[(key.into(), value.into())])
+fn get(client: &Daemon, route: &str, key: &str, value: &str) -> Result<Value> {
+    client.get(route, &[(key.into(), value.into())])
 }
 
 fn fetch(args: &Parsed<'_>) -> Result<Value> {
     let target = args.positionals.first().map(String::as_str);
     let client = Daemon::connect()?;
+    let route = if args.path() == "monitor stats" {
+        "/v1/broker-stats"
+    } else {
+        "/v1/broker-forensics"
+    };
     let previous = previous(args)?;
     let latest = args.flag("latest");
     if latest && previous.is_some() {
@@ -192,17 +197,17 @@ fn fetch(args: &Parsed<'_>) -> Result<Value> {
         if previous.is_some() {
             return Err(Error::usage("--previous requires a scope or handle target"));
         }
-        return get(&client, "sourceRef", source);
+        return get(&client, route, "sourceRef", source);
     }
     let Some(target) = target else {
         return Err(Error::usage("either <target> or --source-ref is required"));
     };
     if let Some(n) = previous {
         let id = previous_runtime(target, &client, n)?;
-        return get(&client, "targetId", &id);
+        return get(&client, route, "targetId", &id);
     }
     // Exact persisted runtime and invocation IDs resolve in the daemon.
-    match get(&client, "targetId", target) {
+    match get(&client, route, "targetId", target) {
         Err(e)
             if e.domain
                 .as_ref()
@@ -210,7 +215,7 @@ fn fetch(args: &Parsed<'_>) -> Result<Value> {
         other => return other,
     }
     let id = crate::selectors::runtime(target, &client, latest)?;
-    get(&client, "targetId", &id)
+    get(&client, route, "targetId", &id)
 }
 
 fn events_of(result: &Value) -> Vec<Value> {
@@ -413,75 +418,32 @@ pub(crate) fn transcript(args: &Parsed<'_>) -> Result<()> {
 
 pub(crate) fn stats(args: &Parsed<'_>) -> Result<()> {
     let result = fetch(args)?;
-    let events = events_of(&result);
-    let mut histogram: Vec<(String, u64)> = vec![];
-    let mut turn_ids: Vec<String> = vec![];
-    let mut per_turn: Vec<(String, u64)> = vec![];
-    let mut anonymous = 0;
-    for event in &events {
-        let ty = member(event, "type");
-        match histogram.iter_mut().find(|(t, _)| *t == ty) {
-            Some((_, n)) => *n += 1,
-            None => histogram.push((ty.clone(), 1)),
-        }
-        let turn = event.get("turnId").filter(|v| truthy(v)).map(display);
-        if let Some(turn) = &turn {
-            if !turn_ids.contains(turn) {
-                turn_ids.push(turn.clone());
-            }
-            if !per_turn.iter().any(|(t, _)| t == turn) {
-                per_turn.push((turn.clone(), 0));
-            }
-        }
-        if turn.is_none() && ty == "turn.started" {
-            anonymous += 1;
-        }
-        if ty == "tool.call.started"
-            && let Some(turn) = &turn
-            && let Some((_, n)) = per_turn.iter_mut().find(|(t, _)| t == turn)
-        {
-            *n += 1;
-        }
-    }
-    let mut activity = events
+    let stats = &result;
+    let turn_count = &stats["turnCount"];
+    let tool_calls = &stats["toolCallCount"];
+    let activity: Vec<String> = ["firstActivity", "lastActivity"]
         .iter()
-        .filter_map(|e| e.get("time").map(display))
-        .collect::<Vec<_>>();
-    activity.sort_by(|a, b| a.encode_utf16().cmp(b.encode_utf16()));
-    let tool_calls = histogram
-        .iter()
-        .find(|(t, _)| t == "tool.call.started")
-        .map_or(0, |(_, n)| *n);
-    let mut sorted = histogram.clone();
-    sorted.sort_by(|(a, _), (b, _)| crate::js::locale_cmp(a, b));
-    let turn_count = if turn_ids.is_empty() {
-        anonymous
-    } else {
-        turn_ids.len() as u64
-    };
-    let mut stats = Map::new();
-    for key in ["targetKind", "targetId", "runtimeIds", "invocationIds"] {
-        if let Some(v) = result.get(key) {
-            stats.insert(key.into(), v.clone());
-        }
-    }
-    stats.insert(
-        "eventTypes".into(),
-        Value::Object(sorted.iter().map(|(t, n)| (t.clone(), json!(n))).collect()),
-    );
-    stats.insert("turnCount".into(), json!(turn_count));
-    stats.insert("toolCallCount".into(), json!(tool_calls));
-    stats.insert("firstActivity".into(), json!(activity.first()));
-    stats.insert("lastActivity".into(), json!(activity.last()));
-    stats.insert(
-        "perTurn".into(),
-        per_turn
-            .iter()
-            .map(|(t, n)| json!({"turnId":t,"toolCallCount":n}))
-            .collect(),
-    );
+        .filter_map(|k| stats[k].as_str().map(str::to_owned))
+        .collect();
+    let sorted: Vec<(&str, &Value)> = stats["eventTypes"]
+        .as_object()
+        .into_iter()
+        .flatten()
+        .map(|(t, n)| (t.as_str(), n))
+        .collect();
+    let per_turn: Vec<(String, u64)> = stats["perTurn"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .map(|v| {
+            (
+                member(v, "turnId"),
+                v["toolCallCount"].as_u64().unwrap_or(0),
+            )
+        })
+        .collect();
     if args.flag("json") {
-        crate::print_json(&Value::Object(stats));
+        crate::print_json(stats);
         return Ok(());
     }
     let ids = |key: &str| {

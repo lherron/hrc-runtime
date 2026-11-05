@@ -2,36 +2,7 @@
 //! coercion, UTF-16 lengths, `\s` whitespace and ICU root `localeCompare`.
 use serde_json::Value;
 
-/// `String(value)` for a JSON value; a missing member renders as `undefined`.
-pub(crate) fn display(value: &Value) -> String {
-    match value {
-        Value::Null => "null".into(),
-        Value::Bool(b) => b.to_string(),
-        Value::Number(n) => n
-            .as_i64()
-            .map(|i| i.to_string())
-            .or_else(|| n.as_u64().map(|u| u.to_string()))
-            .unwrap_or_else(|| number(n.as_f64().unwrap_or(f64::NAN))),
-        Value::String(s) => s.clone(),
-        Value::Array(items) => items
-            .iter()
-            .map(|v| {
-                if v.is_null() {
-                    String::new()
-                } else {
-                    display(v)
-                }
-            })
-            .collect::<Vec<_>>()
-            .join(","),
-        Value::Object(_) => "[object Object]".into(),
-    }
-}
-
-/// `String(value)` where an absent member is `undefined` rather than `null`.
-pub(crate) fn member(value: &Value, key: &str) -> String {
-    value.get(key).map_or_else(|| "undefined".into(), display)
-}
+pub(crate) use hrc_common::js::{display, member};
 
 pub(crate) use hrc_common::js::is_space;
 pub(crate) use hrc_common::js::number;

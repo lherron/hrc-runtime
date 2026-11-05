@@ -84,6 +84,10 @@ fn forensics_row(row: &Value) -> Value {
 }
 
 pub fn handle(server: &Server, query: &HashMap<String, String>) -> Result<Response, ApiError> {
+    Ok(Json(select(server, query)?).into_response())
+}
+
+fn select(server: &Server, query: &HashMap<String, String>) -> Result<Value, ApiError> {
     let source = normalized(query, "sourceRef");
     let target = normalized(query, "targetId");
     if source.is_some() == target.is_some() {
@@ -104,14 +108,13 @@ pub fn handle(server: &Server, query: &HashMap<String, String>) -> Result<Respon
     };
     if let Some(source) = source {
         let rows = events("WHERE source_ref = ? ORDER BY origin_seq ASC", source)?;
-        return Ok(Json(body(
+        return Ok(body(
             "source_ref",
             source,
             unique(&rows, "runtimeId"),
             unique(&rows, "invocationId"),
             &rows,
-        ))
-        .into_response());
+        ));
     }
     let target = target.unwrap();
     let invocation_runtime: Option<String> = db
@@ -125,14 +128,13 @@ pub fn handle(server: &Server, query: &HashMap<String, String>) -> Result<Respon
         .map_err(anyhow::Error::from)?;
     if let Some(runtime) = invocation_runtime {
         let rows = events("WHERE invocation_id = ? ORDER BY seq ASC", target)?;
-        return Ok(Json(body(
+        return Ok(body(
             "invocation",
             target,
             vec![runtime.into()],
             vec![target.into()],
             &rows,
-        ))
-        .into_response());
+        ));
     }
     let runtime_exists = db
         .sqlite
@@ -148,14 +150,13 @@ pub fn handle(server: &Server, query: &HashMap<String, String>) -> Result<Respon
     if !runtime_exists {
         let rows = events("WHERE invocation_id = ? ORDER BY seq ASC", target)?;
         if !rows.is_empty() {
-            return Ok(Json(body(
+            return Ok(body(
                 "invocation",
                 target,
                 unique(&rows, "runtimeId"),
                 vec![target.into()],
                 &rows,
-            ))
-            .into_response());
+            ));
         }
     }
     let rows = events(by_runtime, target)?;
@@ -167,12 +168,92 @@ pub fn handle(server: &Server, query: &HashMap<String, String>) -> Result<Respon
             Some(json!({"targetId":target})),
         ));
     }
-    Ok(Json(body(
+    Ok(body(
         "runtime",
         target,
         vec![target.into()],
         unique(&rows, "invocationId"),
         &rows,
     ))
-    .into_response())
+}
+
+/// Same persisted selection/refusal contract as broker-forensics.
+pub fn stats(server: &Server, query: &HashMap<String, String>) -> Result<Response, ApiError> {
+    Ok(Json(aggregate(&select(server, query)?)).into_response())
+}
+
+fn aggregate(result: &Value) -> Value {
+    use hrc_common::js::{display, member};
+    use serde_json::Map;
+    let events = result["events"].as_array().cloned().unwrap_or_default();
+    let mut histogram: Vec<(String, u64)> = vec![];
+    let mut turn_ids: Vec<String> = vec![];
+    let mut per_turn: Vec<(String, u64)> = vec![];
+    let mut anonymous = 0;
+    for event in &events {
+        let ty = member(event, "type");
+        match histogram.iter_mut().find(|(t, _)| *t == ty) {
+            Some((_, n)) => *n += 1,
+            None => histogram.push((ty.clone(), 1)),
+        }
+        let turn = event
+            .get("turnId")
+            .filter(|v| !v.is_null() && **v != json!(false) && **v != json!("") && **v != json!(0))
+            .map(display);
+        if let Some(turn) = &turn {
+            if !turn_ids.contains(turn) {
+                turn_ids.push(turn.clone());
+            }
+            if !per_turn.iter().any(|(t, _)| t == turn) {
+                per_turn.push((turn.clone(), 0));
+            }
+        }
+        if turn.is_none() && ty == "turn.started" {
+            anonymous += 1;
+        }
+        if ty == "tool.call.started"
+            && let Some(turn) = &turn
+            && let Some((_, n)) = per_turn.iter_mut().find(|(t, _)| t == turn)
+        {
+            *n += 1;
+        }
+    }
+    let mut activity = events
+        .iter()
+        .filter_map(|e| e.get("time").map(display))
+        .collect::<Vec<_>>();
+    activity.sort_by(|a, b| a.encode_utf16().cmp(b.encode_utf16()));
+    let tool_calls = histogram
+        .iter()
+        .find(|(t, _)| t == "tool.call.started")
+        .map_or(0, |(_, n)| *n);
+    let mut sorted = histogram.clone();
+    sorted.sort_by(|(a, _), (b, _)| hrc_common::js::locale_cmp(a, b));
+    let turn_count = if turn_ids.is_empty() {
+        anonymous
+    } else {
+        turn_ids.len() as u64
+    };
+    let mut stats = Map::new();
+    for key in ["targetKind", "targetId", "runtimeIds", "invocationIds"] {
+        if let Some(v) = result.get(key) {
+            stats.insert(key.into(), v.clone());
+        }
+    }
+    stats.insert(
+        "eventTypes".into(),
+        Value::Object(sorted.iter().map(|(t, n)| (t.clone(), json!(n))).collect()),
+    );
+    stats.insert("turnCount".into(), json!(turn_count));
+    stats.insert("toolCallCount".into(), json!(tool_calls));
+    stats.insert("firstActivity".into(), json!(activity.first()));
+    stats.insert("lastActivity".into(), json!(activity.last()));
+    stats.insert(
+        "perTurn".into(),
+        per_turn
+            .iter()
+            .map(|(t, n)| json!({"turnId":t,"toolCallCount":n}))
+            .collect(),
+    );
+    Value::Object(stats)
 }
