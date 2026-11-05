@@ -1,5 +1,5 @@
 import { type SessionIdentity, formatSessionIdentityHandle } from 'hrc-core'
-import { MIN_IDLE_MS, type PaneStatus, color } from './types'
+import { HRCPTY_MIN_IDLE_MS, MIN_IDLE_MS, type PaneStatus, color } from './types'
 
 export function sqlQuote(value: string): string {
   return value.replaceAll("'", "''")
@@ -94,6 +94,10 @@ export function skipReasons(status: PaneStatus, minIdleMs: number = MIN_IDLE_MS)
   }
 
   const reasons: string[] = []
+  // hrcpty seats (shape c below) have their own rule: `T-…` task seats only, and
+  // a 4-hour idle clock whether or not a viewer pane shows them.
+  const hrcpty = status.transport === 'hrcpty' || status.presentationKind === 'hrcpty'
+  const idleMs = hrcpty ? HRCPTY_MIN_IDLE_MS : minIdleMs
 
   if (status.identity?.taskId === 'primary') {
     reasons.push(
@@ -126,9 +130,19 @@ export function skipReasons(status: PaneStatus, minIdleMs: number = MIN_IDLE_MS)
   //       TUI window, i.e. presentation.kind === 'tmux-tui' over a leased-tmux
   //       substrate. The HRC transport is the broker channel to the daemon
   //       ('headless'), but the runtime still owns an operator-visible tmux pane.
+  //   (c) hrcpty task seat:  transport or presentation.kind === 'hrcpty' — the
+  //       broker hosts the harness under an hrc-pty supervisor, and terminate
+  //       disposes it the same way. Placement-home and other non-task seats stay.
   // The raw transport value alone is NOT sufficient — for headless runtimes the
   // persisted hosting state (presentationKind / substrateKind) decides.
-  if (status.transport !== 'tmux') {
+  if (hrcpty) {
+    const taskId = status.identity?.taskId ?? ''
+    if (taskId !== 'primary' && !taskId.startsWith('T-')) {
+      reasons.push(
+        `hrcpty seat "${taskId || 'unknown'}" is not a T-… task seat — standing and placement-home seats are never reaped by this sweep`
+      )
+    }
+  } else if (status.transport !== 'tmux') {
     if (status.presentationKind === undefined) {
       // No hosting-state presentation info (legacy metadata path): there is no
       // way to confirm a tmux TUI window, so fall back to the raw transport gate.
@@ -224,11 +238,11 @@ export function skipReasons(status: PaneStatus, minIdleMs: number = MIN_IDLE_MS)
   const lastActivityMs = Date.parse(status.lastActivityUtc)
   if (!Number.isFinite(lastActivityMs)) {
     reasons.push(
-      `latest activity time is missing or invalid — cannot confirm ${formatIdleThreshold(minIdleMs)} idle`
+      `latest activity time is missing or invalid — cannot confirm ${formatIdleThreshold(idleMs)} idle`
     )
-  } else if (!isIdleLongerThanThreshold(status.lastActivityUtc, minIdleMs)) {
+  } else if (!isIdleLongerThanThreshold(status.lastActivityUtc, idleMs)) {
     reasons.push(
-      `latest activity was ${formatDurationAgo(status.lastActivityUtc)} — requires more than ${formatIdleThreshold(minIdleMs)} idle`
+      `latest activity was ${formatDurationAgo(status.lastActivityUtc)} — requires more than ${formatIdleThreshold(idleMs)} idle`
     )
   }
 

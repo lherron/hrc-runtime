@@ -6,6 +6,9 @@ import { join } from 'node:path'
 
 import {
   HEADLESS_PANE_ROLE,
+  HRCPTY_MIN_IDLE_MS,
+  MIN_IDLE_MS,
+  PANELESS_CANDIDATE_MIN_IDLE_MS,
   PANELESS_MIN_IDLE_MS,
   type PaneStatus,
   classifyReapExec,
@@ -941,5 +944,68 @@ describe('paneless inventory reap', () => {
       identity: { kind: 'project-task', agentId: 'mable', projectId: 'p', taskId: 'primary' },
     })
     expect(isQuitEligible(status, PANELESS_MIN_IDLE_MS)).toBe(false)
+  })
+})
+
+// hrcpty task seats (2026-11-05, Lance via T-12500): the fleet runs on hrcpty, and
+// the tmux-only surface gate left every idle hrcpty task seat live. An hrcpty
+// runtime is reapable when it is a `T-…` task seat that is otherwise eligible and
+// idle strictly more than 4 hours. That holds with a viewer pane (where tmux
+// panes use 30 minutes) and without one (where other runtimes use 12 hours).
+describe('hrcpty task seats reap after 4 hours', () => {
+  const hoursAgo = (h: number) => new Date(Date.now() - h * 3_600_000).toISOString()
+  function hrcptyStatus(overrides: Partial<PaneStatus> = {}): PaneStatus {
+    return {
+      ...eligibleStatus(),
+      identity: { kind: 'project-task', agentId: 'cody', projectId: 'p', taskId: 'T-12512' },
+      scopeRef: 'agent:cody:project:p:task:T-12512',
+      transport: 'hrcpty',
+      presentationKind: 'hrcpty',
+      substrateKind: '',
+      lastActivityUtc: hoursAgo(5),
+      ...overrides,
+    } as PaneStatus
+  }
+
+  it('reaps an idle, complete hrcpty task seat past 4 hours, with or without a pane', () => {
+    expect(skipReasons(hrcptyStatus(), MIN_IDLE_MS)).toEqual([])
+    expect(skipReasons(hrcptyStatus(), PANELESS_MIN_IDLE_MS)).toEqual([])
+  })
+
+  it('keeps an hrcpty task seat idle under 4 hours, even with a pane', () => {
+    const status = hrcptyStatus({ lastActivityUtc: hoursAgo(3) })
+    expect(isQuitEligible(status, MIN_IDLE_MS)).toBe(false)
+    expect(skipReasons(status, MIN_IDLE_MS).some((r) => /more than 4 hours idle/.test(r))).toBe(
+      true
+    )
+  })
+
+  it('never reaps a non-task hrcpty seat (placement homes like minisvc)', () => {
+    const status = hrcptyStatus({
+      identity: { kind: 'project-task', agentId: 'mable', projectId: 'p', taskId: 'minisvc' },
+      scopeRef: 'agent:mable:project:p:task:minisvc',
+    })
+    expect(isQuitEligible(status, PANELESS_MIN_IDLE_MS)).toBe(false)
+    expect(skipReasons(status, PANELESS_MIN_IDLE_MS).some((r) => /task seat/.test(r))).toBe(true)
+  })
+
+  it('keeps the primary, chief and active-run guards for hrcpty', () => {
+    const primary = { kind: 'project-task', agentId: 'cody', projectId: 'p', taskId: 'primary' }
+    const chief = { kind: 'project-task', agentId: 'chief', projectId: 'hcs', taskId: 'T-07818' }
+    expect(isQuitEligible(hrcptyStatus({ identity: primary } as Partial<PaneStatus>))).toBe(false)
+    expect(isQuitEligible(hrcptyStatus({ identity: chief } as Partial<PaneStatus>))).toBe(false)
+    expect(isQuitEligible(hrcptyStatus({ activeRunId: 'run-live' }))).toBe(false)
+    expect(isQuitEligible(hrcptyStatus({ runtimeStatus: 'busy' }))).toBe(false)
+  })
+
+  it('leaves non-hrcpty thresholds alone: a paneless tmux runtime still needs 12 hours', () => {
+    const tmux = eligibleStatus({ lastActivityUtc: hoursAgo(5) })
+    expect(isQuitEligible(tmux, PANELESS_MIN_IDLE_MS)).toBe(false)
+    expect(isQuitEligible(tmux, MIN_IDLE_MS)).toBe(true)
+  })
+
+  it('lists hrcpty paneless candidates from 4 hours, so the inventory pre-filter does not hide them', () => {
+    expect(PANELESS_CANDIDATE_MIN_IDLE_MS).toBe(HRCPTY_MIN_IDLE_MS)
+    expect(HRCPTY_MIN_IDLE_MS).toBe(4 * 3_600_000)
   })
 })

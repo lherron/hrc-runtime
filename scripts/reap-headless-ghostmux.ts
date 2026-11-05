@@ -37,9 +37,12 @@ import { classifyReapExec, isAlreadyTerminatedError, sendReap } from './reap-hea
 import {
   type DiscoveredPane,
   HEADLESS_PANE_ROLE,
+  HRCPTY_MIN_IDLE_HOURS,
+  HRCPTY_MIN_IDLE_MS,
   MIN_IDLE_MINUTES,
   MIN_IDLE_MS,
   type Options,
+  PANELESS_CANDIDATE_MIN_IDLE_MS,
   PANELESS_MIN_IDLE_HOURS,
   PANELESS_MIN_IDLE_MS,
   type PaneStatus,
@@ -287,10 +290,11 @@ async function sweep(options: Options): Promise<number> {
   const panes = timePhase('discover', () => listPanes(options))
   const statuses = timePhase('query-status', () => queryStatuses(panes, options))
   // Runtimes whose Ghostty pane is gone never reach pane discovery; find them
-  // in the HRC inventory and hold them to the longer paneless idle clock.
+  // in the HRC inventory and hold them to the longer paneless idle clock
+  // (hrcpty task seats keep their own 4 h clock, so list from the shorter one).
   const paneRuntimeIds = new Set(statuses.map((status) => status.runtimeId).filter(Boolean))
   const panelessTargets = timePhase('discover-paneless', () =>
-    listPanelessTargets(options, PANELESS_MIN_IDLE_MS, paneRuntimeIds)
+    listPanelessTargets(options, PANELESS_CANDIDATE_MIN_IDLE_MS, paneRuntimeIds)
   )
   const panelessStatuses = timePhase('query-status-paneless', () =>
     queryStatuses(panelessTargets, options)
@@ -309,8 +313,8 @@ async function sweep(options: Options): Promise<number> {
     console.log()
     printStatus(
       panelessStatuses,
-      `Paneless runtimes idle >${PANELESS_MIN_IDLE_HOURS}h`,
-      `No paneless runtimes idle >${PANELESS_MIN_IDLE_HOURS}h.`,
+      `Paneless runtimes idle >${HRCPTY_MIN_IDLE_HOURS}h (hrcpty task seats) or >${PANELESS_MIN_IDLE_HOURS}h`,
+      `No paneless runtimes idle >${HRCPTY_MIN_IDLE_HOURS}h.`,
       PANELESS_MIN_IDLE_MS
     )
   })
@@ -324,7 +328,7 @@ async function sweep(options: Options): Promise<number> {
     console.log()
     console.log(
       color.dim(
-        `Reap eligibility: ${eligibleStatuses.length} eligible, ${skipped} skipped (requires scope task!=primary, agent!=chief, controllerKind=harness-broker, a tmux TUI window (transport=tmux OR headless+leased-tmux+presentation=tmux-tui), runtime=ready, no active run, latest turn=completed (a coalesced turn resolves to its owner run), idle>${MIN_IDLE_MINUTES}m with a pane or >${PANELESS_MIN_IDLE_HOURS}h without).`
+        `Reap eligibility: ${eligibleStatuses.length} eligible, ${skipped} skipped (requires scope task!=primary, agent!=chief, controllerKind=harness-broker, a tmux TUI window (transport=tmux OR headless+leased-tmux+presentation=tmux-tui) OR an hrcpty T-… task seat, runtime=ready, no active run, latest turn=completed (a coalesced turn resolves to its owner run), idle>${MIN_IDLE_MINUTES}m with a pane or >${PANELESS_MIN_IDLE_HOURS}h without; hrcpty task seats idle>${HRCPTY_MIN_IDLE_HOURS}h either way).`
       )
     )
   }
@@ -417,6 +421,9 @@ if (import.meta.main) {
 
 export {
   HEADLESS_PANE_ROLE,
+  HRCPTY_MIN_IDLE_MS,
+  MIN_IDLE_MS,
+  PANELESS_CANDIDATE_MIN_IDLE_MS,
   classifyReapExec,
   isAlreadyTerminatedError,
   isQuitEligible,
