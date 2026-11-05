@@ -375,15 +375,20 @@ pub async fn bindings(server: &Server) -> Result<Response, ApiError> {
 async fn scan_bindings(server: &Server) -> Value {
     let node = &server.federation;
     // A pre-federation store has no placement table: nothing is bound here.
-    let rows: Vec<(String, Binding)> = server
+    // `live`: the scope has a runtime that is not terminal. Doctor warns on an
+    // unreadable policy only for a live binding (T-11372); a dormant one is
+    // resolved again by its next summon.
+    let rows: Vec<(String, Binding, bool)> = server
         .store
         .lock()
         .unwrap()
         .sqlite
-        .prepare(
-            "SELECT scope_ref, home_node_id, created_at, updated_at FROM placement_ledger
-              WHERE state = 'active' ORDER BY scope_ref",
-        )
+        .prepare(&format!(
+            "SELECT p.scope_ref, p.home_node_id, p.created_at, p.updated_at,
+                    EXISTS(SELECT 1 FROM runtimes r WHERE r.scope_ref = p.scope_ref AND r.status NOT IN ({}))
+               FROM placement_ledger p WHERE p.state = 'active' ORDER BY p.scope_ref",
+            hrc_store::status::unavailable_sql()
+        ))
         .and_then(|mut stmt| {
             stmt.query_map([], |r| {
                 Ok((
@@ -393,6 +398,7 @@ async fn scan_bindings(server: &Server) -> Value {
                         created_at: r.get(2)?,
                         updated_at: r.get(3)?,
                     },
+                    r.get::<_, bool>(4)?,
                 ))
             })?
             .collect()
@@ -402,7 +408,7 @@ async fn scan_bindings(server: &Server) -> Value {
     let (mut skewed, mut unreadable, mut slowest) = (vec![], vec![], Vec::<(String, u64)>::new());
     let mut scanned = 0;
     let mut truncated = None;
-    for (index, (scope, binding)) in rows.iter().enumerate() {
+    for (index, (scope, binding, live)) in rows.iter().enumerate() {
         let remaining = BINDINGS_SCAN_BUDGET.saturating_sub(started.elapsed());
         let resolve_started = Instant::now();
         let declared = match tokio::time::timeout(remaining, declared(server, scope)).await {
@@ -419,7 +425,7 @@ async fn scan_bindings(server: &Server) -> Value {
         slowest.truncate(5);
         scanned += 1;
         if declared["source"] == "unavailable" {
-            unreadable.push(json!({"scopeRef":scope,"detail":declared["detail"]}));
+            unreadable.push(json!({"scopeRef":scope,"detail":declared["detail"],"live":live}));
             continue;
         }
         let authority = Authority::Bound {

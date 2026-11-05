@@ -1029,12 +1029,21 @@ async fn status(
             Some(json!({"includeSessions":v})),
         ));
     }
+    // Probed before the store lock: a slow peer must not hold it.
+    let peer_health = if query.get("includePeerHealth").is_some_and(|v| v == "true") {
+        Some(federation::peer_health(&server.federation).await)
+    } else {
+        None
+    };
     let aspd = aspc::service_status().await;
     let tmux = status_runtime::tmux().await;
     let db = server.store.lock().unwrap();
     let binary = env::current_exe().map_err(anyhow::Error::from)?;
     let mut value = json!({"ok":true,"uptime":server.started.elapsed().as_secs(),"startedAt":server.started_at,"runtimeRoot":server.runtime,"stateRoot":server.state,"socketPath":server.runtime.join("hrc.sock"),"listenSocketPath":server.runtime.join("hrc.sock"),"dbPath":server.state.join("state.sqlite"),"cwd":env::current_dir().map_err(anyhow::Error::from)?,"binaryPath":binary,"packagePath":binary.parent(),"release":server.release.status(),"aspToolchain":{"toolchainRootActive":false,"binaries":[]},"aspd":aspd,"sessionCount":db.count("sessions")?,"runtimeCount":db.count("runtimes")?,"apiVersion":env!("HRC_API_VERSION"),"eventLoop":server.event_loop.lock().unwrap().snapshot(),"lastRestart":lifecycle::rows::last_restart(&db.sqlite)?,"node":server.federation.config.summary(),"mailKicker":"absent"});
     value["capabilities"] = json!({"semanticCore":{"sessions":true,"ensureRuntime":true,"dispatchTurn":true,"inFlightInput":true,"capture":true,"attach":true,"clearContext":true},"platform":{"appOwnedSessions":false,"appHarnessSessions":false,"commandSessions":true,"literalInput":true,"surfaceBindings":true,"legacyLocalBridges":[]},"bridgeDelivery":{"actualPtyInjection":false,"enter":false,"oobSuffix":false,"freshnessFence":false},"backend":{"tmux":tmux},"serverLifecycle":!server.front,"selfRestart":true,"sessionRestart":true,"federatedSessionRead":true,"runtimeListOmitState":true});
+    if let Some(peer_health) = peer_health {
+        value["peerHealth"] = peer_health.into();
+    }
     if query.get("includeSessions").is_some_and(|v| v == "true") {
         value["sessions"] = json!(
             db.sessions()?

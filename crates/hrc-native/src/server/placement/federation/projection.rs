@@ -45,11 +45,12 @@ fn runtimes_of(body: &Value) -> Option<Value> {
         .then(|| Value::Array(rows.clone()))
 }
 
-/// probePeerHealth with includeRuntimes: (health observation, runtimes).
+/// probePeerHealth: (health observation, runtimes when `include_runtimes`).
 async fn probe(
     node: &Node,
     peer: &FederationPeer,
     query: &[(String, String)],
+    include_runtimes: bool,
 ) -> (Value, Option<Value>) {
     let checked = timestamp();
     let started = Instant::now();
@@ -60,7 +61,7 @@ async fn probe(
     else {
         return (health("unreachable", "Invalid URL".into()), None);
     };
-    {
+    if include_runtimes {
         let mut pairs = url.query_pairs_mut();
         pairs.append_pair("includeRuntimes", "true");
         for (k, v) in query {
@@ -102,7 +103,7 @@ async fn probe(
         || !capabilities["locate"].is_boolean()
         || !capabilities["health"].is_boolean()
         || nonempty(&body["startedAt"]).is_none()
-        || runtimes.is_none()
+        || (include_runtimes && runtimes.is_none())
     {
         let detail = if node_id != Some(peer.node_id.as_str()) {
             format!("peer identified itself as {}", node_id.unwrap_or("unknown"))
@@ -201,7 +202,34 @@ async fn futures_join(node: &Node, query: &[(String, String)]) -> Vec<(Value, Op
         node.config
             .peers
             .iter()
-            .map(|peer| probe(node, peer, query)),
+            .map(|peer| probe(node, peer, query, true)),
     )
     .await
+}
+
+/// `GET /v1/status?includePeerHealth=true` (server-status-methods.ts
+/// collectFederationPeerHealth): one health observation per configured peer,
+/// probed concurrently in peer-table order. The Rust port had dropped it, so
+/// doctor and server status showed no peer rows (T-11372).
+pub async fn peer_health(node: &Node) -> Vec<Value> {
+    let probes = futures_util::future::join_all(
+        node.config
+            .peers
+            .iter()
+            .map(|peer| probe(node, peer, &[], false)),
+    )
+    .await;
+    node.config
+        .peers
+        .iter()
+        .zip(probes)
+        .map(|(peer, (health, _))| {
+            log(
+                if health["state"] == "healthy" { "info" } else { "warn" },
+                "federation.peer.probe",
+                json!({"localNodeId":node.node_id(),"peerNodeId":peer.node_id,"state":health["state"],"latencyMs":health["latencyMs"],"answeredAt":health["answeredAt"],"detail":health["detail"],"includeRuntimes":false}),
+            );
+            health
+        })
+        .collect()
 }

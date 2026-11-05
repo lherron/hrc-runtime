@@ -17,7 +17,7 @@ pub use retirement::retire;
 pub mod summon;
 
 pub use locate::{bindings, designations, locate};
-pub use projection::runtimes;
+pub use projection::{peer_health, runtimes};
 pub use routing::{route_request, scope_of};
 
 use super::stderr_json;
