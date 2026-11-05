@@ -48,22 +48,34 @@ predicate: >
   response boundary and changes neither owner admission nor kernel write
   repetition: the kernel never repeats a write. An upstream Cardo schema
   change is outside this approval and returns for review.
-  T-12662 specification etag 6 extends the prae operator surface to live
-  legacy CLI forms within its named exclusions; it is a parity extension,
-  not new owner or peer authority. Credential discovery retains its existing
+  T-12662 specification etag 7 limits this campaign to gaps affecting Mable's
+  measured executed calls, superseding the earlier whole-CLI parity scope.
+  The submitted census covers 13,405 calls in 216 sessions over 14 days,
+  with a ten-call threshold. The build scope is local runtime.archive on
+  another seat, node.restart and node.stop including the existing peer
+  lifecycle path, task.create with an explicit requester scope,
+  work.group.update and work.group.find for campaign operations, a stats
+  aggregate read and an owner doctor read shared with the CLI.
+  Explicit requester scope and campaign operations forward to existing
+  wrkq primitives with caller attribution and owner admission preserved;
+  they introduce no wrkq primitive or authority change. Forms below the
+  threshold remain reachable by explicit owner-binary path rather than new
+  prae operations. Credential discovery retains its existing
   behavior; this extension requires no catalog credential precondition,
   credential_unavailable refusal or credential-discovery-failure regression.
   The kernel forwards caller identity
   and lifecycle headers verbatim and never substitutes its own authority.
-  HRC verifies credential-present callers on other operator writes as Mable
-  primaries; terminate additionally admits the runtime's own seat. Callers
-  presenting no credential retain existing owner behavior for these routes.
+  For terminate, HRC verifies credential-present callers as Mable primaries
+  or the runtime's own seat. Callers presenting no lifecycle header retain
+  existing owner behavior. The five other operator-route guards introduced
+  by T-12664 are withdrawn: prune, sweep, reconcile-active, drop-continuation
+  and federation retire are outside this campaign's prae surface.
   Restart and stop retain their existing authorization unchanged, with no
   credential-free branch; peer lifecycle retains local authorization and the
-  peer-validated lifecycle grant. Cross-node summon and interrupt use the
-  existing local HRC forwarding routes and HRC-owned peer connections.
-  This extension gives the kernel no new peer control connection and adds no
-  federated owner route. Foreign send and archive remain refused. Ordinary
+  peer-validated lifecycle grant. Cross-node summon and interrupt and room
+  membership operations are no longer in this campaign. Existing foreign_seat
+  restrictions remain unchanged. This extension gives the kernel no new peer
+  control connection and adds no federated owner route. Ordinary
   operator acknowledgement, wrkf, daemon callers, interactive TTY entry points
   and server serve remain excluded. Deliberately headerless calls and a
   protected operation dispatched headerless after credential discovery fails
@@ -86,6 +98,10 @@ authority: >
   narrow support to exclude headerless dispatch after credential discovery
   failure. The catalog precondition and its regression obligation are
   withdrawn; the rest of EN-47463's approval stands.
+  EN-47477 and T-12662 etag 7 record Lance's narrowing to gaps impacting
+  Mable's measured work. This supersedes the earlier whole-surface scope,
+  cross-node summon/interrupt extension and five non-terminate owner guards;
+  the owner-forwarding boundary and remaining approval stand.
 source:
   - wrkq:T-12245
   - wrkq:T-12662
@@ -93,6 +109,7 @@ source:
   - wrkc:EN-45078
   - wrkc:EN-45079
   - wrkc:EN-47473
+  - wrkc:EN-47477
   - docs/proposals/praesidium-kernel.md
   - docs/proposals/praesidium-document.md
   - architecture/contracts/seat-asks.yaml
@@ -103,7 +120,7 @@ validation_scope: >
   The submitted producer, reader, snapshot and whole-seat acceptance
   obligations remain the requester's. This approval adds no gate and
   establishes no implementation, installation, activation or product acceptance.
-  T-12662 parity, replacement, authority and legacy-compatibility acceptance
+  T-12662 etag 7 replacement, authority and legacy-compatibility acceptance
   remain the requester's work. The operator extension adds no product gate.
 last_verified: >
   2026-11-04 design read of f84658c7 and its two-line F1 correction;
@@ -142,3 +159,10 @@ design_review: >
   Corrected the support boundary without a new ruling; the historical
   etag 4 precondition above is superseded by this withdrawal. No build,
   test, install, restart or live mutation was run for this correction.
+  2026-11-05 EN-47477 and T-12662 etag 7 narrow the campaign on Lance's
+  instruction. Read the revised spec and census summary, the current kernel
+  task-create requester stamping, wrkq requester validation and the existing
+  container campaign update/convert/close/portfolio RPC registrations and
+  CLI forwarding. Corrected this scope and operator-owner-authority to retain
+  only the terminate guard. Guard removal and the new operations remain
+  implementation work; no implementation or activation is attested here.

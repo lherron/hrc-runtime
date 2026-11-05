@@ -2,13 +2,11 @@ id: hrc-runtime.operator-owner-authority
 kind: invariant
 status: active
 owner_project: hrc-runtime
-scope: credentialed callers of native HRC protected operator writes
+scope: credentialed callers of native HRC runtime termination
 predicate: >
-  POST /v1/runtimes/prune, /v1/runtimes/sweep,
-  /v1/runs/reconcile-active, /v1/sessions/drop-continuation,
-  /v1/federation/retire and /v1/terminate preserve their existing behavior
-  when no lifecycle header is presented. Any x-hrc-lifecycle-* header
-  requires verification through the daemon's existing lifecycle credential
+  POST /v1/terminate preserves its existing behavior when no lifecycle
+  header is presented. Any x-hrc-lifecycle-* header on this route requires
+  verification through the daemon's existing lifecycle credential
   binding and a Mable primary scope, using the same predicate as restart.
   Terminate additionally admits a verified caller whose scope matches the
   target runtime's stored scope, including other lanes of the same seat.
@@ -16,9 +14,17 @@ predicate: >
   403, server_lifecycle_refused and the lifecycle refusal detail before
   route side effects. Claimed caller headers alone confer no authority.
   Restart and stop retain their existing authority contract. The unserved
-  native tmux kill route is excluded. This is an honest-caller rule, not a
-  security boundary against deliberately headerless callers.
-authority: wrkq:T-12662 etag 4 (Daedalus approved); wrkq:T-12664 (Mable dispatch and tmux exclusion, 2026-11-05)
+  native tmux kill route is excluded. The guards on prune, sweep,
+  reconcile-active, drop-continuation and federation retire are withdrawn
+  under T-12662 etag 7; those routes are outside the campaign's prae surface.
+  This is an honest-caller rule, not a security boundary against headerless
+  callers; headerless dispatch after prae credential discovery fails is
+  explicitly unsupported under T-12662 etag 6 and retained in etag 7.
+authority: >
+  wrkq:T-12662 etag 4 (Daedalus approved); wrkq:T-12664 (Mable dispatch
+  and tmux exclusion, 2026-11-05). T-12662 etag 7 and EN-47477 narrow the
+  scope on Lance's instruction to terminate only, withdrawing the five
+  other guards without changing the retained owner admission boundary.
 source:
   - wrkq:T-12662
   - wrkq:T-12664
@@ -33,3 +39,8 @@ last_verified: 2026-11-05 T-12664 dispatcher fixture; installed activation expli
 reopen_when: The protected route set, headerless compatibility, credential verification, Mable-primary predicate or terminate scope ownership changes.
 supersedes: []
 superseded_by: []
+design_review: >
+  2026-11-05 EN-47477 scope correction: read T-12662 etag 7 and the current
+  shared check. The narrowed predicate is desired law; removal of the five
+  guards remains implementation work and is not attested here. The prior
+  last_verified is historical evidence for T-12664, not proof of this removal.
