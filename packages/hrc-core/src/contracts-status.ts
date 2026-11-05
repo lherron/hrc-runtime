@@ -224,6 +224,8 @@ export type HrcCapabilityStatus = {
      * and relay from a foreign home. ACP gates remote timeline and history on it.
      */
     federatedSessionRead?: boolean | undefined
+    /** T-12417: `GET /v1/runtimes` and `/v1/federation/runtimes` honor `omitState=true`. */
+    runtimeListOmitState?: boolean | undefined
   }
 }
 

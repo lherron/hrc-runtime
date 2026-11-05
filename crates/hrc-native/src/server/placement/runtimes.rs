@@ -23,6 +23,10 @@ fn boolean(q: &HashMap<String, String>, key: &str) -> Result<Option<bool>, ApiEr
         Some(v) => Err(bad(format!("{key} must be a boolean"), key, json!(v))),
     }
 }
+/// `omitState=true`: list rows without `runtimeStateJson` (T-12417).
+pub fn omit_state(q: &HashMap<String, String>) -> Result<bool, ApiError> {
+    Ok(boolean(q, "omitState")?.unwrap_or(false))
+}
 pub(super) fn number(s: &str) -> Option<f64> {
     for (prefix, radix) in [
         ("0x", 16),
@@ -114,11 +118,19 @@ fn attach_identity(db: &hrc_store::Store, row: &mut Value) {
     }
 }
 
-fn hydrate_page(db: &hrc_store::Store, rows: &mut [Value]) -> Result<(), ApiError> {
+fn hydrate_page(
+    db: &hrc_store::Store,
+    rows: &mut [Value],
+    omit_state: bool,
+) -> Result<(), ApiError> {
     for row in rows {
-        *row = db
-            .runtime(row["runtimeId"].as_str().unwrap())?
-            .ok_or_else(|| anyhow::anyhow!("runtime disappeared during pagination"))?;
+        let id = row["runtimeId"].as_str().unwrap();
+        *row = if omit_state {
+            db.runtime_inventory_where("runtime_id=?", [id])?.pop()
+        } else {
+            db.runtime(id)?
+        }
+        .ok_or_else(|| anyhow::anyhow!("runtime disappeared during pagination"))?;
         attach_identity(db, row);
     }
     Ok(())
@@ -225,6 +237,9 @@ pub fn query(
         .collect();
     let stale = boolean(q, "stale")?.unwrap_or(false);
     boolean(q, "json")?;
+    // Opt-in lean rows: runtimeStateJson is never read, parsed or returned
+    // (T-12417). praesidium-kernel deletes the field on arrival.
+    let omit_state = omit_state(q)?;
     let explicit_all = boolean(q, "all")?;
     let all = explicit_all.unwrap_or(mode == Terminal::Include);
     // Recent: the live set plus terminal rows active since `recent_since`.
@@ -279,9 +294,9 @@ pub fn query(
     let clause = clause.join(" AND ");
     let mut rows = if paginate {
         list_keys(&db, &clause, values)?
-    } else if recent_since.is_some() {
+    } else if recent_since.is_some() || omit_state {
         // No inventory reader uses runtime state (the kernel deletes it), so
-        // it is never read or parsed (T-12417).
+        // it is never read or parsed (T-12413, T-12417).
         db.runtime_inventory_where(&clause, rusqlite::params_from_iter(values))?
     } else {
         db.runtimes_where(&clause, rusqlite::params_from_iter(values))?
@@ -376,7 +391,7 @@ pub fn query(
         None
     };
     if paginate {
-        hydrate_page(&db, &mut rows)?;
+        hydrate_page(&db, &mut rows, omit_state)?;
     }
     let mut trips=db.sqlite.prepare("SELECT runtime_id,first_turn_missing_tripped_at,trip_event_seq,generation,bundle_dir FROM runtime_first_turn_watch WHERE first_turn_missing_tripped_at IS NOT NULL ORDER BY first_turn_missing_tripped_at ASC").map_err(anyhow::Error::from)?;
     let trips = trips
@@ -578,6 +593,96 @@ mod tests {
             query(&server, &live, false, Terminal::Recent).map_err(|e| anyhow::anyhow!("{e:?}"))?;
         assert_eq!(rows.len(), 1);
         assert_eq!(rows[0]["runtimeId"], "live");
+        Ok(())
+    }
+
+    // T-12417: scoped kernel reads spent ~95% of their bytes on
+    // runtimeStateJson, which the kernel deletes on arrival. Regressions:
+    // reading or parsing state under omitState (paginated hydration or the
+    // unpaginated read), dropping or changing any other field, cursor or
+    // identity, changing the default, or accepting a non-boolean flag.
+    #[test]
+    fn omit_state_lists_lean_rows_without_reading_state() -> anyhow::Result<()> {
+        let (_scratch, server) = server("off", false)?;
+        {
+            let mut db = server.store.lock().unwrap();
+            let session = db.create_session("agent:test:project:fixture", "main")?.0;
+            for (id, status, state) in [
+                // Parsing this row's state fails the read.
+                ("bad", "busy", "invalid JSON"),
+                ("good1", "ready", r#"{"kept":1}"#),
+                ("good2", "ready", r#"{"kept":2}"#),
+            ] {
+                db.sqlite.execute("INSERT INTO runtimes(runtime_id,host_session_id,scope_ref,lane_ref,generation,transport,status,supports_inflight_input,runtime_state_json,last_activity_at,created_at,updated_at) VALUES(?,?,'agent:test:project:fixture','main',1,'hrcpty',?,0,?,'2026-01-01T00:00:00Z','2026-01-01T00:00:00Z','now')", rusqlite::params![id, session["hostSessionId"].as_str(), status, state])?;
+            }
+        }
+        let q = |pairs: &[(&str, &str)]| -> HashMap<String, String> {
+            pairs
+                .iter()
+                .map(|(k, v)| ((*k).into(), (*v).into()))
+                .collect()
+        };
+        let run = |q: &HashMap<String, String>, paginate| {
+            query(&server, q, paginate, Terminal::Exclude).map_err(|e| anyhow::anyhow!("{e:?}"))
+        };
+        let lean = |q: &HashMap<String, String>| {
+            let mut q = q.clone();
+            q.insert("omitState".into(), "true".into());
+            q
+        };
+        let scope = ("scope", "agent:test:project:fixture");
+
+        // The invalid-state row comes back on both paths: state never parsed.
+        let every = q(&[scope]);
+        assert!(run(&every, false).is_err() && run(&every, true).is_err());
+        for paginate in [false, true] {
+            let (rows, _) = run(&lean(&every), paginate)?;
+            let ids: Vec<_> = rows.iter().map(|r| r["runtimeId"].clone()).collect();
+            assert_eq!(ids, [json!("bad"), json!("good1"), json!("good2")]);
+            assert!(rows.iter().all(|r| r.get("runtimeStateJson").is_none()));
+            assert!(rows.iter().all(|r| r["identity"]["agentId"] == "test"));
+        }
+
+        // Same filter with and without the flag: identical rows minus state,
+        // identical cursors, and the default still carries state.
+        let ready = q(&[scope, ("status", "ready")]);
+        let strip = |mut rows: Vec<Value>| {
+            for r in &mut rows {
+                r.as_object_mut().unwrap().remove("runtimeStateJson");
+            }
+            rows
+        };
+        let (full, _) = run(&ready, false)?;
+        assert_eq!(full[0]["runtimeStateJson"]["kept"], 1);
+        assert_eq!(full[1]["runtimeStateJson"]["kept"], 2);
+        let (slim, _) = run(&lean(&ready), false)?;
+        assert_eq!(slim, strip(full));
+        let mut page = q(&[scope, ("status", "ready"), ("limit", "1")]);
+        let (full, full_cursor) = run(&page, true)?;
+        assert_eq!(full[0]["runtimeStateJson"]["kept"], 1);
+        let (slim, slim_cursor) = run(&lean(&page), true)?;
+        assert_eq!(slim, strip(full));
+        assert!(full_cursor.is_some() && slim_cursor == full_cursor);
+        page.insert("cursor".into(), full_cursor.unwrap());
+        let (full, _) = run(&page, true)?;
+        assert_eq!(full[0]["runtimeStateJson"]["kept"], 2);
+        let (slim, _) = run(&lean(&page), true)?;
+        assert_eq!(slim, strip(full));
+
+        // omitState=false is the default; anything else non-boolean is a 400.
+        let (rows, _) = run(
+            &q(&[scope, ("status", "ready"), ("omitState", "false")]),
+            false,
+        )?;
+        assert_eq!(rows[0]["runtimeStateJson"]["kept"], 1);
+        let err = query(
+            &server,
+            &q(&[("omitState", "yes")]),
+            true,
+            Terminal::Exclude,
+        )
+        .expect_err("omitState=yes must be refused");
+        assert_eq!(err.status, StatusCode::BAD_REQUEST);
         Ok(())
     }
 

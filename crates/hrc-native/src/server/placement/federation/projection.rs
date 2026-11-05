@@ -129,6 +129,17 @@ pub async fn runtimes(
     let checked = timestamp();
     let started = Instant::now();
     let (local, _) = runtimes::query(server, q, false, runtimes::Terminal::Include)?;
+    // A peer on an older build ignores omitState; drop the field here so the
+    // flag holds for every node's rows (T-12417).
+    let omit_state = runtimes::omit_state(q)?;
+    let lean = |mut rows: Value| {
+        if omit_state && let Some(rows) = rows.as_array_mut() {
+            for row in rows.iter_mut().filter_map(Value::as_object_mut) {
+                row.remove("runtimeStateJson");
+            }
+        }
+        rows
+    };
     let answered = timestamp();
     let mut nodes = vec![
         json!({"nodeId":node.node_id(),"state":"answered","checkedAt":checked,"answeredAt":answered,"latencyMs":started.elapsed().as_millis() as u64,"runtimes":local}),
@@ -149,7 +160,7 @@ pub async fn runtimes(
         );
         let key = cache_key(&peer.node_id, &query);
         if health["state"] == "healthy"
-            && let Some(runtimes) = runtimes
+            && let Some(runtimes) = runtimes.map(lean)
         {
             let answered = health["answeredAt"].as_str().unwrap_or_default().to_owned();
             CACHE

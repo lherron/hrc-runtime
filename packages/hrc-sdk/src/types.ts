@@ -374,6 +374,11 @@ export type RuntimeListFilter = {
   json?: boolean | undefined
   /** Include terminal/history rows. The server defaults to live runtimes. */
   all?: boolean | undefined
+  /**
+   * T-12417: rows omit `runtimeStateJson`, which the server then never reads.
+   * Gate on status `capabilities.runtimeListOmitState`; older daemons ignore it.
+   */
+  omitState?: boolean | undefined
   /** Request one bounded page instead of transparently draining all pages. */
   limit?: number | undefined
   /** Opaque cursor returned by listRuntimesPage. */

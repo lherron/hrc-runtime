@@ -130,13 +130,14 @@ describe('runtime lifecycle client methods', () => {
       task: '',
       json: true,
       all: false,
+      omitState: true,
       limit: 7,
       cursor: 'next/page',
     }
     await client.listRuntimesPage(filter)
     await client.listFederatedRuntimes(filter)
     const shared =
-      'transport=tmux&status=ready%2Cbusy&stale=false&olderThan=1h&scope=agent%3Aastra%3Aproject%3Ahrc-runtime&agent=astra&json=true&all=false'
+      'transport=tmux&status=ready%2Cbusy&stale=false&olderThan=1h&scope=agent%3Aastra%3Aproject%3Ahrc-runtime&agent=astra&json=true&all=false&omitState=true'
     expect(requests).toEqual([
       { path: '/v1/runtimes', query: `${shared}&limit=7&cursor=next%2Fpage` },
       { path: '/v1/federation/runtimes', query: shared },

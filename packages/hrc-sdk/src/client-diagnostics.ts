@@ -256,5 +256,6 @@ function runtimeFilterParams(filter: RuntimeListFilter | undefined) {
     task: emptyToUndefined(filter?.task),
     json: filter?.json,
     all: filter?.all,
+    omitState: filter?.omitState,
   }
 }
