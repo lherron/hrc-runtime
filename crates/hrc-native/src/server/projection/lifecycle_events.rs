@@ -174,7 +174,13 @@ pub fn handle(
     }
     if path == "/v1/events/latest-by-session" {
         let q = filters(q)?;
-        let rows = server.store.lock().unwrap().latest_per_session(&q)?;
+        // A filtered read can still walk substantial history. Its own WAL
+        // reader must never queue submissions/pages behind the writer mutex.
+        let mut db = hrc_store::Store::open_readonly(&server.state.join("state.sqlite"))?;
+        if !server.front {
+            super::statement_telemetry::install(&mut db, server.accounting.clone())?;
+        }
+        let rows = db.latest_per_session(&q)?;
         return Ok(Json(rows).into_response());
     }
     // Non-follow /v1/events is routed to `history` before this table.

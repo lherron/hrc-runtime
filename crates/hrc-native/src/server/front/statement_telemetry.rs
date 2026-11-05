@@ -1,4 +1,5 @@
-//! The daemon's one telemetry registration. Front/CLI/kernel opens stay bare.
+//! Daemon statement telemetry, including request-local history readers.
+//! Front/CLI/kernel opens stay bare.
 use super::*;
 fn threshold() -> f64 {
     env::var("HRC_SQLITE_SLOW_STATEMENT_MS")

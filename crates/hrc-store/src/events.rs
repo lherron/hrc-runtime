@@ -46,9 +46,8 @@ impl Store {
         self.lifecycle_rows(&sql, &values, hydrate)
     }
     /// Each (host session, generation)'s newest row, newest first: Bun's
-    /// listLatestPerSession. The grouping reads only the covering
-    /// (host_session_id, generation, hrc_seq) index; hydrating and deduping
-    /// the whole ledger held the store mutex ~95 s on max3 (T-11915).
+    /// listLatestPerSession. Unfiltered reads seek once per historical pair,
+    /// rather than grouping every ledger row (T-12587).
     pub fn latest_per_session(&self, query: &HashMap<String, String>) -> Result<Vec<Value>> {
         let (sql, values) = latest_per_session_query(query)?;
         self.lifecycle_rows(&sql, &values, true)
@@ -113,16 +112,45 @@ fn event_query(
     Ok((sql, values))
 }
 
-/// The pin is only on the grouping subquery; the outer join reads `e` by rowid.
+/// Seek to the last row in the index, then to the last row of each preceding
+/// pair. Both keys are NOT NULL. Separate bounds skip the current generation
+/// and then the host: SQLite only constrains the host for a row-value bound,
+/// walking the current generation before advancing. Work follows pair count.
+/// Explicit pins keep the seek plan stable without sqlite_stat1 (max3).
+/// CROSS JOIN fixes the outer loop to the small pair set; otherwise SQLite
+/// may scan all of `e` and probe an automatic index on the CTE instead.
+const LATEST_PAIRS: &str = "WITH RECURSIVE latest(hrc_seq, host_session_id, generation) AS (
+    SELECT hrc_seq, host_session_id, generation FROM (
+        SELECT hrc_seq, host_session_id, generation
+        FROM hrc_events INDEXED BY idx_hrc_events_host_session_generation_seq
+        ORDER BY host_session_id DESC, generation DESC, hrc_seq DESC LIMIT 1
+    )
+    UNION ALL
+    SELECT e.hrc_seq, e.host_session_id, e.generation FROM latest l
+    JOIN hrc_events e ON e.hrc_seq = COALESCE((
+        SELECT hrc_seq
+        FROM hrc_events INDEXED BY idx_hrc_events_host_session_generation_seq
+        WHERE host_session_id = l.host_session_id AND generation < l.generation
+        ORDER BY generation DESC, hrc_seq DESC LIMIT 1
+    ), (
+        SELECT hrc_seq
+        FROM hrc_events INDEXED BY idx_hrc_events_host_session_generation_seq
+        WHERE host_session_id < l.host_session_id
+        ORDER BY host_session_id DESC, generation DESC, hrc_seq DESC LIMIT 1
+    ))
+) SELECT e.* FROM latest l CROSS JOIN hrc_events e ON e.hrc_seq = l.hrc_seq
+ORDER BY e.hrc_seq DESC";
+
+/// Filter before grouping: an older matching row can be a group's answer.
+/// The scope pin stays on the grouping subquery; outer reads use rowid.
 fn latest_per_session_query(query: &HashMap<String, String>) -> Result<(String, Vec<Sql>)> {
     let mut predicates = Vec::new();
     let mut values = Vec::new();
     field_predicates(query, &mut predicates, &mut values)?;
-    let filter = if predicates.is_empty() {
-        String::new()
-    } else {
-        format!("WHERE {}", predicates.join(" AND "))
-    };
+    if predicates.is_empty() {
+        return Ok((LATEST_PAIRS.to_owned(), values));
+    }
+    let filter = format!("WHERE {}", predicates.join(" AND "));
     let sql = format!(
         "SELECT e.* FROM hrc_events e INNER JOIN (SELECT MAX(hrc_seq) AS max_hrc_seq FROM {} {filter} GROUP BY host_session_id, generation) latest ON latest.max_hrc_seq = e.hrc_seq ORDER BY e.hrc_seq DESC",
         events_source(&predicates)
@@ -373,10 +401,43 @@ mod scope_pin {
             pinned.contains("USING INDEX idx_hrc_events_scope_ref_seq (scope_ref=?)"),
             "{pinned}"
         );
-        // Unfiltered keeps T-11915's covering grouping index.
+        // Unfiltered seeks through the same covering index.
         let (sql, values) = latest_per_session_query(&HashMap::new()).unwrap();
-        assert!(!sql.contains("INDEXED BY"), "{sql}");
         assert!(plan(&db, &sql, &values).contains("idx_hrc_events_host_session_generation_seq"));
+    }
+
+    // T-12587 failures: a full ledger scan; missing old/orphan sessions or
+    // generations; empty ledger produces a phantom row; blank filters widen
+    // differently; filtering the newest row loses an older matching event.
+    #[test]
+    fn latest_seeks_every_historical_pair_and_matches_grouping() {
+        let (_s, db) = seeded();
+        let old = "SELECT e.* FROM hrc_events e INNER JOIN (SELECT MAX(hrc_seq) AS max_hrc_seq FROM hrc_events GROUP BY host_session_id, generation) latest ON latest.max_hrc_seq=e.hrc_seq ORDER BY e.hrc_seq DESC";
+        for query in [HashMap::new(), q(&[("scopeRef", " ")])] {
+            let (sql, values) = latest_per_session_query(&query).unwrap();
+            let detail = plan(&db, &sql, &values);
+            assert!(detail.contains("SEARCH hrc_events USING COVERING INDEX idx_hrc_events_host_session_generation_seq"), "{detail}");
+            assert!(!sql.contains("GROUP BY"), "{sql}");
+            assert!(!detail.lines().any(|l| l == "SCAN e"), "{detail}");
+            assert!(
+                detail.contains("host_session_id=? AND generation<?"),
+                "{detail}"
+            );
+            let rows = db.lifecycle_rows(&sql, &values, true).unwrap();
+            assert_eq!(
+                rows.len(),
+                15,
+                "all hosts and generations, no sessions table required"
+            );
+            assert_eq!(rows, db.lifecycle_rows(old, &[], true).unwrap());
+        }
+        let (sql, values) = latest_per_session_query(&q(&[("eventKind", "turn.started")])).unwrap();
+        let rows = db.lifecycle_rows(&sql, &values, true).unwrap();
+        assert!(!rows.is_empty());
+        assert!(rows.iter().all(|r| r["eventKind"] == "turn.started"));
+        let (sql, values) = latest_per_session_query(&HashMap::new()).unwrap();
+        db.sqlite.execute("DELETE FROM hrc_events", []).unwrap();
+        assert!(db.lifecycle_rows(&sql, &values, true).unwrap().is_empty());
     }
 
     #[test]
@@ -392,7 +453,7 @@ mod scope_pin {
             let (sql, _) = event_query(&query, 0, Some(10), Some(5), true).unwrap();
             assert!(!sql.contains("INDEXED BY"), "{query:?}: {sql}");
             let (sql, _) = latest_per_session_query(&query).unwrap();
-            assert!(!sql.contains("INDEXED BY"), "{query:?}: {sql}");
+            assert!(!sql.contains(SCOPE_PIN), "{query:?}: {sql}");
         }
     }
 }
