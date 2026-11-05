@@ -36,7 +36,7 @@ import time
 import uuid
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from foundation import UnixHTTP  # noqa: E402
+from foundation import daemon_env, UnixHTTP  # noqa: E402
 
 PROMPT = 'Reply with exactly the word OK and nothing else. No tools.'
 
@@ -100,6 +100,7 @@ def main():
         assert ok or pending, (name, detail)
 
     def command(name, argv, timeout=180, ok=True):
+        argv = [hrc if str(argv[0]) == 'hrc' else argv[0], *argv[1:]]
         r = subprocess.run([str(v) for v in argv], env=env, cwd=project, capture_output=True,
                            text=True, timeout=timeout)
         steps.append({'name': name, 'argv': [str(v) for v in argv], 'exit': r.returncode,
@@ -137,7 +138,7 @@ def main():
     def spawn(name, argv):
         log = (art / f'{name}.log').open('w')
         logs.append(log)
-        proc = subprocess.Popen([str(a) for a in argv], env=env, cwd=project, stdout=log, stderr=log)
+        proc = subprocess.Popen([str(a) for a in argv], env=daemon_env(env), cwd=project, stdout=log, stderr=log)
         owners[name] = proc
         return proc
 
@@ -198,8 +199,8 @@ def main():
     try:
         command('project-init', ['git', 'init', '-q'])
         command('wrkq-migrate', ['wrkqadm', 'migrate'])
-        command('wrkq-project', ['wrkq', 'mkdir', '/' + project_id, '--kind', 'project', '--json'])
-        command('wrkq-root', ['wrkq', 'set', '/' + project_id, '--root', project, '--json'])
+        command('wrkq-project', [str(Path.home() / ".local/bin/wrkq"), 'mkdir', '/' + project_id, '--kind', 'project', '--json'])
+        command('wrkq-root', [str(Path.home() / ".local/bin/wrkq"), 'set', '/' + project_id, '--root', project, '--json'])
 
         # Bun on its private socket; nothing on the public one yet.
         bun('bun-1', private)
@@ -329,13 +330,13 @@ def main():
             log = (art / 'injector.log').open('w')
             logs.append(log)
             owners['injector'] = subprocess.Popen(['bunx', '--bun', '--silent', f'hrc-mail-injector@{args.injector}'],
-                                                  env=env_inj, cwd=project, stdout=log, stderr=log)
+                                                  env=daemon_env(env_inj), cwd=project, stdout=log, stderr=log)
             seat = scope.split(':', 1)[1]
             agent, rest = seat.split(':project:', 1)
             proj, task = rest.split(':task:', 1)
             address = f'{agent}@{proj}:{task}'
             runs_before = {r['run_id'] for r in rows("SELECT run_id FROM hrc_events WHERE event_kind='turn.completed'")}
-            said = command('wrkc-say', ['wrkc', 'say', f'/{project_id}', '--to', address, '--fyi', '-m', PROMPT,
+            said = command('wrkc-say', [str(Path.home() / ".local/bin/wrkc"), 'say', f'/{project_id}', '--to', address, '--fyi', '-m', PROMPT,
                                         '--as', 'agent:clod', '--json'])
             delivered = False
             for _ in range(1800):

@@ -73,6 +73,7 @@ Run on the pre-change binary, C1 records the admit refusal (discriminator).
 Never touches the live daemon (its socket is refused), the live aspd, or any
 shared service. Every process and root it creates is removed on exit.
 """
+from foundation import daemon_env
 import argparse
 import base64
 import hashlib
@@ -286,7 +287,7 @@ class Run:
     def up(self, tag):
         log = (self.artifacts / f'daemon-{tag}.log').open('w')
         self.logs.append(log)
-        proc = subprocess.Popen([str(self.binary), 'server'], env=self.env, cwd=self.root / PROJECT,
+        proc = subprocess.Popen([str(self.binary), 'server'], env=daemon_env(self.env), cwd=self.root / PROJECT,
                                 stdout=log, stderr=log, start_new_session=True)
         self.owners.append(proc)
         for _ in range(300):

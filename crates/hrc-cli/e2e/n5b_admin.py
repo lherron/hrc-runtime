@@ -267,7 +267,7 @@ def worktree_fixture(store, root, seat):
     root.mkdir(parents=True)
     wrkq_env = {k: v for k, v in os.environ.items() if not k.startswith(('WRKQ', 'HRC_'))}
     wrkq_env['WRKQ_DB'] = str(root / 'wrkq.db')
-    wrkq = lambda *a: sh('wrkq', *a, cwd=root, env=wrkq_env)
+    wrkq = lambda *a: sh(str(Path.home() / ".local/bin/wrkq"), *a, cwd=root, env=wrkq_env)
     sh('wrkqadm', 'init', '--attach-dir', str(root / 'attach'), cwd=root, env=wrkq_env)
     for project in ('alpha', 'beta', 'gamma', 'delta', 'epsilon'):
         wrkq('mkdir', f'/{project}')
@@ -341,7 +341,7 @@ def worktree_fixture(store, root, seat):
     db.commit()
     db.close()
     # An unmigrated ledger: wrkq refuses it the same way for both sides.
-    sh('wrkq', 'projects', '--json', cwd=root, env={**wrkq_env, 'WRKQ_DB': str(root / 'unmigrated.db')}, check=False)
+    sh(str(Path.home() / ".local/bin/wrkq"), 'projects', '--json', cwd=root, env={**wrkq_env, 'WRKQ_DB': str(root / 'unmigrated.db')}, check=False)
     return alpha
 
 
@@ -364,7 +364,7 @@ def main():
         target = tools / tool
         if target.is_symlink() or target.exists():
             target.unlink()
-        target.symlink_to(shutil.which(tool))
+        target.symlink_to(str(Path.home() / ".local/bin/wrkq") if tool == "wrkq" else shutil.which(tool))
     assert not (tools / 'bun').exists()
     runner.subject_path = f'{tools}:{runner.subject_path}'
 

@@ -21,7 +21,7 @@ import time
 ROOT = Path(__file__).resolve().parents[3]
 sys.path.insert(0, str(ROOT/'crates/hrc-cli/e2e'))
 from copied_release import copied_bun_cli, preflight_unmanaged
-from foundation import UnixHTTP
+from foundation import daemon_env, UnixHTTP
 from metrics_isolation import isolated_suite
 
 
@@ -50,7 +50,7 @@ def main():
                 preflight_unmanaged(oracle, child_env, a.artifacts/(label+'-preflight.json'))
             argv = [shutil.which('bun'), str(oracle)] if owner == 'bun' else [str(a.binary.resolve())]
             with (a.artifacts/(label+'.log')).open('w') as log:
-                proc = subprocess.Popen(argv+['server','serve'], env=child_env, cwd=root,
+                proc = subprocess.Popen(argv+['server','serve'], env=daemon_env(child_env), cwd=root,
                                         stdin=subprocess.DEVNULL, stdout=log, stderr=log)
             processes.append(proc)
             return proc

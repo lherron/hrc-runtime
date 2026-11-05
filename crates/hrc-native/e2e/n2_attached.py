@@ -102,7 +102,7 @@ def main():
 
         def run(name, extra):
             before = s.rows('SELECT COALESCE(MAX(hrc_seq),0) AS m FROM hrc_events')[0]['m']
-            child = Pty(s, ['hrc', 'run', scope, '--project-id', s.project_id, '--project-root', s.project,
+            child = Pty(s, [s.cli, 'run', scope, '--project-id', s.project_id, '--project-root', s.project,
                             '--no-register', *extra])
             # The operator's client is on the lease's tui window once the run is up.
             attached = s.wait(lambda: [r for r in s.rows("SELECT runtime_id, tmux_json FROM runtimes WHERE host_session_id IN (SELECT host_session_id FROM sessions WHERE scope_ref=?) AND status NOT IN ('terminated','dead','stale','crashed')", (scope,))

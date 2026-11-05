@@ -11,40 +11,40 @@ restart, capture, send) and `server/broker/{broker,start,hrcpty}.rs` (births, hr
 
 ## Sub-features
 
-- `hrc start <scope> [-p <prompt>] [--dry-run] [--json]`: births through aspd and the harness broker. `--dry-run
+- `~/.bun/bin/hrc start <scope> [-p <prompt>] [--dry-run] [--json]`: births through aspd and the harness broker. `--dry-run
   --json` is a daemon preview (`POST /v1/previews/run`, no side effects): `{preview: {selection {harness
   claude-hrcpty, model, provenance}, execution {recipeId claude-code, driver claude-code-hrcpty, protocol
   harness-broker/0.2, hosting {executionTransport pty, terminalHost hrcpty}}}}` for tabularasa (2026-11-02). The
   live answer is `{sessionRef, hostSessionId, created, runtime, follow}`; `runId`, `runtimeId`, `generation`,
   `startIdentity.invocationId`, `observation` and `stage: accepted` sit under `.runtime`. `--wait
   started|completed` waits past `accepted` (source-only, 2026-11-02: `crates/hrc-cli/src/launch.rs:159-163`).
-- `hrc show <selector> [--json]`: resolves runtime, then host session, then message; prints `kind`. For a
+- `~/.bun/bin/hrc show <selector> [--json]`: resolves runtime, then host session, then message; prints `kind`. For a
   runtime the fields are top-level (`status`, `transport`, …).
-- `hrc runtime list --json` (a bare array of non-terminated runtimes), `hrc runtime inspect <id> --json`
+- `~/.bun/bin/hrc runtime list --json` (a bare array of non-terminated runtimes), `~/.bun/bin/hrc runtime inspect <id> --json`
   (`{hrc, broker}`; `.hrc.contextReading {turnId, usedTokens, windowTokens, model {id, source}, observedAt}` after
-  a turn that reported usage, else `null`), `hrc session list --json`.
-- `hrc ls <runtimes|sessions|messages> [--json]`: the inventory by noun; without one, "error: missing required
+  a turn that reported usage, else `null`), `~/.bun/bin/hrc session list --json`.
+- `~/.bun/bin/hrc ls <runtimes|sessions|messages> [--json]`: the inventory by noun; without one, "error: missing required
   argument 'noun'", rc 2 (source-only, 2026-11-02: `crates/hrc-cli/src/parse.rs:229-236`).
-- `hrc runtime status <target> [--json]`: lifecycle plus the broker's capture snapshot (`capture.state`,
+- `~/.bun/bin/hrc runtime status <target> [--json]`: lifecycle plus the broker's capture snapshot (`capture.state`,
   `deferredCount`, `blockedUnknown[]`): `open`, 0, 0 on 2026-11-02.
-- `hrc session resolve --scope <scopeRef> [--json]`: `found`, `created: false`, `generation`, `hostSessionId`;
-  `--create` makes one (not driven). `hrc session get <hostSessionId> --live --json`: `{session, runtimes}`.
-  `hrc session meta get <target> --json`: `{metadata, metadataSources}`, empty on a fresh scope.
-- `hrc runtime capture <runtimeId>`: the screen text, rc 0, on an hrcpty seat (substrate capture). A runtime with
+- `~/.bun/bin/hrc session resolve --scope <scopeRef> [--json]`: `found`, `created: false`, `generation`, `hostSessionId`;
+  `--create` makes one (not driven). `~/.bun/bin/hrc session get <hostSessionId> --live --json`: `{session, runtimes}`.
+  `~/.bun/bin/hrc session meta get <target> --json`: `{metadata, metadataSources}`, empty on a fresh scope.
+- `~/.bun/bin/hrc runtime capture <runtimeId>`: the screen text, rc 0, on an hrcpty seat (substrate capture). A runtime with
   no pane refuses "cannot capture a non-interactive runtime; use the runtime event stream instead" (source-only,
   2026-11-02: `crates/hrc-native/src/server/turns/io.rs:105-110`).
-- `hrc peek <target> [--lines N]`: the live screen tail; works on hrcpty though its help says "tmux pane".
-- `hrc send <target> <text> [--no-enter] [--json]`: literal input; works on hrcpty though its help says "live tmux
+- `~/.bun/bin/hrc peek <target> [--lines N]`: the live screen tail; works on hrcpty though its help says "tmux pane".
+- `~/.bun/bin/hrc send <target> <text> [--no-enter] [--json]`: literal input; works on hrcpty though its help says "live tmux
   runtime". No envelope or obligation, but a submitting send answers `{delivered, runId, status: started}` and its
   turn is in `hrc_events`. `--no-enter` is held by the daemon, not typed (Gotchas). `--idempotency-key` replays a
   retry (source-only, 2026-11-02: `crates/hrc-native/src/server/turns/input.rs`).
-- `hrc summon <target> --json`: ensure-target; on an existing scope `state: bound` and `lastAppliedIntentJson`,
+- `~/.bun/bin/hrc summon <target> --json`: ensure-target; on an existing scope `state: bound` and `lastAppliedIntentJson`,
   no birth.
-- `hrc runtime terminate <id> [--reason R] [--drop-continuation]`: ends the runtime and by default keeps the
+- `~/.bun/bin/hrc runtime terminate <id> [--reason R] [--drop-continuation]`: ends the runtime and by default keeps the
   continuation (`droppedContinuation: false`). The reason is stored but not shown (Gotchas).
-- `hrc resume <scope> [--no-attach] [-p <prompt>]`: re-births from the stored continuation into a new host session
+- `~/.bun/bin/hrc resume <scope> [--no-attach] [-p <prompt>]`: re-births from the stored continuation into a new host session
   and generation (`{sessionRef, hostSessionId, priorHostSessionId, continuation, runtime}`).
-- `hrc restart <scope> [--force] [--json]` (`POST /v1/sessions/restart`): archives the host session, births
+- `~/.bun/bin/hrc restart <scope> [--force] [--json]` (`POST /v1/sessions/restart`): archives the host session, births
   generation+1 with no continuation (`{ok, priorHostSessionId, hostSessionId, generation, launch: {status,
   runtimeId}}`) and terminates the old runtime. A seat that is not idle is refused `ok: false`, `code:
   runtime_busy` ("seat is turn-active; not restarted" on 2026-11-02), rc 1, nothing changed; a seat it cannot probe is refused
@@ -53,47 +53,47 @@ restart, capture, send) and `server/broker/{broker,start,hrcpty}.rs` (births, hr
   `server/broker/broker.rs:125-131`, `restart.rs:231-238`); the replay is Bun only (`--engine bun`,
   `packages/hrc-server/src/session-restart.ts`). Not `restartme` and not `server restart`.
 - Not driven here: `start --force-restart|--new-session|--no-viewer|--app-server-viewer|--on-conflict`,
-  `hrc run` (feature 8 covers attach), `hrc restartme`, `session rotate`, `session drop-continuation`, `runtime
+  `~/.bun/bin/hrc run` (feature 8 covers attach), `~/.bun/bin/hrc restartme`, `session rotate`, `session drop-continuation`, `runtime
   interrupt`, and the Bun passthroughs `session meta set|clear`, `session retitle`, `runtime send`.
 
 ## How to get to it
 
-`hv scratch up --name <task>` (native by default), then every verb through `hv run <task> -- hrc …`. Birth the
+`hv scratch up --name <task>` (native by default), then every verb through `hv run <task> -- ~/.bun/bin/hrc …`. Birth the
 blank agent `tabularasa@hrc-runtime:<slug>` (claude via `claude-hrcpty`, no spaces) with a one-word prompt.
 
 ## Driving it
 
 ```bash
 T=tabularasa@hrc-runtime:hvprobe
-hv run <task> -- hrc start $T --dry-run --json | jq -c '{h: .preview.selection.harness, ex: .preview.execution|{recipeId,driver,protocol,hosting}}'
-hv run <task> -- hrc start $T -p "Reply with exactly the word OK and nothing else. Do not use any tools." --json
+hv run <task> -- ~/.bun/bin/hrc start $T --dry-run --json | jq -c '{h: .preview.selection.harness, ex: .preview.execution|{recipeId,driver,protocol,hosting}}'
+hv run <task> -- ~/.bun/bin/hrc start $T -p "Reply with exactly the word OK and nothing else. Do not use any tools." --json
 R=<.runtime.runtimeId from the start output>
-hv run <task> -- hrc runtime list --json | jq -c '.[] | {runtimeId,status,transport}'   # ready, hrcpty
-hv run <task> -- hrc show $T --json | jq -c '{kind, status, transport}'
-hv run <task> -- hrc runtime inspect $R --json | jq -c '{hrc: (.hrc|{status,transport}), broker: (.broker|keys)}'
-hv run <task> -- hrc peek $T --lines 15
-hv run <task> -- hrc ls runtimes --json | jq -c '.[] | {runtimeId,status,transport}'
-hv run <task> -- hrc runtime status $T --json | jq -c '{status, capture: (.capture|{state, deferredCount, n: (.blockedUnknown|length)})}'
-hv run <task> -- hrc session resolve --scope agent:tabularasa:project:hrc-runtime:task:hvprobe --json | jq -c '{found, created, generation, hostSessionId}'
-hv run <task> -- hrc session get <hostSessionId> --live --json | jq -c keys
-hv run <task> -- hrc session meta get $T --json
-hv run <task> -- hrc send $T 'Reply with exactly the word SENT and nothing else.' --json
-hv run <task> -- hrc monitor transcript $R --tail 4                  # wait for 'SAYS | SENT'
-hv run <task> -- hrc summon $T --json | head -20
-hv run <task> -- hrc session list --json
-hv run <task> -- hrc runtime terminate $R --reason '<task> drive'
-hv run <task> -- hrc runtime list --json          # [] once terminated
+hv run <task> -- ~/.bun/bin/hrc runtime list --json | jq -c '.[] | {runtimeId,status,transport}'   # ready, hrcpty
+hv run <task> -- ~/.bun/bin/hrc show $T --json | jq -c '{kind, status, transport}'
+hv run <task> -- ~/.bun/bin/hrc runtime inspect $R --json | jq -c '{hrc: (.hrc|{status,transport}), broker: (.broker|keys)}'
+hv run <task> -- ~/.bun/bin/hrc peek $T --lines 15
+hv run <task> -- ~/.bun/bin/hrc ls runtimes --json | jq -c '.[] | {runtimeId,status,transport}'
+hv run <task> -- ~/.bun/bin/hrc runtime status $T --json | jq -c '{status, capture: (.capture|{state, deferredCount, n: (.blockedUnknown|length)})}'
+hv run <task> -- ~/.bun/bin/hrc session resolve --scope agent:tabularasa:project:hrc-runtime:task:hvprobe --json | jq -c '{found, created, generation, hostSessionId}'
+hv run <task> -- ~/.bun/bin/hrc session get <hostSessionId> --live --json | jq -c keys
+hv run <task> -- ~/.bun/bin/hrc session meta get $T --json
+hv run <task> -- ~/.bun/bin/hrc send $T 'Reply with exactly the word SENT and nothing else.' --json
+hv run <task> -- ~/.bun/bin/hrc monitor transcript $R --tail 4                  # wait for 'SAYS | SENT'
+hv run <task> -- ~/.bun/bin/hrc summon $T --json | head -20
+hv run <task> -- ~/.bun/bin/hrc session list --json
+hv run <task> -- ~/.bun/bin/hrc runtime terminate $R --reason '<task> drive'
+hv run <task> -- ~/.bun/bin/hrc runtime list --json          # [] once terminated
 sqlite3 -readonly /tmp/hv/<task>/state/state.sqlite "select event_kind, payload_json from hrc_events where runtime_id='$R' and event_kind='runtime.terminated'"   # the reason (Gotchas)
-hv run <task> -- hrc resume $T --no-attach -p 'Which single words did you reply with earlier in this conversation? Answer as a comma-separated list, nothing else. No tools.' --json | jq -c '{rt: .runtime.runtimeId, gen: .runtime.generation, prior: .priorHostSessionId}'
-hv run <task> -- hrc monitor transcript <new runtimeId> --tail 6   # OK, SENT
-hv run <task> -- hrc runtime capture <new runtimeId> | tail -8         # the screen, rc 0
-hv run <task> -- hrc runtime inspect <new runtimeId> --json | jq -c '.hrc | {status, transport, contextReading}'
-hv run <task> -- hrc restart $T --json                                 # generation+1, launch.status started
-until hv run <task> -- hrc peek $T --lines 12 | grep -q 'bypass permissions'; do sleep 1; done   # TUI up first (T-11870)
-hv run <task> -- hrc turn $T 'Which single words did you reply with earlier in this conversation? Answer as a comma-separated list, or NONE if there were none. No tools.' --wait final --timeout 3m --json | jq -c '{generation, final: .terminal.finalMessage}'   # NONE
-hv run <task> -- hrc send $T 'Write the numbers from 1 to 300 as English words, one per line. No tools.' --json | jq -c .status
-for i in $(seq 10); do s=$(hv run <task> -- hrc runtime list --json | jq -r '.[0].status'); echo "t+$i $s"; [ "$s" = busy ] && break; sleep 1; done   # gate on busy (Gotchas)
-hv run <task> -- hrc restart $T --json; echo "rc=$?"                   # runtime_busy, rc 1
+hv run <task> -- ~/.bun/bin/hrc resume $T --no-attach -p 'Which single words did you reply with earlier in this conversation? Answer as a comma-separated list, nothing else. No tools.' --json | jq -c '{rt: .runtime.runtimeId, gen: .runtime.generation, prior: .priorHostSessionId}'
+hv run <task> -- ~/.bun/bin/hrc monitor transcript <new runtimeId> --tail 6   # OK, SENT
+hv run <task> -- ~/.bun/bin/hrc runtime capture <new runtimeId> | tail -8         # the screen, rc 0
+hv run <task> -- ~/.bun/bin/hrc runtime inspect <new runtimeId> --json | jq -c '.hrc | {status, transport, contextReading}'
+hv run <task> -- ~/.bun/bin/hrc restart $T --json                                 # generation+1, launch.status started
+until hv run <task> -- ~/.bun/bin/hrc peek $T --lines 12 | grep -q 'bypass permissions'; do sleep 1; done   # TUI up first (T-11870)
+hv run <task> -- ~/.bun/bin/hrc turn $T 'Which single words did you reply with earlier in this conversation? Answer as a comma-separated list, or NONE if there were none. No tools.' --wait final --timeout 3m --json | jq -c '{generation, final: .terminal.finalMessage}'   # NONE
+hv run <task> -- ~/.bun/bin/hrc send $T 'Write the numbers from 1 to 300 as English words, one per line. No tools.' --json | jq -c .status
+for i in $(seq 10); do s=$(hv run <task> -- ~/.bun/bin/hrc runtime list --json | jq -r '.[0].status'); echo "t+$i $s"; [ "$s" = busy ] && break; sleep 1; done   # gate on busy (Gotchas)
+hv run <task> -- ~/.bun/bin/hrc restart $T --json; echo "rc=$?"                   # runtime_busy, rc 1
 ```
 
 ## Gotchas
@@ -103,15 +103,15 @@ hv run <task> -- hrc restart $T --json; echo "rc=$?"                   # runtime
   (source-only, 2026-11-02: `crates/hrc-native/src/server/broker/broker.rs:649-658`). Bun only (`--engine bun`):
   the boot refusal "runtime root socket path too long" since 955416e9 (T-10330), which `hv scratch up` reports
   as `daemon_exited` (2026-10-19, `T-11363`). That is why `hv` roots live under `/tmp/hv`.
-- **`hrc start --json` is not turn evidence.** It answers `stage: accepted`; read `turn.completed` and the final
+- **`~/.bun/bin/hrc start --json` is not turn evidence.** It answers `stage: accepted`; read `turn.completed` and the final
   message (feature 3). A `monitor wait --until turn-finished` armed after the turn had already finished waited
   out its 120 s and answered `result: timeout`, `exitCode: 20` (2026-11-02).
-- **`hrc start --json` answers `transport: headless`** at accept; the hosted runtime is `hrcpty` for tabularasa
+- **`~/.bun/bin/hrc start --json` answers `transport: headless`** at accept; the hosted runtime is `hrcpty` for tabularasa
   (`runtime list`, `show`, `inspect`; it was `tmux` on the Bun daemon). Read the transport after the birth.
-- **`hrc runtime list --json` is a bare array**, not `{runtimes: […]}`. Terminated runtimes drop out of it, and
-  `hrc show <scope>` then refuses "did not match any runtime among 0 known candidates".
+- **`~/.bun/bin/hrc runtime list --json` is a bare array**, not `{runtimes: […]}`. Terminated runtimes drop out of it, and
+  `~/.bun/bin/hrc show <scope>` then refuses "did not match any runtime among 0 known candidates".
 - **`terminate --reason` is stored but not surfaced.** The reason lands in `runtime_state_json.terminationReason`
-  (1f63a58b; `server/turns/control.rs:606-616`) and in the `runtime.terminated` event payload, but `hrc runtime inspect` shows neither
+  (1f63a58b; `server/turns/control.rs:606-616`) and in the `runtime.terminated` event payload, but `~/.bun/bin/hrc runtime inspect` shows neither
   (`.hrc.terminationReason` null, no path holds the string) (2026-11-02; product task filed by T-12291). Read it
   from `hrc_events`.
 - **`runtime.terminated` says `transport: "sdk"` for an hrcpty runtime** (`audit_transport`,
@@ -134,7 +134,7 @@ hv run <task> -- hrc restart $T --json; echo "rc=$?"                   # runtime
   that drive waits first, so it neither reproduces nor clears the wedge: T-11870 stays open, uncertified on native.
 - **`monitor wait --until idle` right after `send` races the send.** Armed 0 s after `send` returned, it answered
   `already_true` from the previous idle (2026-10-05). Confirm a send by its `SAYS` line or `turn.completed`.
-- `hrc runtime terminate` always prints its result as JSON; `--json` changes nothing.
+- `~/.bun/bin/hrc runtime terminate` always prints its result as JSON; `--json` changes nothing.
 - On a single-node scratch, `target locate` shows `authority: unbound` even with a live runtime (feature 5).
 
 ## Proven when

@@ -21,7 +21,7 @@ from runtime import normalize
 
 ROOT = Path(__file__).resolve().parents[3]
 sys.path.insert(0, str(ROOT / 'crates/hrc-native/e2e'))
-from foundation import UnixHTTP
+from foundation import daemon_env, UnixHTTP
 
 
 @isolated_suite
@@ -58,7 +58,7 @@ def main():
             log = (args.artifacts / (owner + '.log')).open('w')
             if owner == 'bun':preflight_unmanaged(daemon_oracle, child_env, args.artifacts / 'bun-release-preflight.json')
             command = [bun, str(daemon_oracle), 'server', 'serve'] if owner == 'bun' else [str(args.binary.resolve()), 'server', 'serve']
-            proc = subprocess.Popen(command, env=child_env, cwd=root, stdout=log, stderr=log)
+            proc = subprocess.Popen(command, env=daemon_env(child_env), cwd=root, stdout=log, stderr=log)
             log.close()
             for _ in range(200):
                 assert proc.poll() is None, (owner, 'daemon exited; see log')

@@ -6,7 +6,7 @@ publish, task affiliation loses a fact, attribute order changes, a restart
 skips an unacknowledged post, or a lost reply creates duplicate project facts.
 Only private wrkqd databases are reset, with the authority stopped first.
 """
-import argparse,json,sqlite3,subprocess,time,shutil,signal,os
+import argparse,json,sqlite3,subprocess,time,signal,os
 from pathlib import Path
 from n3_scratch import Scratch
 
@@ -27,7 +27,7 @@ def main():
     for k in ('binary','installed-release','aspd-socket','scratch-root','artifacts'):p.add_argument('--'+k,type=Path,required=True)
     a=p.parse_args();s=Scratch(a.scratch_root,a.installed_release,a.aspd_socket,a.binary,a.artifacts,project_id='n3-t11839')
     try:
-        s.init_substrate();s.command('server-project',['wrkq','mkdir','/hrc-runtime','--kind','project','--json'])
+        s.init_substrate();s.command('server-project',[str(Path.home() / ".local/bin/wrkq"),'mkdir','/hrc-runtime','--kind','project','--json'])
         empty=s.root/'empty-wrkq.sqlite';backup(s.root/'wrkq.db',empty)
         authority=s.owners[0]
         bun=s.up('bun','publication-baseline')
@@ -51,7 +51,7 @@ def main():
             s.down(authority);backup(empty,s.root/'wrkq.db')
             log=(a.artifacts/('wrkqd-'+tag+'.log')).open('w');s.logs.append(log)
             authority=subprocess.Popen(['wrkqd','-addr','127.0.0.1:'+str(s.authority['port']),'-db',str(s.root/'wrkq.db')],env={**s.env,'WRKQ_DB':str(s.root/'wrkq.db'),'WRKQD_TOKEN':(s.root/'wrkqd-token').read_text().strip(),'WRKF_HOOK_CATALOG':str(s.root/'hook-catalog.json')},cwd=s.project,stdout=log,stderr=log);s.owners.append(authority)
-            time.sleep(.5);s.command('initialize-'+tag,['wrkq','projects','--json'])
+            time.sleep(.5);s.command('initialize-'+tag,[str(Path.home() / ".local/bin/wrkq"),'projects','--json'])
         reset_authority('baseline-replay');backup(snapshot,s.db_path)
         # Exact production classes from the copied Bun release; they own only
         # observation cursors, with the execution owner down for this replay.
@@ -67,7 +67,7 @@ def main():
         reset_authority('native');backup(snapshot,s.db_path)
         # Fault only the reply from the real private wrkq RPC child, after
         # projectEvent.post has committed. The second daemon retries the key.
-        real_wrkq=shutil.which('wrkq',path=s.env['PATH'])
+        real_wrkq=str(Path.home() / '.local/bin/wrkq')
         marker=s.root/'lost-ack.json'; journal=a.artifacts/'publication-rpc.jsonl'
         wrapper=s.root/'bin/wrkq'
         script=r"""#!/usr/bin/env python3

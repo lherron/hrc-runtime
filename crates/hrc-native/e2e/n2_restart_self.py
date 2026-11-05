@@ -54,7 +54,7 @@ def main():
 
         seat, gate = held_turn('cancel')
         s.env.update(HRC_SESSION_REF=scope + '/lane:main', HRC_RUNTIME_ID=seat['runtimeId'])
-        handoff = s.command('handoff-create', ['wrkq', 'handoff', 'create', '--scope',
+        handoff = s.command('handoff-create', [str(Path.home() / ".local/bin/wrkq"), 'handoff', 'create', '--scope',
                             'tabularasa@' + s.project_id, '-t', 'Restart self probe', '--body-file', '-', '--json'],
                             stdin='After reading and acknowledging this handoff, reply with exactly SUCCESSOR_OK. Do not restart yourself.\n')
         handoff = handoff.get('handoff', handoff)
@@ -67,10 +67,10 @@ def main():
             return {'exit': step['exit'], 'matched': expected}
 
         checks['handoffRequired'] = cli('missing-handoff', [], 'handoff_required', 1)
-        consumed = s.command('consumed-handoff-create', ['wrkq', 'handoff', 'create', '--scope',
+        consumed = s.command('consumed-handoff-create', [str(Path.home() / ".local/bin/wrkq"), 'handoff', 'create', '--scope',
                              'tabularasa@' + s.project_id, '-t', 'Consumed probe', '--body-file', '-', '--json'], stdin='Already consumed.\n')
         consumed = consumed.get('handoff', consumed)
-        s.command('consume-handoff', ['wrkq', 'handoff', 'acknowledge', consumed['id'], '--if-match',
+        s.command('consume-handoff', [str(Path.home() / ".local/bin/wrkq"), 'handoff', 'acknowledge', consumed['id'], '--if-match',
                                     str(consumed['etag']), '--note', 'E2E refusal probe', '--json'])
         checks['handoffNotPending'] = cli('consumed-handoff', ['--handoff', consumed['id']], 'handoff_not_pending', 1)
         checks['armCancel'] = cli('arm-cancel', ['--handoff', hid], 'restart armed')

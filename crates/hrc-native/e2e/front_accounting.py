@@ -8,7 +8,7 @@ L3 records entering the other daemon's output. No modeled endpoint responses.
 import argparse,datetime,json,os,select,signal,socket,sqlite3,subprocess,threading,time
 from http.client import HTTPException
 from pathlib import Path
-from foundation import UnixHTTP
+from foundation import daemon_env, UnixHTTP
 
 p=argparse.ArgumentParser()
 for name in ['binary','bun-release','scratch-root','artifacts']:p.add_argument('--'+name,type=Path,required=True)
@@ -30,7 +30,7 @@ def up(kind,proxy=None):
  log=(a.artifacts/(kind+'.log')).open('w');logs.append(log)
  argv=[str(a.binary.resolve()),'server'] if kind=='native' else ['bun',str(release/'packages/hrc-cli/src/cli.ts'),'server','serve']
  if proxy:argv.extend(['--bun-socket',str(proxy)])
- owner=subprocess.Popen(argv,env=env,cwd=root,stdout=log,stderr=log);owners.append(owner);endpoint=runtime/'hrc.sock'
+ owner=subprocess.Popen(argv,env=daemon_env(env),cwd=root,stdout=log,stderr=log);owners.append(owner);endpoint=runtime/'hrc.sock'
  for _ in range(300):
   assert owner.poll() is None,kind+' exited'
   try:

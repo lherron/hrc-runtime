@@ -15,7 +15,7 @@ import sqlite3
 import subprocess
 import sys
 import time
-from foundation import UnixHTTP
+from foundation import daemon_env, UnixHTTP
 
 
 def main():
@@ -42,7 +42,8 @@ def main():
     env = {k: v for k, v in os.environ.items() if not k.startswith(('HRC_', 'WRKQ_', 'ACP_'))}
     env.update(HRC_STATE_DIR=str(state), HRC_RUNTIME_DIR=str(run), HRC_COMMAND_RUN_TARGETS_FILE=str(config), REMOVE_ME='gone')
     log = (a.artifacts / 'server.log').open('w')
-    proc = subprocess.Popen([str(a.binary.resolve()), 'server'], env=env, stdout=log, stderr=log)
+    owner_env = daemon_env(env)
+    proc = subprocess.Popen([str(a.binary.resolve()), 'server'], env=owner_env, stdout=log, stderr=log)
     observations = []
 
     def http(body):
@@ -84,7 +85,7 @@ def main():
         assert sorted(r['status'] for r in rows) == ['completed', 'failed', 'failed'], rows
         assert (root / 'calls').read_text() == 'x'
         observed = json.loads((root / 'observed.json').read_text())
-        assert observed == dict(stdin={'hello': 'world'}, binding='test', env='set', unset=None, path='/test/bin:' + env['PATH']), observed
+        assert observed == dict(stdin={'hello': 'world'}, binding='test', env='set', unset=None, path='/test/bin:' + owner_env['PATH']), observed
         with sqlite3.connect(dbpath) as db:
             assert db.execute("SELECT COUNT(*) FROM runtimes WHERE status='terminated' AND active_run_id IS NULL").fetchone()[0] == 3
             assert db.execute("SELECT COUNT(*) FROM hrc_events WHERE event_kind='command_run.started'").fetchone()[0] == 3

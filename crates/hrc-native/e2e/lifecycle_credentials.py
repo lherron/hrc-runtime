@@ -23,7 +23,7 @@ ROOT = Path(__file__).resolve().parents[3]
 sys.path.insert(0, str(ROOT / 'crates/hrc-cli/e2e'))
 from copied_release import copied_bun_cli, preflight_unmanaged
 from metrics_isolation import isolated_suite
-from foundation import UnixHTTP
+from foundation import daemon_env, UnixHTTP
 
 
 @isolated_suite
@@ -66,7 +66,7 @@ def main():
             if owner == 'bun':
                 preflight_unmanaged(oracle, env, a.artifacts / 'bun-release-preflight.json')
             command = [bun, str(oracle)] if owner == 'bun' else [str(a.binary.resolve())]
-            proc = subprocess.Popen(command + ['server', 'serve'], env=env, cwd=root,
+            proc = subprocess.Popen(command + ['server', 'serve'], env=daemon_env(env), cwd=root,
                                     stdin=subprocess.DEVNULL, stdout=log, stderr=log)
             log.close()
             for _ in range(200):

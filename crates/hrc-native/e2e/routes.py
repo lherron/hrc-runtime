@@ -16,7 +16,7 @@ import sqlite3
 import subprocess
 import time
 from urllib.parse import urlencode
-from foundation import UnixHTTP
+from foundation import daemon_env, UnixHTTP
 
 
 def main(prepare=None, case_factory=None, observe=None, suite="n1-routes", settle=None, compare=None):
@@ -61,7 +61,7 @@ def main(prepare=None, case_factory=None, observe=None, suite="n1-routes", settl
         nonlocal proc,log
         log = (args.artifacts/f'{label}.log').open('w')
         argv = [str(args.binary.resolve()),'server'] if kind=='native' else ['bun',str(release/'packages/hrc-cli/src/cli.ts'),'server','serve']
-        proc = subprocess.Popen(argv,env=env,cwd=root,stdout=log,stderr=log)
+        proc = subprocess.Popen(argv,env=daemon_env(env),cwd=root,stdout=log,stderr=log)
         for _ in range(300):
             assert proc.poll() is None, (label,'owner exited')
             try:
@@ -81,7 +81,7 @@ def main(prepare=None, case_factory=None, observe=None, suite="n1-routes", settl
     query = lambda path,**kw:path+'?'+urlencode(kw)
     try:
         subprocess.run(['wrkqadm','migrate'],env=env,check=True,capture_output=True)
-        subprocess.run(['wrkq','mkdir','/n1-t11818','--kind','project','--as','agent:cody'],env=env,check=True,capture_output=True)
+        subprocess.run([str(Path.home() / ".local/bin/wrkq"),'mkdir','/n1-t11818','--kind','project','--as','agent:cody'],env=env,check=True,capture_output=True)
         up('bun','prime')
         for lane in ('main','alternate'):
             created = call('POST','/v1/sessions/resolve',{'sessionRef':scope+'/lane:'+lane,'create':True,'summonIntent':'explicit_local'})

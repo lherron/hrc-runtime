@@ -20,7 +20,7 @@ import subprocess
 import time
 from urllib.parse import urlencode
 
-from foundation import UnixHTTP
+from foundation import daemon_env, UnixHTTP
 
 
 def main(case_factory=None, observe=None, paginate=True, before_subject=None, before_request=None):
@@ -71,6 +71,7 @@ def main(case_factory=None, observe=None, paginate=True, before_subject=None, be
     scope = 'agent:tabularasa:project:n1-t11818:task:native-' + str(time.time_ns())
     steps, gates, owners, logs = [{'name':'named-bun-cli','resolvedPath':str(cli.resolve()),'releasePath':str(release)}], {}, [], []
     def command(name, argv, timeout=120):
+        argv = [cli if str(argv[0]) == 'hrc' else argv[0], *argv[1:]]
         run = subprocess.run([str(v) for v in argv], env=env, cwd=project,
                              capture_output=True, text=True, timeout=timeout)
         steps.append({'name': name, 'argv': [str(v) for v in argv], 'exit': run.returncode,
@@ -95,7 +96,7 @@ def main(case_factory=None, observe=None, paginate=True, before_subject=None, be
         logs.append(log)
         argv = [args.binary.resolve(), 'server'] if kind == 'native' else [
             'bun', release / 'packages/hrc-cli/src/cli.ts', 'server', 'serve']
-        proc = subprocess.Popen([str(a) for a in argv], env=env, cwd=project, stdout=log, stderr=log)
+        proc = subprocess.Popen([str(a) for a in argv], env=daemon_env(env), cwd=project, stdout=log, stderr=log)
         owners.append(proc)
         for _ in range(200):
             assert proc.poll() is None, (kind, 'owner exited', proc.returncode)
@@ -143,8 +144,8 @@ def main(case_factory=None, observe=None, paginate=True, before_subject=None, be
     try:
         command('project-init', ['git', 'init', '-q'])
         command('wrkq-migrate', ['wrkqadm', 'migrate'])
-        command('wrkq-project', ['wrkq', 'mkdir', '/n1-t11818', '--kind', 'project', '--json'])
-        command('wrkq-root', ['wrkq', 'set', '/n1-t11818', '--root', project, '--json'])
+        command('wrkq-project', [str(Path.home() / ".local/bin/wrkq"), 'mkdir', '/n1-t11818', '--kind', 'project', '--json'])
+        command('wrkq-root', [str(Path.home() / ".local/bin/wrkq"), 'set', '/n1-t11818', '--root', project, '--json'])
         command('schema-create', ['bun', '-e',
             f'import {{openHrcDatabase}} from {json.dumps(str(release / "packages/hrc-store-sqlite/src/database.ts"))};openHrcDatabase(process.argv[1]).close()', db_path])
         bun = up('bun', 0)

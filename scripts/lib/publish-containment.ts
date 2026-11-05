@@ -23,7 +23,7 @@
 
 import { spawnSync } from 'node:child_process'
 import { readFileSync } from 'node:fs'
-import { hostname } from 'node:os'
+import { homedir, hostname } from 'node:os'
 import { join } from 'node:path'
 
 import { resolveStateRoot } from 'hrc-core'
@@ -85,7 +85,7 @@ export function federationConfigPath(env: NodeJS.ProcessEnv = process.env): stri
  * degrading this one check.
  */
 function nodeIdFromDaemonStatus(): string | undefined {
-  const result = spawnSync('hrc', ['server', 'status', '--json'], {
+  const result = spawnSync(join(homedir(), '.bun/bin/hrc'), ['server', 'status', '--json'], {
     encoding: 'utf8',
     timeout: 15_000,
   })

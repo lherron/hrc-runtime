@@ -7,6 +7,7 @@ production release), env leaking this seat's HRC/ASP identity into the scratch
 daemon or its brokers, production usage metrics, and a broker escaping the
 scratch runtime root.
 """
+from foundation import daemon_env
 from http.client import HTTPConnection, HTTPException
 import json
 import os
@@ -97,6 +98,9 @@ class Scratch:
 
     # -- subprocesses -----------------------------------------------------
     def command(self, name, argv, timeout=300, check=True, stdin=None):
+        owners = {'hrc': self.cli, **{tool: Path.home() / '.local/bin' / tool
+                                     for tool in ('wrkq', 'wrkc', 'wrkf')}}
+        argv = [owners.get(str(argv[0]), argv[0]), *argv[1:]]
         run = subprocess.run([str(v) for v in argv], env=self.env, cwd=self.project, input=stdin,
                              capture_output=True, text=True, timeout=timeout)
         self.steps.append({'name': name, 'argv': [str(v) for v in argv], 'exit': run.returncode,
@@ -112,8 +116,8 @@ class Scratch:
     def init_substrate(self):
         self.command('project-init', ['git', 'init', '-q'])
         self.command('wrkq-migrate', ['wrkqadm', 'migrate'])
-        self.command('wrkq-project', ['wrkq', 'mkdir', '/' + self.project_id, '--kind', 'project', '--json'])
-        self.command('wrkq-root', ['wrkq', 'set', '/' + self.project_id, '--root', self.project, '--json'])
+        self.command('wrkq-project', [str(Path.home() / ".local/bin/wrkq"), 'mkdir', '/' + self.project_id, '--kind', 'project', '--json'])
+        self.command('wrkq-root', [str(Path.home() / ".local/bin/wrkq"), 'set', '/' + self.project_id, '--root', self.project, '--json'])
         self.command('schema-create', ['bun', '-e',
                      'import {openHrcDatabase} from ' + json.dumps(str(self.release / 'packages/hrc-store-sqlite/src/database.ts'))
                      + ';openHrcDatabase(process.argv[1]).close()', self.db_path])
@@ -123,7 +127,7 @@ class Scratch:
         self.logs.append(log)
         argv = [self.binary, 'server'] if kind == 'native' else [
             'bun', self.release / 'packages/hrc-cli/src/cli.ts', 'server', 'serve']
-        proc = subprocess.Popen([str(a) for a in argv], env=self.env, cwd=self.project, stdout=log, stderr=log)
+        proc = subprocess.Popen([str(a) for a in argv], env=daemon_env(self.env, (self.root / 'bin',)), cwd=self.project, stdout=log, stderr=log)
         self.owners.append(proc)
         for _ in range(300):
             assert proc.poll() is None, (kind, 'owner exited', proc.returncode)

@@ -6,6 +6,7 @@ blank body or duplicate accepted, stale etag accepted, history lost on owner
 restart, or kernel leaking the body/omitting handoff metadata. Live model
 rotation is separately driven after installation on the assigned task seat.
 """
+from foundation import daemon_env
 import argparse
 import json
 import os
@@ -52,7 +53,7 @@ def main():
 
     def up():
         nonlocal proc
-        proc = subprocess.Popen([str(binary), 'server'], cwd=root, env=env, stdout=log, stderr=log)
+        proc = subprocess.Popen([str(binary), 'server'], cwd=root, env=daemon_env(env), stdout=log, stderr=log)
         for _ in range(300):
             assert proc.poll() is None, 'owner exited; inspect owner.log'
             try:

@@ -23,7 +23,7 @@ Scratch or live:
   `/tmp/hv/<name>/state`) and its own wrkq store (`/tmp/hv/<name>/wrkq`), in a fresh ghostmux tab, and waits
   until it answers `server status`. `--engine bun` starts the retained Bun daemon from the same copy instead
   (dev-env, migrations); grade it only for a Bun-only claim. Run every `hrc` verb against it with
-  `hv run <name> -- hrc …`. It is a real daemon with a fresh store: it births real harness runtimes (through
+  `hv run <name> -- ~/.bun/bin/hrc …`. It is a real daemon with a fresh store: it births real harness runtimes (through
   the live aspd, which only prepares), and it never touches the live `state.sqlite`, ledger, ACP webhook or
   federation. Use it for starts, turns, sends, terminates, resumes, sweeps, captures and the HTTP API.
   - **Never run a daemon from the installed or owner tree.** A Bun daemon whose package sits in a release
@@ -37,7 +37,8 @@ Scratch or live:
     `ls ~/praesidium/var/hrc-owner/hrc-runtime-releases/`); neither may change.
   - The launcher drops every inherited `HARNESS*`, `TMUX*`, `HRC_*`, `AGENT*`, `ASP_*`, `CLAUDE*`, `CODEX*`,
     `WRKQ*` and `XPC_SERVICE_NAME` variable and sets `HRC_LAUNCHD_LABEL=hv.scratch.<name>` before it sets its
-    own, so no child reaches the caller's broker, tmux server, the live ledger or the production launchd job (a
+    own. Its daemon PATH prepends `~/.local/bin` and `~/.bun/bin` for internal owner clients; the
+    calling shell keeps its filtered PATH. No child reaches the caller's broker, tmux server, the live ledger or the production launchd job (a
     native daemon whose `XPC_SERVICE_NAME` equals its label answers a granted stop with `launchctl bootout` of
     that job). `HRC_WRKQ_DB` is the only thing keeping a native daemon's `server.started` and session facts out
     of the live wrkq; the posts fail against the empty private store
@@ -53,13 +54,13 @@ Scratch or live:
     has no harness guard (feature 1); the scrub is what keeps a scratch's births clean. Don't unset your own
     shell's variables to start one by hand; use `hv`.
 - **Live (read-only).** The launchd daemon (`com.praesidium.hrc-server`, socket
-  `~/praesidium/var/run/hrc/hrc.sock`). On it run `hrc server status`, `hrc doctor`, `hrc target locate`,
-  `hrc monitor show|watch|events|transcript|stats|search`, `hrc runtime list|inspect|diagnostics`,
-  `hrc admin metrics report|routes`, `hrc target bindings` and dry-run `admin runs`. Its log is
+  `~/praesidium/var/run/hrc/hrc.sock`). On it run `~/.bun/bin/hrc server status`, `~/.bun/bin/hrc doctor`, `~/.bun/bin/hrc target locate`,
+  `~/.bun/bin/hrc monitor show|watch|events|transcript|stats|search`, `~/.bun/bin/hrc runtime list|inspect|diagnostics`,
+  `~/.bun/bin/hrc admin metrics report|routes`, `~/.bun/bin/hrc target bindings` and dry-run `admin runs`. Its log is
   `~/praesidium/var/logs/hrc-runtime/rusthrc-owner.log` (JSON lines `{ts, server:"rusthrc", level, component,
   event, data}`); `hrc-server.log` there is the Bun owner's, frozen at 2026-10-26T15:37Z. Use live when the claim is about the installed node itself: its release, its federation, its
   bindings.
-- **Never** restart or stop the live daemon (`hrc server restart|stop`), run `just install`, publish, deploy
+- **Never** restart or stop the live daemon (`~/.bun/bin/hrc server restart|stop`), run `just install`, publish, deploy
   or retire on live from this skill. Those belong to Mable primary (restart) and the install doctrine
   (`~/praesidium/build_deploy_guide.md`). When a drive needs one, write the step down, mark it
   `needs operator`, and drive what you can around it.
@@ -69,7 +70,7 @@ Scratch or live:
   on both sides: the live daemon is `rusthrc server serve` from the owner tree
   (`~/praesidium/var/hrc-owner/hrc-runtime-current`) and the CLI is `rusthrc`. Some CLI verbs still hand off to
   the retained Bun CLI (`crates/hrc-cli/command-scope.json` entries marked `bun` exec `bun
-  <release>/packages/hrc-cli/bin/hrc.js`: every bare group and its `--help` (so `hrc admin --help` is
+  <release>/packages/hrc-cli/bin/hrc.js`: every bare group and its `--help` (so `~/.bun/bin/hrc admin --help` is
   commander output), `monitor search`, `runtime send`, `session meta set|clear`, `session retitle`, `server tmux
   kill`, `capture release|recover`, `admin broker-verify run`, `admin runs recover-unstarted`, `admin worktrees
   prune`, `admin runtime ensure|prune`, `admin surface list|unbind`, `admin events`, `federation retire`,
@@ -81,19 +82,19 @@ Scratch or live:
 
 ## Doctor
 
-Always start with `hrc doctor` (read-only) and `hrc server status`, and run them again after anything
-surprising. On a scratch: `hv run <name> -- hrc doctor`.
+Always start with `~/.bun/bin/hrc doctor` (read-only) and `~/.bun/bin/hrc server status`, and run them again after anything
+surprising. On a scratch: `hv run <name> -- ~/.bun/bin/hrc doctor`.
 
 ```bash
-hrc doctor                         # + ok, ~ warn, x fail; exit 0 unless a fail (--strict: warns too)
-hrc server status --json | jq '.release | {mode, releaseId, runningEqualsInstalled, src: .hrcBuild.sourceCommit}'
-hv run t-xxxxx -- hrc doctor       # scratch: single-node, no bindings
+~/.bun/bin/hrc doctor                         # + ok, ~ warn, x fail; exit 0 unless a fail (--strict: warns too)
+~/.bun/bin/hrc server status --json | jq '.release | {mode, releaseId, runningEqualsInstalled, src: .hrcBuild.sourceCommit}'
+hv run t-xxxxx -- ~/.bun/bin/hrc doctor       # scratch: single-node, no bindings
 ```
 
-On max3 `hrc doctor` prints `~ placement-policy` warns for task scopes whose worktree is gone or ambiguous.
-Those are normal and are not a reason to stop; `--strict` turns them into exit 1. Every `hrc server status
+On max3 `~/.bun/bin/hrc doctor` prints `~ placement-policy` warns for task scopes whose worktree is gone or ambiguous.
+Those are normal and are not a reason to stop; `--strict` turns them into exit 1. Every `~/.bun/bin/hrc server status
 --json` path is nested (`.release.runningEqualsInstalled`, `.node.nodeId`); a top-level read answers `null`
-for a path that doesn't exist. `hrc info` lists the paths.
+for a path that doesn't exist. `~/.bun/bin/hrc info` lists the paths.
 
 ## Drive
 
@@ -104,17 +105,17 @@ for a path that doesn't exist. `hrc info` lists the paths.
 4. Check the file's "Proven when" against what you captured.
 5. If the drive disagreed with the file, fix the file (Gotchas, with date and evidence) in the same change.
 
-`hrc --help` (agent view), `hrc --human --help`, `hrc admin --help` (the full cellar), `hrc info` and
-`hrc <cmd> --help` give the live surface. `docs/cli-surface.md` and `docs/cli-reference.md` describe it.
+`~/.bun/bin/hrc --help` (agent view), `~/.bun/bin/hrc --human --help`, `~/.bun/bin/hrc admin --help` (the full cellar), `~/.bun/bin/hrc info` and
+`~/.bun/bin/hrc <cmd> --help` give the live surface. `docs/cli-surface.md` and `docs/cli-reference.md` describe it.
 
 ## Evidence
 
 - **The installed surface, not a unit test.** A claim is proven by the installed build driven end to end and
-  observed in its own outputs: `hrc server status --json`, `hrc monitor` (the lifecycle log and the
-  invocation ledger), `hrc_events`, the pane (`hrc peek`, ghostmux capture), the HTTP responses.
-- **Grade a turn from the ledger, not the start response.** `hrc start --json` answers at `accepted`; the
-  turn's proof is `turn.completed` for its `runId` and the final `turn.message` (`hrc monitor watch`,
-  `hrc monitor transcript`), or the `terminal.finalMessage` of `hrc turn --wait final` on a warm seat (on a cold
+  observed in its own outputs: `~/.bun/bin/hrc server status --json`, `~/.bun/bin/hrc monitor` (the lifecycle log and the
+  invocation ledger), `hrc_events`, the pane (`~/.bun/bin/hrc peek`, ghostmux capture), the HTTP responses.
+- **Grade a turn from the ledger, not the start response.** `~/.bun/bin/hrc start --json` answers at `accepted`; the
+  turn's proof is `turn.completed` for its `runId` and the final `turn.message` (`~/.bun/bin/hrc monitor watch`,
+  `~/.bun/bin/hrc monitor transcript`), or the `terminal.finalMessage` of `~/.bun/bin/hrc turn --wait final` on a warm seat (on a cold
   scope `--json` prints `render_frame` lines instead; feature 3 Gotchas).
 - **An artifact that survives,** under your task's `artifact_dir` (`~/praesidium/var/wrkq-artifacts/<task>/`),
   in one layout:
@@ -131,7 +132,7 @@ for a path that doesn't exist. `hrc info` lists the paths.
 - **Reproduce before you fix.** For a defect, capture the failing drive first. If you can't reproduce it,
   say so and show what you ran.
 - **Name what you couldn't drive,** and the concrete prerequisite that stopped you (for example `needs
-  operator: just install` or `needs operator: hrc server restart`).
+  operator: just install` or `needs operator: ~/.bun/bin/hrc server restart`).
 - **Prove a negative with a discriminator.** A command that answers the same whether the thing is there or
   not proves nothing (`jq` on a missing key is `null`; `turn-finished` armed after the turn exits 20 on
   timeout, not "never finished"). Show the control case beside the subject.

@@ -107,12 +107,12 @@ def main():
     # -- scratch wrkq ledger: T-00001..T-00005 --------------------------------
     wrkq_db = root / 'wrkq.db'
     wenv = {**clean, 'WRKQ_DB': str(wrkq_db), 'WRKQD_TOKEN': '', 'WRKQD_TOKEN_FILE': '', 'WRKQ_PRINCIPAL_REF': 'agent:e2e'}
-    wrkq = lambda *a: subprocess.run(['wrkq', *a], env=wenv, cwd=root, check=True, capture_output=True, text=True).stdout
+    wrkq = lambda *a: subprocess.run([str(Path.home() / ".local/bin/wrkq"), *a], env=wenv, cwd=root, check=True, capture_output=True, text=True).stdout
     subprocess.run(['wrkqadm', 'migrate'], env=wenv, cwd=root, check=True, capture_output=True)
     wrkq('mkdir', '/e2e', '--kind', 'project')
     tasks = [json.loads(wrkq('touch', f'/e2e/seat-{n}', '-t', f'seat {n}', '--json'))[0]['id'] for n in range(1, 4)]
     assert tasks == ['T-00001', 'T-00002', 'T-00003'], tasks
-    shown = subprocess.run(['wrkq', 'rpc', '--stdio'], env=wenv, input='\n'.join(json.dumps(f) for f in (
+    shown = subprocess.run([str(Path.home() / ".local/bin/wrkq"), 'rpc', '--stdio'], env=wenv, input='\n'.join(json.dumps(f) for f in (
         {'jsonrpc': '2.0', 'id': 1, 'method': 'rpc.initialize', 'params': {'protocolVersion': '2026-06-30', 'client': {'name': 'e2e', 'version': '0'}}},
     )) + '\n', capture_output=True, text=True).stdout
     db_path = json.loads(shown.splitlines()[0])['result']['database']['path']

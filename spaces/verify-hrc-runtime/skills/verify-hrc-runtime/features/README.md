@@ -12,13 +12,13 @@ Proven when. The last lines of each file name the drive that last proved it and 
 | 5 | Placement and federation (`target locate`, `target bindings`, doctor's node/federation/placement rows) | [05-placement-federation.md](05-placement-federation.md) | live read-only; scratch |
 | 6 | Install and release (atomic release, manifest, `runningEqualsInstalled`, the owner tree and staging, release pruning and held releases, the dirty guard; the front door is obsolete on owner nodes) | [06-install-release.md](06-install-release.md) | live read-only; install needs operator |
 | 7 | Maintenance (`admin runs`, `admin metrics`, `admin status`, `runtime diagnostics`, `runtime sweep/prune` dry-runs, `capture status`, `broker-verify candidates/run`, `worktrees audit`, the prune-deltas job) | [07-maintenance.md](07-maintenance.md) | scratch; live read-only |
-| 8 | Attach (`hrc attach` in a real TTY through ghostmux to an `hrc-pty` seat, detach, the attach descriptor) | [08-attach.md](08-attach.md) | scratch |
+| 8 | Attach (`~/.bun/bin/hrc attach` in a real TTY through ghostmux to an `hrc-pty` seat, detach, the attach descriptor) | [08-attach.md](08-attach.md) | scratch |
 
 Since 2026-10-26 the installed CLI and the live daemon are native (`rusthrc`); `hv scratch up` starts the
 native daemon from a release copy, and every file grades that unless it says "Bun only".
 
 Not mapped here: the viewer (it ships from ACP now) and the mail injector (agent-control-plane's
-`hrc-mail-injector`). `hrc federation retire`, `hrc server restart|stop`, `just install|publish|deploy-*`,
+`hrc-mail-injector`). `~/.bun/bin/hrc federation retire`, `~/.bun/bin/hrc server restart|stop`, `just install|publish|deploy-*`,
 `just front-door-enable|disable` are named in their features but are operator steps, never driven by this skill.
 Also not mapped, from the live surface on 2026-10-05 (T-10350), rechecked 2026-10-26 (T-11864) and 2026-11-02
 (T-12291, native CLI; `index/help-*.txt` in that task's artifacts):
@@ -30,13 +30,13 @@ Also not mapped, from the live surface on 2026-10-05 (T-10350), rechecked 2026-1
 - `admin surface bind|unbind|list`: low-level surface plumbing that ACP and the viewer drive; prove it from
   those consumers. (`admin bridge …` and `admin registrations gc` are gone since 4c7c3653, T-11542: `unknown
   command`, and their routes answer 404; 2026-10-26, T-11864.)
-- `hrc index status|rebuild` (Bun CLI): the transcript search index behind feature 3's `monitor search`;
+- `~/.bun/bin/hrc index status|rebuild` (Bun CLI): the transcript search index behind feature 3's `monitor search`;
   rebuild rewrites the live index.
-- `hrc run annotate|export` (Bun CLI) and `admin runs recover-unstarted` (Bun CLI): run annotations and export,
+- `~/.bun/bin/hrc run annotate|export` (Bun CLI) and `admin runs recover-unstarted` (Bun CLI): run annotations and export,
   and the Bun-era unstarted-run settle (native `reconcile-active` does not port it, T-12303's note). Nothing in
   this skill needs them yet.
 - The seat-handoff and seat-work routes (`/v1/seat-handoffs…`, GET/PUT `/v1/sessions/work`, prae-rev1, schema
-  0130): consumed by `hrc restartme` and wrkq handoffs; `restartme` restarts the calling seat, so it is never
+  0130): consumed by `~/.bun/bin/hrc restartme` and wrkq handoffs; `restartme` restarts the calling seat, so it is never
   driven from a scratch here.
 - `hrc-pty` itself (each release's `bin/hrc-pty`): the native seat supervisor. Features 2 and 8 drive it through
   `hrc`; its own `ops` socket verbs (status, shutdown) are not driven (never send `shutdown`).

@@ -9,7 +9,7 @@ import argparse,datetime,json,os,signal,sqlite3,subprocess,time
 from pathlib import Path
 from http.client import HTTPException
 from urllib.parse import urlencode
-from foundation import UnixHTTP
+from foundation import daemon_env, UnixHTTP
 
 p=argparse.ArgumentParser()
 for key in ['binary','bun-release','scratch-root','artifacts']:p.add_argument('--'+key,type=Path,required=True)
@@ -35,7 +35,7 @@ def down():
 def up(kind,label=None):
  global proc,log
  log=(a.artifacts/((label or kind)+'.log')).open('w');argv=[str(a.binary.resolve()),'server'] if kind=='native' else ['bun',str(release/'packages/hrc-cli/src/cli.ts'),'server','serve']
- proc=subprocess.Popen(argv,env=env,cwd=root,stdout=log,stderr=log)
+ proc=subprocess.Popen(argv,env=daemon_env(env),cwd=root,stdout=log,stderr=log)
  for _ in range(300):
   assert proc.poll() is None,kind+' exited'
   try:

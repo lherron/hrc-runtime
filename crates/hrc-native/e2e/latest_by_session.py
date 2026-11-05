@@ -9,6 +9,7 @@ The socket stub satisfies front boot only; every measured HTTP route is native.
 Use --baseline for the installed pre-fix binary, then --binary for the subject.
 The supplied database must be a scratch VACUUM INTO copy, never the live store.
 """
+from foundation import daemon_env
 import argparse
 from concurrent.futures import ThreadPoolExecutor
 import json
@@ -71,7 +72,7 @@ def drive(binary, database, artifacts, tag):
 
         log = (artifacts / f'{tag}-http.log').open('w')
         proc = subprocess.Popen([str(copied_binary), 'server', '--front', '--bun-socket',
-                                 str(root / 'backend.sock')], env=env, stdout=log, stderr=log)
+                                 str(root / 'backend.sock')], env=daemon_env(env), stdout=log, stderr=log)
         try:
             for _ in range(300):
                 assert proc.poll() is None, (artifacts / f'{tag}-http.log').read_text()[-4000:]

@@ -13,7 +13,7 @@ import signal
 import sqlite3
 import subprocess
 import time
-from foundation import UnixHTTP, owner_follow_ready
+from foundation import daemon_env, UnixHTTP, owner_follow_ready
 
 
 def main():
@@ -50,7 +50,7 @@ def main():
         log=(args.artifacts/(kind+'.log')).open('a');logs.append(log)
         argv=[str(args.binary.resolve()),'server'] if kind=='native' else ['bun',str(release/'packages/hrc-cli/src/cli.ts'),'server','serve']
         if proxy:argv.extend(['--bun-socket',str(proxy)])
-        proc=subprocess.Popen(argv,env=env,cwd=root,stdout=log,stderr=log);owners.append(proc)
+        proc=subprocess.Popen(argv,env=daemon_env(env),cwd=root,stdout=log,stderr=log);owners.append(proc)
         socket=root/kind/'run/hrc.sock'
         for _ in range(300):
             assert proc.poll() is None,(kind,'exited')
@@ -61,7 +61,7 @@ def main():
         raise AssertionError(kind+' not ready')
     try:
         subprocess.run(['wrkqadm','migrate'],env=base,check=True,capture_output=True)
-        subprocess.run(['wrkq','mkdir','/n1-t11818','--kind','project','--as','agent:cody'],env=base,check=True,capture_output=True)
+        subprocess.run([str(Path.home() / ".local/bin/wrkq"),'mkdir','/n1-t11818','--kind','project','--as','agent:cody'],env=base,check=True,capture_output=True)
         bun=up('bun')
         scope='agent:tabularasa:project:n1-t11818:task:proxy-'+str(time.time_ns())
         created=request(bun,'POST','/v1/sessions/resolve',json.dumps({'sessionRef':scope+'/lane:main','create':True,'summonIntent':'explicit_local'}))

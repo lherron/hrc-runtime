@@ -3,6 +3,7 @@
 Broker hook addresses are daemon-process identity too. A headless broker must
 never inherit this task seat's live observer/callback socket from the shell.
 """
+from pathlib import Path
 import json,os,secrets,socket,subprocess,time,datetime
 from n2_scratch import Scratch as BaseScratch,UnixHTTP
 class Scratch(BaseScratch):
@@ -49,7 +50,7 @@ class Scratch(BaseScratch):
             try:
                 with socket.create_connection(('127.0.0.1',port),timeout=.1):break
             except OSError:time.sleep(.1)
-        projects=self.command('verify-private-authority',['wrkq','projects','--json'])
+        projects=self.command('verify-private-authority',[str(Path.home() / ".local/bin/wrkq"),'projects','--json'])
         assert any(p.get('slug')==self.project_id or p.get('path')==self.project_id for p in projects),projects
         self.authority={'locator':self.env['HRC_WRKQ_DB'],'dbPath':str(self.root/'wrkq.db'),'pid':proc.pid,'port':port}
         (self.artifacts/'authority.json').write_text(json.dumps(self.authority,indent=2)+'\n')

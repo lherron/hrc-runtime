@@ -17,7 +17,7 @@ spaces/verify-hrc-runtime | head -1`). Every "since the last pass" below means `
 `NN-<feature>/drive.txt` per feature (step 4), `evidence/<scratch name>/` from each `hv evidence`, and
 `ship.txt` (step 6).
 
-**Never** in a pass: `just install`, `just publish`, `just deploy-*`, `hrc server restart|stop`,
+**Never** in a pass: `just install`, `just publish`, `just deploy-*`, `~/.bun/bin/hrc server restart|stop`,
 `federation retire`. A drive that needs one is written down as `needs operator`.
 
 ## 1. Index hygiene
@@ -27,7 +27,7 @@ summary still names what the file covers. Each feature file has the five H2s (Su
 it, Driving it, Gotchas, Proven when) and SKILL.md has Launch, Doctor, Drive, Evidence, Cleanup, Helpers.
 Every non-markdown file in this directory is mode 100755 in git (`git ls-files -s
 spaces/verify-hrc-runtime`) and named in SKILL.md. Then compare the live surface with the map:
-`hrc --human --help`, `hrc admin --help` and each group's `--help` against the verbs the feature files name.
+`~/.bun/bin/hrc --human --help`, `~/.bun/bin/hrc admin --help` and each group's `--help` against the verbs the feature files name.
 A verb no file names is mapped in step 6 or listed under the README's "Not mapped here" with why. Save what you
 ran to `index/`.
 
@@ -51,7 +51,7 @@ Drive every feature (eight today) on every pass, even when no HRC commit landed 
 also comes from what HRC runs on (ASP and aspd, the harness CLIs, tmux, wrkq), which the source reads don't
 see.
 
-Run `hrc doctor` and `hrc server status` first, and again after any surprise. Note the installed
+Run `~/.bun/bin/hrc doctor` and `~/.bun/bin/hrc server status` first, and again after any surprise. Note the installed
 `sourceCommit`: the pass grades that build, which may lag HEAD. Drive the native scratch (`hv scratch up`'s
 default engine, the production owner); a feature driven only on `--engine bun` counts as driven for Bun, not for
 production, and the report says so. Record both release trees (`~/.bun/install/hrc-runtime-releases/` and

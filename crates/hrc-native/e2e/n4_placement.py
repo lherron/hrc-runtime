@@ -77,8 +77,8 @@ def main():
         # A cwd under no git repository, so nothing is found by walking up.
         (root / 'nogit').mkdir()
         # A registered root that is itself a linked worktree.
-        s.command('wrkq-linked', ['wrkq', 'mkdir', '/n4-linked', '--kind', 'project', '--json'])
-        s.command('wrkq-linked-root', ['wrkq', 'set', '/n4-linked', '--root', worktree, '--json'])
+        s.command('wrkq-linked', [str(Path.home() / ".local/bin/wrkq"), 'mkdir', '/n4-linked', '--kind', 'project', '--json'])
+        s.command('wrkq-linked-root', [str(Path.home() / ".local/bin/wrkq"), 'set', '/n4-linked', '--root', worktree, '--json'])
         s.up(args.owner, 'placement')
 
         def scope(project, task=None):

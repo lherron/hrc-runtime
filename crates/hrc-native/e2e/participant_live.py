@@ -6,7 +6,7 @@ foreign roots, missing durable graph, ACK before N2, broker killed on owner shut
 import argparse,json,os,signal,socket,sqlite3,subprocess,time,uuid
 from pathlib import Path
 from http.client import HTTPException
-from foundation import UnixHTTP
+from foundation import daemon_env, UnixHTTP
 p=argparse.ArgumentParser()
 for k in ['binary','bun-release','scratch-root','artifacts','aspd-socket']:p.add_argument('--'+k,type=Path,required=True)
 a=p.parse_args();root=a.scratch_root.absolute();assert not root.exists();root.mkdir(parents=True);a.artifacts.mkdir(parents=True,exist_ok=True)
@@ -17,7 +17,7 @@ for k in ['HRC_SESSION_REF','HRC_RUNTIME_ID','HRC_RUN_ID','HRC_HOST_SESSION_ID',
 project=root/'n1-t11818';project.mkdir()
 base.update(ASP_PROJECT_ROOT_OVERRIDE=str(project),HRC_PROJECT_SEARCH_ROOTS=str(project),HRC_STATE_DIR=str(root/'state'),HRC_RUNTIME_DIR=str(root/'run'))
 config=root/'federation.json';config.write_text(json.dumps({'nodeId':socket.gethostname().split('.')[0].lower(),'peers':{}}));config.chmod(0o600);base['HRC_PEER_CONFIG_FILE']=str(config)
-subprocess.run(['wrkqadm','migrate'],env=base,capture_output=True,check=True);subprocess.run(['wrkq','mkdir','/n1-t11818','--kind','project','--as','agent:cody'],env=base,capture_output=True,check=True)
+subprocess.run(['wrkqadm','migrate'],env=base,capture_output=True,check=True);subprocess.run([str(Path.home() / ".local/bin/wrkq"),'mkdir','/n1-t11818','--kind','project','--as','agent:cody'],env=base,capture_output=True,check=True)
 class Rpc:
  def __init__(self,path):
   self.s=socket.socket(socket.AF_UNIX,socket.SOCK_STREAM);self.s.settimeout(120);self.s.connect(str(path));self.f=self.s.makefile('rwb');self.id=0
@@ -40,7 +40,7 @@ for kind in ['bun','native']:
  log=(a.artifacts/(kind+'.log')).open('w');brokerlog=(a.artifacts/(kind+'-broker.log')).open('w');broker=None;owner=None;record={}
  try:
   argv=[str(a.binary.resolve()),'server'] if kind=='native' else ['bun',str(release/'packages/hrc-cli/src/cli.ts'),'server','serve']
-  owner=subprocess.Popen(argv,cwd=project,env=base,stdout=log,stderr=log)
+  owner=subprocess.Popen(argv,cwd=project,env=daemon_env(base),stdout=log,stderr=log)
   for _ in range(300):
    assert owner.poll() is None,kind+' owner exited'
    try:

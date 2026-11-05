@@ -1,8 +1,8 @@
 import { expect, test } from 'bun:test'
 import { existsSync } from 'node:fs'
 import { mkdir, mkdtemp, rm } from 'node:fs/promises'
-import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { homedir, tmpdir } from 'node:os'
+import { delimiter, join } from 'node:path'
 
 const CLI_PATH = join(import.meta.dir, '..', 'cli.ts')
 const PRELOAD_PATH = join(import.meta.dir, 'fixtures', 'unhandled-rejection-preload.fixture.ts')
@@ -28,7 +28,14 @@ test('a booted foreground server handles rejected promises with deliberate fatal
     const child = Bun.spawn(
       [process.execPath, '--preload', PRELOAD_PATH, CLI_PATH, 'server', 'serve'],
       {
-        env,
+        env: {
+          ...env,
+          PATH: [
+            join(homedir(), '.local/bin'),
+            join(homedir(), '.bun/bin'),
+            env['PATH'] ?? '',
+          ].join(delimiter),
+        },
         stdout: 'pipe',
         stderr: 'pipe',
       }

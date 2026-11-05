@@ -14,7 +14,8 @@ import { Database } from 'bun:sqlite'
 import { afterEach, describe, expect, it } from 'bun:test'
 import { existsSync, openSync, readFileSync } from 'node:fs'
 import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
-import { join } from 'node:path'
+import { homedir } from 'node:os'
+import { delimiter, join } from 'node:path'
 
 import { lifecycleCredentialPath } from 'hrc-core'
 import { openHrcDatabase } from 'hrc-store-sqlite'
@@ -161,7 +162,14 @@ async function startDaemon(scratch: Scratch): Promise<number> {
   const out = openSync(scratch.daemonLog, 'a')
   const child = Bun.spawn([process.execPath, CLI_PATH, 'server', 'serve'], {
     cwd: scratch.root,
-    env: scratch.env,
+    env: {
+      ...scratch.env,
+      PATH: [
+        join(homedir(), '.local/bin'),
+        join(homedir(), '.bun/bin'),
+        scratch.env['PATH'] ?? '',
+      ].join(delimiter),
+    },
     stdout: out,
     stderr: out,
     stdin: 'ignore',

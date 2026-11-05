@@ -14,6 +14,7 @@ relay that rewrites records; locate/designations views with different keys,
 order or values; and a scratch node reaching the real federation.json,
 registry or peers (every config, token and port here is private).
 """
+from foundation import daemon_env
 import argparse
 import ipaddress
 import json
@@ -91,6 +92,7 @@ class Node:
         self.bun_store('schema', 'openHrcDatabase(a[0]).close()', self.db)
 
     def run(self, name, argv, stdin=None):
+        argv = [self.release / 'packages/hrc-cli/bin/hrc.js' if str(argv[0]) == 'hrc' else argv[0], *argv[1:]]
         r = subprocess.run([str(a) for a in argv], env=self.env, cwd=self.project, input=stdin,
                            capture_output=True, text=True, timeout=300)
         self.steps.append({'name': name, 'argv': [str(a) for a in argv], 'exit': r.returncode,
@@ -117,7 +119,7 @@ class Node:
         self.logs.append(log)
         argv = [binary, 'server'] if owner == 'native' else [
             'bun', self.release / 'packages/hrc-cli/src/cli.ts', 'server', 'serve']
-        proc = subprocess.Popen([str(a) for a in argv], env=self.env, cwd=self.project, stdout=log, stderr=log)
+        proc = subprocess.Popen([str(a) for a in argv], env=daemon_env(self.env), cwd=self.project, stdout=log, stderr=log)
         self.procs.append(proc)
         for _ in range(300):
             assert proc.poll() is None, (owner, tag, 'owner exited', proc.returncode)

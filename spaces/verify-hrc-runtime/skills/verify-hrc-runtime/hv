@@ -11,6 +11,7 @@ set -uo pipefail
 HV_HOME="${HV_HOME:-/tmp/hv}"
 LIVE_ASPD_SOCKET="${HV_ASPD_SOCKET:-$HOME/praesidium/var/aspd/run/aspd.sock}"
 INSTALLED_LINK="$HOME/.bun/install/hrc-runtime-current"
+INSTALLED_HRC="$HOME/.bun/bin/hrc"
 
 die() { # error message next
   jq -cn --arg e "$1" --arg m "$2" --arg n "${3:-}" '{error:$e,message:$m,next:$n}'
@@ -79,6 +80,8 @@ for v in \$(env | cut -d= -f1 | grep -E '^(HARNESS|TMUX|HRC_|AGENT|ASP_|CLAUDE|C
 # answers a granted stop with launchctl bootout of that job (crates/hrc-native/.../actuation.rs): never
 # let a scratch name the production job.
 unset XPC_SERVICE_NAME XPC_FLAGS 2>/dev/null
+# S4: only this daemon launcher receives the owner clients; the hv caller stays filtered.
+export PATH="$HOME/.local/bin:$HOME/.bun/bin:$PATH"
 export HRC_LAUNCHD_LABEL="hv.scratch.$name"
 export HRC_RUNTIME_DIR="$d/run" HRC_STATE_DIR="$d/state"
 export ASP_HOME="$HOME/praesidium/var/spaces-repo"
@@ -105,7 +108,7 @@ SH
   printf '%s' "$surface" | jq -r '.id // .uuid // .surface_id // empty' > "$d/surface"
   local i ok=""
   for i in $(seq 1 60); do
-    if [ -S "$d/run/hrc.sock" ] && with_env "$name" hrc server status --json 2>/dev/null | jq -e '.api.socketPath' >/dev/null 2>&1; then
+    if [ -S "$d/run/hrc.sock" ] && with_env "$name" "$INSTALLED_HRC" server status --json 2>/dev/null | jq -e '.api.socketPath' >/dev/null 2>&1; then
       ok=1; break
     fi
     # A daemon that refuses to boot (e.g. a root too long for sun_path) exits during startup; say why
@@ -117,7 +120,7 @@ SH
   done
   [ -n "$ok" ] || die not_ready "scratch $name did not answer status in 30 s; read $d/serve.log" "hv scratch down $name"
   local status
-  status="$(with_env "$name" hrc server status --json)"
+  status="$(with_env "$name" "$INSTALLED_HRC" server status --json)"
   if [ "$(printf '%s' "$status" | jq -r '.release.mode')" = "atomic" ]; then
     cmd_down "$name" >/dev/null
     die atomic_release "scratch $name reported release.mode atomic; stopped it before it could prune" "hv scratch up --name $name"
@@ -145,7 +148,7 @@ cmd_down() {
   surface="$(cat "$d/surface" 2>/dev/null || true)"
   runtimes="[]"
   if pid_alive "$pid"; then
-    runtimes="$(with_env "$name" hrc runtime list --json 2>/dev/null \
+    runtimes="$(with_env "$name" "$INSTALLED_HRC" runtime list --json 2>/dev/null \
       | jq -c '[.[]? | select(.status != "terminated" and .status != "dead") | .runtimeId]' 2>/dev/null || echo '[]')"
   fi
   if [ -n "$dry" ]; then
@@ -155,7 +158,7 @@ cmd_down() {
   fi
   local rt
   for rt in $(printf '%s' "$runtimes" | jq -r '.[]'); do
-    with_env "$name" hrc runtime terminate "$rt" >/dev/null 2>&1 || true
+    with_env "$name" "$INSTALLED_HRC" runtime terminate "$rt" >/dev/null 2>&1 || true
   done
   if pid_alive "$pid"; then
     kill -TERM "$pid" 2>/dev/null
@@ -192,7 +195,7 @@ cmd_run() {
   need_name "${1:-}"
   local name="$1"; shift
   [ "${1:-}" = "--" ] && shift
-  [ $# -gt 0 ] || die usage "no command" "hv run N -- hrc server status --json"
+  [ $# -gt 0 ] || die usage "no command" "hv run N -- ~/.bun/bin/hrc server status --json"
   local d; d="$(name_dir "$name")"
   [ -S "$d/run/hrc.sock" ] || die not_up "scratch $name has no socket" "hv scratch up --name $name"
   with_env "$name" "$@"
@@ -202,7 +205,7 @@ cmd_run() {
 # its output and its exit code. CMD runs under bash -c, so pipes work. The
 # command's own output is passed through; the exit code is CMD's.
 cmd_rec() {
-  [ $# -ge 2 ] || die usage "a drive file and a command are required" "hv rec <artifact_dir>/NN-x/drive.txt 'hrc server status --json'"
+  [ $# -ge 2 ] || die usage "a drive file and a command are required" "hv rec <artifact_dir>/NN-x/drive.txt '~/.bun/bin/hrc server status --json'"
   local file="$1"; shift
   [ "${1:-}" = "--" ] && shift
   mkdir -p "$(dirname "$file")"
@@ -229,9 +232,9 @@ cmd_evidence() {
   if ls "$d/run/logs/hrcpty/"*.log >/dev/null 2>&1; then
     mkdir -p "$out/hrcpty"; cp "$d/run/logs/hrcpty/"*.log "$out/hrcpty/" 2>/dev/null || true
   fi
-  with_env "$name" hrc server status --json > "$out/status.json" 2>&1 || true
-  with_env "$name" hrc runtime list --json > "$out/runtimes.json" 2>&1 || true
-  with_env "$name" hrc session list --json > "$out/sessions.json" 2>&1 || true
+  with_env "$name" "$INSTALLED_HRC" server status --json > "$out/status.json" 2>&1 || true
+  with_env "$name" "$INSTALLED_HRC" runtime list --json > "$out/runtimes.json" 2>&1 || true
+  with_env "$name" "$INSTALLED_HRC" session list --json > "$out/sessions.json" 2>&1 || true
   if [ -f "$d/state/state.sqlite" ]; then
     sqlite3 -readonly "$d/state/state.sqlite" \
       "select hrc_seq, ts, event_kind, scope_ref, runtime_id from hrc_events order by hrc_seq" > "$out/hrc_events.tsv" 2>&1 || true

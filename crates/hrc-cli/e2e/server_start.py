@@ -49,8 +49,8 @@ def main():
         oracle_tools = root / 'oracle-tools'; oracle_tools.mkdir()
         (oracle_tools / 'bun').symlink_to(bun)
         for tool in ('wrkq', 'tmux'):
-            (tools / tool).symlink_to(shutil.which(tool))
-            (oracle_tools / tool).symlink_to(shutil.which(tool))
+            (tools / tool).symlink_to((str(Path.home() / ".local/bin/wrkq") if tool == "wrkq" else shutil.which(tool)))
+            (oracle_tools / tool).symlink_to((str(Path.home() / ".local/bin/wrkq") if tool == "wrkq" else shutil.which(tool)))
         env = {k:v for k,v in os.environ.items() if not k.startswith(('ASP_', 'HRC_', 'WRKQ', 'HARNESS_BROKER_')) and k not in ('CLAUDECODE', 'CLAUDE_CODE_ENTRYPOINT', 'CODEX_SANDBOX')}
         env.update(HOME=str(home), HRC_RUNTIME_DIR=str(runtime), HRC_STATE_DIR=str(state), HRC_PEER_CONFIG_FILE=str(root / 'no-federation.json'), HRC_ACP_WEBHOOK_URL='', PATH=f'{tools}:/usr/bin:/bin', NO_COLOR='1', FORCE_COLOR='0')
         env.update(WRKQ_DB=a.wrkq_db, HRC_WRKQ_DB=a.wrkq_db, WRKQD_TOKEN_FILE=str(a.token_file), HRC_WRKQD_TOKEN_FILE=str(a.token_file))

@@ -153,7 +153,7 @@ def lag_snapshot(binary, root, artifacts, interval=1000):
     env = {k:v for k,v in os.environ.items() if not k.startswith(prefixes)}
     env.update(HRC_RUNTIME_DIR=str(root/'run'), HRC_STATE_DIR=str(root/'state'), HRC_WRKQ_DB=str(root/'private-wrkq.sqlite'), HRC_LAUNCHD_LABEL='fixture.idle')
     with (artifacts/'lag-owner.log').open('w') as log:
-        proc = subprocess.Popen([str(binary.resolve()), 'server'], env=env, stdout=log, stderr=log)
+        proc = subprocess.Popen([str(binary.resolve()), 'server'], env={**env, 'PATH': os.pathsep.join([str(Path.home() / '.local/bin'), str(Path.home() / '.bun/bin'), env.get('PATH', os.defpath)])}, stdout=log, stderr=log)
         try:
             for _ in range(100):
                 assert proc.poll() is None, (artifacts/'lag-owner.log').read_text()

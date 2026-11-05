@@ -17,6 +17,16 @@
 # binary.
 rbuild := `command -v rbuild || echo scripts/rbuild-local.sh`
 mac_debug := "crates/target/aarch64-apple-darwin/debug"
+# Worker recipes name the owner explicitly; PATH is filtered in prae seats.
+# Fixed paths, deliberately without environment overrides. Operator recipes below
+# (fleet, launchd and owner activation) retain their operator CLI resolution.
+installed_hrc := home_directory() + "/.bun/bin/hrc"
+installed_asp := home_directory() + "/.bun/bin/asp"
+installed_wrkq := home_directory() + "/.local/bin/wrkq"
+installed_wrkc := home_directory() + "/.local/bin/wrkc"
+installed_wrkf := home_directory() + "/.local/bin/wrkf"
+rusthrc_debug := "crates/target/debug/rusthrc"
+rusthrc_mac_debug := mac_debug + "/rusthrc"
 
 # Default recipe
 default:
@@ -193,12 +203,12 @@ cargo-check:
     {{rbuild}} sh -c '[ "$(uname)" = Darwin ] || bun install --frozen-lockfile --silent; exec cargo test --manifest-path crates/Cargo.toml --workspace --locked --exclude hrc-pty'
     cargo test --manifest-path crates/Cargo.toml --locked -p hrc-pty
     {{rbuild}} --mac --pull {{mac_debug}}/rusthrc --pull {{mac_debug}}/hrc-pty cargo build --manifest-path crates/Cargo.toml --locked -p hrc-native -p hrc-pty
-    python3 crates/hrc-cli/e2e/differential.py --binary {{mac_debug}}/rusthrc --artifacts "${HRC_CLI_E2E_ARTIFACTS:-/tmp/hrc-cli-e2e-$(date +%s)-$$}"
-    python3 crates/hrc-native/e2e/kernel_fold.py --binary {{mac_debug}}/rusthrc --artifacts "${HRC_NATIVE_E2E_ARTIFACTS:-/tmp/hrc-native-e2e-$(date +%s)-$$}/kernel-fold"
-    python3 crates/hrc-native/e2e/runtime_created.py --binary {{mac_debug}}/rusthrc --artifacts "${HRC_NATIVE_E2E_ARTIFACTS:-/tmp/hrc-native-e2e-$(date +%s)-$$}/runtime-created"
-    python3 crates/hrc-native/e2e/kernel_fd_cost.py --binary {{mac_debug}}/rusthrc --artifacts "${HRC_NATIVE_E2E_ARTIFACTS:-/tmp/hrc-native-e2e-$(date +%s)-$$}/kernel-fd-cost"
-    python3 crates/hrc-native/e2e/foundation.py --binary {{mac_debug}}/rusthrc --artifacts "${HRC_NATIVE_E2E_ARTIFACTS:-/tmp/hrc-native-e2e-$(date +%s)-$$}"
-    python3 crates/hrc-native/e2e/command_runs.py --binary {{mac_debug}}/rusthrc --scratch-root "/tmp/hrc-command-runs-$(date +%s)-$$" --artifacts "${HRC_NATIVE_E2E_ARTIFACTS:-/tmp/hrc-native-e2e-$(date +%s)-$$}/command-runs"
+    python3 crates/hrc-cli/e2e/differential.py --binary {{rusthrc_mac_debug}} --artifacts "${HRC_CLI_E2E_ARTIFACTS:-/tmp/hrc-cli-e2e-$(date +%s)-$$}"
+    python3 crates/hrc-native/e2e/kernel_fold.py --binary {{rusthrc_mac_debug}} --artifacts "${HRC_NATIVE_E2E_ARTIFACTS:-/tmp/hrc-native-e2e-$(date +%s)-$$}/kernel-fold"
+    python3 crates/hrc-native/e2e/runtime_created.py --binary {{rusthrc_mac_debug}} --artifacts "${HRC_NATIVE_E2E_ARTIFACTS:-/tmp/hrc-native-e2e-$(date +%s)-$$}/runtime-created"
+    python3 crates/hrc-native/e2e/kernel_fd_cost.py --binary {{rusthrc_mac_debug}} --artifacts "${HRC_NATIVE_E2E_ARTIFACTS:-/tmp/hrc-native-e2e-$(date +%s)-$$}/kernel-fd-cost"
+    python3 crates/hrc-native/e2e/foundation.py --binary {{rusthrc_mac_debug}} --artifacts "${HRC_NATIVE_E2E_ARTIFACTS:-/tmp/hrc-native-e2e-$(date +%s)-$$}"
+    python3 crates/hrc-native/e2e/command_runs.py --binary {{rusthrc_mac_debug}} --scratch-root "/tmp/hrc-command-runs-$(date +%s)-$$" --artifacts "${HRC_NATIVE_E2E_ARTIFACTS:-/tmp/hrc-native-e2e-$(date +%s)-$$}/command-runs"
 
 # Standing native workflows, run by hand only. They compare native against a
 # named installed Bun baseline with live model turns (aspd, tmux and model
@@ -259,7 +269,7 @@ e2e:
 # Run the seat-annotations e2e on a scratch rusthrc
 e2e-annotations:
     cargo build --manifest-path crates/Cargo.toml --locked -p hrc-native -p hrc-pty
-    python3 crates/hrc-cli/e2e/annotations.py --binary crates/target/debug/rusthrc --artifacts "${HRC_ANNOTATIONS_E2E_ARTIFACTS:-/tmp/hrc-annotations-e2e-$(date +%s)-$$}"
+    python3 crates/hrc-cli/e2e/annotations.py --binary {{rusthrc_debug}} --artifacts "${HRC_ANNOTATIONS_E2E_ARTIFACTS:-/tmp/hrc-annotations-e2e-$(date +%s)-$$}"
 
 # hrc-pty's spike e2e (T-12047): Claude Code under a bare `hrc-pty serve`,
 # attached from real Ghostty windows through ghostmux. Needs a logged-in

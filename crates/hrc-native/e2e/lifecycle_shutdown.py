@@ -21,7 +21,7 @@ import time
 ROOT = Path(__file__).resolve().parents[3]
 sys.path.insert(0, str(ROOT / 'crates/hrc-cli/e2e'))
 from copied_release import copied_bun_cli, preflight_unmanaged
-from foundation import UnixHTTP
+from foundation import daemon_env, UnixHTTP
 from metrics_isolation import isolated_suite
 
 
@@ -76,7 +76,7 @@ def main():
         def boot(command, name):
             nonlocal proc
             log = (args.artifacts/(name+'.log')).open('w')
-            proc = subprocess.Popen(command+['server', 'serve'], env=env, cwd=root,
+            proc = subprocess.Popen(command+['server', 'serve'], env=daemon_env(env), cwd=root,
                                     stdin=subprocess.DEVNULL, stdout=log, stderr=log)
             log.close()
             for _ in range(300):

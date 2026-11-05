@@ -19,6 +19,17 @@ import time
 import uuid
 
 
+def daemon_env(env, fixture_bins=()):
+    """Give only the daemon child its owner clients (T-12651 / S4).
+
+    Explicit fixture bins stay first for tests that inject a ledger fault.
+    The caller's mapping and the prae recipe/CLI PATH remain unchanged.
+    """
+    bins = [*(str(path) for path in fixture_bins),
+            str(Path.home() / '.local/bin'), str(Path.home() / '.bun/bin')]
+    return {**env, 'PATH': os.pathsep.join([*bins, env.get('PATH', os.defpath)])}
+
+
 class UnixHTTP(http.client.HTTPConnection):
     def __init__(self, path):
         super().__init__('localhost', timeout=10)
@@ -106,7 +117,7 @@ def main():
                 results.append({'case': variant, 'exit': proc.returncode, 'stderr': proc.stderr.decode(), 'noMainDatabaseWrites': True})
                 continue
             log = (args.artifacts / 'serve.log').open('w')
-            proc = subprocess.Popen([binary, 'server'], env=env, stdout=log, stderr=log)
+            proc = subprocess.Popen([binary, 'server'], env=daemon_env(env), stdout=log, stderr=log)
             sock = subject / 'run/hrc.sock'
             def request(method, path, body=None):
                 c = UnixHTTP(sock)

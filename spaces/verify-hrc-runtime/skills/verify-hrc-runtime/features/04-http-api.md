@@ -38,7 +38,7 @@ observation routes a consumer pages. Code: `crates/hrc-native/src/server.rs` (`d
   `/v1/runtimes/capture/release` (6 × 404, 6 lines). Native 404s any unimplemented method+path, so a GET suffices.
 - `GET /v1/sessions[?latestGeneration=true]`: a bare array of host sessions; `latestGeneration` keeps only each
   scope's newest generation (T-10832; one row, gen 4 `active`, 2026-11-02). `POST /v1/sessions/restart` is what
-  `hrc restart` calls (feature 2).
+  `~/.bun/bin/hrc restart` calls (feature 2).
 - Refusals (`malformed_request` 400 unless noted, 2026-11-02, T-12291): no `limit` → "limit is required"; 501 →
   "limit must be between 1 and 500"; 0 → "limit must be a safe integer greater than or equal to 1"; `generation=x`
   → "generation must be a non-negative integer"; `beforeHrcSeq` without the incarnation → "beforeHrcSeq requires
@@ -89,7 +89,7 @@ curl -s -D- -o /dev/null --unix-socket $L 'http://hrc/v1/events/tail?limit=1&sco
   only serve.log's `route.not_served` line (native, no Bun socket) says a route was unserved rather than handled
   with a 404. Grade unserved routes by that line, and count lines per path (2026-11-02, T-12291).
 - `/v1/federation/health` on the unix socket is a plain-text 404 too (peer routes live on the federation TCP
-  listener; read federation health through `hrc doctor`, feature 5). A routed `scopeRef` read carries the home's
+  listener; read federation health through `~/.bun/bin/hrc doctor`, feature 5). A routed `scopeRef` read carries the home's
   incarnation and head (2026-10-19: svc head 123941 vs max3's 3035766, T-11363); don't page it with the local one.
 - **`turn.completed` is per turn, not per HRC run.** A turn the broker takes without an HRC dispatch (typed
   in the pane, a participant's own prompt) has no `runId` since e822f2a9 (T-11306), so "one per run" holds

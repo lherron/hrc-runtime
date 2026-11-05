@@ -16,7 +16,7 @@ import sqlite3
 import datetime
 import subprocess
 import time
-from foundation import UnixHTTP, owner_follow_ready
+from foundation import daemon_env, UnixHTTP, owner_follow_ready
 
 
 def main():
@@ -46,7 +46,7 @@ def main():
         log=(args.artifacts/(kind+'.log')).open('w');logs.append(log)
         argv=[str(args.binary.resolve()),'server'] if kind.startswith('native') else ['bun',str(release/'packages/hrc-cli/src/cli.ts'),'server','serve']
         if proxy:argv.extend(['--bun-socket',str(proxy)])
-        proc=subprocess.Popen(argv,env=env,cwd=root,stdout=log,stderr=log);owners.append(proc)
+        proc=subprocess.Popen(argv,env=daemon_env(env),cwd=root,stdout=log,stderr=log);owners.append(proc)
         socket=runtime/'hrc.sock'
         for _ in range(300):
             assert proc.poll() is None,kind+' exited'
@@ -58,7 +58,7 @@ def main():
     try:
         subprocess.run(['wrkqadm','migrate'],env=base,check=True,capture_output=True)
         bun=up('bun')
-        subprocess.run(['wrkq','mkdir','/n1-t11818','--kind','project','--as','agent:cody'],env=base,check=True,capture_output=True)
+        subprocess.run([str(Path.home() / ".local/bin/wrkq"),'mkdir','/n1-t11818','--kind','project','--as','agent:cody'],env=base,check=True,capture_output=True)
         http=UnixHTTP(bun)
         http.request('POST','/v1/sessions/resolve',json.dumps({'sessionRef':'agent:tabularasa:project:n1-t11818:task:accounting-'+str(time.time_ns())+'/lane:main','create':True,'summonIntent':'explicit_local'}),{'Content-Type':'application/json'})
         response=http.getresponse();assert response.status==200

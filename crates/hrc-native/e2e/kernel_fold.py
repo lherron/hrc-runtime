@@ -5,6 +5,7 @@ stale fences, discovery without HRC types/documents, startup/stop ordering,
 lock failure isolation and front-mode exclusion. Projection/attach coverage
 moved to praesidium-kernel and campaign T-12361; no live service is modified.
 """
+from foundation import daemon_env
 import argparse
 import fcntl
 import json
@@ -132,8 +133,8 @@ def substrate(root, artifacts, binary):
     r.env = env
     # A private wrkq ledger behind a private wrkqd (n3_scratch.py's shape): an
     # implicit birth reads the scope's birth envelope over wrkq RPC.
-    for argv in (['wrkqadm', 'migrate'], ['wrkq', 'mkdir', '/' + PROJECT, '--kind', 'project', '--json'],
-                 ['wrkq', 'set', '/' + PROJECT, '--root', str(root / PROJECT), '--json']):
+    for argv in (['wrkqadm', 'migrate'], [str(Path.home() / ".local/bin/wrkq"), 'mkdir', '/' + PROJECT, '--kind', 'project', '--json'],
+                 [str(Path.home() / ".local/bin/wrkq"), 'set', '/' + PROJECT, '--root', str(root / PROJECT), '--json']):
         subprocess.run(argv, env=dict(env, WRKQ_PRINCIPAL_REF='agent:clod'), cwd=root / PROJECT,
                        check=True, capture_output=True, timeout=60)
     catalog = root / 'hook-catalog.json'
@@ -410,7 +411,7 @@ def main():
         listener.listen(4)
         log_path = args.artifacts / 'daemon-front.log'
         with log_path.open('w') as out:
-            front = subprocess.Popen([str(binary), 'server', '--front', '--bun-socket', str(bun)], env=r.env,
+            front = subprocess.Popen([str(binary), 'server', '--front', '--bun-socket', str(bun)], env=daemon_env(r.env),
                                      cwd=root / PROJECT, stdout=out, stderr=out, start_new_session=True)
             r.wait(lambda: '"server.listening"' in log_path.read_text() or front.poll() is not None, 20, 'front listening')
             text = log_path.read_text()

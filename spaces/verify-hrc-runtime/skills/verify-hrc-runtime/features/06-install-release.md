@@ -28,7 +28,7 @@ release into `~/praesidium/var/hrc-owner/hrc-runtime-releases/` and repoints
   `var/hrc-owner/bin/rusthrc` exists but the plist does not use it; it is byte-identical to the release bin
   (`cmp`, `TeamIdentifier=not set`; 2026-11-02, T-12291). Both `current` manifests were identical
   (release-20261102082222127-69529, 9861ae0e, installedAt 08:23:34Z).
-- The daemon's view: `hrc server status --json` `.release` (mode atomic, releaseId, releasePath, manifestPath,
+- The daemon's view: `~/.bun/bin/hrc server status --json` `.release` (mode atomic, releaseId, releasePath, manifestPath,
   `hrcBuild.sourceCommit`, aspContracts, installedAt, processStartedAt, `runningEqualsInstalled`);
   `binaryPath`/`packagePath` are the owner link spelling
   (`…/var/hrc-owner/hrc-runtime-current/bin/rusthrc`); schema `0130_seat_handoffs`, `pending: []` (2026-11-02,
@@ -39,7 +39,7 @@ release into `~/praesidium/var/hrc-owner/hrc-runtime-releases/` and repoints
   `.release.releaseId` yourself.
 - The dirty guard: `bun scripts/install-dirty-guard.ts --source-root=$PWD` refuses tracked source
   modifications (docs, `architecture/` and prose extensions don't count).
-- Release pruning (T-10024; there is no `hrc admin release` command). **The install prune** (atomic-install.ts
+- Release pruning (T-10024; there is no `~/.bun/bin/hrc admin release` command). **The install prune** (atomic-install.ts
   → release-prune.ts) still runs on `~/.bun/install/hrc-runtime-releases` after its cutover: it deletes every
   release except current and those a live host process holds (cwd, manifest or `bin/*` open, or argv inside;
   T-11830), names them in `heldBy` and prints `held by live processes …`; a holder probe that fails its own
@@ -56,7 +56,7 @@ release into `~/praesidium/var/hrc-owner/hrc-runtime-releases/` and repoints
 - **Needs operator, never driven by this skill:** `just install`, `hrc-owner.sh stage|activate|refresh-plist`,
   `just switch-owner-rusthrc`, `just refresh-owner-exe`, `just publish`, `just deploy-*` (stages only when
   `DEPLOY_RESTART_NEEDED=1`; source-only, 2026-11-02: justfile:1326-1334), `just launchd-install|uninstall`,
-  `just front-door-enable|disable`, `hrc server restart`. Install-then-restart on an owner node is install →
+  `just front-door-enable|disable`, `~/.bun/bin/hrc server restart`. Install-then-restart on an owner node is install →
   `hrc-owner.sh stage` → a Mable-primary restart, then `.release.releaseId` = both `current` links at the new
   sourceCommit; write it down as an operator step.
 - Only Bun migrates: a native daemon refuses a missing store ("schema: cannot open existing Bun store",
@@ -65,7 +65,7 @@ release into `~/praesidium/var/hrc-owner/hrc-runtime-releases/` and repoints
 
 ## How to get to it
 
-Read-only from any shell: both trees, the plist, `hrc server status --json`,
+Read-only from any shell: both trees, the plist, `~/.bun/bin/hrc server status --json`,
 `~/praesidium/var/logs/hrc-runtime/rusthrc-owner.log` (`hrc-owner.sh log-path`), lsof on the daemon pid, the
 dirty guard from the canonical checkout. A native scratch (`hv scratch up`) is the control: it reports
 `unmanaged` and must leave both trees unchanged.
@@ -78,9 +78,9 @@ for m in ~/.bun/install ~/praesidium/var/hrc-owner; do jq -c '{releaseId, src: .
 ls ~/.bun/install/hrc-runtime-releases | wc -l; ls ~/praesidium/var/hrc-owner/hrc-runtime-releases | wc -l; du -sh ~/praesidium/var/hrc-owner/hrc-runtime-releases
 plutil -extract ProgramArguments json -o - ~/Library/LaunchAgents/com.praesidium.hrc-server.plist   # link, not bin/rusthrc
 cmp ~/praesidium/var/hrc-owner/bin/rusthrc ~/.bun/install/hrc-runtime-current/bin/rusthrc && echo identical
-hrc server status --json | jq -c '{binaryPath, release: (.release|{mode, releaseId, src: .hrcBuild.sourceCommit, runningEqualsInstalled}), schema: (.schema|{storeVersion, pending, schemaAhead})}'
+~/.bun/bin/hrc server status --json | jq -c '{binaryPath, release: (.release|{mode, releaseId, src: .hrcBuild.sourceCommit, runningEqualsInstalled}), schema: (.schema|{storeVersion, pending, schemaAhead})}'
 basename "$(readlink ~/.bun/install/hrc-runtime-current)"         # == .release.releaseId, else install is ahead of running
-P=$(hrc server status --json | jq -r .pid); lsof -nP -p $P | awk '{print $NF}' | grep -E 'hrc-owner|hrc-runtime-releases|rusthrc-owner' | sort -u
+P=$(~/.bun/bin/hrc server status --json | jq -r .pid); lsof -nP -p $P | awk '{print $NF}' | grep -E 'hrc-owner|hrc-runtime-releases|rusthrc-owner' | sort -u
 grep -cF release_prune ~/praesidium/var/logs/hrc-runtime/rusthrc-owner.log   # 0: native never prunes
 cd ~/praesidium/hrc-runtime && git rev-parse HEAD origin/main       # installed lags HEAD between installs
 cd ~/praesidium/hrc-runtime && just front-door-status
@@ -102,7 +102,7 @@ cd ~/praesidium/hrc-runtime && bun scripts/install-dirty-guard.ts --source-root=
   processes, mostly `hrc-pty` seat supervisors whose argv is link-spelled (source-only, 2026-11-02:
   T-12291 sources/06.md §0), so any future owner-tree pruner needs the lsof/txt holder probe, not argv. In
   `~/.bun` a held release outlives its holders until the next install.
-- **Any Bun daemon started from a release is a pruner for its directory** (Bun only): a scratch Bun `hrc server
+- **Any Bun daemon started from a release is a pruner for its directory** (Bun only): a scratch Bun `~/.bun/bin/hrc server
   serve` from the installed tree deleted production's running release on 2026-10-26 (04:50Z, EN-36056); in
   the owner tree it would take up to 52 directories. `rusthrc` prunes nothing: native scratch `t-12291` reported
   `unmanaged`, and both trees' listings hashed identical before and after with live pid 81530 unchanged

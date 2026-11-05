@@ -5,6 +5,7 @@ Failures to fence: missing/invalid endpoint, incompatible hello, absent profile,
 invalid request, producer refusal, and accidental hosting during observation.
 The transport's protocol tests are supplied by the real installed aspd.
 """
+from foundation import daemon_env
 import argparse
 import http.client
 import json
@@ -54,7 +55,7 @@ def main():
                    ASP_PROJECT_ROOT_OVERRIDE=str(project))
         env.pop('HRC_PEER_CONFIG_FILE', None)
         log = (args.artifacts / 'serve.log').open('w')
-        proc = subprocess.Popen([args.binary.resolve(), 'server'], env=env, stdout=log, stderr=log)
+        proc = subprocess.Popen([args.binary.resolve(), 'server'], env=daemon_env(env), stdout=log, stderr=log)
         sock = root / 'run/hrc.sock'
         def request(path, body):
             c = UnixHTTP(sock)

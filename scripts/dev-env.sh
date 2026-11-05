@@ -402,7 +402,9 @@ start_daemon() {
   log "starting ephemeral daemon (hrc server serve) → ${LOG_FILE}"
   (
     cd "${REPO_ROOT}"
-    HRC_RUNTIME_DIR="${RUN_DIR}" HRC_STATE_DIR="${STATE_DIR}" ASP_AGENTS_ROOT="${AGENTS_DIR}" \
+    # S4: owner clients belong to the daemon child, never the recipe shell.
+    PATH="$HOME/.local/bin:$HOME/.bun/bin:$PATH" \
+      HRC_RUNTIME_DIR="${RUN_DIR}" HRC_STATE_DIR="${STATE_DIR}" ASP_AGENTS_ROOT="${AGENTS_DIR}" \
       HRC_PROJECT_SEARCH_ROOTS="${PROJECT_SEARCH_ROOT}" \
       HRC_WRKQ_DB="${WRKQ_DB_FILE}" HRC_WRKQD_TOKEN_FILE='' WRKQ_DB="${WRKQ_DB_FILE}" \
       nohup env -u WRKQ_DB_PATH -u WRKQ_DB_PATH_FILE bun "${REPO_ROOT}/packages/hrc-cli/bin/hrc.js" server serve \

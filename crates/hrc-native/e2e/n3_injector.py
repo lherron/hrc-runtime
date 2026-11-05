@@ -5,6 +5,7 @@ Failure modes: wrong wrkq authority, subscriber receipt loss on reconnect,
 delivery repeated after owner restart, Stop allowing presented reply debt,
 losing the still-running broker/tool, or reply discharge never clearing Stop.
 """
+from foundation import daemon_env
 import argparse,json,shlex,sqlite3,subprocess,time
 from pathlib import Path
 from n3_scratch import Scratch
@@ -25,11 +26,11 @@ def main():
         assert unmarked.returncode!=0 and 'import marker' in unmarked.stderr,unmarked.stderr
         with sqlite3.connect(s.root/'state/injector.sqlite') as db:db.execute('INSERT INTO injector_store_imports(source_path,imported_at) VALUES(?,?)',('scratch:none',time.strftime('%Y-%m-%dT%H:%M:%SZ',time.gmtime())))
         log=(a.artifacts/'injector.log').open('w');s.logs.append(log)
-        injector=subprocess.Popen(argv,env=env,cwd=s.project,stdout=log,stderr=log);s.owners.append(injector)
+        injector=subprocess.Popen(argv,env=daemon_env(env),cwd=s.project,stdout=log,stderr=log);s.owners.append(injector)
         ready=s.root/'reply-ready';release=s.root/'release-reply'
-        command='touch '+shlex.quote(str(ready))+'; while [ ! -f '+shlex.quote(str(release))+' ]; do sleep 0.1; done; wrkc say /n3-t11839 --scope-ref '+shlex.quote(seat)+' --as agent:tabularasa --to '+shlex.quote(sender)+' --fyi -m N3_PRIVATE_ACK --json'
+        command='touch '+shlex.quote(str(ready))+'; while [ ! -f '+shlex.quote(str(release))+' ]; do sleep 0.1; done; '+shlex.quote(str(Path.home() / '.local/bin/wrkc'))+' say /n3-t11839 --scope-ref '+shlex.quote(seat)+' --as agent:tabularasa --to '+shlex.quote(sender)+' --fyi -m N3_PRIVATE_ACK --json'
         body='Private N3 mail gate. Use your Bash tool to run exactly this command once. It intentionally waits for a local test marker; keep waiting until the file exists. The command replies to this mail. Do not run another wrkc reply. After it finishes, respond only DONE.\n\n'+command
-        said=s.command('private-wrkc-say',['wrkc','say','/n3-t11839','--scope-ref',sender,'--as','agent:cody','--to',seat,'-m',body,'--json'])
+        said=s.command('private-wrkc-say',[str(Path.home() / ".local/bin/wrkc"),'say','/n3-t11839','--scope-ref',sender,'--as','agent:cody','--to',seat,'-m',body,'--json'])
         envelope=said['envelopes'][0]['id']
         until=time.monotonic()+180
         while not ready.exists():
@@ -43,7 +44,7 @@ def main():
         release.write_text('release after native owner restart\n')
         replies=[];until=time.monotonic()+180
         while time.monotonic()<until:
-            room=s.command('private-room-read',['wrkc','log','/n3-t11839','--limit','100','--json'])
+            room=s.command('private-room-read',[str(Path.home() / ".local/bin/wrkc"),'log','/n3-t11839','--limit','100','--json'])
             replies=[row for row in room['items'] if row.get('body')=='N3_PRIVATE_ACK']
             if replies:break
             time.sleep(.2)
@@ -52,7 +53,7 @@ def main():
         status,clear=s.http('POST','/v1/internal/mail/stop-decision',{'runtimeId':rt['runtimeId']})
         assert status==200 and clear['decision']=='allow' and clear['reason']=='clear',(status,clear)
         time.sleep(3)
-        room=s.command('private-room-final',['wrkc','log','/n3-t11839','--limit','100','--json'])
+        room=s.command('private-room-final',[str(Path.home() / ".local/bin/wrkc"),'log','/n3-t11839','--limit','100','--json'])
         assert len([row for row in room['items'] if row.get('body')=='N3_PRIVATE_ACK'])==1,room
         s.assert_no_duplicate_turn_messages()
         result={'pass':True,'injectorVersion':a.injector,'envelope':envelope,'replyCount':1,'blockedBeforeRestart':blocked,'clearAfterReply':clear,'brokerRowsBeforeRestart':before,'brokerRowsAfterRestart':s.rows('SELECT COUNT(*) AS n FROM broker_invocation_events')[0]['n'],'authority':s.authority}

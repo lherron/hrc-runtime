@@ -11,7 +11,7 @@ from n3_scratch import Scratch
 
 def rpc(s,method,params):
     frame={'jsonrpc':'2.0','id':1,'method':method,'params':{'principalRef':'agent:hrc',**params}}
-    out=s.command(method,['wrkq','rpc','--stdio'],stdin=json.dumps(frame)+'\n')
+    out=s.command(method,[str(Path.home() / ".local/bin/wrkq"),'rpc','--stdio'],stdin=json.dumps(frame)+'\n')
     if isinstance(out,str):out=json.loads(out.splitlines()[-1])
     assert 'error' not in out,out
     return out['result']
@@ -19,7 +19,7 @@ def rpc(s,method,params):
 def exercise(s,scope,runtime,host,generation):
     sender='cody@n3-t11839:primary';seat='tabularasa@n3-t11839:mail';out={}
     def say(body):
-        result=s.command('private-wrkc-say',['wrkc','say','/n3-t11839','--scope-ref',sender,'--as','agent:cody','--to',seat,'-m',body,'--json'])
+        result=s.command('private-wrkc-say',[str(Path.home() / ".local/bin/wrkc"),'say','/n3-t11839','--scope-ref',sender,'--as','agent:cody','--to',seat,'-m',body,'--json'])
         envelope=result['envelopes'][0];return envelope['id']
     def stop(name):
         status,v=s.http('POST','/v1/internal/mail/stop-decision',{'runtimeId':runtime});assert status==200,(status,v);out[name]=v;return v
@@ -35,7 +35,7 @@ def exercise(s,scope,runtime,host,generation):
     present(next_id)
     assert stop('new-obligation')['refusalCount']==1
     for id in (id,next_id):
-        s.command('private-wrkc-reply',['wrkc','say',id,'--scope-ref',seat,'--as','agent:tabularasa','--to',sender,'--fyi','-m','Private gate answered.','--json'])
+        s.command('private-wrkc-reply',[str(Path.home() / ".local/bin/wrkc"),'say',id,'--scope-ref',seat,'--as','agent:tabularasa','--to',sender,'--fyi','-m','Private gate answered.','--json'])
     assert stop('answered')['reason']=='clear'
     for label,body in [('array',[]),('empty',{}),('missing-runtime',{'runtimeId':'missing'}),('not-string',{'runtimeId':42})]:out[label]=s.http('POST','/v1/internal/mail/stop-decision',body)
     return out

@@ -11,7 +11,7 @@ this suite proves durable descriptor admission/retry, not live broker activation
 import argparse,copy,hashlib,json,os,signal,socket,sqlite3,stat,subprocess,time
 from http.client import HTTPException
 from pathlib import Path
-from foundation import UnixHTTP
+from foundation import daemon_env, UnixHTTP
 
 p=argparse.ArgumentParser()
 for name in ['binary','bun-release','scratch-root','artifacts']:p.add_argument('--'+name,type=Path,required=True)
@@ -35,7 +35,7 @@ def call(path,body,raw=False):
 def up(kind,label):
  global proc,log
  log=(a.artifacts/(label+'.log')).open('w');argv=[str(a.binary.resolve()),'server'] if kind=='native' else ['bun',str(release/'packages/hrc-cli/src/cli.ts'),'server','serve']
- proc=subprocess.Popen(argv,env=e,cwd=root,stdout=log,stderr=log)
+ proc=subprocess.Popen(argv,env=daemon_env(e),cwd=root,stdout=log,stderr=log)
  for _ in range(300):
   assert proc.poll() is None,(label,'owner exited')
   try:
@@ -63,7 +63,7 @@ def snapshot():
 
 try:
  subprocess.run(['wrkqadm','migrate'],env=e,check=True,capture_output=True)
- subprocess.run(['wrkq','mkdir','/n1-t11818','--kind','project','--as','agent:cody'],env=e,check=True,capture_output=True)
+ subprocess.run([str(Path.home() / ".local/bin/wrkq"),'mkdir','/n1-t11818','--kind','project','--as','agent:cody'],env=e,check=True,capture_output=True)
  up('bun','prime');down()
  with sqlite3.connect(dbpath) as src,sqlite3.connect(root/'snapshot.sqlite') as dst:src.backup(dst)
  for kind in ['bun','native']:

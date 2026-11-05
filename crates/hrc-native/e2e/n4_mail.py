@@ -13,6 +13,7 @@ presented, or presented twice; a mail turn running on the wrong node; a
 registry or locate answer that hides the remote home; and any scratch process
 reaching the real federation.json, registry, wrkq ledger or peers.
 """
+from foundation import daemon_env
 import argparse
 import json
 import secrets
@@ -68,7 +69,7 @@ class Node(Scratch):
                        ('scratch:none', time.strftime('%Y-%m-%dT%H:%M:%SZ', time.gmtime())))
         log = (self.artifacts / 'injector.log').open('w')
         self.logs.append(log)
-        self.injector = subprocess.Popen(argv, env=env, cwd=self.project, stdout=log, stderr=log)
+        self.injector = subprocess.Popen(argv, env=daemon_env(env), cwd=self.project, stdout=log, stderr=log)
         self.owners.append(self.injector)
 
     def birth(self, task):
@@ -81,12 +82,12 @@ class Node(Scratch):
 
 
 def envelope(node, envelope_id):
-    shown = node.command('show-' + envelope_id, ['wrkc', 'show', envelope_id, '--json'])
+    shown = node.command('show-' + envelope_id, [str(Path.home() / ".local/bin/wrkc"), 'show', envelope_id, '--json'])
     return shown.get('envelope', shown)
 
 
 def room_items(node):
-    return node.command('room', ['wrkc', 'log', '/' + PROJECT, '--limit', '200', '--json'])['items']
+    return node.command('room', [str(Path.home() / ".local/bin/wrkc"), 'log', '/' + PROJECT, '--limit', '200', '--json'])['items']
 
 
 def main():
@@ -132,11 +133,11 @@ def main():
         b.start_injector(args.injector)
 
         def exchange(name, sender, recipient, sender_task, recipient_task, marker):
-            reply = (f'wrkc say /{PROJECT} --scope-ref {shlex.quote(seat(recipient_task))} --as agent:{AGENT} '
+            reply = (f'{shlex.quote(str(Path.home() / ".local/bin/wrkc"))} say /{PROJECT} --scope-ref {shlex.quote(seat(recipient_task))} --as agent:{AGENT} '
                      f'--to {shlex.quote(seat(sender_task))} --fyi -m {marker} --json')
             body = (f'N4 cross-node mail gate ({name}). Use your Bash tool to run exactly this command once; it replies '
                     'to this mail. Do not run another wrkc reply. After it finishes, respond only DONE.\n\n' + reply)
-            said = sender.command(name + '-say', ['wrkc', 'say', '/' + PROJECT, '--scope-ref', seat(sender_task),
+            said = sender.command(name + '-say', [str(Path.home() / ".local/bin/wrkc"), 'say', '/' + PROJECT, '--scope-ref', seat(sender_task),
                                                   '--as', 'agent:' + AGENT, '--to', seat(recipient_task),
                                                   '-m', body, '--json'])
             request = said['envelopes'][0]['id']
