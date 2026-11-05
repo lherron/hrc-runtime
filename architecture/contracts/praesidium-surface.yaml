@@ -48,13 +48,12 @@ predicate: >
   response boundary and changes neither owner admission nor kernel write
   repetition: the kernel never repeats a write. An upstream Cardo schema
   change is outside this approval and returns for review.
-  T-12662 specification etag 4 extends the prae operator surface to live
+  T-12662 specification etag 6 extends the prae operator surface to live
   legacy CLI forms within its named exclusions; it is a parity extension,
-  not new owner or peer authority. The catalog declares credential: required
-  for operations protected by the new owner rule. If credential discovery
-  fails, prae refuses those operations with credential_unavailable before
-  dispatch. This is a client presence precondition, not credential verification
-  or operator authorization in the kernel. The kernel forwards caller identity
+  not new owner or peer authority. Credential discovery retains its existing
+  behavior; this extension requires no catalog credential precondition,
+  credential_unavailable refusal or credential-discovery-failure regression.
+  The kernel forwards caller identity
   and lifecycle headers verbatim and never substitutes its own authority.
   HRC verifies credential-present callers on other operator writes as Mable
   primaries; terminate additionally admits the runtime's own seat. Callers
@@ -66,8 +65,11 @@ predicate: >
   This extension gives the kernel no new peer control connection and adds no
   federated owner route. Foreign send and archive remain refused. Ordinary
   operator acknowledgement, wrkf, daemon callers, interactive TTY entry points
-  and server serve remain excluded. Deliberately headerless calls and older
-  clients without the precondition are outside the supported caller model;
+  and server serve remain excluded. Deliberately headerless calls and a
+  protected operation dispatched headerless after credential discovery fails
+  are explicitly unsupported. The latter retains the existing headerless
+  owner behavior; the contract makes no refusal guarantee for that case.
+  Protected owner admission is governed by hrc-runtime.operator-owner-authority;
   this compatibility boundary is not adversarial agent isolation. Rebuilding
   Mable's agent profile and retiring her legacy CLI space require a separate
   decision and are not authorized by this extension.
@@ -80,23 +82,28 @@ authority: >
   specification etag 4, 2026-11-05, following Lance's direct scope ruling
   recorded there; this supersedes the proposal's operator-surface exclusion
   and remote-seat restriction only within the extension's stated scope.
+  EN-47473, Mable's 2026-11-05 withdrawal of the F3 fix, and T-12662 etag 6
+  narrow support to exclude headerless dispatch after credential discovery
+  failure. The catalog precondition and its regression obligation are
+  withdrawn; the rest of EN-47463's approval stands.
 source:
   - wrkq:T-12245
   - wrkq:T-12662
   - wrkc:EN-45074
   - wrkc:EN-45078
   - wrkc:EN-45079
+  - wrkc:EN-47473
   - docs/proposals/praesidium-kernel.md
   - docs/proposals/praesidium-document.md
   - architecture/contracts/seat-asks.yaml
   - architecture/contracts/seat-annotations.yaml
   - architecture/records/invariants/hrc-runtime.self-restart-turn-boundary.yaml
+  - architecture/records/invariants/hrc-runtime.operator-owner-authority.yaml
 validation_scope: >
   The submitted producer, reader, snapshot and whole-seat acceptance
   obligations remain the requester's. This approval adds no gate and
   establishes no implementation, installation, activation or product acceptance.
-  T-12662 parity, replacement, authority and legacy-compatibility acceptance,
-  and the implementation task's credential-discovery-failure regression,
+  T-12662 parity, replacement, authority and legacy-compatibility acceptance
   remain the requester's work. The operator extension adds no product gate.
 last_verified: >
   2026-11-04 design read of f84658c7 and its two-line F1 correction;
@@ -113,8 +120,8 @@ reopen_when: >
   record representation, the legacy cutover hold, catalog authority,
   owner reconciliation meaning, native Cardo execution controls or the
   no-kernel-write-repetition boundary changes.
-  Reopen the operator extension when credential-required coverage, refusal
-  before dispatch, owner admission, credential-free compatibility, restart
+  Reopen the operator extension when owner admission,
+  credential-free compatibility, credential-discovery support scope, restart
   authority, peer-control routing, exclusions or the supported caller model
   changes.
 design_review: >
@@ -127,3 +134,11 @@ design_review: >
   client presence precondition. This verifies the design only. No build,
   test, install, restart or live mutation was run; prior last_verified
   evidence is unchanged.
+  2026-11-05 EN-47473 and T-12662 etag 6 withdraw the unbuilt F3 client
+  precondition and its regression obligation, explicitly excluding the
+  credential-discovery-failure case instead. Re-read the revised spec,
+  prae's optional credential discovery and the bridge's optional-header
+  forwarding, plus the newly active operator-owner-authority record.
+  Corrected the support boundary without a new ruling; the historical
+  etag 4 precondition above is superseded by this withdrawal. No build,
+  test, install, restart or live mutation was run for this correction.
