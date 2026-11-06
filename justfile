@@ -1268,7 +1268,10 @@ _deploy-node ssh-target expected-node target-ref="origin/main" aspd-ref="origin/
     if (( aspd_current == 1 )); then
       echo "[aspd] already serving ${aspd_sha} under ${aspd_label}"
     else
-      build_wt="$(mktemp -d "${TMPDIR:-/tmp}/aspd-build.XXXXXX")"
+      # Under $HOME: rbuild mirrors these at the same absolute path on build1, which
+      # the absolute --target-dir, --pull and remap paths in asp-release rely on.
+      mkdir -p "$HOME/praesidium/var/scratch/hrc-runtime"
+      build_wt="$(mktemp -d "$HOME/praesidium/var/scratch/hrc-runtime/aspd-build.XXXXXX")"
       rmdir "$build_wt"
       drop_build_wt() { git -C "$asp_repo" worktree remove --force "$build_wt" >/dev/null 2>&1 || true; }
       trap drop_build_wt EXIT
