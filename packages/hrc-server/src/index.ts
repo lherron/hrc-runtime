@@ -103,7 +103,11 @@ import {
   type PresentationPublishMethods,
   presentationPublishMethods,
 } from './presentation-publish.js'
-import { captureServerRelease, pruneReleasesFromCurrent } from './release-provenance.js'
+import {
+  captureServerRelease,
+  isProductionLifecycleOwner,
+  pruneReleasesFromCurrent,
+} from './release-provenance.js'
 import { ServerRequestMetricSampler, writeServerMetric } from './request-metrics.js'
 import type { RequestMetricsSink } from './request-metrics.js'
 import {
@@ -536,7 +540,13 @@ export class HrcServerInstance implements HrcServer {
       node: this.federationNodeId,
     })
     this.serverProjectEvents =
-      options.lifecycleProvenance === true
+      options.lifecycleProvenance === true &&
+      isProductionLifecycleOwner({
+        atomic: this.capturedRelease.mode === 'atomic',
+        home: process.env['HOME'] ?? '',
+        runtimeRoot: options.runtimeRoot,
+        stateRoot: options.stateRoot,
+      })
         ? new ServerProjectEventPublisher({
             db: this.db,
             post: (params) => this.wrkqLedger.projectEventPost(params),

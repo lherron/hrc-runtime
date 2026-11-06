@@ -34,6 +34,25 @@ type CapturedUnmanagedRelease = Omit<
 
 export type CapturedServerRelease = CapturedAtomicRelease | CapturedUnmanagedRelease
 
+/** Release provenance alone does not make a daemon on private roots production. */
+export function isProductionLifecycleOwner(input: {
+  atomic: boolean
+  home: string
+  runtimeRoot: string
+  stateRoot: string
+}): boolean {
+  if (!input.atomic || !input.home) return false
+  try {
+    return (
+      realpathSync(input.runtimeRoot) ===
+        realpathSync(join(input.home, 'praesidium/var/run/hrc')) &&
+      realpathSync(input.stateRoot) === realpathSync(join(input.home, 'praesidium/var/state/hrc'))
+    )
+  } catch {
+    return false
+  }
+}
+
 export function projectHrcReleaseIdentity(
   captured: CapturedServerRelease
 ): { releaseId: string; sourceCommit: string } | undefined {

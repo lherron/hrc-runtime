@@ -142,6 +142,11 @@ async fn post(server: &Shared, mut fact: Value) -> Result<()> {
 }
 async fn pump_server(server: &Shared, node: &str) -> Result<()> {
     let _serial = server.publication.server.lock().await;
+    // Owning a scratch socket is not owning this node's production timeline.
+    // Still consume excluded rows so a later boot cannot backfill them.
+    let publish = server
+        .release
+        .is_production_owner(&server.runtime, &server.state);
     loop {
         let (rows, incarnation) = {
             let db = server.store.lock().unwrap();
@@ -151,7 +156,7 @@ async fn pump_server(server: &Shared, node: &str) -> Result<()> {
             )
         };
         for e in &rows {
-            if e.get("evidenceOrigin").is_none() {
+            if publish && e.get("evidenceOrigin").is_none() {
                 let fact = server_fact(e, node, &incarnation);
                 if let Err(error) = post(server, fact.clone()).await {
                     stderr_json(

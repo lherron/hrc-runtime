@@ -208,6 +208,7 @@ cargo-check:
     python3 crates/hrc-native/e2e/runtime_created.py --binary {{rusthrc_mac_debug}} --artifacts "${HRC_NATIVE_E2E_ARTIFACTS:-/tmp/hrc-native-e2e-$(date +%s)-$$}/runtime-created"
     python3 crates/hrc-native/e2e/kernel_fd_cost.py --binary {{rusthrc_mac_debug}} --artifacts "${HRC_NATIVE_E2E_ARTIFACTS:-/tmp/hrc-native-e2e-$(date +%s)-$$}/kernel-fd-cost"
     python3 crates/hrc-native/e2e/foundation.py --binary {{rusthrc_mac_debug}} --artifacts "${HRC_NATIVE_E2E_ARTIFACTS:-/tmp/hrc-native-e2e-$(date +%s)-$$}"
+    python3 crates/hrc-native/e2e/lifecycle_publication.py --binary {{rusthrc_mac_debug}} --artifacts "${HRC_NATIVE_E2E_ARTIFACTS:-/tmp/hrc-native-e2e-$(date +%s)-$$}/lifecycle-publication"
     python3 crates/hrc-native/e2e/command_runs.py --binary {{rusthrc_mac_debug}} --scratch-root "/tmp/hrc-command-runs-$(date +%s)-$$" --artifacts "${HRC_NATIVE_E2E_ARTIFACTS:-/tmp/hrc-native-e2e-$(date +%s)-$$}/command-runs"
 
 # Standing native workflows, run by hand only. They compare native against a

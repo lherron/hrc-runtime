@@ -19,12 +19,14 @@ import { Database } from 'bun:sqlite'
 import { afterEach, beforeEach, describe, expect, it } from 'bun:test'
 import { mkdir, readFile, rm } from 'node:fs/promises'
 import { join } from 'node:path'
+import type { HrcDatabase } from 'hrc-store-sqlite'
 
 import { createHrcServer } from '../index.js'
 import type { HrcServer, HrcServerOptions } from '../index.js'
 import { SERVER_EVENT_SCOPE_REF, type ServerShutdownAttribution } from '../server-lifecycle.js'
 import {
   SERVER_PROJECT_EVENTS_STREAM,
+  ServerProjectEventPublisher,
   deriveServerProjectEvent,
   serverProjectEventIdempotencyKey,
 } from '../wrkq/server-project-events.js'
@@ -46,10 +48,7 @@ type Row = {
 
 // Private seams the stop-completeness gates inject failures through.
 type Inspectable = HrcServer & {
-  db: {
-    hrcEvents: { ledgerIncarnationId(): string }
-    wrkqLedgerCursors: { get(s: string): number | undefined }
-  }
+  db: HrcDatabase
   zombieSweepInFlight: Promise<unknown> | undefined
   activeRunReconcileInFlight: Promise<unknown> | undefined
   firstTurnEvalInFlight: Promise<unknown> | undefined
@@ -135,7 +134,21 @@ describe('T-08137 daemon lifecycle provenance', () => {
   }
 
   async function startLifecycle(overrides: Partial<HrcServerOptions> = {}): Promise<Inspectable> {
-    return (await createHrcServer(lifecycleOpts(overrides))) as Inspectable
+    const server = (await createHrcServer(lifecycleOpts(overrides))) as Inspectable
+    // Exercise the low-level publisher against this explicit private ledger.
+    // The daemon integration itself excludes these unmanaged fixture roots.
+    if (server.db.wrkqLedgerCursors.get(SERVER_PROJECT_EVENTS_STREAM) === undefined) {
+      server.db.wrkqLedgerCursors.advance(0, SERVER_PROJECT_EVENTS_STREAM)
+    }
+    Object.defineProperty(server, 'serverProjectEvents', {
+      value: new ServerProjectEventPublisher({
+        db: server.db,
+        post: (params) => ledger.projectEventPost(params),
+        nodeId: 'fixture',
+        pollIntervalMs: 0,
+      }),
+    })
+    return server
   }
 
   function serverRows(): Row[] {

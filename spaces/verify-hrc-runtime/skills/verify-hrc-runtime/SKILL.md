@@ -40,10 +40,13 @@ Scratch or live:
     own. Its daemon PATH prepends `~/.local/bin` and `~/.bun/bin` for internal owner clients; the
     calling shell keeps its filtered PATH. No child reaches the caller's broker, tmux server, the live ledger or the production launchd job (a
     native daemon whose `XPC_SERVICE_NAME` equals its label answers a granted stop with `launchctl bootout` of
-    that job). `HRC_WRKQ_DB` is the only thing keeping a native daemon's `server.started` and session facts out
-    of the live wrkq; the posts fail against the empty private store
-    (`server_project_event.post_failed`, `session_project_event.post_failed` in `serve.log`), which is the
-    isolation working. The runtime config path is `/tmp/hv/<name>/state/federation.json`, not a repo file;
+    that job). Since T-12677, native and Bun lifecycle project publication requires a validated atomic
+    release on the canonical production runtime/state roots. A scratch keeps its local lifecycle facts
+    but does not post `server.started` or `server.stopped`; native advances its excluded publication cursor.
+    `HRC_WRKQ_DB` still isolates session facts and other ledger traffic: posts fail against the empty
+    private store (`session_project_event.post_failed` in `serve.log`), which is the isolation working.
+    Older releases also log `server_project_event.post_failed` because they lack the lifecycle guard.
+    The runtime config path is `/tmp/hv/<name>/state/federation.json`, not a repo file;
     `hv scratch up` does not create it, and the launcher scrubs any inherited `HRC_PEER_CONFIG_FILE` override.
     With that config absent the scratch is single-node (derived nodeId `max3`, the same as live: tell them
     apart by `.node.nodeIdProvenance` and `.node.configExists`).

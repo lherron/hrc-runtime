@@ -8,6 +8,22 @@ pub struct Release {
     installed_link: Option<PathBuf>,
 }
 impl Release {
+    pub fn is_production_owner(&self, runtime: &std::path::Path, state: &std::path::Path) -> bool {
+        let Some(home) = std::env::var_os("HOME").map(PathBuf::from) else {
+            return false;
+        };
+        let same_root = |actual: &std::path::Path, expected: PathBuf| {
+            actual
+                .canonicalize()
+                .ok()
+                .zip(expected.canonicalize().ok())
+                .is_some_and(|(a, b)| a == b)
+        };
+        self.captured["mode"] == "atomic"
+            && same_root(runtime, home.join("praesidium/var/run/hrc"))
+            && same_root(state, home.join("praesidium/var/state/hrc"))
+    }
+
     pub fn capture(started_at: &str) -> Result<Self> {
         let binary = std::env::current_exe()?.canonicalize()?;
         let package = binary

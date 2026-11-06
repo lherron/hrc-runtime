@@ -53,6 +53,8 @@ source:
   - crates/hrc-native/src/server/lifecycle/lifecycle/rows.rs
   - crates/hrc-native/src/server/front/release.rs
   - crates/hrc-native/src/server/front/hosting.rs
+  - crates/hrc-native/e2e/lifecycle_publication.py
+  - packages/hrc-server/src/__tests__/t12677-production-lifecycle-publication.test.ts
   - packages/hrc-server/src/release-provenance.ts
   - packages/hrc-server/src/server-lifecycle.ts
   - packages/hrc-server/src/wrkq/server-project-events.ts
@@ -66,13 +68,15 @@ source:
   - packages/hrc-server/src/__tests__/t09861-server-lifecycle-authority.test.ts
   - packages/hrc-cli/src/__tests__/t09861-server-lifecycle-e2e.test.ts
 required_tests:
+  - just cargo-check
+  - bun test packages/hrc-server/src/__tests__/t12677-production-lifecycle-publication.test.ts
   - just architecture-records
   - bun test packages/hrc-server/src/__tests__/t08137-daemon-lifecycle-provenance.test.ts
   - bun test packages/hrc-cli/src/__tests__/t08137-shutdown-deadline-flag.test.ts
   - bun test packages/hrc-cli/src/__tests__/t07646-server-status-json-parity.test.ts
   - bun test packages/hrc-server/src/__tests__/t09861-server-lifecycle-authority.test.ts
   - bun test packages/hrc-cli/src/__tests__/t09861-server-lifecycle-e2e.test.ts
-last_verified: 2026-09-28 T-09861 scratch-daemon e2e (granted restart/stop, ungranted SIGTERM, SIGKILL unattributed); installed smoke pending
+last_verified: 2026-11-06 T-12677 source-built native daemon acceptance (four release/root cases, two boots each, local facts retained, excluded cursor drained, production-shaped start/stop/start published); source Bun scratch acceptance retained local facts with no lifecycle posts; installed activation forbidden by assignment. Earlier lifecycle grant/stop evidence remains T-09861, 2026-09-28.
 reopen_when: The lifecycle grant shape or its authorization source, the stop() teardown order, the continue-past-failure site set, the stopped attestation boundary, boot classification, the sentinel envelope, the production publication eligibility boundary or canonical owner roots, the timeline projection key or cursor rule, or the lastRestart derivation changes.
 supersedes: []
 superseded_by: []
