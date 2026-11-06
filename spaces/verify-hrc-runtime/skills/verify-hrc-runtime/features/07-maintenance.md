@@ -68,7 +68,9 @@ first_turn}.rs`, `broker/startup/sweeps.rs`, `front/accounting.rs` (request log,
   event: "prune.report", data}`; a failure is `event: "prune.failed"`, level `error`, exit 1, on stdout).
   Default tables `runtime_buffers` and `broker_projection_dispositions` (4b5d322b); the launchd job runs
   `--apply --tables runtime_buffers,broker_projection_dispositions,hrcmail_stop_refusals` against the live,
-  now native-owned DB. The retired `events` table still reports `skipped`.
+  now native-owned DB. The retired `events` table still reports `skipped`. Each retention run also ages out
+  `backups/pre-activate-*.sqlite` beside the DB and reports them under `.data.preActivateBackups`; rules in
+  `docs/state-retention.md` (T-12695).
 - Not the cellar but they terminate HRC runtimes: launchd `com.praesidium.reap-headless-ghostmux` (every 30 min,
   `-y`) reaps paneless ready runtimes idle more than 12 h (54535197); and native seat retirement (T-12236)
   logs `runtime.seat_retirement_complete` (the scratch's: `skippedByReason: {standing_seat: 1}`, 2026-11-02,

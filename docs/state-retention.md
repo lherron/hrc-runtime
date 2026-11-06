@@ -65,6 +65,41 @@ The prune has SQL-level safety invariants independent of cutoff arithmetic:
 There is no archive migration. Observation history is retained in the live state
 database; aged `runtime_buffers` and expired disposition metadata are deleted.
 
+## Pre-activate store backups
+
+`hrc-owner.sh activate --expect-commit` writes a full copy of the store to
+`backups/pre-activate-<UTC stamp>-<pid>.sqlite` beside `state.sqlite` (2–25 GiB)
+and deletes older ones. The same nightly job ages out what remains, so a node
+with no activation for weeks still gets the space back (T-12695). There is no
+new plist argument: the job does this on every retention run, and without
+`--apply` it reports `would-remove` and deletes nothing.
+
+A backup goes when it is at least 7 days old, measured from the later of its
+filename stamp and its mtime, and the store has moved past it. Each run reports
+every backup under `preActivateBackups` in its `prune.report` line. A backup stays
+with one of these reasons:
+
+| reason | meaning |
+|---|---|
+| `inside-window` | Under 7 days old |
+| `unreadable-name` | The name has no stamp, so its age is unknown |
+| `rollback` | The store's `hrc_migrations` is not a strict superset of the backup's |
+| `backup-unreadable`, `store-unreadable` | That comparison could not be made |
+
+`rollback` is the check that no rollback has used the backup. HRC has no rollback
+command to record one. Activation refuses to run without pending migrations, so
+a successful one always leaves the store strictly ahead of its backup. Restoring
+the backup puts the two level, as does a migration that failed after the backup,
+and the file then stays until the next activation replaces it.
+
+## Staged owner releases
+
+`hrc-owner.sh stage` prunes `var/hrc-owner/hrc-runtime-releases` as its last step
+(T-12695). It keeps current, the newest 5, the release the running daemon reports
+and any release a live process holds or was started from. A holder probe that
+fails, or a daemon status with no answer, deletes nothing, and a prune failure
+never fails the stage. The next stage tries again. `--dry-run` deletes nothing.
+
 ## Broker projection dispositions — terminal committed prefix
 
 `broker_projection_dispositions` is deduplication metadata, not an event ledger.

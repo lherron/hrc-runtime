@@ -7,6 +7,7 @@ import {
   SPILL_TOOL_RESULTS_OPERATION,
   STRIP_ENVELOPE_PAYLOADS_OPERATION,
 } from './prune-hrc-event-deltas/constants.ts'
+import { agePreActivateBackups } from './prune-hrc-event-deltas/pre-activate-backups.ts'
 import { pruneStateRetention } from './prune-hrc-event-deltas/prune-state-retention.ts'
 import { restubToolResults } from './prune-hrc-event-deltas/restub-tool-results.ts'
 import { spillToolResults } from './prune-hrc-event-deltas/spill-tool-results.ts'
@@ -43,8 +44,12 @@ export {
 const PRUNE_LOG_COMPONENT = 'hrc-prune-deltas'
 
 if (import.meta.main) {
+  // Reported on the failure line too: the files are gone by the time a later step throws.
+  let preActivateBackups: ReturnType<typeof agePreActivateBackups> | undefined
   try {
     const options = parsePruneStateRetentionArgs(Bun.argv.slice(2))
+    // First and independent of the store's own retention, which can run to its deadline.
+    if (options.operation === 'retention') preActivateBackups = agePreActivateBackups(options)
     const result =
       options.operation === STRIP_ENVELOPE_PAYLOADS_OPERATION
         ? await stripEnvelopePayloads(options)
@@ -74,6 +79,7 @@ if (import.meta.main) {
           maxDutyCycle: options.maxDutyCycle,
           countedEligible: options.countEligible,
           ...result,
+          ...(preActivateBackups === undefined ? {} : { preActivateBackups }),
         },
         PRUNE_LOG_COMPONENT
       )
@@ -83,7 +89,10 @@ if (import.meta.main) {
       formatServerLogLine(
         'error',
         'prune.failed',
-        { message: error instanceof Error ? error.message : String(error) },
+        {
+          message: error instanceof Error ? error.message : String(error),
+          ...(preActivateBackups === undefined ? {} : { preActivateBackups }),
+        },
         PRUNE_LOG_COMPONENT
       )
     )

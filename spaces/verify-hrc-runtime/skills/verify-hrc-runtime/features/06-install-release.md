@@ -46,9 +46,9 @@ release into `~/praesidium/var/hrc-owner/hrc-runtime-releases/` and repoints
   control refuses `live-holders-unavailable`. On an owner node the daemon's releasePath is in the owner tree,
   so it keeps nothing extra for the daemon (source-only, 2026-11-02: release-prune.ts:216-219). 1 directory there
   on 2026-11-02. **Native prunes nothing**: a native scratch left both trees unchanged (2026-11-02, T-12291,
-  `00-guard`); the daemon-start prune `server.start.release_prune` is Bun only, and `hrc-owner.sh stage` never
-  deletes (source-only, 2026-11-02: hrc-owner.sh:183-187). Nobody prunes the owner tree: 53 directories, 8.0G
-  on 2026-11-02 (product task filed by T-12291).
+  `00-guard`); the daemon-start prune `server.start.release_prune` is Bun only. `hrc-owner.sh stage` prunes the
+  owner tree as its last step (T-12695): it keeps current, the newest 5, the daemon's release and any held by a
+  live process, and prints `[stage] release prune: …` or `… skipped: <reason>; nothing deleted`.
 - The front door (T-11822) is obsolete on owner nodes: `front-door-enable|disable` and `launchd-install`
   refuse a rusthrc owner (source-only, 2026-11-02: justfile:726-727, :812-813, :848-849). `just
   front-door-status` probes `hrc-bun.sock` ("no answer", 2026-11-02, T-12291) and prints `mode: direct` because
@@ -98,10 +98,10 @@ cd ~/praesidium/hrc-runtime && bun scripts/install-dirty-guard.ts --source-root=
   front/release.rs:96-116).
 - **The daemon holds no manifest.** lsof on pid 81530 showed only the owner release's `bin/rusthrc` and
   `rusthrc-owner.log` (2026-11-02, T-12291). "Every atomic daemon holds its own manifest for life" is Bun only.
-- **The owner tree only grows.** Held or not, every staged release stays; 16 of the 53 were held by live
-  processes, mostly `hrc-pty` seat supervisors whose argv is link-spelled (source-only, 2026-11-02:
-  T-12291 sources/06.md §0), so any future owner-tree pruner needs the lsof/txt holder probe, not argv. In
-  `~/.bun` a held release outlives its holders until the next install.
+- **A held owner release outlives its holders until the next stage.** 16 of 53 staged releases were held by
+  live processes on 2026-11-02, mostly `hrc-pty` seat supervisors, some with a link-spelled argv (T-12291
+  sources/06.md §0), so the owner-tree prune relies on the lsof/txt holder probe as well as argv (T-12695). In
+  `~/.bun` a held release likewise outlives its holders until the next install.
 - **Any Bun daemon started from a release is a pruner for its directory** (Bun only): a scratch Bun `~/.bun/bin/hrc server
   serve` from the installed tree deleted production's running release on 2026-10-26 (04:50Z, EN-36056); in
   the owner tree it would take up to 52 directories. `rusthrc` prunes nothing: native scratch `t-12291` reported

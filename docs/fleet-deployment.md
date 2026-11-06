@@ -189,7 +189,8 @@ configured so that macOS TCC grants survive releases (T-12224;
 
 - **Deploy.** The `deploy-*` recipes work on either owner. On a rusthrc owner,
   `just install` alone changes nothing that runs, so the lane stages the new
-  release (`hrc-owner.sh stage`) before the restart. If the installed release
+  release (`hrc-owner.sh stage`, which also prunes old staged releases; see
+  `docs/state-retention.md`) before the restart. If the installed release
   has pending migrations, the lane first runs the existing schema activation
   door with `--dry-run`, then `--prepare-only`: it backs up SQLite through its
   backup API into the owner's state `backups/`, applies migrations with the

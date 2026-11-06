@@ -9,7 +9,8 @@
 #   hrc-owner.sh render <bun-plist> <out>          owner plist from an installed Bun plist
 #   hrc-owner.sh stage --expect-commit <sha> [--dry-run]
 #                                                  copy the installed release to the owner root and
-#                                                  its rusthrc (signed when configured) to the fixed exe
+#                                                  its rusthrc (signed when configured) to the fixed exe,
+#                                                  then prune old staged releases
 #   hrc-owner.sh preflight <node> <sha>            read-only switch report (KEY=value lines)
 #   hrc-owner.sh prepare <node> <sha>              stage + render the owner plist to <plist>.rusthrc-owner.next
 #   hrc-owner.sh activate --expect-commit <sha> [--expect-pending <id,id>] [--reason <text>] [--dry-run|--prepare-only]
@@ -140,13 +141,17 @@ render() {
 
 # Run the installed release's rusthrc against this node's store, read-only (the
 # schema read opens the DB read-only; status is a GET), with the plist's roots.
-schema_json() {
+owner_status_json() {
   local exe="$1" env_json
-  local out
   env_json="$(plutil -extract EnvironmentVariables json -o - "$PLIST")"
   # Exit 2 (degraded) still prints the schema.
-  out="$(env HRC_RUNTIME_DIR="$(jq -r .HRC_RUNTIME_DIR <<<"$env_json")" HRC_STATE_DIR="$(jq -r .HRC_STATE_DIR <<<"$env_json")" \
-    "$exe" server status --json 2>/dev/null || true)"
+  env HRC_RUNTIME_DIR="$(jq -r .HRC_RUNTIME_DIR <<<"$env_json")" HRC_STATE_DIR="$(jq -r .HRC_STATE_DIR <<<"$env_json")" \
+    "$exe" server status --json 2>/dev/null || true
+}
+
+schema_json() {
+  local out
+  out="$(owner_status_json "$1")"
   jq -c '.schema // {}' <<<"$out" 2>/dev/null || echo '{}'
 }
 
@@ -185,8 +190,9 @@ knows_native_roles() {
 # Copy the installed release to $OWNER_ROOT (which neither `just install` nor
 # Bun's startup prune touches) and point hrc-runtime-current at it. The layout
 # mirrors ~/.bun/install so native reports mode=atomic with the release's
-# sourceCommit. Earlier staged releases are kept for a native-to-native rollback.
-# Staging restarts nothing; the owner picks the link up on its next start.
+# sourceCommit. Staging restarts nothing; the owner picks the link up on its next
+# start. Earlier staged releases stay for a native-to-native rollback until
+# prune_owner_releases, the last step, removes them.
 stage() {
   local expect="" dry=0 src id commit state release
   while (($#)); do
@@ -238,6 +244,60 @@ stage() {
   fi
   commit_owner_exe "$dest/bin/rusthrc" "$dry"
   echo "[stage] ok release=$id sourceCommit=$commit exe=$OWNER_EXE"
+  prune_owner_releases "$dest" "$dry"
+}
+
+# Retention of staged releases (T-12695): keep current, the newest
+# $OWNER_RELEASES_KEEP_NEWEST, the release the running daemon reports, and any
+# release a live process holds or was started from. pruneReleaseDirs does the
+# holder probes, and refuses to delete anything when one fails. It comes from
+# the release just staged, so the keep list goes through its existing `keep`
+# option: a new one would be ignored by an older release, and stage can roll back.
+#
+# The daemon needs its own line: under the fixed exe it holds no file of its
+# release open, and it spawns hrc-pty from that release's path. A status that
+# gives no answer prunes nothing. The stage already succeeded, so no failure
+# here fails it; the next stage tries again.
+OWNER_RELEASES_KEEP_NEWEST=5
+prune_owner_releases() {
+  local dest="$1" dry="$2" running
+  if ((dry)); then
+    echo "[stage] would prune staged releases, keeping current, the newest $OWNER_RELEASES_KEEP_NEWEST, the running daemon's and any a live process holds"
+    return
+  fi
+  if ! running="$(owner_status_json "$dest/bin/rusthrc" | jq -er '
+    if (.running | type) != "boolean" then error("no answer")
+    elif .running and .release.mode == "atomic" and (.release.releasePath | type) == "string" then .release.releasePath
+    else "" end' 2>/dev/null)"; then
+    echo "[stage] release prune skipped: daemon status gave no answer; nothing deleted"
+    return
+  fi
+  bun run - "$dest" "$OWNER_ROOT/hrc-runtime-releases" "$OWNER_ROOT/hrc-runtime-current" "$OWNER_RELEASES_KEEP_NEWEST" "$running" <<'JS' ||
+import { readdirSync } from 'node:fs'
+import { join } from 'node:path'
+const [dest, releaseRoot, currentLink, keepNewest, running] = process.argv.slice(2)
+const { pruneReleaseDirs } = await import(`${dest}/packages/hrc-core/dist/release-prune.js`)
+// Release ids sort by their creation stamp. A .partial is a crashed copy, not a release.
+const newest = readdirSync(releaseRoot, { withFileTypes: true })
+  .filter((e) => e.isDirectory() && e.name.startsWith('release-') && !e.name.endsWith('.partial'))
+  .map((e) => e.name)
+  .sort()
+  .slice(-Number(keepNewest))
+const keep = newest.map((name) => join(releaseRoot, name))
+if (running) keep.push(running)
+const result = await pruneReleaseDirs({ releaseRoot, currentLink, expectedCurrent: dest, keep })
+if (!result.pruned) {
+  console.log(`[stage] release prune skipped: ${result.reason}; nothing deleted`)
+} else {
+  const held = Object.entries(result.heldBy).map(([id, pids]) => `${id} (pid ${pids.join(', ')})`)
+  console.log(
+    `[stage] release prune: removed ${result.removed.length} [${result.removed.join(', ')}]; kept ${result.kept.length}` +
+      `${held.length ? `; held by live processes ${held.join(', ')}` : ''}` +
+      `${result.failed.length ? `; failed ${result.failed.join(', ')}` : ''}`
+  )
+}
+JS
+    echo "[stage] release prune failed; nothing further deleted, the next stage tries again"
 }
 
 # The node's code-signing identity (its certificate common name): the
@@ -489,7 +549,8 @@ PY
   echo "[activate] backup=$backup"
   # Retention: the backup just written (quick_check ok) is this activation's
   # rollback point; older pre-activate copies are a full store each (2–25 GiB)
-  # and roll back nothing current, so only the newest is kept.
+  # and roll back nothing current, so only the newest is kept. The nightly state
+  # retention job ages that one out after 7 days (T-12695, docs/state-retention.md).
   local old
   for old in "$HRC_STATE_DIR"/backups/pre-activate-*.sqlite; do
     [[ -f "$old" && "$old" != "$backup" ]] || continue

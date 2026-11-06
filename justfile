@@ -1467,9 +1467,10 @@ _node-readback ssh-target expected-node target-sha aspd-sha aspd-release injecto
     # with it, or launchd still holds a definition the plist no longer declares.
     if plutil -extract ProgramArguments json -o - "$supervisor_plist" | jq -e 'any(.[]; endswith("/rusthrc"))' >/dev/null; then
       owner=rusthrc
-      # T-11893: the owner runs a staged copy of an atomic release that no prune
-      # touches. T-12224: it execs the fixed signed copy bin/rusthrc; a plist not
-      # yet refreshed (just refresh-owner-exe) still execs the release link.
+      # T-11893: the owner runs a staged copy of an atomic release that only
+      # stage's own retention prunes. T-12224: it execs the fixed signed copy
+      # bin/rusthrc; a plist not yet refreshed (just refresh-owner-exe) still execs
+      # the release link.
       owner_root="$HOME/praesidium/var/hrc-owner"
       plist_exe="$(plutil -extract ProgramArguments json -o - "$supervisor_plist" | jq -r 'map(select(endswith("/rusthrc")))[0]')"
       case "$plist_exe" in

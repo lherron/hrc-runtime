@@ -6,11 +6,12 @@
  * from its own tree. A live Rust kernel also retains its executable release
  * until it exits, independently of daemon activation.
  *
- * Both callers prune through here: install after its cutover (keeping the
- * release the running daemon reports), and the daemon at startup once it runs
- * from current. Neither knows every process on the host, so both also keep any
- * release a live process holds open or was started from (T-11830: a scratch
- * daemon on another runtime root deleted the release production ran from).
+ * Every caller prunes through here: install after its cutover (keeping the
+ * release the running daemon reports), the daemon at startup once it runs from
+ * current, and `hrc-owner.sh stage` for the owner tree, which keeps its newest
+ * five (T-12695). None knows every process on the host, so all keep any release
+ * a live process holds open or was started from (T-11830: a scratch daemon on
+ * another runtime root deleted the release production ran from).
  */
 import { existsSync } from 'node:fs'
 import { open, readdir, realpath, rm } from 'node:fs/promises'
