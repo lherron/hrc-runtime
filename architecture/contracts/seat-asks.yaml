@@ -57,6 +57,10 @@ predicate: >
   provider retains seat.summon, seat.restart, seat.send and annotation
   put/act/delete for operator callers. The asks record key, body grammar,
   ownership, retention, CAS and action semantics above remain unchanged.
+  Amendment 2026-11-06 (seat-asks r1.5, T-12675): a row may carry an
+  optional problem string, seat-owned question content kept through
+  whole-record rewrites like the seat's other fields. A row without it
+  stays valid. HRC changes no code; the body remains opaque to it.
 authority: >
   Daedalus approval of the HRC-side seat-asks r1.2 at 7b76e6b7,
   resubmitted in EN-40748 on T-12239, 2026-11-02 UTC. Resolves F1 from

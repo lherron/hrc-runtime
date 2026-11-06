@@ -1,6 +1,6 @@
 # Seat asks: a seat's open questions as one HRC seat record
 
-Status: r1.4, 2026-11-02 (r1.4: the hrc read form is `annotation list` filtered, since the installed CLI has no `annotation get`; no HRC change); r1.2 **APPROVED by Daedalus** (EN-40752; contract `architecture/contracts/seat-asks.yaml` f07a94f1); r1.3 is editorial (`sent.runId` optional, `--body-file` on the hrc form, rewrite keeps other writers' sub-objects) and not resubmitted (T-12239, c2 project; the contract is HRC's and lives here); r1.1 resolved Daedalus F1 (EN-40695): the seat never deletes the record, empty is the "none" state, absent reads as epoch; r1.2 adds the `prae` form of the operations under the kernel record's verb grammar (`praesidium-kernel.md` r1.6 §2.4) with no change to the HRC contract. Owner mable@hrc-runtime:primary. Rulings by Lance on 2026-11-01 are marked **RULED**. Diagrams: `diagrams/seat-data.arris-board.json` (frames `seat-data-question-keyed`, `seat-data-model-seat-questions`, `seat-data-document-seat-questions`; they still read `c2 · asks` and follow this document to `hrc · asks`) and `diagrams/taxonomy.arris-board.json#taxonomy-subjects` (the seat as the join of agent-spaces, wrkq and HRC).
+Status: r1.5, 2026-11-06 (r1.5: the optional seat-owned `problem` on a row, T-12675; additive, no HRC change because the body is opaque); r1.4, 2026-11-02 (r1.4: the hrc read form is `annotation list` filtered, since the installed CLI has no `annotation get`; no HRC change); r1.2 **APPROVED by Daedalus** (EN-40752; contract `architecture/contracts/seat-asks.yaml` f07a94f1); r1.3 is editorial (`sent.runId` optional, `--body-file` on the hrc form, rewrite keeps other writers' sub-objects) and not resubmitted (T-12239, c2 project; the contract is HRC's and lives here); r1.1 resolved Daedalus F1 (EN-40695): the seat never deletes the record, empty is the "none" state, absent reads as epoch; r1.2 adds the `prae` form of the operations under the kernel record's verb grammar (`praesidium-kernel.md` r1.6 §2.4) with no change to the HRC contract. Owner mable@hrc-runtime:primary. Rulings by Lance on 2026-11-01 are marked **RULED**. Diagrams: `diagrams/seat-data.arris-board.json` (frames `seat-data-question-keyed`, `seat-data-model-seat-questions`, `seat-data-document-seat-questions`; they still read `c2 · asks` and follow this document to `hrc · asks`) and `diagrams/taxonomy.arris-board.json#taxonomy-subjects` (the seat as the join of agent-spaces, wrkq and HRC).
 
 ## 0. Claim
 
@@ -38,7 +38,8 @@ row:  {
   ask:         string,                          // non-empty; the question, in the seat's words
   options:     [{label: string, text?: string}],// ≥ 1; labels unique within the row; text defaults to label
   recommended?: string,                         // one option label; dropped by readers if it names none
-  why?:        string,                          // one sentence
+  problem?:    string,                          // one or two plain sentences: what is happening and what is held up (T-12675)
+  why?:        string,                          // one sentence: the reason for the recommendation
   task?:       "T-…",                           // the task the question belongs to; readers group by it
   other?:      true,                            // a free-text answer is allowed
   dependsOn?:  "<sessionRef>#<rowId>",          // this row waits on another seat's row; never delivered on its own
@@ -46,6 +47,8 @@ row:  {
   sent?:       {by: principal, runId?: string, at: iso, text: string}   # runId absent when HRC accepted the delivery without a run (controller-independence, T-12239 D7)
 }
 ```
+
+`problem` is the situation and `why` is the reason for the recommendation. A row without `problem` stays valid, because rows written before it must keep rendering.
 
 Row validity (readers apply it; HRC does not): `id` unique, `ask` non-empty, `options` non-empty with unique labels. A reader keeps the valid rows and drops the rest; a record with no valid row reads as empty. The option shape is the T-12235 question shape so an existing `questions[]` renderer renders a row unchanged.
 
