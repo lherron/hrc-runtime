@@ -12,9 +12,10 @@
 # runs each step here when build1 is down and prints where it ran; without
 # rbuild, scripts/rbuild-local.sh runs them here the same way. On build1 the
 # test leg first runs `bun install` (store tests migrate scratch stores through
-# Bun; build1 reaches mini's registry over Tailscale). hrc-pty's tests run here:
-# its vendored libghostty-vt.a is arm64-only and cannot link into a Linux test
-# binary.
+# Bun; build1 reaches mini's registry over Tailscale). hrc-pty is excluded from
+# that Linux leg because its vendored libghostty-vt.a is arm64-only: its tests
+# are cross-built on build1 instead (`--mac`), pulled back and run here. The
+# standalone e2e recipes cross-build their binaries on build1 the same way.
 rbuild := `command -v rbuild || echo scripts/rbuild-local.sh`
 mac_debug := "crates/target/aarch64-apple-darwin/debug"
 # Worker recipes name the owner explicitly; PATH is filtered in prae seats.
@@ -25,7 +26,6 @@ installed_asp := home_directory() + "/.bun/bin/asp"
 installed_wrkq := home_directory() + "/.local/bin/wrkq"
 installed_wrkc := home_directory() + "/.local/bin/wrkc"
 installed_wrkf := home_directory() + "/.local/bin/wrkf"
-rusthrc_debug := "crates/target/debug/rusthrc"
 rusthrc_mac_debug := mac_debug + "/rusthrc"
 
 # Default recipe
@@ -201,7 +201,7 @@ cargo-check:
     {{rbuild}} cargo fmt --manifest-path crates/Cargo.toml --all -- --check
     {{rbuild}} --mac cargo clippy --manifest-path crates/Cargo.toml --workspace --all-targets --locked -- -D warnings
     {{rbuild}} sh -c '[ "$(uname)" = Darwin ] || bun install --frozen-lockfile --silent; exec cargo test --manifest-path crates/Cargo.toml --workspace --locked --exclude hrc-pty'
-    cargo test --manifest-path crates/Cargo.toml --locked -p hrc-pty
+    {{rbuild}} --mac cargo test --manifest-path crates/Cargo.toml --locked -p hrc-pty
     {{rbuild}} --mac --pull {{mac_debug}}/rusthrc --pull {{mac_debug}}/hrc-pty cargo build --manifest-path crates/Cargo.toml --locked -p hrc-native -p hrc-pty
     python3 crates/hrc-cli/e2e/differential.py --binary {{rusthrc_mac_debug}} --artifacts "${HRC_CLI_E2E_ARTIFACTS:-/tmp/hrc-cli-e2e-$(date +%s)-$$}"
     python3 crates/hrc-native/e2e/kernel_fold.py --binary {{rusthrc_mac_debug}} --artifacts "${HRC_NATIVE_E2E_ARTIFACTS:-/tmp/hrc-native-e2e-$(date +%s)-$$}/kernel-fold"
@@ -216,8 +216,8 @@ cargo-check:
 # credentials required), so they stay off the post-push runner under the
 # 2026-10-26 no-Bun-in-the-gate ruling.
 e2e-native-full:
-    cargo build --manifest-path crates/Cargo.toml --locked -p hrc-native -p hrc-pty
-    python3 crates/hrc-native/e2e/full.py --artifacts "${HRC_NATIVE_FULL_ARTIFACTS:-${FOUNDRY_ARTIFACTS:-/tmp}/hrc-native-full-$(date +%s)-$$}"
+    {{rbuild}} --mac --pull {{mac_debug}}/rusthrc --pull {{mac_debug}}/hrc-pty cargo build --manifest-path crates/Cargo.toml --locked -p hrc-native -p hrc-pty
+    python3 crates/hrc-native/e2e/full.py --binary {{rusthrc_mac_debug}} --artifacts "${HRC_NATIVE_FULL_ARTIFACTS:-${FOUNDRY_ARTIFACTS:-/tmp}/hrc-native-full-$(date +%s)-$$}"
 
 # -- Ephemeral development environment (T-06896) -----------------------------
 #
@@ -269,8 +269,8 @@ e2e:
 
 # Run the seat-annotations e2e on a scratch rusthrc
 e2e-annotations:
-    cargo build --manifest-path crates/Cargo.toml --locked -p hrc-native -p hrc-pty
-    python3 crates/hrc-cli/e2e/annotations.py --binary {{rusthrc_debug}} --artifacts "${HRC_ANNOTATIONS_E2E_ARTIFACTS:-/tmp/hrc-annotations-e2e-$(date +%s)-$$}"
+    {{rbuild}} --mac --pull {{mac_debug}}/rusthrc --pull {{mac_debug}}/hrc-pty cargo build --manifest-path crates/Cargo.toml --locked -p hrc-native -p hrc-pty
+    python3 crates/hrc-cli/e2e/annotations.py --binary {{rusthrc_mac_debug}} --artifacts "${HRC_ANNOTATIONS_E2E_ARTIFACTS:-/tmp/hrc-annotations-e2e-$(date +%s)-$$}"
 
 # hrc-pty's spike e2e (T-12047): Claude Code under a bare `hrc-pty serve`,
 # attached from real Ghostty windows through ghostmux. Needs a logged-in
@@ -279,13 +279,13 @@ e2e-annotations:
 
 # Run the hrc-pty e2e (E1-E5) against real Ghostty windows
 e2e-hrc-pty:
-    cargo build --manifest-path crates/Cargo.toml --locked -p hrc-pty
-    python3 crates/hrc-pty/e2e/hrc_pty_e2e.py --binary crates/target/debug/hrc-pty --artifacts "${HRC_PTY_E2E_ARTIFACTS:-/tmp/hrc-pty-e2e-$(date +%s)-$$}"
+    {{rbuild}} --mac --pull {{mac_debug}}/hrc-pty cargo build --manifest-path crates/Cargo.toml --locked -p hrc-pty
+    python3 crates/hrc-pty/e2e/hrc_pty_e2e.py --binary {{mac_debug}}/hrc-pty --artifacts "${HRC_PTY_E2E_ARTIFACTS:-/tmp/hrc-pty-e2e-$(date +%s)-$$}"
 
 # Re-record Ghostty's answers to Claude's startup queries into responder-answers.json
 hrc-pty-record-answers:
-    cargo build --manifest-path crates/Cargo.toml --locked -p hrc-pty
-    python3 crates/hrc-pty/e2e/record_answers.py --binary crates/target/debug/hrc-pty --out "${HRC_PTY_RECORD_ARTIFACTS:-/tmp/hrc-pty-record-$(date +%s)-$$}"
+    {{rbuild}} --mac --pull {{mac_debug}}/hrc-pty cargo build --manifest-path crates/Cargo.toml --locked -p hrc-pty
+    python3 crates/hrc-pty/e2e/record_answers.py --binary {{mac_debug}}/hrc-pty --out "${HRC_PTY_RECORD_ARTIFACTS:-/tmp/hrc-pty-record-$(date +%s)-$$}"
 
 # Rebuild hrc-pty's vendored libghostty-vt from scriptable-ghostty (zig 0.17; after moving GHOSTTY_COMMIT)
 hrc-pty-vendor-lib:
