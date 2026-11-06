@@ -199,6 +199,10 @@ configured so that macOS TCC grants survive releases (T-12224;
   the credentialless SSH shell. A schema ahead of the release or an unreadable
   schema refuses deployment. `scripts/hrc-owner-schema-e2e.py` exercises this
   door against a private store using an installed release.
+- **Turn attention.** The subscriber is `bunx hrc-turn-attention@<version>`, not
+  part of the owner release. Activate a change with `just publish` plus
+  `just install-turn-attention-launchd <version>`, or with `just deploy-max3`,
+  which re-points it to latest.
 - **Switch.** `just switch-owner-rusthrc <node>` is read-only: it prints the
   preflight report and the rendered plist diff against the node's Bun plist. Add
   `apply` to switch. First deploy the node to the target under Bun. Apply then
