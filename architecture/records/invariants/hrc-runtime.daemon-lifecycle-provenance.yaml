@@ -2,10 +2,12 @@ id: hrc-runtime.daemon-lifecycle-provenance
 kind: invariant
 status: active
 owner_project: hrc-runtime
-scope: durable provenance of the production HRC daemon's own start and stop
+scope: local daemon lifecycle provenance and production lifecycle project publication
 predicate: >
-  Only the production daemon integration (hrc server serve, lifecycleProvenance)
-  records its own lifecycle; embedded and test servers write no server facts.
+  The daemon integration (native owner serve or Bun hrc server serve with
+  lifecycleProvenance) records its own lifecycle locally, including when run
+  against private scratch roots; embedded Bun servers without
+  lifecycleProvenance write no server facts.
   Server facts are the server category kinds server.shutting_down,
   server.stopped, server.previous_exit_unattributed and server.started under the
   non-seat sentinels hostSessionId hrc-server, scopeRef server:hrc, lane main,
@@ -27,16 +29,31 @@ predicate: >
   release, sourceCommit, storeSchema, processStartedAt, previousPid?}. A
   separate cursor-backed producer projects only local non-retained
   server.stopped and server.started to project hrc-runtime as agent:hrc, keyed
-  server:<nodeId>:<ledgerIncarnationId>:<hrcSeq>, and advances its cursor only
-  after an accepted post. Status lastRestart derives solely from the local
+  server:<nodeId>:<ledgerIncarnationId>:<hrcSeq>. Lifecycle project publication
+  requires both the current daemon's validated atomic release provenance and
+  runtime/state roots resolving to $HOME/praesidium/var/run/hrc and
+  $HOME/praesidium/var/state/hrc respectively. Existing paths are canonicalized
+  so symlink aliases compare as the same roots. An atomic release alone does
+  not authorize publication from private roots. Excluded native daemons skip
+  lifecycle project posts and advance their lifecycle publication cursor;
+  the Bun integration applies the same eligibility boundary to its lifecycle
+  publisher. Eligible local non-retained facts advance the cursor only after
+  an accepted post. This boundary does not suppress local lifecycle facts or
+  alter session project publication. Status lastRestart derives solely from the local
   ledger: the latest server.started plus the immediately preceding
   server.stopped attribution (its grant, or a pre-contract predecessor's flat
   attribution), null attribution otherwise. Lifecycle refusals are log lines,
   never server facts.
-authority: wrkq:T-08137 rev 4 (Daedalus approval EN-19426, 2026-09-28; Lance stop() reorder ruling C-25789, 2026-09-27); attribution source amended by wrkq:T-09861 rev 4 (Daedalus approval EN-20244, 2026-09-28)
+authority: wrkq:T-08137 rev 4 (Daedalus approval EN-19426, 2026-09-28; Lance stop() reorder ruling C-25789, 2026-09-27); attribution source amended by wrkq:T-09861 rev 4 (Daedalus approval EN-20244, 2026-09-28); production publication boundary amended by wrkq:T-12677 (Daedalus design approval, 2026-11-06)
 source:
   - wrkq:T-08137
   - wrkq:T-09861
+  - wrkq:T-12677
+  - crates/hrc-native/src/server/lifecycle/publication.rs
+  - crates/hrc-native/src/server/lifecycle/lifecycle/rows.rs
+  - crates/hrc-native/src/server/front/release.rs
+  - crates/hrc-native/src/server/front/hosting.rs
+  - packages/hrc-server/src/release-provenance.ts
   - packages/hrc-server/src/server-lifecycle.ts
   - packages/hrc-server/src/wrkq/server-project-events.ts
   - packages/hrc-server/src/index.ts
@@ -56,6 +73,6 @@ required_tests:
   - bun test packages/hrc-server/src/__tests__/t09861-server-lifecycle-authority.test.ts
   - bun test packages/hrc-cli/src/__tests__/t09861-server-lifecycle-e2e.test.ts
 last_verified: 2026-09-28 T-09861 scratch-daemon e2e (granted restart/stop, ungranted SIGTERM, SIGKILL unattributed); installed smoke pending
-reopen_when: The lifecycle grant shape or its authorization source, the stop() teardown order, the continue-past-failure site set, the stopped attestation boundary, boot classification, the sentinel envelope, the timeline projection key or cursor rule, or the lastRestart derivation changes.
+reopen_when: The lifecycle grant shape or its authorization source, the stop() teardown order, the continue-past-failure site set, the stopped attestation boundary, boot classification, the sentinel envelope, the production publication eligibility boundary or canonical owner roots, the timeline projection key or cursor rule, or the lastRestart derivation changes.
 supersedes: []
 superseded_by: []
