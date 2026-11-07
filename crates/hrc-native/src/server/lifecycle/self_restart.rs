@@ -348,26 +348,15 @@ fn claim(server: &Shared) -> anyhow::Result<Vec<(Intent, i64)>> {
     }
 }
 
-fn seat_handoff_prompt(
-    db: &hrc_store::Store,
-    runtime_id: &str,
-    value: &Value,
-    prior_generation: i64,
-    next_generation: i64,
-) -> String {
-    let command = if db.mail_uses_prae(runtime_id) {
-        "prae seat handoff acknowledge"
-    } else {
-        "hrc handoff acknowledge"
+fn seat_handoff_prompt(value: &Value, prior_generation: i64, next_generation: i64) -> String {
+    let id = value["id"].as_str().unwrap();
+    let etag = &value["etag"];
+    let title = match value["title"].as_str().unwrap_or("").trim() {
+        "" => String::new(),
+        title => format!(" ({title})"),
     };
     format!(
-        "Fresh context after self-restart (generation {prior_generation} → {next_generation}). Pending HRC seat handoff {} (etag {}). Absorb the handoff below, then acknowledge it with `{command} {} --if-match {} --note 'Consumed; <retained context>'` and continue the work it describes.\n\n{}\n\n{}",
-        value["id"].as_str().unwrap(),
-        value["etag"],
-        value["id"].as_str().unwrap(),
-        value["etag"],
-        value["title"].as_str().unwrap_or(""),
-        value["body"].as_str().unwrap_or("")
+        "Fresh context after self-restart (generation {prior_generation} → {next_generation}). Pending seat handoff {id}{title}, etag {etag}. Read it with `prae seat handoff get {id} --json`, absorb it, acknowledge it with `prae seat handoff acknowledge {id} --if-match {etag} --note 'Consumed; <retained context>'`, then continue the work it describes."
     )
 }
 
@@ -399,14 +388,7 @@ async fn execute(server: &Shared, intent: Intent, terminal_seq: i64) -> Result<(
         next["laneRef"].as_str().unwrap_or("main"),
     )?;
     let prompt = if let Some(value) = pending {
-        let db = server.store.lock().unwrap();
-        seat_handoff_prompt(
-            &db,
-            &intent.runtime_id,
-            &value,
-            prior_generation,
-            next_generation,
-        )
+        seat_handoff_prompt(&value, prior_generation, next_generation)
     } else {
         format!(
             "Fresh context after self-restart (generation {prior_generation} → {next_generation}). Run `wrkq handoff get {} --json`, absorb it, acknowledge it with `wrkq handoff acknowledge`, then continue the work it describes.",
@@ -511,41 +493,17 @@ pub async fn stop(server: &Shared) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    mod fixture {
-        include!(concat!(
-            env!("CARGO_MANIFEST_DIR"),
-            "/../hrc-store/src/test_support.rs"
-        ));
-    }
 
     #[test]
-    fn successor_acknowledgement_uses_runtime_spaces() -> anyhow::Result<()> {
-        let (_scratch, mut db) = fixture::ScratchStore::new()?;
-        let scope = "agent:faber:project:p";
-        db.create_session(scope, "main")?;
-        db.sqlite.execute("INSERT INTO runtimes(runtime_id,host_session_id,scope_ref,lane_ref,generation,transport,status,supports_inflight_input,created_at,updated_at,active_operation_id) SELECT 'rt-restart',host_session_id,scope_ref,lane_ref,1,'tmux','busy',1,created_at,updated_at,'op-restart' FROM sessions WHERE scope_ref=?", [scope])?;
-        db.sqlite.execute("INSERT INTO runtime_operations(operation_id,runtime_id,host_session_id,generation,operation_kind,controller,startup_method,status,route_decision_json,created_at,updated_at,preparation_json) SELECT 'op-restart',runtime_id,host_session_id,1,'broker_invocation','harness-broker','broker.startInvocationFromRequest','running','{}',created_at,updated_at,'{}' FROM runtimes WHERE runtime_id='rt-restart'", [])?;
+    fn successor_prompt_names_the_handoff_without_its_body() {
         let handoff = json!({"id":"H-test", "etag":3, "title":"Resume", "body":"Retained context"});
-        let legacy = "Fresh context after self-restart (generation 1 → 2). Pending HRC seat handoff H-test (etag 3). Absorb the handoff below, then acknowledge it with `hrc handoff acknowledge H-test --if-match 3 --note 'Consumed; <retained context>'` and continue the work it describes.\n\nResume\n\nRetained context";
-        for (space, expected) in [
-            ("defaults@dev", legacy.to_owned()),
-            (
-                "prae-tools@dev",
-                legacy.replace("hrc handoff acknowledge", "prae seat handoff acknowledge"),
-            ),
-        ] {
-            let preparation =
-                json!({"response":{"plan":{"resolvedBundle":{"spaces":[{"resolvedKey":space}]}}}});
-            db.sqlite.execute(
-                "UPDATE runtime_operations SET preparation_json=? WHERE operation_id='op-restart'",
-                [preparation.to_string()],
-            )?;
-            assert_eq!(
-                seat_handoff_prompt(&db, "rt-restart", &handoff, 1, 2),
-                expected,
-                "{space}"
-            );
-        }
-        Ok(())
+        let prompt = seat_handoff_prompt(&handoff, 1, 2);
+        assert_eq!(
+            prompt,
+            "Fresh context after self-restart (generation 1 → 2). Pending seat handoff H-test (Resume), etag 3. Read it with `prae seat handoff get H-test --json`, absorb it, acknowledge it with `prae seat handoff acknowledge H-test --if-match 3 --note 'Consumed; <retained context>'`, then continue the work it describes."
+        );
+        assert!(!prompt.contains("Retained context"));
+        let untitled = json!({"id":"H-x", "etag":1, "title":"", "body":"b"});
+        assert!(seat_handoff_prompt(&untitled, 4, 5).contains("Pending seat handoff H-x, etag 1."));
     }
 }

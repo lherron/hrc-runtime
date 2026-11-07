@@ -63,7 +63,7 @@ fn payload(request: &parse::Request, record: &Value) -> String {
     let seq = record["messageSeq"].as_i64().unwrap();
     let mut content = request.body.clone();
     if content.encode_utf16().count() > 1200 {
-        let suffix = format!("… (truncated; hrcchat show '#{seq}')");
+        let suffix = format!("… (truncated; read it in full with `hrc show seq:{seq}`)");
         let prefix = content
             .encode_utf16()
             .take(1200 - suffix.encode_utf16().count())

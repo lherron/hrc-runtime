@@ -32,7 +32,7 @@ describe('semantic turn payload formatting', () => {
       '2026-09-01T18:30:00Z'
     )
 
-    expect(rendered).toContain("… (truncated; hrcchat show '#7')")
+    expect(rendered).toContain('… (truncated; read it in full with `hrc show seq:7`)')
     expect(rendered).not.toContain('x'.repeat(1_201))
   })
 })

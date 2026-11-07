@@ -47,7 +47,7 @@ export function formatDmPayload(
   const maxChars = 1200
   let content = body
   if (content.length > maxChars) {
-    const suffix = `… (truncated; hrcchat show '#${messageSeq}')`
+    const suffix = `… (truncated; read it in full with \`hrc show seq:${messageSeq}\`)`
     content = content.slice(0, maxChars - suffix.length) + suffix
   }
   return `[Turn request from ${fromDisplay} · #${messageSeq} · sentAt=${createdAt} · to ${toDisplay}]\n${content}`
