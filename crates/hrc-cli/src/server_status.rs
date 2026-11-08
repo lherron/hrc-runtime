@@ -7,7 +7,8 @@ use crate::{
 use serde_json::{Value, json};
 use std::{
     fs,
-    io::Read,
+    io::{ErrorKind, Read},
+    os::fd::AsRawFd,
     path::{Path, PathBuf},
     process::{Command, Stdio},
     time::{Duration, Instant},
@@ -49,9 +50,11 @@ pub(crate) fn state_root() -> Result<PathBuf> {
         "Cannot resolve HRC state directory: set HRC_STATE_DIR, HOME, or XDG_STATE_HOME",
     ))
 }
-// All subprocess probes are bounded, including a stale tmux socket. Only the
-// probe process we created may be killed; no tmux server/session is killed.
-fn probe(program: &str, args: &[&str], budget: Duration) -> (i32, String, String, bool) {
+// Bound inactivity separately from the total diagnostic time: draining a large
+// session list is progress, not an unresponsive tmux. Nonblocking, bounded reads
+// keep both pipes moving without reader threads or waiting for descendant EOF.
+// Only the probe child may be killed; no tmux server/session is killed.
+fn probe(program: &str, args: &[&str], deadline: Instant) -> (i32, String, String, bool) {
     let child = Command::new(program)
         .args(args)
         .stdout(Stdio::piped())
@@ -61,44 +64,95 @@ fn probe(program: &str, args: &[&str], budget: Duration) -> (i32, String, String
     let Ok(mut child) = child else {
         return (1, String::new(), String::new(), false);
     };
-    // Drain both pipes concurrently so a long session list cannot fill a pipe
-    // and turn a successful probe into a timeout.
-    let stdout = child.stdout.take().unwrap();
-    let stderr = child.stderr.take().unwrap();
-    let drain = |mut pipe: Box<dyn Read + Send>| {
-        std::thread::spawn(move || {
-            let mut bytes = Vec::new();
-            let _ = pipe.read_to_end(&mut bytes);
-            String::from_utf8_lossy(&bytes).into_owned()
-        })
-    };
-    let out = drain(Box::new(stdout));
-    let err = drain(Box::new(stderr));
-    let start = Instant::now();
+    let mut stdout = child.stdout.take().unwrap();
+    let mut stderr = child.stderr.take().unwrap();
+    for fd in [stdout.as_raw_fd(), stderr.as_raw_fd()] {
+        // These are our own pipe descriptors. Refuse the probe if nonblocking
+        // setup fails rather than risk blocking past the diagnostic deadline.
+        let configured = unsafe {
+            let flags = libc::fcntl(fd, libc::F_GETFL);
+            flags >= 0 && libc::fcntl(fd, libc::F_SETFL, flags | libc::O_NONBLOCK) >= 0
+        };
+        if !configured {
+            let _ = child.kill();
+            let _ = child.wait();
+            return (
+                1,
+                String::new(),
+                "tmux probe pipe setup failed".into(),
+                false,
+            );
+        }
+    }
+    let mut out = Vec::new();
+    let mut err = Vec::new();
+    let mut last_progress = Instant::now();
     let mut timed_out = false;
     loop {
-        match child.try_wait() {
-            Ok(Some(_)) => break,
-            Ok(None) if start.elapsed() < budget => std::thread::sleep(Duration::from_millis(5)),
-            _ => {
+        if Instant::now() >= deadline || last_progress.elapsed() >= Duration::from_millis(750) {
+            let _ = child.kill();
+            timed_out = true;
+            break;
+        }
+        // Observe exit before reading: a write/exit between a WouldBlock read
+        // and try_wait must not discard the final buffered bytes.
+        let exited = match child.try_wait() {
+            Ok(status) => status.is_some(),
+            Err(_) => {
                 let _ = child.kill();
                 timed_out = true;
                 break;
             }
+        };
+        let mut progressed = false;
+        let mut buffer = [0u8; 16 * 1024];
+        for (pipe, bytes) in [
+            (&mut stdout as &mut dyn Read, &mut out),
+            (&mut stderr as &mut dyn Read, &mut err),
+        ] {
+            match pipe.read(&mut buffer) {
+                Ok(n) if n > 0 => {
+                    bytes.extend_from_slice(&buffer[..n]);
+                    progressed = true;
+                }
+                Ok(_) => {}
+                Err(e) if matches!(e.kind(), ErrorKind::WouldBlock | ErrorKind::Interrupted) => {}
+                Err(_) => {
+                    let _ = child.kill();
+                    let _ = child.wait();
+                    return (
+                        1,
+                        String::new(),
+                        "tmux probe pipe read failed".into(),
+                        false,
+                    );
+                }
+            }
+        }
+        if progressed {
+            last_progress = Instant::now();
+        }
+        // Drain after exit, without waiting for descendant EOF.
+        if exited && !progressed {
+            break;
+        }
+        if !progressed {
+            std::thread::sleep(Duration::from_millis(5));
         }
     }
     let status = child.wait().ok().and_then(|s| s.code()).unwrap_or(1);
     (
         status,
-        out.join().unwrap_or_default(),
-        err.join().unwrap_or_default(),
+        String::from_utf8_lossy(&out).into_owned(),
+        String::from_utf8_lossy(&err).into_owned(),
         timed_out,
     )
 }
 fn tmux(root: &Path) -> Value {
     let socket = root.join("tmux.sock");
-    let budget = Duration::from_millis(750);
-    let (exit, out, err, timed) = probe("tmux", &["-V"], budget);
+    // Share the hard cap across version and session probes.
+    let deadline = Instant::now() + Duration::from_secs(5);
+    let (exit, out, err, timed) = probe("tmux", &["-V"], deadline);
     let version = format!("{}\n{}", out, err).trim().to_owned();
     let mut value = json!({"available":exit==0 && !timed});
     if exit == 0 && !timed {
@@ -109,8 +163,12 @@ fn tmux(root: &Path) -> Value {
     value["sessionCount"] = 0.into();
     value["sessions"] = json!([]);
     if exit != 0 || timed {
+        if timed {
+            value["available"] = Value::Null;
+            value["running"] = Value::Null;
+        }
         value["error"] = if timed {
-            "tmux -V unresponsive after 750ms".into()
+            "tmux -V probe timed out (750ms idle / 5000ms total)".into()
         } else {
             if version.is_empty() {
                 "tmux unavailable".into()
@@ -123,7 +181,7 @@ fn tmux(root: &Path) -> Value {
     let (exit, out, err, timed) = probe(
         "tmux",
         &["-S", socket.to_str().unwrap(), "list-sessions", "-F", "#S"],
-        budget,
+        deadline,
     );
     value["leases"] = json!([]);
     value["leaseDiagnostics"] = json!({"total":0,"probed":0,"skipped":0});
@@ -137,7 +195,8 @@ fn tmux(root: &Path) -> Value {
         value["sessionCount"] = sessions.len().into();
         value["sessions"] = json!(sessions);
     } else if timed {
-        value["error"] = "tmux list-sessions unresponsive after 750ms".into();
+        value["running"] = Value::Null;
+        value["error"] = "tmux list-sessions probe timed out (750ms idle / 5000ms total)".into();
     } else {
         let detail = format!("{}\n{}", err, out).trim().to_owned();
         let lower = detail.to_lowercase();
@@ -442,7 +501,9 @@ fn render(s: &Value) -> String {
         );
     }
     let tm = &s["tmux"];
-    let tm_summary = if tm["available"] == true {
+    let tm_summary = if tm["running"].is_null() {
+        format!("unknown ({})", text(&tm["error"]))
+    } else if tm["available"] == true {
         if tm["running"] == true {
             format!("running ({} session(s))", tm["sessionCount"])
         } else {

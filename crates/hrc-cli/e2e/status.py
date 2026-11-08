@@ -148,10 +148,26 @@ def main():
                 for command in ([bun, str(args.oracle.resolve())], [str(args.binary.resolve())]):
                     child = subprocess.run(command + ['server', 'status'] + flags, cwd=ROOT, env=env, text=True, capture_output=True, timeout=8)
                     observed.append(dict(exit=child.returncode, stdout=child.stdout, stderr=child.stderr))
-                if scenario == 'tmux-large' and flags:
-                    complete = json.loads(observed[1]['stdout'])
-                    assert len(complete['tmux']['sessions']) == 12000, 'Rust must drain the complete probe'
-                    results.append(dict(case='tmux-large:json', status='UNSUPPORTED', reason='Bun truncates server status --json above 64 KiB; Rust emits complete JSON', oracle=observed[0], subject=observed[1]))
+                if scenario in ('tmux-large', 'tmux-stalled'):
+                    # Native deliberately fixes Bun's wall-timeout verdict.
+                    # Assert the contract directly, retaining both observations.
+                    subject = observed[1]
+                    assert subject['exit'] == 1 and not subject['stderr']
+                    if flags:
+                        tmux = json.loads(subject['stdout'])['tmux']
+                        if scenario == 'tmux-large':
+                            assert tmux['running'] is True and tmux['sessionCount'] == 12000
+                            assert tmux['sessions'] == [f'session-{i}' for i in range(12000)]
+                        else:
+                            assert tmux['running'] is None and tmux['available'] is None
+                            assert 'timed out' in tmux['error']
+                    elif scenario == 'tmux-large':
+                        assert 'tmux:         running (12000 session(s))' in subject['stdout']
+                    else:
+                        assert 'tmux:         unknown (tmux -V probe timed out' in subject['stdout']
+                    results.append(dict(case=scenario + (':json' if flags else ':human'),
+                        comparison='native contract: complete progressing output; unknown on timeout',
+                        oracle=observed[0], subject=subject, **{'pass': True}))
                     continue
                 if scenario in ('checkpointed-wal', 'live-wal') and flags:
                     schema = json.loads(observed[1]['stdout'])['schema']
