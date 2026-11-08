@@ -13,7 +13,10 @@ provenance: authored
 `hrc` is the operator CLI for the HRC daemon: it gives a target a stable
 identity, preserves continuity across launches, manages live runtimes, and
 lets an operator or another agent inspect/attach/start/interrupt a runtime.
-Installed to `~/.bun/bin/hrc`, source in `packages/hrc-cli`. This page
+`~/.bun/bin/hrc` links to the installed release's native `rusthrc` binary;
+execution is Rust (`crates/hrc-cli`), while the command graph and help text are
+generated from the Bun registrations in `packages/hrc-cli` into
+`crates/hrc-cli/surface.json`. This page
 covers the common command surface; run `hrc <group> <cmd> --help` for the
 complete flag set of any command.
 
@@ -33,7 +36,7 @@ For target-handle syntax used throughout this page, see
 `hrc-runtime/target-handles`. Agent messaging is `wrkc`; the `hrcchat` CLI
 was retired in T-07616.
 
-## ASP v2 selection contract (T-08690; pending Daedalus review)
+## ASP v2 selection contract (T-08690)
 
 For a new broker birth this surface conveys only optional request intent. HRC
 preserves omission in optional camelCase `requested` overrides. Source-distinct
@@ -43,10 +46,9 @@ raw summon overrides use `selectionContext.summonDirectives` with exactly
 schema-2 target, summon directives and request overrides, then selects and
 validates the execution, worker and driver.
 No CLI/HRC flag resolves a profile/target or chooses a route, driver or
-presentation default. The Codex-specific viewer paragraphs below are historical
-v1 behavior and do not define v2 flags: v1 selectors and aliases are refused,
-not adapted. Explicit presentation mismatch leaves a live runtime untouched;
-omission does not request a new birth.
+presentation default; v1 selectors and aliases are refused, not adapted.
+Explicit presentation mismatch leaves a live runtime untouched; omission does
+not request a new birth.
 
 ## `run` / `start` / `attach` — managed runtime lifecycle
 
@@ -72,8 +74,11 @@ host session), `--dry-run` (daemon-compiled plan preview; no session, runtime
 or tmux side effects), `--debug`,
 `--project-id <id>`, `--project-root <path>`, `--json` (on error, emit
 structured JSON including broker admission-rejection detail), `--no-register`.
-`run` is interactive-only; use `hrc start <scope> [-p <prompt>]` for
-non-interactive provisioning. `attach` takes `--dry-run` and `--json`.
+`run` is interactive-only (`--attach-only` reattaches without starting, `-v`
+prints the run phase timeline); use `hrc start <scope> [-p <prompt>]` for
+non-interactive provisioning. `start` also takes `--cwd <path>` (execution cwd
+without changing the project root), `--idempotency-key <key>` and
+`--wait [started|completed]`. `attach` takes `--dry-run` and `--json`.
 
 `start` also takes `--viewer-window <key>` (place this session's viewer tab in
 the window stamped with that key; absent ⇒ today's "Headless Sessions" window)
@@ -83,42 +88,21 @@ claims exactly the scope you named or refuses with `session_scope_occupied`).
 See `docs/cli-reference.md` for the roster and the one-time console-window
 stamp.
 
-`start --no-viewer` (T-08553) selects HEADLESS execution with no operator viewer
-or terminal for that start. It is not a hidden terminal: on a node that sends
-Codex to the interactive TUI (`HRC_CODEX_CLI_TMUX_BROKER_ENABLED`) or attaches a
-`tmux-tui` viewer by default, the request runs on the headless codex-app-server
-route instead, and with `HRC_ASPD_SOCKET` configured it prepares through aspd.
-Omitting it leaves every node default unchanged (see the T-08555 default below). Refused with
-`--viewer-window`, off the headless broker route
-(`presentation_operator_unsupported`), and against a scope whose live runtime
-already has a viewer or TUI (`presentation_conflict`, runtime untouched).
-
-`start --app-server-viewer` (T-08554) selects the headless codex-app-server WITH
-HRC's attachable tmux renderer viewer for that start (`presentation.operator:
-tmux-tui`). Like `--no-viewer` it exempts the Codex interactive TUI redirect;
-with `HRC_ASPD_SOCKET` configured it prepares through aspd and the renderer runs
-from the worker's own ASP release. Attach with `hrc attach <scope>` (tmux client
-detach to leave; the worker keeps running). Omitting it leaves every node
-default unchanged. Refused with `--no-viewer`, for interactive starts or off
-the headless broker route (`presentation_operator_unsupported`; whether the
-selected execution can present the viewer is ASP's validation), and against a scope whose live
-runtime has no such viewer (`presentation_conflict`, runtime untouched).
-
-Node-default Codex route (T-08555, `docs/aspd-headless-codex-integration.md`
-§1.3). On a node that turns the Codex redirect off
-(`HRC_CODEX_CLI_TMUX_BROKER_ENABLED=0`, max3), a plain `hrc start <codex scope>`
-or a cold dispatch or mail birth with nothing established in the scope runs the
-headless codex-app-server with the presentation ASP selects. ASP defaults
-`presentation` to `true` when the agent profile omits it, so with
-`HRC_ASPD_SOCKET` that means the aspd-prepared attached viewer, and
-`--app-server-viewer` is not needed.
-`--no-viewer` stays the headless opt-out. A scope whose established runtime is a
-TUI or headless worker keeps it: input goes to that transport's own admission. A
-foreign-harness headless runtime refuses `established_runtime_harness_mismatch`.
-`hrc run` remains the explicit standalone interactive Codex backend,
-admissible whatever the redirect control says (`hrc attach` only reattaches a
-live runtime and never births one). Nodes that keep the
-redirect on are unchanged.
+`start --no-viewer` requests a birth with no operator viewer or terminal: it
+sends `presentation.operator: none`, which HRC freezes as
+`requested.presentation: false`. `start --app-server-viewer` requests HRC's
+attachable tmux renderer viewer (`presentation.operator: tmux-tui`, frozen as
+`requested.presentation: true`); attach with `hrc attach <scope>` (tmux client
+detach to leave; the worker keeps running). Both go through aspd preparation,
+and ASP decides whether the selected execution can honor them: a tmux-tui
+request whose selected execution lacks compile-request presentation, terminal
+tmux hosting or a tmux presentation surface refuses
+`execution_presentation_constraint_mismatch` before any effect. The CLI refuses
+`--no-viewer` together with `--viewer-window` or `--app-server-viewer`.
+Omitting both leaves presentation to ASP's selection. There is no node-level
+Codex route override; `hrc run` always requests presentation, and `hrc attach` only
+reattaches a live runtime and never births one. The preparation law is the
+`hrc-runtime.aspd-prepared-execution-release` invariant.
 
 A clean interactive `/quit` ends the run normally (the broker reaps the
 tmux lease); after the tmux client exits, `hrc run` prints the broker-pushed
@@ -234,8 +218,10 @@ hrc runtime list --all
 ```
 
 `runtime list` filters: `--host-session-id <id>` (or `--session <id>`),
-`--transport <tmux|headless|sdk>`, `--status <csv>`, `--older-than <duration>`,
-`--scope <scopeRef|handle>`, `--stale`, `--json`. The default view excludes
+`--transport <tmux|headless|sdk|hrcpty>`, `--status <csv>`,
+`--older-than <duration>`, `--scope <scopeRef|handle>`, `--agent <agentId>`,
+`--task <taskId>`, `--stale`, `--json`, and `--all-nodes` (best-effort
+node-labeled inventory across configured peers). The default view excludes
 terminal runtime history; `--all` explicitly retrieves it through bounded
 server pages. The
 `hrc ls runtimes` orientation alias accepts the same filters.
@@ -306,7 +292,9 @@ error. Replacements: `hrc monitor show` (was `hrc status` /
 `hrc server health`). `hrcchat dm` itself is gone; send agent messages with
 `wrkc say`.
 
-Source of truth: command registration in
+Source of truth: command registration and help text in
 `packages/hrc-cli/src/cli/build-program.ts` and `cli/register-*.ts` (scope-verb
-flags in `cli/scope-verb-options.ts`); monitor-wait codes in
-`packages/hrc-core/src/monitor/exit-codes.ts` (applied by `condition-engine.ts`).
+flags in `cli/scope-verb-options.ts`), generated into
+`crates/hrc-cli/surface.json` by `bun crates/hrc-cli/generate-surface.ts`;
+execution in `crates/hrc-cli/src`; monitor-wait codes in
+`crates/hrc-cli/src/monitor/engine.rs` (`exit` constants).

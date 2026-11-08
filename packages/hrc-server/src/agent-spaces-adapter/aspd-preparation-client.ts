@@ -1,6 +1,6 @@
 /**
  * The aspd preparation hop for the HRC-hosted headless codex-app-server route
- * (T-08542; docs/aspd-headless-codex-integration.md).
+ * (T-08542; spec preserved as attachment ATT-00428).
  *
  * One Unix connection per preparation: connect, negotiate `aspc.hello`, run the
  * existing `aspc.compileHarnessInvocation`, close. HRC holds no resident

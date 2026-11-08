@@ -20,99 +20,108 @@ agent-control-plane (ACP), the external gateway (Discord/iOS) into the
 collective. HRC consumes ASP packages as pinned Verdaccio dev-snapshots and
 publishes a subset of its own packages back to Verdaccio for ACP.
 
-This page describes shipped architecture, not aspiration. For the deeper
-daemon module breakdown, the repo's own `docs/hrc-server-architecture.md`
-remains the most detailed source; this page is the platform-docs-facing
-summary plus the pieces that page does not cover (package topology, state
-locations at a glance).
+This page describes shipped architecture, not aspiration. For the Bun daemon's
+module breakdown see `docs/hrc-server-architecture.md` in the repo;
+this page is the platform-docs-facing summary plus the pieces that page does
+not cover (crate and package topology, state locations at a glance).
 
-## The daemon: `hrc-server`
+## The daemon: `rusthrc`
 
-`hrc-server` is a Bun TypeScript process (`packages/hrc-server`) running from
-an installed atomic release. Source edits reach it through `just install`
-and an authorized daemon restart; restarting alone does not load checkout
-changes. `hrc server status --json` reports the running release path and source
-commit (see `docs/atomic-install.md` in the repo). It is managed by launchd:
+Every fleet node (max3, svc, hrcdev) runs the native Rust owner, `rusthrc`
+(`crates/hrc-native`, T-11893); `just fleet-status` reads it in the `OWNER`
+column. The Bun `hrc-server` package is no node's owner. It remains the
+rollback owner, the ephemeral daemon `just verify-bun` provisions, and the
+source of the store migration graph. The daemon is managed by launchd:
 
-- Launchd label: `com.praesidium.hrc-server` (`ProgramArguments: hrc server serve`)
+- Launchd label: `com.praesidium.hrc-server` (`ProgramArguments`:
+  `praesidium-launch <owner exe> server serve`, where the owner exe is
+  `~/praesidium/var/hrc-owner/bin/rusthrc` or, before
+  `just refresh-owner-exe <node>`, the release link
+  `~/praesidium/var/hrc-owner/hrc-runtime-current/bin/rusthrc`)
 - Unix socket: `/Users/lherron/praesidium/var/run/hrc/hrc.sock`
 - State DB: `/Users/lherron/praesidium/var/state/hrc/state.sqlite`
-- Logs: `/Users/lherron/praesidium/var/logs/hrc-runtime/hrc-server.{log,err.log}`
+- Log: `/Users/lherron/praesidium/var/logs/hrc-runtime/rusthrc-owner.log`
+  (`hrc-server.log` is the retired Bun owner's)
 
-The daemon exposes a **Unix-socket HTTP API** (`/v1/*`, roughly 120 exact
-routes) and owns: runtime orchestration (headless and tmux), driving the
-Harness Broker, tmux pane management, event ingestion from broker envelopes
-(hook, OTEL and launch-callback ingest were retired in T-08566), presenting
-addressed wrkq mail to seats, and the federation peer surface.
+The owner runs a staged release under `~/praesidium/var/hrc-owner/`, not the
+CLI release `just install` cuts over. A daemon change reaches it only through
+`just deploy-max3` / `just deploy-fleet` (stage, then an authorized restart);
+`hrc server status --json` reports `.release.releasePath` and
+`.release.hrcBuild.sourceCommit` (`docs/fleet-deployment.md`,
+`crates/hrc-native/README.md`).
 
-### Module topology (`packages/hrc-server/src`)
+The daemon exposes a **Unix-socket HTTP API** (`/v1/*`) and owns: runtime
+orchestration, driving the Harness Broker, tmux pane management, event
+ingestion from broker envelopes (hook, OTEL and launch-callback ingest were
+retired in T-08566), the mail hook routes and session/turn project events, and
+the federation peer surface. Addressed wrkq mail is presented to seats by the
+separately deployed `hrc-mail-injector` (not in this repo; HRC source may not
+import it).
 
-- `index.ts` — bootstrap (`createHrcServer`), the `HrcServerInstance` class
-  shell, and **route aggregation only**. It builds an exact-route map keyed
-  by method+path and a small set of prefix matches; it does not implement
-  handler behavior.
-- Domain handler modules (`*-handlers.ts`, e.g. `app-session-handlers.ts`,
-  `broker-interactive-handlers.ts`, `broker-headless-handlers.ts`,
-  `sdk-turn-handlers.ts`, `runtime-control-handlers.ts`,
-  `selector-message-handlers.ts`, `selector-wait-handlers.ts`, …) export
-  method bags that are `Object.assign`-ed onto the instance prototype. Each
-  owns one domain's behavior; `index.ts` only aggregates.
-- `broker/controller.ts` plus `broker/controller/*` — `HarnessBrokerController`
-  (~6,800 lines across the split modules): broker client/session lifecycle, admission and
-  capability checks, start-graph persistence (runtime plans → runtimes →
-  runs → invocations), tmux/headless substrate allocation, and terminal/crash
-  transition handling.
-- `parsers/` — request-body/query parsing, split by domain
-  (`runtime.ts`, `runtime-dispatch.ts`, `runtime-intent.ts`,
-  `app-sessions.ts`, `bridges.ts`, `command-runs.ts`, `messages.ts`,
-  `provision.ts`, `sweeps.ts`), plus `runtime-harness-resolver.ts` for the one parser that
-  does filesystem IO. `server-parsers.ts` is a thin re-export barrel.
-- `launch/` — tmux environment hygiene. Callback spooling was retired in T-11714. The
-  launch-wrapper hook, OTEL and artifact plumbing was retired in T-08566.
-- `agent-spaces-adapter/` — the seam onto `aspd`: `compileBrokerRuntimePlan`
-  and per-request Unix-socket clients (`aspc.hello` /
-  `aspc.compileHarnessInvocation`); HRC holds no resident ASP process.
-- `wrkq/` — the wrkq ledger client (mail presentation, receipts, room reads
-  and says, project events) and the session/turn project-event publisher.
-- Persistence lives in the sibling package `hrc-store-sqlite` (migrations +
-  repositories), opened by `hrc-server` at `state.sqlite`.
+### Crate topology (`crates/`)
 
-## Package topology (10 packages, built in dependency order)
+- `hrc-native` — the daemon library and the `rusthrc` executable. Its
+  `src/server.rs` maps each module group to the Bun module it replaces:
+  `front/` (daemon entry, HTTP, telemetry), `broker/` (broker execution
+  ownership, aspd compile, startup reattach, retained evidence), `projection/`
+  (ledger reads and envelope projection), `turns/` (turn admission and input),
+  `placement/` (placement, aspd client, federation) and `lifecycle/` (daemon
+  lifecycle, restart authority, handoff, mail hooks, project-event
+  publication).
+- `hrc-cli` — the `hrc` command surface, linked into `rusthrc`. Its command
+  graph and help are generated from the Bun registrations in `packages/hrc-cli`
+  into `surface.json`.
+- `hrc-store` — SQLite access, row shapes and event append. It admits the
+  schema the Bun migration graph defines and never migrates.
+- `hrc-domain` — the six operator operations behind rusthrc's ops-only kernel
+  provider (`hrc-kernel.sock`); seat and runtime reads belong to the
+  Praesidium kernel (`prae seat`, `prae runtime`).
+- `hrc-common` — shared leaf: federation config, scope-ref parsing,
+  JavaScript compatibility helpers and release location.
+- `hrc-pty` — per-seat pty supervisor and attach client for tmux-free seats.
+
+`crates/README.md` holds the allowed dependency edges, enforced by
+`scripts/check-rust-crate-edges.py` in `just verify`.
+
+## Package topology (11 Bun packages, built in dependency order)
 
 | Package | Role |
 | --- | --- |
 | `agent-action-render` | Shared rendering semantics for agent tool/action lines (tool emoji, action lines, admission labels) — shared with ACP's gateway-discord |
 | `hrc-core` | Runtime/session/run DTOs, HTTP contracts, errors, path resolution, monitor condition engine |
 | `hrc-events` | Canonical HRC event payload types, Zod schemas, and the monitor event schema |
-| `hrc-store-sqlite` | SQLite migrations + repositories for HRC state |
-| `hrc-capture-verifier` | Capture verification |
+| `hrc-store-sqlite` | SQLite migrations + repositories for HRC state; the migration graph `hrc-store` admits |
+| `hrc-capture-verifier` | Provider transcript capture verification against the broker ledger |
 | `hrc-sdk` | Typed client (`HrcClient`) for the HRC daemon over the unix socket |
 | `hrc-frame-render` | Projects HRC lifecycle/message events into RenderFrames/timeline |
-| `hrc-server` | The daemon: Unix-socket HTTP API, launch/control, tmux/headless/broker orchestration |
-| `hrc-cli` | `hrc` operator CLI |
+| `hrc-server` | The Bun daemon: rollback owner and `verify-bun`'s ephemeral daemon |
+| `hrc-cli` | Bun CLI (private): command registrations for the generated native surface, and `hrc.js server serve` for the Bun daemon |
 | `hrc-transcript-index` | Resident FTS5 projection and search over HRC transcript turns |
+| `hrc-turn-attention` | Node-local turn attention classifier subscriber (`bunx hrc-turn-attention@<version>`, activated separately) |
 
-## The three transports
+## Transports
 
-Turn dispatch chooses a transport per-turn via `broker-decisions.ts`:
+A runtime's transport is `tmux`, `headless`, `sdk` or `hrcpty` (the
+`hrc runtime list --transport` values):
 
-- **Interactive-tmux broker** — drives a real tmux pane; survives
+- **tmux** — the broker drives a real tmux pane; survives
   `hrc server restart`.
-- **Headless broker** — runs agents without a TUI; events flow back as broker
-  envelopes, as on the interactive route.
-- **Headless SDK executor** — a third, non-broker execution path for
-  programmatic headless turns.
+- **headless** — the broker runs the agent without a TUI; events flow back as
+  broker envelopes, as on the interactive route.
+- **sdk** — a non-broker execution path for programmatic headless turns.
+- **hrcpty** — a tmux-free seat supervised by `hrc-pty`.
 
-Broker-routed turns go through `HarnessBrokerController`, which persists the
-start graph and drives the broker client; invocation events are mapped back
-through `broker/event-mapper.ts` into HRC events/state.
+Broker births compile through aspd, persist the start graph before hosting and
+launch from the frozen preparation; committed broker envelopes are projected
+back into HRC events and state (`crates/hrc-native/src/server/broker/`,
+`projection/`).
 
 ## Target handle grammar (summary)
 
 HRC identifies agent sessions with a shorthand **target handle**:
 
 ```
-agentId[@projectId[:taskId[/roleName]]][~lane]
+agentId[@projectId[:taskId][/roleName]][~lane]
 ```
 
 The handle resolves to a canonical `scopeRef`
@@ -123,10 +132,11 @@ examples.
 
 ## "Awaiting user input" bracket
 
-A turn parked on a user question is modeled as a first-class durable
-bracket (`ask-bracket.ts`), which is the reaper authority — this is what
-prevents the active-run reaper from killing a turn that is legitimately
-waiting on a human/agent response.
+A turn parked on a user question is modeled as a first-class durable state.
+In the Bun daemon the bracket (`ask-bracket.ts`) is the reaper authority, which
+prevents the active-run reaper from killing a turn that is legitimately waiting
+on a human/agent response. The native daemon projects it as the
+`awaiting_input` runtime status and `turn.awaiting_input` event.
 
 ## System boundaries (what HRC is NOT)
 
@@ -142,10 +152,9 @@ Enforced by `bun run check:boundaries` (`scripts/check-boundaries.ts`):
   `wlearn`, and must not assert ACP-source invariants even in tests.
 - **Not the task store.** HRC does not own tasks, handoffs, comments or
   conversations — that is wrkq. HRC reaches wrkq only through its ledger
-  client (`packages/hrc-server/src/wrkq/`): it presents addressed envelopes
-  to seats and records presentation or failure, reads and posts room
-  messages, and publishes session/turn project events. HRC source still may
-  not import `wrkq-lib`.
+  client (`packages/hrc-server/src/wrkq/`; native `lifecycle/`): it answers
+  mail hooks, reads and posts room messages, and publishes session/turn
+  project events. HRC source still may not import `wrkq-lib`.
 - **Not the workflow engine.** Scheduling/runs/effects belong to wrkf; HRC
   executes individual agent turns, not the workflow orchestrator.
 - **Not a PTY multiplexer.** HRC drives real tmux panes by shelling out to
@@ -163,7 +172,9 @@ Enforced by `bun run check:boundaries` (`scripts/check-boundaries.ts`):
 - No `hrc-server` source file exceeds 1,500 lines. The files once
   grandfathered (`broker/controller.ts`, `startup-reconcile.ts`, `index.ts`)
   have since been split below it. Neither ceiling is enforced by a check.
-- Validation bar: `just verify` (env-up, architecture records, `check` —
-  which runs the boundary, manifest, dependency-pin and other repository
-  checks — lint, typecheck, test), then an installed-binary smoke (`just install`, restart the real launchd
-  daemon, `hrc --help` / `hrc server status` / one real read-only command).
+- Validation bar: `just verify` (architecture records, the Rust crate-edge
+  check, and `just cargo-check` when Rust inputs changed; no Bun suites);
+  `just verify-bun` (ephemeral daemon, `check` — the boundary, manifest,
+  dependency-pin and other repository checks — lint, typecheck, test) when
+  Bun/TS code changed. A CLI change smokes after `just install`; a daemon
+  change needs Mable's `just deploy-max3` and a `sourceCommit` readback.

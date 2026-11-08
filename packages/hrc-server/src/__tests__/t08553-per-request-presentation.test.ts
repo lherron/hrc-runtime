@@ -1,6 +1,6 @@
 /**
  * T-08553 — per-request operator presentation on the aspd headless Codex route
- * (docs/aspd-headless-codex-integration.md §1.1). Shares the T-08542 doubles.
+ * (aspd spec ATT-00428 on T-08542, §1.1). Shares the T-08542 doubles.
  *
  * Original T-08542 harness notes: HRC-hosted headless codex-app-server preparation through aspd with a
  * frozen execution release (hrc-runtime.aspd-prepared-execution-release).

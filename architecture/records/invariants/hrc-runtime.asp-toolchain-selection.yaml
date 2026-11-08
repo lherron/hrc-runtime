@@ -59,7 +59,7 @@ authority: wrkq:T-08690 producer-owned v2 consumer amendment, pending Daedalus r
 source:
   - wrkq:T-08690
   - wrkq:T-09274
-  - docs/aspd-headless-codex-integration.md
+  - wrkq:T-08542
   - docs/harness-broker-substrate-spec.md
   - architecture/records/invariants/hrc-runtime.aspd-prepared-execution-release.yaml
   - architecture/records/invariants/hrc-runtime.declaration-observation-consumer.yaml

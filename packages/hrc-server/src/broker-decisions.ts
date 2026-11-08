@@ -418,7 +418,7 @@ export function resolveInteractiveBrokerAdmissionDriver(
   // T-08555: HRC_CODEX_CLI_TMUX_BROKER_ENABLED governs only the omitted-choice
   // Codex redirect. An explicit interactive Codex intent, and reuse of a live
   // codex-tui runtime, stay admissible on a node that turns the redirect off
-  // (docs/aspd-headless-codex-integration.md §1.3, decision 1).
+  // (aspd spec ATT-00428 on T-08542, §1.3, decision 1).
   if (
     intent.harness.provider === 'openai' &&
     (intent.harness.id === undefined || intent.harness.id === 'codex-cli')

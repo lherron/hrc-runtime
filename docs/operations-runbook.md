@@ -283,9 +283,12 @@ mail state. For deployment and supervision use
 
 ## ASP preparation and runtime events
 
-[aspd-headless-codex-integration.md](https://github.com/lherron/hrc-runtime/blob/main/docs/aspd-headless-codex-integration.md) records
-the ASP preparation integration; it does not make its original Codex opt-in
-rollout instructions a current native routing policy. The active producer
+The ASP preparation integration spec and its rollout acceptance records are
+preserved on T-08542 as attachment ATT-00428
+(`prae task attachment get ATT-00428 --output-file <path>`); its Codex opt-in
+rollout instructions are not current routing policy. The shipped law is the
+`hrc-runtime.aspd-prepared-execution-release` and
+`hrc-runtime.asp-toolchain-selection` invariants. The active producer
 chooses execution preparation. Read back `.api.aspd.release` independently
 of HRC's package tuple. Frozen workers/preparations retain their release
 binding across aspd activation; retain any release they still reference.

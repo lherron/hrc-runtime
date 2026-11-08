@@ -1,6 +1,6 @@
 /**
  * T-08556 — `hrc run` on the aspd-prepared interactive Codex TUI
- * (docs/aspd-headless-codex-integration.md §1.4,
+ * (aspd spec ATT-00428 on T-08542, §1.4,
  * hrc-runtime.aspd-prepared-execution-release). Shares the T-08542 doubles.
  *
  * Real pieces: the attached-run door (`/v1/runs/prepare-attached` and

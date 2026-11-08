@@ -1,6 +1,6 @@
 /**
  * T-08560 — every interactive Codex birth through aspd
- * (docs/aspd-headless-codex-integration.md §1.5, D1–D4;
+ * (aspd spec ATT-00428 on T-08542, §1.5, D1–D4;
  * hrc-runtime.aspd-prepared-execution-release, hrc-runtime.asp-toolchain-selection).
  *
  * Real pieces: the dispatch, submission, start, ensure, attach and rotation doors,

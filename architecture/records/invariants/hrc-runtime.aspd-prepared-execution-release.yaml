@@ -110,7 +110,7 @@ source:
   - wrkq:T-08207
   - wrkq:T-08690
   - wrkq:T-09274
-  - docs/aspd-headless-codex-integration.md
+  - wrkq:T-08542
   - docs/harness-broker-substrate-spec.md
   - architecture/records/invariants/hrc-runtime.asp-toolchain-selection.yaml
   - architecture/records/invariants/hrc-runtime.harness-broker-admission-client.yaml

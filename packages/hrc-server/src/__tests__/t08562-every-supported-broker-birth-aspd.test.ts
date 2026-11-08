@@ -1,6 +1,6 @@
 /**
  * T-08562 — every supported broker birth through aspd: claude-code-tmux and
- * pi-tui-tmux (docs/aspd-headless-codex-integration.md §1.6;
+ * pi-tui-tmux (aspd spec ATT-00428 on T-08542, §1.6;
  * hrc-runtime.aspd-prepared-execution-release, hrc-runtime.asp-toolchain-selection,
  * hrc-runtime.harness-broker-admission-client).
  *

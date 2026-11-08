@@ -1,6 +1,15 @@
 # hrc-server Architecture
 
-**Scope:** `packages/hrc-server`, the HRC daemon.
+**Scope:** `packages/hrc-server`, the Bun HRC daemon.
+
+No fleet node runs it as its owner: max3, svc and hrcdev all run the native
+`rusthrc` owner (`crates/hrc-native`; `just fleet-status` OWNER column), whose
+`server.rs` maps each native module to the Bun module it replaces. This
+package is still maintained: it is the rollback owner (the `.bun-owner` plist
+in [fleet-deployment.md](fleet-deployment.md#hrc-owner-bun-or-rusthrc)), the
+ephemeral daemon `just verify-bun` provisions through `scripts/dev-env.sh`, and,
+with `hrc-store-sqlite`, the source of the migration graph `crates/hrc-store`
+admits. The platform map is [architecture-overview.md](architecture-overview.md).
 
 This page maps the daemon's source as shipped. It names modules and seams, not
 line counts or version pins, because those go stale within days. The normative
@@ -19,7 +28,7 @@ collaboration ledger.
 
 - The package `exports` serve TypeScript source under the `bun` condition
   (`"bun": "./src/index.ts"`) and `dist` for `import`/`types`.
-- The launchd daemon runs from the **installed atomic release**, not from the
+- As a launchd owner it runs from the **installed atomic release**, not from the
   checkout: `hrc server status --json` reports `.release.releasePath` and
   `.release.hrcBuild.sourceCommit`. A source edit reaches the daemon only
   through `just install` followed by a restart
@@ -85,14 +94,15 @@ there to keep control-flow narrowing.
   `runtime-inspect-handlers.ts`, `runtime-prune-handlers.ts`,
   `seat-withdraw-handlers.ts`, `sweep-handlers.ts` / `sweep-helpers.ts`.
 - **Events**: `event-handlers.ts`, `event-notification-handlers.ts`,
-  `event-ingest.ts`, follow fan-out.
+  `event-ingest/` (ingest listener, client, forwarder and forward cursors),
+  follow fan-out.
 - **Messaging and selectors**: `target-message-handlers.ts`,
   `selector-message-handlers.ts` (+ `selector-message-handlers/`),
   `selector-wait-handlers.ts`, `messages.ts`.
-- **External participants**: `external-registration-rendezvous.ts`,
-  `registration-handlers.ts`, `registration-gc-handlers.ts`,
-  `participant-registration-handlers.ts`, `participant-attach-handlers.ts`,
-  `participant-establishment.ts`, `roster-claim.ts`, `exact-claim.ts`.
+- **External participants**: `participant-registration-handlers.ts`,
+  `participant-attach-handlers.ts`, `participant-establishment.ts`,
+  `external-participant-lifecycle.ts`, the `participant-succession*` and
+  `participant-successor-*` modules, `roster-claim.ts`, `exact-claim.ts`.
 - **Federation**, `federation/`: node identity and config, the binding registry
   client and endpoint, placement policy, the peer protocol and reachability,
   the summon gate, collective history, scope-read routing.
@@ -113,7 +123,7 @@ there to keep control-flow narrowing.
 
 Shape validation for request bodies and queries: `common.ts`, `runtime.ts`,
 `runtime-dispatch.ts`, `runtime-intent.ts`, `provision.ts`,
-`command-runs.ts`, `bridges.ts`, `messages.ts`, `sweeps.ts`.
+`command-runs.ts`, `surfaces.ts`, `messages.ts`, `sweeps.ts`.
 `runtime-harness-resolver.ts` holds the parsing helper that does filesystem
 IO, kept apart from the pure parsers. `server-parsers.ts` is a re-export
 barrel that keeps the historical import path.
@@ -194,6 +204,8 @@ controller deps. Locate the live DB with `hrc server status --json`
 - The full rule-to-enforcer table is [rule-enforcers.md](rule-enforcers.md).
   The validation commands are in [development-workflow.md](development-workflow.md).
 
-**CLIs:** `hrc` (`packages/hrc-cli`) is the operator CLI. The `hrcchat` CLI is
+**CLIs:** the installed `hrc` is the native `rusthrc` CLI (`crates/hrc-cli`);
+`packages/hrc-cli` holds the command registrations it is generated from and
+serves the Bun daemon (`hrc.js server serve`). The `hrcchat` CLI is
 retired: its runtime verbs moved into `hrc`, and agent messaging moved to
 `wrkc`.

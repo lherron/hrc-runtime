@@ -1,6 +1,6 @@
 /**
  * T-08553/T-08554 — per-request operator presentation
- * (docs/aspd-headless-codex-integration.md §1.1–§1.2,
+ * (aspd spec ATT-00428 on T-08542, §1.1–§1.2,
  * hrc-runtime.aspd-prepared-execution-release).
  *
  * `intent.presentation.operator` chooses the operator presentation of a NEW
@@ -170,7 +170,7 @@ export function assertNoOperatorPresentationConflict(
 /**
  * T-08555 — how an omitted-choice, non-interactive Codex request is routed on a
  * node whose Codex interactive redirect is OFF
- * (docs/aspd-headless-codex-integration.md §1.3, rules 3–5). The scope's
+ * (aspd spec ATT-00428 on T-08542, §1.3, rules 3–5). The scope's
  * established runtime selects the admission; that admission alone decides
  * reuse, birth join, refusal or fenced replacement. With nothing established,
  * the request runs headless with the node presentation default.

@@ -1,6 +1,6 @@
 /**
  * T-08542 — HRC-hosted headless codex-app-server preparation through aspd with a
- * frozen execution release (docs/aspd-headless-codex-integration.md; invariants
+ * frozen execution release (aspd spec ATT-00428 on T-08542; invariants
  * hrc-runtime.aspd-prepared-execution-release and
  * hrc-runtime.asp-toolchain-selection).
  *
