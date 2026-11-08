@@ -12,6 +12,11 @@ pub struct State {
 }
 const SERVER: &str = "server-project-events";
 const SESSION: &str = "session-project-events";
+fn rejected(error: &anyhow::Error) -> bool {
+    error
+        .downcast_ref::<super::ledger::RpcError>()
+        .is_some_and(|e| e.non_retryable())
+}
 const SERVER_KINDS: &[&str] = &["server.started", "server.stopped"];
 const SESSION_KINDS: &[&str] = &[
     "session.created",
@@ -162,10 +167,16 @@ async fn pump_server(server: &Shared, node: &str) -> Result<()> {
                     stderr_json(
                         "warn",
                         "publication",
-                        "server_project_event.post_failed",
+                        if rejected(&error) {
+                            "server_project_event.rejected"
+                        } else {
+                            "server_project_event.post_failed"
+                        },
                         json!({"type":fact["type"],"hrcSeq":e["hrcSeq"],"idempotencyKey":fact["idempotencyKey"],"error":error.to_string()}),
                     );
-                    return Err(error);
+                    if !rejected(&error) {
+                        return Err(error);
+                    }
                 }
             }
             // The post has finished. Fence only the cursor commit; if closed,
@@ -458,6 +469,17 @@ async fn post_session(server: &Shared, mut fact: Value) -> Result<()> {
     attempts.push(fact);
     for (index, params) in attempts.iter().enumerate() {
         if let Err(error) = post(server, params.clone()).await {
+            // Preserve task-to-project fallback. Only a final, explicitly
+            // permanent refusal consumes the fact without an acknowledged post.
+            if index + 1 == attempts.len() && rejected(&error) {
+                stderr_json(
+                    "warn",
+                    "publication",
+                    "session_project_event.rejected",
+                    json!({"type":params["type"],"seat":params["scopeRef"],"idempotencyKey":params["idempotencyKey"],"error":error.to_string()}),
+                );
+                return Ok(());
+            }
             stderr_json(
                 if index + 1 == attempts.len() {
                     "warn"
@@ -486,20 +508,19 @@ async fn pump_session(server: &Shared, node: &str) -> Result<()> {
             .unwrap()
             .publication_events(SESSION, SESSION_KINDS, 200)?;
         for e in &rows {
-            if e.get("evidenceOrigin").is_some() {
-                continue;
-            }
-            if e["eventKind"] == "session.created" {
+            let retained = e.get("evidenceOrigin").is_some();
+            if !retained && e["eventKind"] == "session.created" {
                 if let Some(fact) = birth_fact(server, e, node)? {
                     post_session(server, fact).await?;
                 }
-            } else if let Some(fact) = runtime_fact(e, node) {
+            } else if !retained && let Some(fact) = runtime_fact(e, node) {
                 post_session(server, fact).await?;
             }
             if let Some(runtime) = e["runtimeId"].as_str().filter(|_| {
-                e["identity"]["projectId"]
-                    .as_str()
-                    .is_some_and(|s| !s.is_empty())
+                !retained
+                    && e["identity"]["projectId"]
+                        .as_str()
+                        .is_some_and(|s| !s.is_empty())
             }) {
                 let kind = e["eventKind"].as_str().unwrap_or("");
                 if kind == "turn.started"
@@ -530,8 +551,8 @@ async fn pump_session(server: &Shared, node: &str) -> Result<()> {
                     }
                 }
             }
-        }
-        if let Some(last) = rows.last() {
+            // Commit each consumed row so a later retry cannot replay a
+            // permanent rejection (or already acknowledged earlier rows).
             let Some(_write) = server.owner_writes.enter() else {
                 return Ok(());
             };
@@ -539,7 +560,7 @@ async fn pump_session(server: &Shared, node: &str) -> Result<()> {
                 .store
                 .lock()
                 .unwrap()
-                .publication_advance(SESSION, last["hrcSeq"].as_i64().unwrap())?;
+                .publication_advance(SESSION, e["hrcSeq"].as_i64().unwrap())?;
         }
         if rows.len() < 200 {
             return Ok(());

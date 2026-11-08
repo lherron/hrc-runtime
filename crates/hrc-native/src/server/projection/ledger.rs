@@ -10,6 +10,24 @@ use std::{env, process::Stdio, time::Duration};
 /// wrkq's workrpc ProtocolVersion (internal/workrpc/doc.go).
 const PROTOCOL_VERSION: &str = "2026-06-30";
 const NOT_INITIALIZED: &str = "rpc.initialize must be called first";
+
+/// Preserve the owner's structured refusal for callers deciding retry policy.
+#[derive(Debug)]
+pub struct RpcError {
+    method: String,
+    detail: Value,
+}
+impl RpcError {
+    pub fn non_retryable(&self) -> bool {
+        self.detail["data"]["retryable"].as_bool() == Some(false)
+    }
+}
+impl std::fmt::Display for RpcError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "wrkq RPC {}: {}", self.method, self.detail)
+    }
+}
+impl std::error::Error for RpcError {}
 use tokio::{
     io::{AsyncBufReadExt, AsyncWriteExt, BufReader, Lines},
     process::{Child, ChildStdin, ChildStdout, Command},
@@ -125,7 +143,11 @@ impl Client {
             }
             match reply {
                 Ok(result) => Ok(result),
-                Err(error) => bail!("wrkq RPC {method}: {error}"),
+                Err(detail) => Err(RpcError {
+                    method: method.into(),
+                    detail,
+                }
+                .into()),
             }
         })
         .await
