@@ -61,3 +61,7 @@ __pycache__/
 # Arris build output
 diagrams/*.preview/
 diagrams/drafts/
+
+# LLVM profiling / coverage output
+*.profraw
+*.profdata
