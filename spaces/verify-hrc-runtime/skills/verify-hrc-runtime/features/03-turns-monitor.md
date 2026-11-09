@@ -6,8 +6,8 @@ invocation ledger (invocation-local `seq`). Native code (installed `hrc` = rusth
 (events, transcript, stats), `crates/hrc-store/src/monitor_read.rs`; daemon `crates/hrc-native/src/server/turns/`,
 `server/projection/{forensics,transcript}.rs`, `server/projection/projection/{events,context}.rs`. `monitor search`
 is the one Bun verb here (`crates/hrc-cli/command-scope.json` `implementation: bun` →
-`packages/hrc-cli/src/transcript-search.ts`); its route `POST /v1/transcript-search` is native (server.rs:498,
-transcript.rs:470). Docs: `docs/cli-surface.md` (turn, monitor), `docs/monitor-spec.md`.
+`packages/hrc-cli/src/transcript-search.ts`); its route `POST /v1/transcript-search` is native (server.rs:526,
+transcript.rs:483). Docs: `docs/cli-surface.md` (turn, monitor), `docs/monitor-spec.md`.
 
 ## Sub-features
 
@@ -30,7 +30,11 @@ transcript.rs:470). Docs: `docs/cli-surface.md` (turn, monitor), `docs/monitor-s
   condition a blocking wait arms on `turn-finished, runtime-dead` (spec.rs:279). Also 11 `no_session_ever`, 12
   `runtime_death_obstruction`, 13 terminal failure, 21 stalled (`--stall-after`), 22 context changed, 23 monitor
   error, and `--since <seq|duration>` (turn-finished only) fences the edge so an already-finished turn matches
-  (source-only, 2026-11-02: monitor/engine.rs:12-21, monitor/wait.rs:177-181).
+  (source-only, 2026-11-02: monitor/engine.rs:10-20, monitor/wait.rs:177-181). Since f748a301 `wait` and `watch
+  --until` wake from `GET /v1/events/bounded-stream?follow=true` instead of polling the store; a stream that ends
+  exits 23 "monitor event stream ended" (source-only, 2026-11-09: monitor/live.rs:27-108). Armed before a turn,
+  `--until turn-finished` exited 0 `phase: after-arm` and the scratch logged `bounded-stream` requests (2026-11-09,
+  `T-12756/03-turns-monitor/drive-extra.txt`).
 - `~/.bun/bin/hrc monitor watch [selector] [--last N|--from-seq N] [--follow] [--format compact|…]`: the lifecycle events.
   One `--wait final` turn wrote 17 rows (108..124): `turn.user_prompt`, `submission.admission`, `turn.accepted`,
   `turn.started`, `broker.submission.milestone`, `broker.turn.origin`, `broker.seat.transition`, `turn.message`,
@@ -38,11 +42,14 @@ transcript.rs:470). Docs: `docs/cli-surface.md` (turn, monitor), `docs/monitor-s
   turn that reports usage (T-10934), fires mid-turn when the stored reading is missing or 30 s old (T-11448,
   projection/projection/context.rs:7) and carries `~/.bun/bin/hrc runtime inspect`'s `.hrc.contextReading`. `runtime.settled`
   is written only when an idle seat clears a stale owner (T-10841); a clean drive has none.
-- `~/.bun/bin/hrc monitor events|transcript|stats <runtimeId|invocationId|scope>` (native, `GET /v1/broker-forensics`): the
+- `~/.bun/bin/hrc monitor events|transcript|stats <runtimeId|invocationId|scope>` (native; events and transcript read
+  `GET /v1/broker-forensics`, stats reads `GET /v1/broker-stats` since 2c947087, counted by the daemon): the
   invocation ledger (`user.message`, `assistant.message.started|completed`, `usage.updated`, `turn.completed`,
   `admission.*`, `submission.executed`, …), a rendered `<seq> USER|SAYS | text` transcript
   (long turns `… [clipped N chars]`), and `{targetKind, targetId, runtimeIds, invocationIds, eventTypes}` stats
-  (2026-11-02, T-12291); stats also emits `turnCount` (source-only, 2026-11-02: crates/hrc-cli/src/forensics.rs:472).
+  (2026-11-02, T-12291); stats also emits `turnCount`, `toolCallCount`, `perTurn[]` (2026-11-09, T-12756).
+- A cold-scope turn (no session; births through `/v1/messages/turn-handoff`) writes one `message.response`
+  lifecycle row; a warm steer writes none (1 vs 0 on 2026-11-09, `T-12756/03-turns-monitor/drive-extra.txt`).
 - `~/.bun/bin/hrc monitor search <query> [--json]`: Bun CLI passthrough over the native index; serve.log shows the request as
   `client: hrc-cli/0.1.0` (every native verb is `rusthrc/0.1.0`). Answer `{mode: "discovery", hits: [{turnRowid,
   invocationId, runtimeId, scopeRef, generation, seqFrom, seqTo, terminalStatus, userText, finalText, …}]}`
@@ -105,9 +112,10 @@ hv run <task> -- ~/.bun/bin/hrc monitor session-report --runtime $R --json
 - **A set-shaped wait on a resumed scope may arm on the wrong generation (product gap T-11869, still in the native
   port).** Set selectors load every session of the scope `ORDER BY host_session_id` (a random `hsid-<uuid>`) and
   take the last as current (source-only, 2026-11-02: crates/hrc-store/src/monitor_read.rs:299,
-  crates/hrc-cli/src/monitor/engine.rs:103-108). On 2026-10-26 (Bun) `--until-all idle` armed on dead gen 1 and
+  crates/hrc-cli/src/monitor/engine.rs:~100-105). On 2026-10-26 (Bun) `--until-all idle` armed on dead gen 1 and
   exited 12. On 2026-11-02 `$T $T --until-all idle` exited 10 on the live gen-4 runtime 5 of 5, but the live
   hsid (`c83f…`) sorted last of four, so that is no discriminator: T-11869 is neither reproduced nor cleared.
+  Same on 2026-11-09: exit 10 on live gen 3, whose hsid `cf55…` sorted last of three (`aa36…`, `39aa…`).
   Read the `monitor.armed` members before you trust a set wait's exit code.
 - **A bare word is an agent, not a task.** `~/.bun/bin/hrc monitor wait bareword …` resolves `agent:bareword/lane:main`:
   `error: unknown session "agent:bareword/lane:main"`, rc 2 (2026-11-02, T-12291). For a set-shaped selector
@@ -115,14 +123,16 @@ hv run <task> -- ~/.bun/bin/hrc monitor session-report --runtime $R --json
 - **`monitor watch --last 10` misses the turn's `turn.user_prompt`.** One turn writes 17 rows; `--last 10`
   started at `turn.started` (2026-11-02, T-12291). Use `--last 20` or `--from-seq` from `observation.lifecycle.fromSeq`.
 - **The monitor CLI reads the store directly.** `show`, `wait`, `watch` open the dialed daemon's `/v1/status`
-  `dbPath` read-only (source-only, 2026-11-02: crates/hrc-cli/src/monitor/state.rs:826-829); a CLI without the
-  scratch's `HRC_RUNTIME_DIR` reads the live ledger. Use `hv run`.
+  `dbPath` read-only (source-only, 2026-11-02: crates/hrc-cli/src/monitor/state.rs:832-833) and, for `wait`/`watch
+  --until`, follow the daemon's bounded stream; a CLI without the scratch's `HRC_RUNTIME_DIR` reads the live
+  ledger. Use `hv run`.
 - **Claude births log `capture.warning` rows (`blocked_unknown`, `loadBearing: false`), and which ones moves with
   the claude CLI** ("Unknown Claude attachment type: …" on 2026-10-05, "Unknown Claude transcript row type:
   api-request-blob|api-request|…" on 2026-10-19 and 10-26). The parser is ASP's (`agent-spaces/harness/
   harness-broker/src/drivers/claude-code-tmux/hook-transcript.ts`). Count them from `monitor stats --json`
-  `.eventTypes["capture.warning"]`; the old `~/.bun/bin/hrc runtime status` `.capture.blockedUnknown` is not in crates/
-  (source-only, 2026-11-02: grep). Not a turn failure; don't pin a count or a type list.
+  `.eventTypes["capture.warning"]` (4 on 2026-11-09) or `~/.bun/bin/hrc runtime status --json` / `capture status`
+  `.capture.blockedUnknown[]` (`session-owner` on 2026-11-09; feature 2). Not a turn failure; don't pin a count or a
+  type list.
 - `monitor show --json` has no top-level `status`; the runtime's status is under `.runtime`.
 
 ## Proven when
@@ -134,7 +144,7 @@ the turns; `search` (the Bun CLI, `hrc-cli/0.1.0` in serve.log) finds the prompt
 exits 2 and `--until-all idle` exits 10 when its armed members are the live runtimes (on a resumed scope only
 once T-11869 is fixed or the live hsid is shown not to sort last).
 
-Driven 2026-11-02 (T-12291) on a native scratch (rusthrc, release-20261102082222127-69529, 9861ae0e), scratch
-`t-12291` (the turn ran on resumed generation 4, hrcpty; seven `turn.completed`, thirteen
-`runtime.context.updated`, zero `runtime.settled` over the scratch; the set wait was no T-11869 discriminator):
-`~/praesidium/var/wrkq-artifacts/T-12291/{03-turns-monitor,04-http-api,evidence/t-12291}`.
+Driven 2026-11-09 (T-12756 upkeep) on a native scratch (rusthrc, release-20261108171912823-43877, 846648d8),
+scratch `t-12756` (turn on restarted generation 3, hrcpty; eight `turn.completed` over the scratch; the set wait
+was again no T-11869 discriminator; plus the armed `turn-finished` wait and a cold-scope turn):
+`~/praesidium/var/wrkq-artifacts/T-12756/{03-turns-monitor,04-http-api,evidence/t-12756}`.

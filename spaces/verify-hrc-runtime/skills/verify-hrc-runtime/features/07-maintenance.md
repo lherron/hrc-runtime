@@ -7,7 +7,7 @@ passes through) and the scheduled retention job. Native CLI: `crates/hrc-cli/src
 capture status). Daemon `crates/hrc-native/src/server/broker/{sweeps,reconcile,maintenance,seat_retirement,
 first_turn}.rs`, `broker/startup/sweeps.rs`, `front/accounting.rs` (request log, metrics file), `server.rs`
 (`/v1/status`). Bun only: `packages/hrc-cli/src/broker-verify/` (`run`), `worktree-prune.ts`,
-`handlers-capture.ts` (release|recover), `scripts/prune-hrc-event-deltas.ts` and
+`packages/hrc-cli/src/cli/handlers-capture.ts` (release|recover CLI), `scripts/prune-hrc-event-deltas.ts` and
 `launchd/com.praesidium.hrc-prune-deltas.plist`. Docs: `docs/state-retention.md`, `docs/operations-runbook.md`.
 
 ## Sub-features
@@ -27,11 +27,16 @@ first_turn}.rs`, `broker/startup/sweeps.rs`, `front/accounting.rs` (request log,
   [--idle] [--json]` (T-11541): read-only rollup of `server-*.ndjson` request records (`count`, `records`,
   `errors`, `errorRate`, `ms.p50|p95|max`, `firstSeen`/`lastSeen`; `client` is the User-Agent `<name>/<version>`).
   **Blind on native:** the daemon writes `rusthrc-server-<day>.ndjson` (`front/accounting.rs:22`) and
-  `routes.rs:88` keeps only names starting `server-`, so `--since 1h|24h` answers 0 rows while that day's
-  `rusthrc-server` file held 235544 native request lines; `--since 10d` returns 27 Bun-era rows (2026-11-02,
-  T-12291; product gap filed by T-12291). `[]` is not "no traffic": count the `rusthrc-server` file beside it.
+  `routes.rs:70` keeps only names starting `server-`, so `--since 1h|24h` answers 0 rows while that day's
+  `rusthrc-server` file held 235544 native request lines (2026-11-02); `--since 10d` returned 27 Bun-era rows on
+  11-02 and 0 on 2026-11-09, the Bun files having aged out (product gap T-12304, open). `[]` is not "no
+  traffic": count the `rusthrc-server` file beside it. `--since` defaults to 7d; `suppressedPoll` is gone from the
+  rows and `--idle` (06521944; 0 occurrences, 2026-11-09).
 - L3 request line: every listener writes one `component: http`, `event: http.request` line per request with
-  `{listener, servedBy, method, route, path, status, durationMs, client, requestId?, remote?, peer?}`; on live
+  `{listener, servedBy, method, route, path, status, durationMs, client, caller, requestId?, remote?, peer?}`
+  (`caller` from `x-praesidium-caller`, `unknown`/`invalid` otherwise; last 2000 live lines: `praesidium-kernel:hrc@max3`
+  662, `hrc-mail-injector` 582, `unknown` 18, 2026-11-09). Native-only routes are named by path, not `unmatched`
+  (0 live `unmatched`; only unserved routes log it). On live
   it lands in `var/logs/hrc-runtime/rusthrc-owner.log` (`hrc-server.log` is the frozen Bun log), on a scratch in
   `serve.log` (148 `servedBy: "native"` lines, 2026-11-02, T-12291). All completed non-stream
   requests write a line; streams log open/close.
@@ -48,21 +53,25 @@ first_turn}.rs`, `broker/startup/sweeps.rs`, `front/accounting.rs` (request log,
 - `~/.bun/bin/hrc admin broker-verify run --invocation <id> [--jsonl P] [--json]` (Bun passthrough; it opens the store
   itself): verifies one invocation against its ledger and lifecycle projections (`status: pass`, `ok`,
   `ledger.statuses`, `lifecycle[]` broker seq → hrcSeq); exit 1 when `ok` is false.
-- `~/.bun/bin/hrc admin status --json`: prints `/v1/status .aspToolchain`. **Vacuous on native:** `server.rs:1023`
+- `~/.bun/bin/hrc admin status --json`: prints `/v1/status .aspToolchain`. **Vacuous on native:** `server.rs:1061`
   hard-codes `{toolchainRootActive:false, binaries:[]}`, so live answers that although its plist sets
-  `HRC_ASP_TOOLCHAIN_ROOT=/Users/lherron/.bun/bin` (2026-11-02, T-12291; product gap filed by T-12291).
+  `HRC_ASP_TOOLCHAIN_ROOT=/Users/lherron/.bun/bin` (2026-11-02, still on 2026-11-09; product gap T-12306, open).
 - `~/.bun/bin/hrc runtime diagnostics [selector] [--json]`: `first_turn_missing` watchdog trips (read-only).
 - `~/.bun/bin/hrc capture status <target> --json`: the broker-authoritative capture state (`open`, `deferredCount`); native
   also projects that state into the DB, so it is a scratch verb (source-only, 2026-11-02:
-  `crates/hrc-native/src/server/turns/io.rs:194-197`). `capture release|recover` are Bun CLI writes
-  (not driven); native has no `/v1/runtimes/capture/release` route (`route.not_served` in the scratch serve log,
-  2026-11-02, T-12291).
+  `crates/hrc-native/src/server/turns/io.rs:194-197`). `capture release|recover` are Bun CLI verbs. `capture
+  recover <rt> --dry-run --json` is native-served (`/v1/capture/recover`) and read-only: on a terminated scratch
+  runtime it answered `outcome: recovered, class: complete, eligibility.eligible: true, recorded: false`
+  (2026-11-09, `T-12756/07-maintenance/drive-extra.txt`); `--yes` writes (not driven). Native has no
+  `/v1/runtimes/capture/release` route (`route.not_served` in the scratch serve log, 2026-11-02, T-12291).
 - `~/.bun/bin/hrc admin broker-verify candidates <scopeRef> --json`: `{scopeRef, candidates: [{schema, invocationId,
   runtimeId, runId, generation, driver, brokerDriver, state, …}]}`; native reads `state.sqlite` read-only
   directly, no daemon (source-only, 2026-11-02: `admin/broker_verify.rs:54-56`).
 - `~/.bun/bin/hrc admin worktrees audit --json` (`mode`, `projectsInspected`, `results`, `summary`): completed-task linked
-  worktrees (shells `wrkq` and `git worktree list`: source-only, 2026-11-02: `admin/worktrees.rs:263,392`).
-  `worktrees prune` is Bun (not driven).
+  worktrees (shells the bare name `wrkq` and `git worktree list`: `admin/worktrees.rs:263,277,392`).
+  **Fails in a prae seat**, whose PATH has no `wrkq`: "wrkq projects failed: spawnSync wrkq ENOENT", rc 1; with
+  `PATH=$HOME/.local/bin:$PATH` it answered `summary {matched 9, wouldPrune 1}` (2026-11-09; product gap
+  T-12759). `worktrees prune` is Bun (not driven).
 - `scripts/prune-hrc-event-deltas.ts [--db P] [--apply] …` (Bun, opens the DB itself): bounded retention;
   without `--apply` it reports eligible counts per table as one logging-standard line (`{ts, level, component,
   event: "prune.report", data}`; a failure is `event: "prune.failed"`, level `error`, exit 1, on stdout).
@@ -70,7 +79,8 @@ first_turn}.rs`, `broker/startup/sweeps.rs`, `front/accounting.rs` (request log,
   `--apply --tables runtime_buffers,broker_projection_dispositions,hrcmail_stop_refusals` against the live,
   now native-owned DB. The retired `events` table still reports `skipped`. Each retention run also ages out
   `backups/pre-activate-*.sqlite` beside the DB and reports them under `.data.preActivateBackups`; rules in
-  `docs/state-retention.md` (T-12695).
+  `docs/state-retention.md` (T-12695). Shape `{dir, retentionDays: 7, entries[{name, bytes, ageDays?, action,
+  reason?}], error?}`; a scratch with no `backups/` gives `entries: []` (2026-11-09).
 - Not the cellar but they terminate HRC runtimes: launchd `com.praesidium.reap-headless-ghostmux` (every 30 min,
   `-y`) reaps paneless ready runtimes idle more than 12 h (54535197); and native seat retirement (T-12236)
   logs `runtime.seat_retirement_complete` (the scratch's: `skippedByReason: {standing_seat: 1}`, 2026-11-02,
@@ -122,6 +132,9 @@ grep -c '"event":"prune.failed"' ~/praesidium/var/logs/hrc-runtime/hrc-prune-del
   `var/logs/hrc-runtime/hrc-prune-deltas.log` (`hrc-prune-deltas.err.log` beside it is 0 bytes since T-10854);
   on 2026-11-02 there were 0 and the job's last exit was 0 (T-12291). The log's first line is old-format
   (`.data` null).
+- **The native CLI panics when a pipe reader closes early.** `hrc runtime list --all-nodes --json | head -c 20`
+  printed `panicked at hrc-cli/src/metrics.rs:106:10: write stdout: … Broken pipe` and exited 1 (2026-11-09;
+  product gap T-12760). Write to a file and read that, or ignore the panic text after `| head`.
 - The dry-run `admin runs` verbs on live answer `matched: 0` in steady state; a non-zero `matched` is the signal
   to look, not to `--yes` (2026-10-05 `reconcile-active` matched a `run_abandoned_by_runtime` run on
   `clod@wrkq:T-10327`, T-10350). With hrcpty seats invisible to `reconcile-active`, zero says nothing about them.
@@ -132,11 +145,11 @@ grep -c '"event":"prune.failed"' ~/praesidium/var/logs/hrc-runtime/hrc-prune-del
 Each verb answers its documented shape on the scratch (zero matches on a clean scratch), `capture status`
 names the scratch runtime with `state: open`, `broker-verify candidates` lists the scratch invocation and
 `broker-verify run` passes it, the prune dry-run reports `runtime_buffers` and `broker_projection_dispositions`
-`stopReason: complete`, and the three product gaps (routes blind, status vacuous, hrcpty never pruned) still
-reproduce or are gone with a commit to cite.
+`stopReason: complete`, and the product gaps (routes blind T-12304, status vacuous T-12306, hrcpty never pruned
+T-12303, worktrees audit off PATH T-12759) still reproduce or are gone with a commit to cite.
 
-Driven 2026-11-02 (T-12291 upkeep) on a native scratch (rusthrc, release-20261102082222127-69529, 9861ae0e)
-and live read-only (scratch `admin runs` and `runtime sweep|prune` dry-runs all 0; live `sweep-zombies` 0,
-live `runtime sweep` matched 23 skipped 23; diagnostics 50 trips live; capture `open`/0; `broker-verify run`
-passed 30 applied events; launchd prune last exit 0, `prune.failed` 0): evidence
-`~/praesidium/var/wrkq-artifacts/T-12291/{07-maintenance,08-attach,evidence/t-12291}`.
+Driven 2026-11-09 (T-12756 upkeep) on a native scratch (rusthrc, release-20261108171912823-43877, 846648d8)
+and live read-only (scratch `admin runs` and `runtime sweep|prune` dry-runs all 0 with 2 terminated hrcpty rows as
+the control; live `sweep-zombies` 0, live `runtime sweep` matched 18 skipped 18; diagnostics 50 trips live;
+capture `open`/0 deferred; `broker-verify run` passed 44 applied events; launchd prune 6 runs, last exit 0,
+`prune.failed` 0): evidence `~/praesidium/var/wrkq-artifacts/T-12756/{07-maintenance,09-product,evidence/t-12756}`.

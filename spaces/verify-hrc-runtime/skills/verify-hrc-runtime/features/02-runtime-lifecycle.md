@@ -7,7 +7,8 @@ Births, reads and ends a managed runtime for a scope, and carries its conversati
 `crates/hrc-native/src/server.rs` (routes), `server/turns/{control,resume,restart,io,input}.rs` (terminate, resume,
 restart, capture, send) and `server/broker/{broker,start,hrcpty}.rs` (births, hrc-pty seats). `runtime send`,
 `session meta set|clear` and `session retitle` are Bun passthroughs (`crates/hrc-cli/command-scope.json`). Docs:
-`docs/cli-surface.md` (run/start/attach), `docs/target-handles.md`.
+`docs/cli-surface.md` (run/start/attach), `docs/target-handles.md`. Seat handoffs and seat work: CLI
+`hrc handoff …`, `hrc seat work …` (native in `command-scope.json`), routes `/v1/seat-handoffs…`, `/v1/sessions/work`.
 
 ## Sub-features
 
@@ -20,13 +21,15 @@ restart, capture, send) and `server/broker/{broker,start,hrcpty}.rs` (births, hr
   started|completed` waits past `accepted` (source-only, 2026-11-02: `crates/hrc-cli/src/launch.rs:159-163`).
 - `~/.bun/bin/hrc show <selector> [--json]`: resolves runtime, then host session, then message; prints `kind`. For a
   runtime the fields are top-level (`status`, `transport`, …).
-- `~/.bun/bin/hrc runtime list --json` (a bare array of non-terminated runtimes), `~/.bun/bin/hrc runtime inspect <id> --json`
+- `~/.bun/bin/hrc runtime list --json` (a bare array of non-terminated runtimes; `--all` adds terminated ones), `~/.bun/bin/hrc runtime inspect <id> --json`
   (`{hrc, broker}`; `.hrc.contextReading {turnId, usedTokens, windowTokens, model {id, source}, observedAt}` after
   a turn that reported usage, else `null`), `~/.bun/bin/hrc session list --json`.
 - `~/.bun/bin/hrc ls <runtimes|sessions|messages> [--json]`: the inventory by noun; without one, "error: missing required
   argument 'noun'", rc 2 (source-only, 2026-11-02: `crates/hrc-cli/src/parse.rs:229-236`).
 - `~/.bun/bin/hrc runtime status <target> [--json]`: lifecycle plus the broker's capture snapshot (`capture.state`,
-  `deferredCount`, `blockedUnknown[]`): `open`, 0, 0 on 2026-11-02.
+  `deferredCount`, `blockedUnknown[]`): `open`, 0, 0 on 2026-11-02; `open`, 0, 1 on 2026-11-09, the one entry
+  `{nativeType: "session-owner", family: "diagnostic", loadBearing: false, message: "Unknown Claude transcript row
+  type: session-owner"}` (Gotchas).
 - `~/.bun/bin/hrc session resolve --scope <scopeRef> [--json]`: `found`, `created: false`, `generation`, `hostSessionId`;
   `--create` makes one (not driven). `~/.bun/bin/hrc session get <hostSessionId> --live --json`: `{session, runtimes}`.
   `~/.bun/bin/hrc session meta get <target> --json`: `{metadata, metadataSources}`, empty on a fresh scope.
@@ -50,8 +53,22 @@ restart, capture, send) and `server/broker/{broker,start,hrcpty}.rs` (births, hr
   runtime_busy` ("seat is turn-active; not restarted" on 2026-11-02), rc 1, nothing changed; a seat it cannot probe is refused
   `seat_unobservable` (source-only, 2026-11-02: `crates/hrc-native/src/server/turns/restart.rs:98-119`);
   `--force` skips the check. Native replays no `initialPrompt` and answers at launch (source-only, 2026-11-02:
-  `server/broker/broker.rs:125-131`, `restart.rs:231-238`); the replay is Bun only (`--engine bun`,
+  `server/broker/broker.rs:199-211`, `restart.rs:231-240`); the replay is Bun only (`--engine bun`,
   `packages/hrc-server/src/session-restart.ts`). Not `restartme` and not `server restart`.
+- `POST /v1/terminate` with an `x-hrc-lifecycle-*` header checks operator authority: from a caller that is not
+  the runtime's seat it answers 403 `server_lifecycle_refused` "only mable@<project>:primary or the runtime's own
+  seat may terminate a runtime …" (`refusal: credential_missing`), nothing terminated (2026-11-09, T-12756). The
+  CLI's `runtime terminate` sends no lifecycle header, so its drive is unaffected.
+- `~/.bun/bin/hrc handoff create --scope <seat> -t <title> --body-file <f>` → `{id H-…, state pending, etag 1}`;
+  `handoff list [--scope] [--all]`, `handoff get <id>`, `handoff acknowledge <id> --if-match <etag> --note <n>`
+  (`--note` is required, rc 2 without; a stale etag is `[handoff_stale]`, rc 1). `seat work get <scope>` →
+  `{kind, work {kind none|task}, workEtag}`; `seat work set <scope> --task T|--workstream W|--none --if-match <n>`,
+  stale etag `[stale_seat_work] work etag changed`, rc 1. Each write lands as `session.handoff.changed` /
+  `session.work.changed` in `hrc_events` (2026-11-09, `T-12756/02-runtime-lifecycle/drive-handoff-seat.txt`).
+- A start or turn on a host session a rotation retired is refused 409 `stale_context` (`reason:
+  host_session_retired`), and a resume whose harness differs from the carried continuation 409
+  `continuation_harness_mismatch` (source-only, 2026-11-09: 846648d8, `server/broker/broker.rs:60-92`,
+  `compile.rs:108-140`; the CLI's `send`/`turn` take no `host:` selector to reach it).
 - Not driven here: `start --force-restart|--new-session|--no-viewer|--app-server-viewer|--on-conflict`,
   `~/.bun/bin/hrc run` (feature 8 covers attach), `~/.bun/bin/hrc restartme`, `session rotate`, `session drop-continuation`, `runtime
   interrupt`, and the Bun passthroughs `session meta set|clear`, `session retitle`, `runtime send`.
@@ -100,7 +117,7 @@ hv run <task> -- ~/.bun/bin/hrc restart $T --json; echo "rc=$?"                 
 
 - **A long root fails each birth on native, not the boot.** The broker's sockets must fit 104 bytes; native checks
   at birth ("broker socket path too long", an internal error; `<runtime>/btmux/<12>-<32>.sock` is root+57 bytes)
-  (source-only, 2026-11-02: `crates/hrc-native/src/server/broker/broker.rs:649-658`). Bun only (`--engine bun`):
+  (source-only, 2026-11-02: `crates/hrc-native/src/server/broker/broker.rs:735-744`). Bun only (`--engine bun`):
   the boot refusal "runtime root socket path too long" since 955416e9 (T-10330), which `hv scratch up` reports
   as `daemon_exited` (2026-10-19, `T-11363`). That is why `hv` roots live under `/tmp/hv`.
 - **`~/.bun/bin/hrc start --json` is not turn evidence.** It answers `stage: accepted`; read `turn.completed` and the final
@@ -116,7 +133,7 @@ hv run <task> -- ~/.bun/bin/hrc restart $T --json; echo "rc=$?"                 
   from `hrc_events`.
 - **`runtime.terminated` says `transport: "sdk"` for an hrcpty runtime** (`audit_transport`,
   `crates/hrc-native/src/server/turns/control.rs:356`, maps anything not `headless` to `sdk`) (2026-11-02;
-  product task filed by T-12291). Don't grade the transport from that event.
+  product task filed by T-12291; still `sdk` on 2026-11-09). Don't grade the transport from that event.
 - **A restart right after `send` can race the busy check.** After `send`, `runtime list` stays `ready` ~1 s
   before `busy`. `send`, `sleep 3`, `restart` restarted (generation 4) instead of refusing; polling saw `ready` at
   t+1 and `busy` at t+2, and the restart then refused `runtime_busy`, rc 1 (2026-11-02). Gate on `status ==
@@ -134,6 +151,9 @@ hv run <task> -- ~/.bun/bin/hrc restart $T --json; echo "rc=$?"                 
   that drive waits first, so it neither reproduces nor clears the wedge: T-11870 stays open, uncertified on native.
 - **`monitor wait --until idle` right after `send` races the send.** Armed 0 s after `send` returned, it answered
   `already_true` from the previous idle (2026-10-05). Confirm a send by its `SAYS` line or `turn.completed`.
+- **`blockedUnknown` can hold a Claude row type HRC doesn't know yet.** On 2026-11-09 every claude-hrcpty seat
+  reported `session-owner` (`family: diagnostic`, `loadBearing: false`, count 4): drift in the claude CLI's
+  transcript, not HRC. `capture.state` stayed `open`; it is not a capture failure unless `loadBearing` is true.
 - `~/.bun/bin/hrc runtime terminate` always prints its result as JSON; `--json` changes nothing.
 - On a single-node scratch, `target locate` shows `authority: unbound` even with a live runtime (feature 5).
 
@@ -144,5 +164,6 @@ authority views, `terminate` answers `ok: true` and `runtime list` empties, and 
 whose transcript recalls `OK, SENT`; `restart` births generation+1 that answers `NONE`, and a seat gated on
 `busy` is refused `runtime_busy`, rc 1.
 
-Driven 2026-11-02 on a native scratch (rusthrc, release-20261102082222127-69529, 9861ae0e), evidence
-`~/praesidium/var/wrkq-artifacts/T-12291/{01-server-health,02-runtime-lifecycle,evidence/t-12291}`.
+Driven 2026-11-09 (T-12756 upkeep) on a native scratch (rusthrc, release-20261108171912823-43877, 846648d8):
+generations 1–3 (`OK`, `SENT`, resume `OK, SENT`, restart `NONE`), `runtime_busy` rc 1 at t+2, plus the handoff
+and seat-work verbs; evidence `~/praesidium/var/wrkq-artifacts/T-12756/{02-runtime-lifecycle,evidence/t-12756}`.

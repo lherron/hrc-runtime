@@ -31,7 +31,15 @@ spawn the argv and wait); daemon `crates/hrc-native/src/server/projection/surfac
   client with nothing to read and hangs (`timeout 5` → rc 124); when killed it leaves no client behind (a
   `client.attached`/`client.detached` pair ~5 s apart in the supervisor log) (2026-11-02, T-12291).
 - `~/.bun/bin/hrc run <target>`: start-or-reattach and attach; interactive only (not driven separately: its attach half is
-  this feature, its start half is feature 2).
+  this feature, its start half is feature 2). `run --attach-only` is `attach`: on an `rt-` id it printed the same
+  hrcpty descriptor (four fence keys) and with `--dry-run` refused rc 2 (2026-11-09, T-12756).
+- A scope with no session refuses "no session exists for "<scope>". Start one with: hrc start <scope>", rc 1
+  (2026-11-09, T-12756); one with no live runtime says to resume, and every candidate unavailable is
+  `runtime_unavailable`, rc 1 (source-only, 2026-11-09: `launch/terminal.rs:35,46,52-56`).
+- Caller attribution (d1505962): the `hrc-pty attach` client runs with `PRAESIDIUM_CALLER=hrc-cli`, the supervisor
+  with `rusthrc`, its `harness-broker` child with `hrc-pty`, and the claude child has none (`env_remove`,
+  `crates/hrc-pty/src/serve.rs:948`; walked by pid on the scratch, 2026-11-09). The attach request logs
+  `route: /v1/runtimes/attach, caller: <your seat>`.
 - tmux seats (codex `harness=codex`, e.g. arris): the argv is `tmux -S <run>/btmux/<driver>--<rt>.sock
   attach-session -t hrc-<driver>-<rt>:tui`, a `tmux detach-client` prints `[detached (from session …)]` and exits
   0, the descriptor fence has windowId/paneId, and a scope with no TTY fails `open terminal failed: not a
@@ -70,10 +78,13 @@ ghostmux kill-surface -t <id> --force
 - **A no-TTY scope attach hangs, it does not fail.** Always `</dev/null` and `timeout`; the old "rc 2" check is
   tmux-only. While it hangs it is a read-write client.
 - **A read-write client changes the seat** (source-only, 2026-11-02: `broker/seat_retirement.rs:67-68`,
-  `crates/hrc-pty/src/serve.rs:772-788`): seat retirement skips it while attached, and typed keystrokes hold
+  `crates/hrc-pty/src/serve.rs:773-789`): seat retirement skips it while attached, and typed keystrokes hold
   back queued broker input until the human is idle. Attach to a live seat only read-only
   (`hrc-pty attach --read-only --socket …`), never through `~/.bun/bin/hrc attach`; take descriptors (`~/.bun/bin/hrc attach <rt>`,
   which can write) on a scratch.
+- **Find the scratch's claude child by its own supervisor, never `pgrep claude`.** A `pgrep -f claude -P <pid>` with an
+  empty or wrong parent matched a live production seat's claude on 2026-11-09; resolve the supervisor by its
+  `/tmp/hv/<name>/run/bipc/<hash>` socket and list `pgrep -P` of that pid.
 - Scope attach binds the Ghostty surface when `GHOSTTY_SURFACE_UUID` is set, which every ghostmux tab sets
   (source-only, 2026-11-02: `launch/terminal.rs:112-135`).
 - tmux seats only: bound every `tmux -S` with `timeout` and glob only `btmux/*-rt-*.sock`
@@ -90,7 +101,7 @@ descriptor whose `argv` is `hrc-pty attach --socket <run>/bipc/…/hrcpty.sock` 
 keys, twice concurrently; `--dry-run` on a runtimeId is rc 2; a no-TTY scope attach times out (124) and leaves
 no client.
 
-Driven 2026-11-02 (T-12291 upkeep) on a native scratch (rusthrc, release-20261102082222127-69529, 9861ae0e),
-tabularasa `claude-hrcpty` runtime `rt-d625b7c6`: evidence
-`~/praesidium/var/wrkq-artifacts/T-12291/{07-maintenance,08-attach,evidence/t-12291}` (supervisor log
-`evidence/t-12291/rt-d625b7c6-a148-4cf2-9355-4929dc5b016f.log`).
+Driven 2026-11-09 (T-12756 upkeep) on a native scratch (rusthrc, release-20261108171912823-43877, 846648d8),
+tabularasa `claude-hrcpty` runtime `rt-c6f3cb8c`: evidence
+`~/praesidium/var/wrkq-artifacts/T-12756/{08-attach,evidence/t-12756}` (supervisor log
+`evidence/t-12756/hrcpty/rt-c6f3cb8c-1c33-491e-b725-3bb30f0b574e.log`).

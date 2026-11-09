@@ -44,8 +44,10 @@ Scratch or live:
     release on the canonical production runtime/state roots. A scratch keeps its local lifecycle facts
     but does not post `server.started` or `server.stopped`; native advances its excluded publication cursor.
     `HRC_WRKQ_DB` still isolates session facts and other ledger traffic: posts fail against the empty
-    private store (`session_project_event.post_failed` in `serve.log`), which is the isolation working.
-    Older releases also log `server_project_event.post_failed` because they lack the lifecycle guard.
+    private store, which is the isolation working: since 7a094593 (T-12722) the store's permanent refusal
+    logs `session_project_event.rejected` (warn, "project must resolve to a project") and the post is skipped,
+    beside `project_registry.refresh_failed` (20 and 14 lines on 2026-11-09, T-12756); older releases log
+    `session_project_event.post_failed`, and pre-T-12677 ones also `server_project_event.post_failed`.
     The runtime config path is `/tmp/hv/<name>/state/federation.json`, not a repo file;
     `hv scratch up` does not create it, and the launcher scrubs any inherited `HRC_PEER_CONFIG_FILE` override.
     With that config absent the scratch is single-node (derived nodeId `max3`, the same as live: tell them
@@ -94,8 +96,10 @@ surprising. On a scratch: `hv run <name> -- ~/.bun/bin/hrc doctor`.
 hv run t-xxxxx -- ~/.bun/bin/hrc doctor       # scratch: single-node, no bindings
 ```
 
-On max3 `~/.bun/bin/hrc doctor` prints `~ placement-policy` warns for task scopes whose worktree is gone or ambiguous.
-Those are normal and are not a reason to stop; `--strict` turns them into exit 1. Every `~/.bun/bin/hrc server status
+On max3 `~/.bun/bin/hrc doctor` prints one `+ placement-policy` row counting dormant bindings whose declared policy
+is unreadable (466 on 2026-11-09) and one `+ federation-peer:<node>` row per peer. It warns (`~ placement-policy`,
+one row per cause) only for bindings with a live runtime; those are registry data, not a reason to stop, and
+`--strict` turns them into exit 1 (rc 0 on 2026-11-09, feature 1). Every `~/.bun/bin/hrc server status
 --json` path is nested (`.release.runningEqualsInstalled`, `.node.nodeId`); a top-level read answers `null`
 for a path that doesn't exist. `~/.bun/bin/hrc info` lists the paths.
 

@@ -20,21 +20,24 @@ release into `~/praesidium/var/hrc-owner/hrc-runtime-releases/` and repoints
   `~/.bun/bin/hrc` and `~/.bun/bin/rusthrc` both → `hrc-runtime-current/bin/rusthrc` (the native CLI, f29deeb5;
   2026-11-02, T-12291); `praesidium-release.json` in each release (releaseId, `hrcBuild.sourceCommit`,
   `setVersion`, `aspContracts`, `installedAt`). Each release carries `bin/hrc-pty` and `bin/rusthrc` with their
-  `.inputs` digests (install needs cargo). The embedded kernel runs inside the owner rusthrc and shares its
+  `.inputs` digests (install builds them on build1 through `rbuild --mac --pull`, falling back to local cargo,
+  since 54c56b7c; ad-hoc signed `Identifier=rusthrc-<hash>`, 2026-11-09). The embedded kernel runs inside the owner rusthrc and shares its
   release and lifetime; the T-12019 separate-kernel install gate retired in T-12141.
 - The owner tree (T-11930, 16dde77a): launchd `com.praesidium.hrc-server` runs `praesidium-launch
   ~/praesidium/var/hrc-owner/hrc-runtime-current/bin/rusthrc server serve`. `hrc-owner.sh stage` refuses unless
-  the store schema is current (source-only, 2026-11-02: hrc-owner.sh:205-207). The T-12224 fixed exe
+  the store schema is current (source-only, 2026-11-09: hrc-owner.sh:213-215). `hrc-owner.sh schema-state` is a
+  read-only probe (opens the plist's `state.sqlite` `readonly: true`) printing `current|pending|ahead`: `current`,
+  rc 0 on 2026-11-09 (T-12756); `just deploy-*` branches on it (source-only: justfile:1372-1386). The T-12224 fixed exe
   `var/hrc-owner/bin/rusthrc` exists but the plist does not use it; it is byte-identical to the release bin
   (`cmp`, `TeamIdentifier=not set`; 2026-11-02, T-12291). Both `current` manifests were identical
   (release-20261102082222127-69529, 9861ae0e, installedAt 08:23:34Z).
 - The daemon's view: `~/.bun/bin/hrc server status --json` `.release` (mode atomic, releaseId, releasePath, manifestPath,
   `hrcBuild.sourceCommit`, aspContracts, installedAt, processStartedAt, `runningEqualsInstalled`);
   `binaryPath`/`packagePath` are the owner link spelling
-  (`…/var/hrc-owner/hrc-runtime-current/bin/rusthrc`); schema `0130_seat_handoffs`, `pending: []` (2026-11-02,
-  T-12291). `runningEqualsInstalled` compares releasePath with `releasePath/../../hrc-runtime-current`, the
+  (`…/var/hrc-owner/hrc-runtime-current/bin/rusthrc`); schema `0131_runtime_live_indexes`, `pending: []`
+  (2026-11-09, T-12756). `runningEqualsInstalled` compares releasePath with `releasePath/../../hrc-runtime-current`, the
   OWNER link, so after `just install` without `hrc-owner.sh stage` it still reads `true` (source-only,
-  2026-11-02: front/release.rs:96-116). Install moves `~/.bun` current, stage moves the owner's, only `hrc
+  2026-11-09: front/release.rs:110-133). Install moves `~/.bun` current, stage moves the owner's, only `hrc
   server restart` moves "running": compare `basename "$(readlink ~/.bun/install/hrc-runtime-current)"` with
   `.release.releaseId` yourself.
 - The dirty guard: `bun scripts/install-dirty-guard.ts --source-root=$PWD` refuses tracked source
@@ -45,23 +48,30 @@ release into `~/praesidium/var/hrc-owner/hrc-runtime-releases/` and repoints
   T-11830), names them in `heldBy` and prints `held by live processes …`; a holder probe that fails its own
   control refuses `live-holders-unavailable`. On an owner node the daemon's releasePath is in the owner tree,
   so it keeps nothing extra for the daemon (source-only, 2026-11-02: release-prune.ts:216-219). 1 directory there
-  on 2026-11-02. **Native prunes nothing**: a native scratch left both trees unchanged (2026-11-02, T-12291,
+  on 2026-11-02, 2 on 2026-11-09. **Native prunes nothing**: a native scratch left both trees unchanged (2026-11-02, T-12291,
   `00-guard`); the daemon-start prune `server.start.release_prune` is Bun only. `hrc-owner.sh stage` prunes the
   owner tree as its last step (T-12695): it keeps current, the newest 5, the daemon's release and any held by a
-  live process, and prints `[stage] release prune: …` or `… skipped: <reason>; nothing deleted`.
+  live process, and prints `[stage] release prune: …` or `… skipped: <reason>; nothing deleted`
+  (hrc-owner.sh:250-301). The tree went from 53 (2026-11-02) to 17 (2026-11-09, 2.8 GB): the newest 5 plus 12
+  older ones, each named by ≥1 live process argv (`T-12756/06-install-release/drive.txt`).
+- `hrc-owner.sh activate` writes a `pre-activate-*.sqlite` backup that passes `quick_check` before migrating and
+  deletes older ones; its `-shm`/`-wal` siblings stay behind (one 25 GB backup plus both siblings in
+  `var/state/hrc/backups/` on 2026-11-09). The prune job reports them as `.data.preActivateBackups {dir,
+  retentionDays: 7, entries[]}` (feature 7).
 - The front door (T-11822) is obsolete on owner nodes: `front-door-enable|disable` and `launchd-install`
-  refuse a rusthrc owner (source-only, 2026-11-02: justfile:726-727, :812-813, :848-849). `just
+  refuse a rusthrc owner (source-only, 2026-11-09: justfile:756, :842, :878). `just
   front-door-status` probes `hrc-bun.sock` ("no answer", 2026-11-02, T-12291) and prints `mode: direct` because
-  it only tests for a rusthrc-server plist (source-only, 2026-11-02: justfile:879): read it as "not fronted".
+  it only tests for a rusthrc-server plist (source-only, 2026-11-09: justfile:908): read it as "not fronted".
 - **Needs operator, never driven by this skill:** `just install`, `hrc-owner.sh stage|activate|refresh-plist`,
   `just switch-owner-rusthrc`, `just refresh-owner-exe`, `just publish`, `just deploy-*` (stages only when
-  `DEPLOY_RESTART_NEEDED=1`; source-only, 2026-11-02: justfile:1326-1334), `just launchd-install|uninstall`,
+  `DEPLOY_RESTART_NEEDED=1` and `schema-state` is `current`; `pending` runs activate `--dry-run` then
+  `--prepare-only`; source-only, 2026-11-09: justfile:1346, :1365-1386), `just launchd-install|uninstall`,
   `just front-door-enable|disable`, `~/.bun/bin/hrc server restart`. Install-then-restart on an owner node is install →
   `hrc-owner.sh stage` → a Mable-primary restart, then `.release.releaseId` = both `current` links at the new
   sourceCommit; write it down as an operator step.
 - Only Bun migrates: a native daemon refuses a missing store ("schema: cannot open existing Bun store",
   2026-11-02, T-12291, `01-server-health`); `hrc-owner.sh activate --expect-commit` migrates with Bun's
-  `openHrcDatabase`, then stages and restarts (source-only, 2026-11-02: hrc-owner.sh:395-425).
+  `openHrcDatabase`, then stages and restarts (source-only, 2026-11-09: hrc-owner.sh:457-492).
 
 ## How to get to it
 
@@ -91,11 +101,11 @@ cd ~/praesidium/hrc-runtime && bun scripts/install-dirty-guard.ts --source-root=
 
 - **Installed lagging HEAD is the usual state.** On 2026-10-26 installed and running were 02661aeb, six commits
   behind HEAD = origin/main. On 2026-11-02 `~/.bun` current, owner current and `.release` all named 9861ae0e
-  (T-12291). Compare the claim's commit with `.release.hrcBuild.sourceCommit` and both `current` links, not
+  (T-12291); on 2026-11-09 all three named 846648d8, one docs commit behind HEAD 694e6931 (T-12756). Compare the claim's commit with `.release.hrcBuild.sourceCommit` and both `current` links, not
   with HEAD.
 - **`runningEqualsInstalled: true` is not "the latest install is running" on an owner node.** It compares
   against the owner link only; an install that was never staged still reads `true` (source-only, 2026-11-02:
-  front/release.rs:96-116).
+  front/release.rs:110-133).
 - **The daemon holds no manifest.** lsof on pid 81530 showed only the owner release's `bin/rusthrc` and
   `rusthrc-owner.log` (2026-11-02, T-12291). "Every atomic daemon holds its own manifest for life" is Bun only.
 - **A held owner release outlives its holders until the next stage.** 16 of 53 staged releases were held by
@@ -104,7 +114,7 @@ cd ~/praesidium/hrc-runtime && bun scripts/install-dirty-guard.ts --source-root=
   `~/.bun` a held release likewise outlives its holders until the next install.
 - **Any Bun daemon started from a release is a pruner for its directory** (Bun only): a scratch Bun `~/.bun/bin/hrc server
   serve` from the installed tree deleted production's running release on 2026-10-26 (04:50Z, EN-36056); in
-  the owner tree it would take up to 52 directories. `rusthrc` prunes nothing: native scratch `t-12291` reported
+  the owner tree it would take up to 16 directories (17 on 2026-11-09). `rusthrc` prunes nothing: native scratch `t-12291` reported
   `unmanaged`, and both trees' listings hashed identical before and after with live pid 81530 unchanged
   (2026-11-02, T-12291, `00-guard`). The Bun prune line (`server.start.release_prune`, `.data.pruned`,
   `.data.failed`, `heldBy`) appears only in the frozen Bun log.
@@ -121,10 +131,12 @@ cd ~/praesidium/hrc-runtime && bun scripts/install-dirty-guard.ts --source-root=
 `~/.bun` current, owner current, both manifests and `server status` name the same releaseId and sourceCommit
 with `runningEqualsInstalled: true`, and lsof on the daemon pid shows the owner release's `bin/rusthrc`;
 `~/.bun/install/hrc-runtime-releases` holds current plus whatever the last install prune's `heldBy` named; the
-owner tree count is recorded (it never shrinks); `front-door-status` reads "not fronted"; a native scratch
+owner tree count is recorded and every release outside the newest 5 is held by a live process (stage prunes
+the rest); `front-door-status` reads "not fronted"; a native scratch
 reports `unmanaged` and leaves both trees unchanged; the dirty guard passes on a clean tree and names the files
 on a dirty one. Install → stage → restart is operator-only and is proven on the operator's run.
 
-Driven 2026-11-02 (live read-only + native scratch, rusthrc release-20261102082222127-69529,
-9861ae0e): `~/praesidium/var/wrkq-artifacts/T-12291/{05-placement-federation,06-install-release,live,00-guard}`.
-Not driven: install, stage, restart, front-door enable/disable (needs operator); the dirty guard not rerun today.
+Driven 2026-11-09 (T-12756 upkeep, live read-only + native scratch, rusthrc release-20261108171912823-43877,
+846648d8): `~/praesidium/var/wrkq-artifacts/T-12756/{06-install-release,live}` (trees identical before and after
+the scratch; dirty guard rc 0 on a clean tree; `schema-state` `current`). Not driven: install, stage, activate,
+restart, front-door enable/disable (needs operator); the dirty guard's refusal (no dirty tree today).

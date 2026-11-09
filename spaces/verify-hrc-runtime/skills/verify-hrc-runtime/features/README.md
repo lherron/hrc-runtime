@@ -5,8 +5,8 @@ Proven when. The last lines of each file name the drive that last proved it and 
 
 | # | Feature | File | Drive on |
 | --- | --- | --- | --- |
-| 1 | Server health (`server status`, `doctor`, `info`, `server subscribers`, `server tmux status`, release block, the harness guard (Bun only; `rusthrc server serve` has none)) | [01-server-health.md](01-server-health.md) | live read-only; scratch |
-| 2 | Runtime lifecycle (`start`, `show`, `ls`, `runtime list/inspect/status/capture/terminate`, `session list/resolve/get/meta get`, `peek`, `send`, `summon`, `resume`, `restart`) | [02-runtime-lifecycle.md](02-runtime-lifecycle.md) | scratch |
+| 1 | Server health (`server status`, `doctor` (rows built at `/v1/doctor`, peer rows), `info`, `server subscribers`, `server tmux status`, release block, the harness guard (Bun only; `rusthrc server serve` has none)) | [01-server-health.md](01-server-health.md) | live read-only; scratch |
+| 2 | Runtime lifecycle (`start`, `show`, `ls`, `runtime list/inspect/status/capture/terminate`, `session list/resolve/get/meta get`, `peek`, `send`, `summon`, `resume`, `restart`, `handoff create/list/get/acknowledge`, `seat work get/set`) | [02-runtime-lifecycle.md](02-runtime-lifecycle.md) | scratch |
 | 3 | Turns and monitor (`turn`, `turn --attach`, `monitor show/watch/wait/events/transcript/stats/search/session-report`) | [03-turns-monitor.md](03-turns-monitor.md) | scratch; live read-only |
 | 4 | HTTP API on the daemon socket (`/v1/health`, `/v1/events/tail` paging and refusals, `/v1/events/head`, `/v1/events/page`, retired routes) | [04-http-api.md](04-http-api.md) | scratch |
 | 5 | Placement and federation (`target locate`, `target bindings`, doctor's node/federation/placement rows) | [05-placement-federation.md](05-placement-federation.md) | live read-only; scratch |
@@ -20,8 +20,8 @@ native daemon from a release copy, and every file grades that unless it says "Bu
 Not mapped here: the viewer (it ships from ACP now) and the mail injector (agent-control-plane's
 `hrc-mail-injector`). `~/.bun/bin/hrc federation retire`, `~/.bun/bin/hrc server restart|stop`, `just install|publish|deploy-*`,
 `just front-door-enable|disable` are named in their features but are operator steps, never driven by this skill.
-Also not mapped, from the live surface on 2026-10-05 (T-10350), rechecked 2026-10-26 (T-11864) and 2026-11-02
-(T-12291, native CLI; `index/help-*.txt` in that task's artifacts):
+Also not mapped, from the live surface on 2026-10-05 (T-10350), rechecked 2026-10-26 (T-11864), 2026-11-02
+(T-12291, native CLI) and 2026-11-09 (T-12756; `index/help-*.txt` in that task's artifacts):
 
 - Continuity writes `session rotate`, `session meta set|clear`, `session retitle` (deprecated alias of meta),
   `session drop-continuation`, and run plumbing `runtime send` and `runtime interrupt`: feature 2 names them;
@@ -35,9 +35,9 @@ Also not mapped, from the live surface on 2026-10-05 (T-10350), rechecked 2026-1
 - `~/.bun/bin/hrc run annotate|export` (Bun CLI) and `admin runs recover-unstarted` (Bun CLI): run annotations and export,
   and the Bun-era unstarted-run settle (native `reconcile-active` does not port it, T-12303's note). Nothing in
   this skill needs them yet.
-- The seat-handoff and seat-work routes (`/v1/seat-handoffs…`, GET/PUT `/v1/sessions/work`, prae-rev1, schema
-  0130): consumed by `~/.bun/bin/hrc restartme` and wrkq handoffs; `restartme` restarts the calling seat, so it is never
-  driven from a scratch here.
+- `~/.bun/bin/hrc restartme`: restarts the calling seat, so it is never driven from a scratch here. The seat-handoff
+  and seat-work routes behind it (`/v1/seat-handoffs…`, GET/PUT `/v1/sessions/work`, schema 0130) are driven
+  through `hrc handoff …` and `hrc seat work …` in feature 2 (listed in top-level `--help` on 2026-11-09; absent from T-12291's capture).
 - `hrc-pty` itself (each release's `bin/hrc-pty`): the native seat supervisor. Features 2 and 8 drive it through
   `hrc`; its own `ops` socket verbs (status, shutdown) are not driven (never send `shutdown`).
 - `admin runtime ensure|prune` (prune deletes keep-forever ledgers by exact manifest), `admin events drain`
