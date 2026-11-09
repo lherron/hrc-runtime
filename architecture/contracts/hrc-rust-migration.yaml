@@ -2,7 +2,7 @@ id: hrc-runtime.rust-migration
 kind: contract
 status: active
 owner_project: hrc-runtime
-scope: Rust migration, delivered kernel/facades, approved kernel fold, isolated native parity, Rust front door and cohesive per-node owner transfer
+scope: Rust migration, delivered kernel/facades, approved kernel fold, isolated native parity, Rust front door, cohesive per-node owner transfer and native schema ownership
 explicitly_unsupported_routes:
   - "POST /v1/runtimes/capture/release: operator-only CLI; the installed broker unconditionally rejects release because capture no longer blocks (raw_record_not_blocked, T-07883; confirmed T-12065)."
   - "POST /v1/in-flight-input: runtime send reaches the Bun handler, but semantic SDK in-flight delivery unconditionally fails closed with inflight_unsupported because the SDK harness path is retired (T-12065)."
@@ -59,6 +59,14 @@ kernel_fold_amendment:
   status: design approved by Daedalus 2026-10-29 in EN-38698; implementation and activation unverified
   authority: Lance's 2026-10-29 ruling that HRC embeds its kernel (no single-process cardo platform)
   boundary: kernel runs inside the owner rusthrc; hrc-kernel process, crate and install gate retire; brokers, aspc and injector unmoved
+schema_migration_amendment:
+  task: T-12840
+  task_slug: rust-schema-migrator
+  proposal: wrkq:T-12840 specification r3, task etag 4
+  status: design approved by Daedalus 2026-11-09 in EN-48682; implementation and fleet acceptance unverified
+  authority: Lance's 2026-11-09 Rust-completion direction, submitted by Mable in EN-48621
+  replaces: Bun schema ownership, Bun scratch initialization and exclusion of production Rust migration authority
+  boundary: baseline at 0131, atomic forward upgrades under a store-directory lock, and Bun live-store openers retired before the first live forward migration
 predicate: >
   HRC embeds cardo-runtime as a library and retains ownership of its durable
   store, lifecycle ledger, HTTP API, federation and broker lifecycle. Rust
@@ -226,7 +234,8 @@ predicate: >
   ingest updates the existing scope/lane seat natural key. Cancellation
   cannot undo the mutation and requires readback. The other three proposed
   operations remain outside this approval.
-  During stage 2 complete Bun remains independently usable without Rust,
+  During stage 2, before the first live Rust-only migration, complete Bun
+  remains independently usable without Rust,
   with existing hrc CLI, SDK and package exports preserved. The native CLI
   is rusthrc. Incremental native packages use isolated state, scopes, tmux
   leases, sockets/ports, registry, ASP configuration and wrkq/publication
@@ -275,10 +284,42 @@ predicate: >
   per invocation. Rust adds an API availability dependency, supervised by
   launchd and reversible through the submitted front-stage rollback.
   External direct writers/readers
-  remain explicit compatibility consumers. Production schema migrations stay
-  Bun-owned. Native scratch initialization uses canonical Bun machinery;
-  unknown or incomplete schemas refuse. A Rust canonical migration runner
-  is test-only until separately authorized for production.
+  remain explicit compatibility consumers. T-12840 transfers schema ownership
+  to Rust. hrc-store owns a baseline at 0131_runtime_live_indexes, the frozen
+  109 legacy ids and an ordered forward registry beginning after that baseline.
+  The TypeScript migration graph freezes; build admission no longer derives
+  from TypeScript, and native store creation, upgrades and the Rust gate need
+  no Bun process. Fresh stores use the complete baseline with page size 4096,
+  incremental auto_vacuum selected before the first table, WAL, code-owned
+  seed rows and a newly minted ledger incarnation. Missing legacy ids, unknown
+  ids and non-HRC databases refuse without application writes. Existing stores
+  must contain the legacy set plus a prefix of the forward registry; ordinary
+  admission still requires the build's exact migration set in both directions.
+  Only the owner at boot and rusthrc store migrate may migrate. Both take the
+  same exclusive advisory lock beside state.sqlite before writes; the owner
+  holds it for its process lifetime and migrates before binding any socket.
+  A competing process using the same state directory refuses store_owned
+  regardless of its runtime directory. The runtime-directory lock remains
+  responsible for sockets. Direct readers never migrate. The entire pending
+  forward set, its migration ids and one store.migrated attribution row commit
+  in one transaction or all roll back. Declared rebuilds disable foreign-key
+  enforcement before the transaction, run foreign_key_check before commit
+  and restore enforcement afterwards. Failure logs store.migration_failed
+  with the failing id and exits before binding, retaining the prior set.
+  Upgrades never rewrite the ledger incarnation or reset or lower either
+  hrc_events or broker_invocation_events AUTOINCREMENT high-water value;
+  rebuilds carry sequence rows across and store.migrated takes the next
+  hrc_events value as an ordinary append. Fresh stores have distinct incarnations.
+  The first live forward migration waits until every Bun live-store opener
+  is retired, including direct CLI leaves, nightly pruning and the capture
+  verifier. Baseline-only and fixture-conversion releases precede that step.
+  Deploy recipes replace the inline Bun activation migrator with boot migration
+  and an online pre-migration backup when the target release reports pending
+  migrations, retained for seven days. Migration duration is restart downtime.
+  Below-baseline and partial-legacy stores have no native upgrade path; rollback
+  to a binary lacking an applied migration, aliased-path store ownership,
+  mandatory backup admission, the separate svc federation registry, and
+  reproduction of fresh-store historical applied_at values are unsupported.
   R2 replaces the frozen source-hash inventory with a coverage report
   regenerated from current main at each gate. Exact/computed/pattern main
   routes, peer/registry/ingest routes, CLI commands and recurring jobs map
@@ -307,7 +348,7 @@ predicate: >
   and the real baseline before affected native requalification. N4 includes
   whatever federation surface survives T-11712's ruled deletions.
   R2 excludes deleted main surface, older-than-paired Bun fallback releases,
-  split writers, production Rust migration authority and mechanism races
+  split writers and mechanism races
   with no broker/client product path. This does not change the existing
   state-model or ownership invariants. Fixed performance budgets remain
   unsupported; N4 records resource use and latency for Lance's ruling.
@@ -316,17 +357,24 @@ predicate: >
   controllers, credentials, jobs and publishers relinquish control before
   the replacement starts. Preserve surviving brokers, generation, sequence,
   incarnation, replay/ACK, queued input, projections and publication cursors.
-  A named same-release Bun fallback must read and continue native-written
-  history; stop/fence candidate before fallback. Socket redirection alone
+  Before the first live Rust-only migration, a named same-release Bun fallback
+  must read and continue native-written history; stop/fence candidate before
+  fallback. After that migration, T-12840's refusal of binaries lacking an
+  applied migration governs. Socket redirection alone
   cannot prove rollback. Installation and activation remain separate;
   worktree checks do not certify canonical installed acceptance. Preserve
   release sourceCommit, actual binary/package paths, selected/running tuple
   and restart authority. Pilot order requires supported reviewed tooling,
-  since current deploy-fleet order differs. No production activation,
-  migration transfer, Bun retirement, ACP port or broker consolidation is
-  authorized by this amendment. Delivered kernel/read/facade predicates
+  since current deploy-fleet order differs. Historical parity approval did
+  not authorize production activation, migration transfer or Bun retirement;
+  T-12840 separately authorizes the schema transfer and prerequisite
+  Bun-store-opener retirement above. No ACP port or broker consolidation is
+  authorized here. Delivered kernel/read/facade predicates
   above remain unchanged. Performance budgets remain measured proposals.
 authority: >
+  Daedalus approval EN-48682 of T-12840 rust-schema-migrator specification r3,
+  task etag 4, submitted in EN-48674 on 2026-11-09 under Lance's Rust-completion
+  direction relayed in EN-48621. Closes EN-48624 F1/F2 and EN-48647 F3.
   Lance's library, gradual migration and one-repository rulings cited in the
   approved proposal; Daedalus architecture approval of r3.2 submitted in
   EN-32629, 2026-10-20. F1-F4 were closed by r3.1 and F5 by r3.2.
@@ -358,6 +406,18 @@ authority: >
   of T-12067 section 8.1 at 1e5109af, closing EN-38696 F1 through explicit
   per-node activation order, not a legacy-lock compatibility mechanism.
 source:
+  - wrkq:T-12840
+  - wrkc:EN-48621
+  - wrkc:EN-48624
+  - wrkc:EN-48647
+  - wrkc:EN-48674
+  - wrkc:EN-48682
+  - crates/hrc-store/src/lib.rs
+  - crates/hrc-store/src/events.rs
+  - crates/hrc-native/src/server/front/hosting.rs
+  - crates/hrc-native/src/server/placement/owner.rs
+  - packages/hrc-store-sqlite/src/migrations.ts
+  - scripts/hrc-owner.sh
   - commit:1e5109af
   - wrkq:T-12067
   - wrkc:EN-38696
@@ -430,6 +490,19 @@ source:
   - crates/hrc-native/src/server.rs
   - crates/hrc-domain/src/declarations.rs
 validation_scope: >
+  T-12840 requires its five submitted product gates: one-time native/Bun
+  baseline equivalence of normalized schema, pragmas, legacy ids and seed
+  rows, with distinct fresh-store incarnations; successful two-migration
+  upgrade preserving incarnation and broker sequence while advancing the
+  hrc_events sequence exactly once for attribution, plus second-migration
+  failure rolling back the whole set and retaining prior-build admission;
+  no-write schema refusals and same-state/different-runtime store_owned
+  refusal with a pending migration; just verify's Rust leg and native e2e
+  with Bun absent from PATH; and the first real forward migration deployed
+  through ordinary recipes to all three nodes with schema current, running
+  equal to installed, brokers reattached and no Bun activation process.
+  Equivalence is one-time task-artifact evidence, not a recurring Bun dependency.
+  These are implementation obligations, not results established by this review.
   Historical gates below describe T-12067's activation, not current rusthrc
   read obligations. Amendment 2026-11-02 (praesidium-kernel r1.9 / T-12360):
   kq.py status now reads the separate praesidium:praesidium document; rusthrc's
@@ -494,9 +567,11 @@ validation_scope: >
   baseline, discriminating missing-route/field/duplicate-effect/wrong-owner
   controls, explicit downstream gaps and isolated real ASP/wrkq/broker
   evidence. Component gates require both-implementation compatibility and
-  native ownership discriminators. N6 requires forward/reverse same-history
-  owner transfer with one executor for every ingress/controller/job and
-  named compatible Bun fallback. Worktree checks, canonical installed
+  native ownership discriminators. Before the first live Rust-only migration,
+  N6 requires forward/reverse same-history owner transfer with one executor
+  for every ingress/controller/job and named compatible Bun fallback.
+  T-12840 excludes rollback to a binary lacking an applied migration thereafter.
+  Worktree checks, canonical installed
   acceptance and independent grading remain separate. These are future
   implementation obligations, not successful runtime evidence.
   F requires a scratch Rust front and Bun owner on the same isolated state
@@ -512,6 +587,14 @@ validation_scope: >
   N6 inherits the serve-only boundary and pre-mutation refusal contract.
   Design approval authorizes none of these installs or activations.
 last_verified: >
+  2026-11-09 T-12840 specification r3, task etag 4, approved in EN-48682 by
+  reading the submitted revisions against exact-set admission, independently
+  resolved runtime/state roots, runtime-directory ownership, the Bun runner,
+  attribution insert, AUTOINCREMENT schema and native ledger-head reader.
+  F1/F2 close through the atomic pending-set transaction and store-directory
+  lock; F3 closes through the attribution-aware successful-upgrade assertion.
+  No build, test, install or service command was run for this ruling;
+  implementation, equivalence and fleet gates remain unverified.
   2026-10-29 T-12067 section 8.1 at 1e5109af approved in EN-38698 by
   reading the revision, crate boundaries, daemon dispatch and lifecycle,
   cardo 12bd05d owner/wire/host/tokio code, legacy kernel startup and
