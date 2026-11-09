@@ -68,6 +68,9 @@ impl ProcInfo {
 struct AttachedClient {
     tx: SyncSender<Arc<[u8]>>,
     read_only: bool,
+    cols: u16,
+    rows: u16,
+    cell_px: Option<(u32, u32)>,
     /// `hrc-pty attach` ran with `SSH_CONNECTION` set (Loggia's SSH relay).
     remote: bool,
     /// The last `CSI I`/`CSI O` this client's terminal sent; true until the first.
@@ -108,6 +111,22 @@ struct State {
 impl State {
     fn read_write_clients(&self) -> usize {
         self.clients.values().filter(|c| !c.read_only).count()
+    }
+
+    /// The byte relay must fit every writable window, including SSH clients.
+    fn recompute_size(&mut self) {
+        let writable = self.read_write_clients() > 0;
+        let size = self
+            .clients
+            .values()
+            .filter(|c| !writable || !c.read_only)
+            .map(|c| (c.cols, c.rows))
+            .reduce(|a, b| (a.0.min(b.0), a.1.min(b.1)));
+        if let Some((cols, rows)) = size
+            && self.size != (cols, rows)
+        {
+            self.apply_size(cols, rows, None);
+        }
     }
 
     fn apply_size(&mut self, cols: u16, rows: u16, cell_px: Option<(u32, u32)>) {
@@ -603,11 +622,17 @@ fn handle_connection(shared: Arc<Shared>, stream: UnixStream) {
         return;
     }
     let mut authed = false;
+    let mut owned_attach_id: Option<String> = None;
     let mut frame = first;
     loop {
         let id = frame.get("id").cloned().unwrap_or(Value::Null);
         let method = frame["method"].as_str().unwrap_or("").to_owned();
-        let params = frame.get("params").cloned().unwrap_or(json!({}));
+        let mut params = frame.get("params").cloned().unwrap_or(json!({}));
+        if method == "resize"
+            && let Some(attach_id) = owned_attach_id.as_ref()
+        {
+            params["attachId"] = json!(attach_id);
+        }
         let reply = if !authed && method != "hello" {
             rpc::error(&id, "unauthorized", "hello first")
         } else {
@@ -637,7 +662,12 @@ fn handle_connection(shared: Arc<Shared>, stream: UnixStream) {
                     return;
                 }
                 _ => match dispatch(&shared, &method, &params) {
-                    Ok(result) => rpc::result(&id, result),
+                    Ok(result) => {
+                        if method == "attach" {
+                            owned_attach_id = result["attachId"].as_str().map(str::to_owned);
+                        }
+                        rpc::result(&id, result)
+                    }
                     Err(e) => {
                         let text = format!("{e:#}");
                         let (code, message) = text.split_once(": ").unwrap_or(("error", &text));
@@ -718,7 +748,28 @@ fn dispatch(shared: &Arc<Shared>, method: &str, params: &Value) -> anyhow::Resul
         "resize" => {
             let (cols, rows) = (u16_param(params, "cols")?, u16_param(params, "rows")?);
             let mut st = shared.state.lock().unwrap();
-            st.apply_size(cols, rows, cell_px_param(params, cols, rows));
+            let cell_px = cell_px_param(params, cols, rows);
+            if cell_px.is_some() {
+                st.cell_px = cell_px;
+            }
+            let attach_id = params["attachId"].as_str().unwrap_or("");
+            if let Some(client) = st.clients.get_mut(attach_id) {
+                client.cols = cols;
+                client.rows = rows;
+                if cell_px.is_some() {
+                    client.cell_px = cell_px;
+                }
+                st.recompute_size();
+            } else if let Some(pending) = st.pending.get_mut(attach_id) {
+                pending.cols = cols;
+                pending.rows = rows;
+                if cell_px.is_some() {
+                    pending.cell_px = cell_px;
+                }
+            } else if st.size != (cols, rows) {
+                // An independent ops connection retains direct resize semantics.
+                st.apply_size(cols, rows, None);
+            }
             Ok(json!({"cols": cols, "rows": rows}))
         }
         "capture" => capture(shared, params),
@@ -803,6 +854,11 @@ fn status(shared: &Shared) -> Value {
             "readOnly": st.clients.len() - st.read_write_clients(),
             "remote": st.clients.values().filter(|c| c.remote).count(),
             "focused": st.clients.values().filter(|c| !c.read_only && c.focused).count(),
+            "sizes": st.clients.iter().map(|(id, c)| json!({
+                "attachId": id, "cols": c.cols, "rows": c.rows,
+                "readOnly": c.read_only, "remote": c.remote,
+                "cellPx": c.cell_px.map(|(w, h)| json!({"w": w, "h": h})),
+            })).collect::<Vec<_>>(),
         },
         "humanIdleMs": human_idle_ms,
         "responderArmed": st.read_write_clients() == 0,
@@ -1060,6 +1116,7 @@ fn output_loop(shared: Arc<Shared>, mut master: File, generation: u64) {
                 st.answered
                     .push(json!({"query": name, "atMs": st.started.elapsed().as_millis() as u64}));
             }
+            let previous_clients = st.clients.len();
             st.clients
                 .retain(|_, client| match client.tx.try_send(chunk.clone()) {
                     Ok(()) => true,
@@ -1068,6 +1125,9 @@ fn output_loop(shared: Arc<Shared>, mut master: File, generation: u64) {
                         false
                     }
                 });
+            if st.clients.len() != previous_clients {
+                st.recompute_size();
+            }
             replies
         };
         for (name, reply) in replies {
@@ -1095,8 +1155,27 @@ fn data_connection(
             let _ = stream.shutdown(std::net::Shutdown::Both);
             return;
         };
-        // §4.3: resize first, so the replay renders at the client's size.
-        st.apply_size(pending.cols, pending.rows, pending.cell_px);
+        let Ok(handle) = stream.try_clone() else {
+            return;
+        };
+        if pending.cell_px.is_some() {
+            st.cell_px = pending.cell_px;
+        }
+        st.clients.insert(
+            attach_id.clone(),
+            AttachedClient {
+                tx: tx.clone(),
+                read_only: pending.read_only,
+                cols: pending.cols,
+                rows: pending.rows,
+                cell_px: pending.cell_px,
+                remote: pending.remote,
+                focused: true,
+                stream: handle,
+            },
+        );
+        // Count the new window before rendering its replay at the effective size.
+        st.recompute_size();
         let prefix = match st.vt.as_ref() {
             Some(vt) => replay_prefix(vt).unwrap_or_else(|e| {
                 log(&format!("replay prefix failed: {e:#}"));
@@ -1108,19 +1187,6 @@ fn data_connection(
         if !pending.read_only {
             st.responder.reset();
         }
-        let Ok(handle) = stream.try_clone() else {
-            return;
-        };
-        st.clients.insert(
-            attach_id.clone(),
-            AttachedClient {
-                tx,
-                read_only: pending.read_only,
-                remote: pending.remote,
-                focused: true,
-                stream: handle,
-            },
-        );
         pending.read_only
     };
     shared.emit(
@@ -1167,13 +1233,14 @@ fn data_connection(
         }
     }
     let _ = stream.shutdown(std::net::Shutdown::Both);
-    let removed = shared
-        .state
-        .lock()
-        .unwrap()
-        .clients
-        .remove(&attach_id)
-        .is_some();
+    let removed = {
+        let mut st = shared.state.lock().unwrap();
+        let removed = st.clients.remove(&attach_id).is_some();
+        if removed {
+            st.recompute_size();
+        }
+        removed
+    };
     if removed {
         shared.emit(
             "client.detached",
