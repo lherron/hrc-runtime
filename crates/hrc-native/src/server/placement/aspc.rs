@@ -1,6 +1,9 @@
 //! The ASP observation/preparation boundary. HRC assembles intent and placement;
 //! ASP alone interprets profiles, bundles and provider/driver selection.
-use super::{ApiError, rpc::JsonRpc};
+use super::{
+    ApiError,
+    rpc::{ErrorReply, JsonRpc},
+};
 use axum::http::StatusCode;
 use serde_json::{Value, json};
 use std::{
@@ -149,15 +152,30 @@ impl AspSession {
             endpoint,
         })
     }
+    /// A JSON-RPC error reply is aspd's answer: 422 `aspd_refused` carrying the
+    /// error object unchanged. Only transport failures are 503, and a timeout
+    /// is told by its kind, never by the message text.
     pub async fn call(&self, method: &str, request: Value) -> Result<Value, ApiError> {
         self.client.request(method, request).await.map_err(|e| {
-            let message = e.to_string();
-            let code = if message.contains("timeout") {
+            if let Some(ErrorReply(error)) = e.downcast_ref::<ErrorReply>() {
+                let message = error["message"]
+                    .as_str()
+                    .map_or_else(|| error.to_string(), str::to_owned);
+                return ApiError::domain(
+                    StatusCode::UNPROCESSABLE_ENTITY,
+                    "aspd_refused",
+                    message,
+                    Some(
+                        json!({"route":"aspd","endpoint":self.endpoint,"method":method,"aspdError":error}),
+                    ),
+                );
+            }
+            let code = if e.downcast_ref::<tokio::time::error::Elapsed>().is_some() {
                 "aspd_request_timeout"
             } else {
                 "aspd_connection_closed"
             };
-            unavailable(code, message, json!({"endpoint":self.endpoint}))
+            unavailable(code, e.to_string(), json!({"endpoint":self.endpoint}))
         })
     }
     pub fn service(&self) -> Value {

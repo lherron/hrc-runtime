@@ -300,6 +300,18 @@ impl Compiled {
                 json!({"compileRequest":request,"dispatchEnv":request["placement"]["dispatchEnv"],"aspHome":asp_home()}),
             )
             .await?;
+        if response["schemaVersion"] == "aspc-compile-harness-invocation-response/v2"
+            && response["ok"] != true
+        {
+            return Err(ApiError::domain(
+                StatusCode::UNPROCESSABLE_ENTITY,
+                "aspd_compile_rejected",
+                "ASP compile rejected the invocation",
+                Some(
+                    json!({"route":"aspd","endpoint":asp.service()["endpoint"],"admissionCode":"compile-not-ok","rejectedBy":"producer","diagnostics":response["diagnostics"]}),
+                ),
+            ));
+        }
         admit(&response, &request, operator).map_err(ApiError::from)?;
         continuation_gate(&response, &request)?;
         let executable = validate_release(

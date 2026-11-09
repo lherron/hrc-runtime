@@ -594,7 +594,7 @@ fn dispatch_environment(
     let session_ref = format!("{scope}/lane:{lane_id}");
     let id = hrc_store::derive_identity(scope);
     let mut envs = json!({"AGENT_SCOPE_REF":scope,"AGENT_LANE_REF":lane_ref,"AGENT_LANE":lane_id,"AGENT_SESSION_REF":session_ref,"HRC_SESSION_REF":session_ref,"ASP_SCOPE_REF":scope});
-    for key in ["AGENT_ID", "AGENT_ACTOR", "WRKQ_ACTOR", "ASP_AGENT_ID"] {
+    for key in ["AGENT_ID", "AGENT_ACTOR", "ASP_AGENT_ID"] {
         envs[key] = id["agentId"].clone();
     }
     for (keys, field) in [
@@ -789,10 +789,8 @@ fn preparation(
     let policy_driver = format!("policy-route-headless-broker:{driver}");
     let mut policy = json!({"schemaVersion":"harness-broker.lifecycle-policy/v1","policyId":policy_driver,"retention":{"mode":"keep-alive"},"harnessRecovery":{"mode":"none"},"turnRetry":{"mode":"none"}});
     policy["policyHash"] = compile::digest(compile::canonical(&policy).as_bytes()).into();
-    let mut dispatch_env = execution["dispatchRequest"]
-        .get("dispatchEnv")
-        .cloned()
-        .unwrap_or_else(|| compiled.request["placement"]["dispatchEnv"].clone());
+    // HRC's own map is the base; aspd's dispatchRequest.dispatchEnv only echoed it.
+    let mut dispatch_env = compiled.request["placement"]["dispatchEnv"].clone();
     for (key, field) in [
         ("HRC_RUNTIME_ID", "runtimeId"),
         ("HRC_INVOCATION_ID", "invocationId"),
