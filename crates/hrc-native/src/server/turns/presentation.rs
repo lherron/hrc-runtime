@@ -1,4 +1,4 @@
-//! Store-only presentation routes for embedded kernel bootstrap and keyed
+//! Presentation routes for embedded kernel bootstrap and keyed
 //! updates. No probe, reconciliation, attach or lifecycle write happens here.
 use super::{ApiError, Server, parse_body, parse_session_ref};
 use axum::{
@@ -12,7 +12,7 @@ pub fn list(server: &Server) -> Result<Response, ApiError> {
     let db = server.store.lock().unwrap();
     Ok(Json(hrc_store::presentation::runtimes(&db)?).into_response())
 }
-pub fn seats(server: &Server, body: &[u8]) -> Result<Response, ApiError> {
+pub async fn seats(server: &Server, body: &[u8]) -> Result<Response, ApiError> {
     let input = parse_body(body).map_err(|mut e| {
         e.detail = Some(json!({}));
         e
@@ -37,14 +37,19 @@ pub fn seats(server: &Server, body: &[u8]) -> Result<Response, ApiError> {
             keys.push((scope.to_owned(), lane.to_owned()));
         }
     }
-    let db = server.store.lock().unwrap();
-    for value in input["runtimeIds"].as_array().unwrap() {
-        if let Some((scope, lane)) = db.presentation_runtime_seat(value.as_str().unwrap())? {
-            let key = format!("{scope}/lane:{}", canonical_lane(&lane));
-            if seen.insert(key) {
-                keys.push((scope, lane));
+    let mut output = {
+        let db = server.store.lock().unwrap();
+        for value in input["runtimeIds"].as_array().unwrap() {
+            if let Some((scope, lane)) = db.presentation_runtime_seat(value.as_str().unwrap())? {
+                let key = format!("{scope}/lane:{}", canonical_lane(&lane));
+                if seen.insert(key) {
+                    keys.push((scope, lane));
+                }
             }
         }
-    }
-    Ok(Json(hrc_store::presentation::seats(&db, keys)?).into_response())
+        hrc_store::presentation::seats(&db, keys)?
+    };
+    super::federation::session_home::annotate(server, output["sessions"].as_array_mut().unwrap())
+        .await;
+    Ok(Json(output).into_response())
 }

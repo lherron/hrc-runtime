@@ -14,6 +14,9 @@ pub mod registry_listener;
 mod retirement;
 mod routing;
 pub use retirement::retire;
+pub mod session_home;
+#[cfg(test)]
+mod session_home_tests;
 pub mod summon;
 
 pub use locate::{bindings, designations, locate};
@@ -156,6 +159,7 @@ pub struct Node {
     http: reqwest::Client,
     /// home-authority.ts `foreignHomeMemo`: one consult per scope per process.
     memo: Mutex<HashMap<String, Binding>>,
+    session_home: Mutex<session_home::Cache>,
     /// The peer and registry listeners: (name, graceful-shutdown signal, task).
     listeners: Mutex<Vec<Listener>>,
     /// The collective-history coordinator. Bun always resolves a federation
@@ -478,6 +482,7 @@ impl Node {
             registry_db,
             http,
             memo: Mutex::new(HashMap::new()),
+            session_home: Mutex::default(),
             listeners: Mutex::new(Vec::new()),
             history: history::Coordinator::default(),
         })
@@ -1055,7 +1060,7 @@ impl Node {
         home: &str,
         decision: Option<Decision>,
     ) -> Result<Value, RegistryError> {
-        match &self.client {
+        let result = match &self.client {
             Client::Unavailable(reason) => Err(RegistryError::Unreachable(reason.clone())),
             Client::Local(db) => {
                 if home != self.node_id() {
@@ -1088,7 +1093,9 @@ impl Node {
                 })
                 .await
             }
-        }
+        };
+        self.invalidate_session_home();
+        result
     }
 
     /// `designateBirth`; `None` when this client cannot designate.

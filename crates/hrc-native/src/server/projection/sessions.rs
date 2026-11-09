@@ -8,7 +8,7 @@ use axum::{
 use serde_json::{Value, json};
 use std::collections::HashMap;
 
-pub fn handle(
+pub async fn handle(
     server: &Server,
     method: &Method,
     path: &str,
@@ -56,6 +56,11 @@ pub fn handle(
     let lane = input["laneRef"].as_str().unwrap_or("main");
     let ref_string = format!("{scope}/lane:{}", hrc_store::storage_lane(lane));
     let (scope, lane) = parse_session_ref(&ref_string)?;
+    let home = if !metadata {
+        Some(super::federation::session_home::home(server, scope).await)
+    } else {
+        None
+    };
     let mut db = server.store.lock().unwrap();
     let session = db.continuity_session(scope, lane)?.ok_or_else(|| {
         ApiError::domain(
@@ -104,6 +109,7 @@ pub fn handle(
     let mut result = if metadata { stored.clone() } else { json!({}) };
     if !metadata {
         let facts=db.sqlite.query_row("SELECT effective_status,execution_mode,last_activity_at FROM session_index WHERE scope_ref=? AND lane_ref=?",[scope,lane],|r|Ok(json!({"effectiveStatus":r.get::<_,String>(0)?,"executionMode":r.get::<_,String>(1)?,"lastActivityAt":r.get::<_,String>(2)?}))).unwrap_or_else(|_|json!({"effectiveStatus":"inactive","executionMode":"nonInteractive","lastActivityAt":session["updatedAt"]}));
+        result["home"] = home.unwrap();
         result["continuity"] = json!({"scopeRef":scope,"laneRef":hrc_store::canonical_lane(lane)});
         let seat = db.seat_state(scope, lane)?;
         for key in ["kind", "work", "workEtag"] {

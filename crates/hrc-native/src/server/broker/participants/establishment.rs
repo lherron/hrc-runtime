@@ -617,7 +617,9 @@ async fn recover_replacement(server: &Shared, reg: &Value, a: &Value) -> Result<
     body["laneRef"] = reg["lane_ref"].clone();
     let prior = &intent["predecessor"];
     body["expectedPredecessor"] = json!({"hostIncarnationId":prior["hostIncarnationId"],"runtimeId":prior["runtimeId"],"generation":prior["generation"]});
-    match super::join(server, &body).await? {
+    match super::join(server, &body).await.map_err(|error| {
+        anyhow::anyhow!("{}: {} ({:?})", error.code, error.message, error.detail)
+    })? {
         hrc_store::ParticipantJoin::Registered(_) => Ok(()),
         hrc_store::ParticipantJoin::Refused(v) => anyhow::bail!(
             "{}: {}",

@@ -772,7 +772,7 @@ async fn dispatch_inner(server: &Shared, request: Request, local_only: bool) -> 
             Err(e) => Err(e),
         }
     } else {
-        handle(server, &method, uri.path(), &query, &body, &headers)
+        handle(server, &method, uri.path(), &query, &body, &headers).await
     };
     result.unwrap_or_else(|error| error.into_response_for(&headers))
 }
@@ -942,7 +942,7 @@ fn parse_session_ref(raw: &str) -> std::result::Result<(&str, &str), ApiError> {
     }
     Ok((scope, lane))
 }
-fn handle(
+async fn handle(
     server: &Server,
     method: &Method,
     path: &str,
@@ -965,16 +965,16 @@ fn handle(
         return aspc::placement_bindings(server, query);
     }
     if *method == Method::GET && ["/v1/sessions/page", "/v1/sessions/facets"].contains(&path) {
-        return index::handle(server, path, query);
+        return index::handle(server, path, query).await;
     }
-    if let Some(response) = sessions::handle(server, method, path, query, body, headers)? {
+    if let Some(response) = sessions::handle(server, method, path, query, body, headers).await? {
         return Ok(response);
     }
     if *method == Method::GET && path == "/v1/presentation/runtimes" {
         return presentation::list(server);
     }
     if *method == Method::POST && path == "/v1/presentation/seats/read" {
-        return presentation::seats(server, body);
+        return presentation::seats(server, body).await;
     }
     if *method == Method::GET && path == "/v1/broker-events/follow" {
         return evidence::follow(server, query, headers);

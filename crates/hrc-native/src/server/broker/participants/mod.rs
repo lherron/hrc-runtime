@@ -199,7 +199,23 @@ pub async fn register(server: &super::Shared, body: Value) -> Result<Response, A
     }
 }
 
-async fn join(server: &super::Shared, body: &Value) -> anyhow::Result<hrc_store::ParticipantJoin> {
+async fn join(
+    server: &super::Shared,
+    body: &Value,
+) -> Result<hrc_store::ParticipantJoin, ApiError> {
+    let authority = super::federation::session_home::home(
+        server,
+        body["requestedSessionRef"].as_str().unwrap(),
+    )
+    .await;
+    if authority["state"] == "foreign" {
+        return Err(ApiError::domain(
+            StatusCode::CONFLICT,
+            "foreign_scope",
+            "scope is homed on another node",
+            Some(json!({"homeNodeId":authority["nodeId"]})),
+        ));
+    }
     let home = participant_home(server);
     let joined = server
         .store

@@ -113,6 +113,7 @@ async fn assert_authority(server: &Shared, request: &SummonRequest<'_>) -> Resul
     {
         install_active(&server.store.lock().unwrap().sqlite, binding)
             .map_err(|e| ApiError::from(anyhow::anyhow!(e)))?;
+        server.federation.invalidate_session_home();
     }
     if evaluation.reason == "virgin-establishment"
         && let Some(home) = &evaluation.home
@@ -282,7 +283,9 @@ async fn commit_establishment(
         ));
     }
     install_active(&server.store.lock().unwrap().sqlite, binding)
-        .map_err(|e| ApiError::from(anyhow::anyhow!(e)))
+        .map_err(|e| ApiError::from(anyhow::anyhow!(e)))?;
+    server.federation.invalidate_session_home();
+    Ok(())
 }
 
 /// summon-gate-server-repair.ts `assertScopeNotRetired`: an existing session

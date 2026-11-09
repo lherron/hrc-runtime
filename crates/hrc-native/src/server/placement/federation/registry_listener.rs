@@ -267,6 +267,7 @@ async fn route_request(
             let decision = parse_decision(body.get("birthDesignation"))?;
             let scope = canonical(&required(&body, "scopeRef")?)?;
             let result = establish(&mut db.lock().unwrap(), &scope, &home, decision)?;
+            server.federation.invalidate_session_home();
             let mut out = json!({"authenticatedNodeId":peer});
             out.as_object_mut()
                 .unwrap()
@@ -335,6 +336,7 @@ async fn route_request(
             let scope = canonical(&required(&body, "scopeRef")?)?;
             let retired_at = required(&body, "retiredAt")?;
             let result = delete(&mut db.lock().unwrap(), &scope, &expected, &retired_at)?;
+            server.federation.invalidate_session_home();
             let conflict = result["outcome"] == "conflict";
             let mut out = json!({"ok":!conflict,"authenticatedNodeId":peer});
             out.as_object_mut()

@@ -77,6 +77,7 @@ pub async fn retire(server: &Shared, body: Value) -> Result<Response, ApiError> 
         tx.commit().map_err(anyhow::Error::from)?;
         row
     };
+    node.invalidate_session_home();
     server.ledger_committed();
     // Retirement is already durable if continuity fencing fails. Never release
     // registry authority after such a failure; retry repeats this separate step.
@@ -123,6 +124,7 @@ pub async fn retire(server: &Shared, body: Value) -> Result<Response, ApiError> 
         }
         Client::Unavailable(_) => Err(RegistryError::unreachable()),
     };
+    node.invalidate_session_home();
     let mut out = match deleted {
         Ok(reply) if reply["outcome"] == "conflict" => {
             let mut out = result(

@@ -17,7 +17,7 @@ fn optional<'a>(query: &'a HashMap<String, String>, field: &str) -> Option<&'a s
     query.get(field).map(|v| v.trim()).filter(|v| !v.is_empty())
 }
 
-pub fn handle(
+pub async fn handle(
     server: &Server,
     path: &str,
     query: &HashMap<String, String>,
@@ -169,24 +169,28 @@ pub fn handle(
             }
         }
     }
-    let db = server.store.lock().unwrap();
     let peer_status = json!({local.clone():{"state":"healthy","checkedAt":hrc_store::timestamp()}});
     if page {
-        let highwater: i64 = db
-            .sqlite
-            .query_row("SELECT COALESCE(MAX(hrc_seq),0) FROM hrc_events", [], |r| {
-                r.get(0)
-            })
-            .map_err(anyhow::Error::from)?;
-        let component = &components[&local];
-        let cursor = component["t"].as_str().zip(component["h"].as_str());
-        let (rows, more) = db.session_index_page(&filters, cursor, limit)?;
+        let (highwater, rows, more) = {
+            let db = server.store.lock().unwrap();
+            let highwater: i64 = db
+                .sqlite
+                .query_row("SELECT COALESCE(MAX(hrc_seq),0) FROM hrc_events", [], |r| {
+                    r.get(0)
+                })
+                .map_err(anyhow::Error::from)?;
+            let component = &components[&local];
+            let cursor = component["t"].as_str().zip(component["h"].as_str());
+            let (rows, more) = db.session_index_page(&filters, cursor, limit)?;
+            (highwater, rows, more)
+        };
         let mut items = Vec::with_capacity(rows.len());
         for mut row in rows {
             row["nodeId"] = local.clone().into();
             components[&local] = json!({"t":row["lastActivityAt"],"h":row["hostSessionId"]});
             items.push(hrc_store::ordered(row, ITEM_ORDER));
         }
+        super::federation::session_home::annotate(server, &mut items).await;
         // handleSessionPageLocal: nextCursor sits between items and eventHighWater.
         let mut output = serde_json::Map::new();
         output.insert("items".into(), items.into());
@@ -203,7 +207,11 @@ pub fn handle(
         output.insert("peerStatus".into(), peer_status);
         Ok(Json(Value::Object(output)).into_response())
     } else {
-        let mut output = db.session_index_facets(&filters)?;
+        let mut output = server
+            .store
+            .lock()
+            .unwrap()
+            .session_index_facets(&filters)?;
         let node_count = output
             .as_object_mut()
             .unwrap()
