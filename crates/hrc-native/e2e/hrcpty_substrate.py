@@ -99,7 +99,9 @@ LIVE_HRC_SOCKET = Path.home() / 'praesidium/var/run/hrc/hrc.sock'
 NODE_ID = 'h12049'
 LEAK = ('GIT_', 'HRC_', 'ASP_', 'AGENT_', 'AGENTCHAT_', 'WRKQ', 'CLAUDE', 'CODEX', 'ACP_', 'HARNESS_', 'TMUX')
 PROJECT = 't12049'
-T12163 = Path.home() / 'praesidium/var/wrkq-artifacts/T-12163'
+# Real aspc codex responses captured by T-12163, committed here so the substrate
+# runs on any node; they carry T12163_SCRATCH paths, re-addressed per request.
+T12163 = HERE / 'fixtures/aspc-codex'
 T12163_SCRATCH = '/Users/lherron/praesidium/var/scratch/agent-spaces/T-12163'
 APP_SERVER = r'''
 import os, signal, sys, time

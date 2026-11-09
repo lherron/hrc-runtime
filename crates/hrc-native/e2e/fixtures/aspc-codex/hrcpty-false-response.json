@@ -1,0 +1,200 @@
+{
+  "schemaVersion": "aspc-compile-harness-invocation-response/v2",
+  "ok": true,
+  "plan": {
+    "schemaVersion": "agent-runtime-plan/v2",
+    "compiler": {
+      "name": "agent-spaces",
+      "version": "0.1.1"
+    },
+    "compileId": "compile_3224b8229d7e03b94c10aadf166b180e",
+    "createdAt": "2026-10-30T16:39:37.718Z",
+    "agent": {
+      "id": "codex-hrcpty-proof"
+    },
+    "identity": {
+      "requestId": "request_T12163-false",
+      "operationId": "operation_T12163-false",
+      "hostSessionId": "host_T12163-false",
+      "generation": 1,
+      "runtimeId": "runtime_T12163-false",
+      "invocationId": "inv_T12163-false",
+      "initialInputId": "input_T12163-false",
+      "runId": "run_T12163-false",
+      "traceId": "trace_T12163-false",
+      "idempotencyKey": "T12163-false"
+    },
+    "placement": {
+      "agentRoot": "/Users/lherron/praesidium/var/scratch/agent-spaces/T-12163/codex-hrcpty-proof",
+      "projectRoot": "/Users/lherron/praesidium/var/scratch/agent-spaces/T-12163/project",
+      "cwd": "/Users/lherron/praesidium/var/scratch/agent-spaces/T-12163/project",
+      "runMode": "task",
+      "bundle": {
+        "kind": "agent-project",
+        "agentName": "codex-hrcpty-proof",
+        "projectRoot": "/Users/lherron/praesidium/var/scratch/agent-spaces/T-12163/project"
+      },
+      "correlation": {
+        "sessionRef": {
+          "scopeRef": "agent:codex-hrcpty-proof:project:agent-spaces",
+          "laneRef": "main"
+        },
+        "hostSessionId": "host_T12163-false"
+      }
+    },
+    "resolvedBundle": {
+      "bundleIdentity": "bundle:01261e4a644eab26",
+      "runMode": "task",
+      "cwd": "/Users/lherron/praesidium/var/scratch/agent-spaces/T-12163/project",
+      "instructions": [
+        {
+          "slot": "soul",
+          "ref": "agent-root:///SOUL.md",
+          "contentHash": "sha256:4d15bc401772ea1f46e3e9f17463ce6e2b83451449efd71d536bccec7dd93423"
+        }
+      ],
+      "spaces": []
+    },
+    "omitPriming": false,
+    "selection": {
+      "harness": "codex-hrcpty",
+      "modelProvider": "openai-codex",
+      "model": "gpt-6.1-sol",
+      "presentation": false,
+      "provenance": {
+        "harness": "agent-profile",
+        "modelProvider": "compile-request",
+        "model": "compile-request",
+        "presentation": "compile-request"
+      }
+    },
+    "execution": {
+      "recipeId": "codex-app-server",
+      "driver": "codex-app-server",
+      "protocol": "harness-broker/0.2",
+      "hosting": {
+        "executionTransport": "jsonrpc-stdio",
+        "terminalRequired": true,
+        "terminalHost": "hrcpty",
+        "processExecution": "supervisor-process"
+      },
+      "presentationSurface": {
+        "transport": "websocket-unix",
+        "terminalHost": "hrcpty"
+      },
+      "presentationFulfillment": "attachable",
+      "profile": {
+        "profileId": "profile_d9535c6e2acefac6731a4a42dc73a6a5",
+        "profileHash": "696129279c245cf97d7b2fb678ae17d2523dd36f938987c7aef2f9a5cba34847",
+        "compatibilityHash": "25c1852592bad1f241eafd3434392d09ca7253e0937bed992075c69aadd93d8e",
+        "startRequestHash": "327c164a5689ee2080829913d4d4b8775fb1ae996a770035eda523abfaba0e60"
+      },
+      "dispatchRequest": {
+        "startRequest": {
+          "spec": {
+            "specVersion": "harness-broker.invocation/v1",
+            "invocationId": "inv_T12163-false",
+            "harness": {
+              "frontend": "codex",
+              "provider": "openai",
+              "driver": "codex-app-server"
+            },
+            "process": {
+              "command": "/Users/lherron/.local/bin/codex",
+              "args": [
+                "--enable",
+                "goals",
+                "app-server"
+              ],
+              "cwd": "/Users/lherron/praesidium/var/scratch/agent-spaces/T-12163/project",
+              "lockedEnv": {
+                "CODEX_HOME": "/Users/lherron/praesidium/var/scratch/agent-spaces/T-12163/asp-home/codex-homes/agent-spaces_codex-hrcpty-proof",
+                "AGENTCHAT_ID": "codex-hrcpty-proof",
+                "ASP_PROJECT": "agent-spaces",
+                "ASP_HOME": "/Users/lherron/praesidium/var/scratch/agent-spaces/T-12163/asp-home",
+                "ASP_AGENT_ROOT": "/Users/lherron/praesidium/var/scratch/agent-spaces/T-12163/codex-hrcpty-proof",
+                "ASP_AGENT_NAME": "codex-hrcpty-proof",
+                "ASP_AGENT_VAR_DIR": "/Users/lherron/praesidium/var/scratch/agent-spaces/T-12163/codex-hrcpty-proof/var",
+                "ASP_AGENT_STATE_DIR": "/Users/lherron/praesidium/var/scratch/agent-spaces/T-12163/codex-hrcpty-proof/var/state",
+                "ASP_AGENT_CACHE_DIR": "/Users/lherron/praesidium/var/scratch/agent-spaces/T-12163/codex-hrcpty-proof/var/cache",
+                "ASP_AGENT_LOG_DIR": "/Users/lherron/praesidium/var/scratch/agent-spaces/T-12163/codex-hrcpty-proof/var/logs",
+                "ASP_PROJECT_ROOT": "/Users/lherron/praesidium/var/scratch/agent-spaces/T-12163/project",
+                "ASP_PROJECT_ID": "agent-spaces_codex-hrcpty-proof",
+                "ASP_PROJECT_STATE_DIR": "/Users/lherron/praesidium/var/scratch/agent-spaces/T-12163/codex-hrcpty-proof/var/state/projects/agent-spaces_codex-hrcpty-proof"
+              },
+              "harnessTransport": {
+                "kind": "jsonrpc-stdio"
+              },
+              "limits": {
+                "startupTimeoutMs": 10000,
+                "turnTimeoutMs": 10000
+              }
+            },
+            "interaction": {
+              "mode": "headless",
+              "turnConcurrency": "single",
+              "inputQueue": "fifo"
+            },
+            "driver": {
+              "kind": "codex-app-server",
+              "model": "gpt-6.1-sol",
+              "approvalPolicy": "never",
+              "permissionPolicy": {
+                "mode": "deny"
+              },
+              "resumeFallback": "fail"
+            },
+            "correlation": {
+              "requestId": "request_T12163-false",
+              "hostSessionId": "host_T12163-false",
+              "operationId": "operation_T12163-false",
+              "runtimeId": "runtime_T12163-false",
+              "runId": "run_T12163-false",
+              "invocationId": "inv_T12163-false",
+              "traceId": "trace_T12163-false",
+              "scopeRef": "agent:codex-hrcpty-proof:project:agent-spaces",
+              "laneRef": "main"
+            }
+          },
+          "initialInput": {
+            "inputId": "input_T12163-false",
+            "kind": "user",
+            "content": [
+              {
+                "type": "text",
+                "text": "Verify the codex compile contract."
+              }
+            ]
+          }
+        }
+      }
+    },
+    "artifacts": {
+      "materializedBundleRoot": "/Users/lherron/praesidium/var/scratch/agent-spaces/T-12163/asp-home/codex-homes/agent-spaces_codex-hrcpty-proof/bundles/.versions/948d9f304e7956aebdbed961b52d7f9645cc22f25f58979b7af053d22cab03d1/codex-hrcpty-proof/codex",
+      "systemPromptFile": "/Users/lherron/praesidium/var/scratch/agent-spaces/T-12163/asp-home/codex-homes/agent-spaces_codex-hrcpty-proof/bundles/.versions/948d9f304e7956aebdbed961b52d7f9645cc22f25f58979b7af053d22cab03d1/codex-hrcpty-proof/codex/.asp-runtime-artifacts/system-prompts/4d/4d15bc401772ea1f46e3e9f17463ce6e2b83451449efd71d536bccec7dd93423/system-prompt.md",
+      "bundleIdentity": "bundle:01261e4a644eab26"
+    },
+    "lockedEnv": {
+      "lockedEnvKeys": [
+        "AGENTCHAT_ID",
+        "ASP_AGENT_CACHE_DIR",
+        "ASP_AGENT_LOG_DIR",
+        "ASP_AGENT_NAME",
+        "ASP_AGENT_ROOT",
+        "ASP_AGENT_STATE_DIR",
+        "ASP_AGENT_VAR_DIR",
+        "ASP_HOME",
+        "ASP_PROJECT",
+        "ASP_PROJECT_ID",
+        "ASP_PROJECT_ROOT",
+        "ASP_PROJECT_STATE_DIR",
+        "CODEX_HOME"
+      ]
+    },
+    "diagnostics": [],
+    "planHash": "761167e7ad2ec59a44e3d8d8e0e96c7ebcfda0565efcb48e9b9af98dfaba5e8b"
+  },
+  "sessionMetadata": {},
+  "diagnostics": [],
+  "effectiveEnvironmentHash": "ee4ae2e7599f46e0c2d57a39878496649b81e385e93940e5c73b27a3630bf3b8"
+}

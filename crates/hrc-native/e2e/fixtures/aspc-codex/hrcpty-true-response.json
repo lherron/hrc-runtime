@@ -1,0 +1,206 @@
+{
+  "schemaVersion": "aspc-compile-harness-invocation-response/v2",
+  "ok": true,
+  "plan": {
+    "schemaVersion": "agent-runtime-plan/v2",
+    "compiler": {
+      "name": "agent-spaces",
+      "version": "0.1.1"
+    },
+    "compileId": "compile_a300f1c5fe705cb3c7bd93b88c19e890",
+    "createdAt": "2026-10-30T16:39:37.727Z",
+    "agent": {
+      "id": "codex-hrcpty-proof"
+    },
+    "identity": {
+      "requestId": "request_T12163-true",
+      "operationId": "operation_T12163-true",
+      "hostSessionId": "host_T12163-true",
+      "generation": 1,
+      "runtimeId": "runtime_T12163-true",
+      "invocationId": "inv_T12163-true",
+      "initialInputId": "input_T12163-true",
+      "runId": "run_T12163-true",
+      "traceId": "trace_T12163-true",
+      "idempotencyKey": "T12163-true"
+    },
+    "placement": {
+      "agentRoot": "/Users/lherron/praesidium/var/scratch/agent-spaces/T-12163/codex-hrcpty-proof",
+      "projectRoot": "/Users/lherron/praesidium/var/scratch/agent-spaces/T-12163/project",
+      "cwd": "/Users/lherron/praesidium/var/scratch/agent-spaces/T-12163/project",
+      "runMode": "task",
+      "bundle": {
+        "kind": "agent-project",
+        "agentName": "codex-hrcpty-proof",
+        "projectRoot": "/Users/lherron/praesidium/var/scratch/agent-spaces/T-12163/project"
+      },
+      "correlation": {
+        "sessionRef": {
+          "scopeRef": "agent:codex-hrcpty-proof:project:agent-spaces",
+          "laneRef": "main"
+        },
+        "hostSessionId": "host_T12163-true"
+      }
+    },
+    "resolvedBundle": {
+      "bundleIdentity": "bundle:01261e4a644eab26",
+      "runMode": "task",
+      "cwd": "/Users/lherron/praesidium/var/scratch/agent-spaces/T-12163/project",
+      "instructions": [
+        {
+          "slot": "soul",
+          "ref": "agent-root:///SOUL.md",
+          "contentHash": "sha256:4d15bc401772ea1f46e3e9f17463ce6e2b83451449efd71d536bccec7dd93423"
+        }
+      ],
+      "spaces": []
+    },
+    "omitPriming": false,
+    "selection": {
+      "harness": "codex-hrcpty",
+      "modelProvider": "openai-codex",
+      "model": "gpt-6.1-sol",
+      "presentation": true,
+      "provenance": {
+        "harness": "agent-profile",
+        "modelProvider": "compile-request",
+        "model": "compile-request",
+        "presentation": "compile-request"
+      }
+    },
+    "execution": {
+      "recipeId": "codex-app-server",
+      "driver": "codex-app-server",
+      "protocol": "harness-broker/0.2",
+      "hosting": {
+        "executionTransport": "jsonrpc-stdio",
+        "terminalRequired": true,
+        "terminalHost": "hrcpty",
+        "processExecution": "supervisor-process"
+      },
+      "presentationSurface": {
+        "transport": "websocket-unix",
+        "terminalHost": "hrcpty"
+      },
+      "presentationFulfillment": "attachable",
+      "profile": {
+        "profileId": "profile_3e5ffa5b955842eac4d2ff6496f90614",
+        "profileHash": "c008d468c31c494d92b2b8662761ea4b4996a134ae66e9792e018b8647452d1b",
+        "compatibilityHash": "9c550227cecc04bc1e51566d480c5eb1b7288a894265d355c43f6e5c7f8fbb38",
+        "startRequestHash": "032151db194563713f290134e7418394506a9f8114b6debeb04f7eced4da5ec2"
+      },
+      "dispatchRequest": {
+        "startRequest": {
+          "spec": {
+            "specVersion": "harness-broker.invocation/v1",
+            "invocationId": "inv_T12163-true",
+            "harness": {
+              "frontend": "codex",
+              "provider": "openai",
+              "driver": "codex-app-server"
+            },
+            "process": {
+              "command": "/Users/lherron/.local/bin/codex",
+              "args": [
+                "--enable",
+                "goals",
+                "Verify the codex compile contract.",
+                "--no-alt-screen",
+                "--model",
+                "gpt-6.1-sol",
+                "--dangerously-bypass-hook-trust"
+              ],
+              "cwd": "/Users/lherron/praesidium/var/scratch/agent-spaces/T-12163/project",
+              "lockedEnv": {
+                "CODEX_HOME": "/Users/lherron/praesidium/var/scratch/agent-spaces/T-12163/asp-home/codex-homes/agent-spaces_codex-hrcpty-proof",
+                "AGENTCHAT_ID": "codex-hrcpty-proof",
+                "ASP_PROJECT": "agent-spaces",
+                "ASP_HOME": "/Users/lherron/praesidium/var/scratch/agent-spaces/T-12163/asp-home",
+                "ASP_AGENT_ROOT": "/Users/lherron/praesidium/var/scratch/agent-spaces/T-12163/codex-hrcpty-proof",
+                "ASP_AGENT_NAME": "codex-hrcpty-proof",
+                "ASP_AGENT_VAR_DIR": "/Users/lherron/praesidium/var/scratch/agent-spaces/T-12163/codex-hrcpty-proof/var",
+                "ASP_AGENT_STATE_DIR": "/Users/lherron/praesidium/var/scratch/agent-spaces/T-12163/codex-hrcpty-proof/var/state",
+                "ASP_AGENT_CACHE_DIR": "/Users/lherron/praesidium/var/scratch/agent-spaces/T-12163/codex-hrcpty-proof/var/cache",
+                "ASP_AGENT_LOG_DIR": "/Users/lherron/praesidium/var/scratch/agent-spaces/T-12163/codex-hrcpty-proof/var/logs",
+                "ASP_PROJECT_ROOT": "/Users/lherron/praesidium/var/scratch/agent-spaces/T-12163/project",
+                "ASP_PROJECT_ID": "agent-spaces_codex-hrcpty-proof",
+                "ASP_PROJECT_STATE_DIR": "/Users/lherron/praesidium/var/scratch/agent-spaces/T-12163/codex-hrcpty-proof/var/state/projects/agent-spaces_codex-hrcpty-proof"
+              },
+              "harnessTransport": {
+                "kind": "jsonrpc-stdio"
+              },
+              "limits": {
+                "startupTimeoutMs": 10000,
+                "turnTimeoutMs": 10000
+              }
+            },
+            "interaction": {
+              "mode": "interactive",
+              "turnConcurrency": "single",
+              "inputQueue": "fifo"
+            },
+            "driver": {
+              "kind": "codex-app-server",
+              "presentation": "codex-tui",
+              "transport": "websocket-unix",
+              "model": "gpt-6.1-sol",
+              "approvalPolicy": "never",
+              "permissionPolicy": {
+                "mode": "deny"
+              },
+              "resumeFallback": "fail"
+            },
+            "correlation": {
+              "requestId": "request_T12163-true",
+              "hostSessionId": "host_T12163-true",
+              "operationId": "operation_T12163-true",
+              "runtimeId": "runtime_T12163-true",
+              "runId": "run_T12163-true",
+              "invocationId": "inv_T12163-true",
+              "traceId": "trace_T12163-true",
+              "scopeRef": "agent:codex-hrcpty-proof:project:agent-spaces",
+              "laneRef": "main"
+            }
+          },
+          "initialInput": {
+            "inputId": "input_T12163-true",
+            "kind": "user",
+            "content": [
+              {
+                "type": "text",
+                "text": "Verify the codex compile contract."
+              }
+            ]
+          }
+        }
+      }
+    },
+    "artifacts": {
+      "materializedBundleRoot": "/Users/lherron/praesidium/var/scratch/agent-spaces/T-12163/asp-home/codex-homes/agent-spaces_codex-hrcpty-proof/bundles/.versions/948d9f304e7956aebdbed961b52d7f9645cc22f25f58979b7af053d22cab03d1/codex-hrcpty-proof/codex",
+      "systemPromptFile": "/Users/lherron/praesidium/var/scratch/agent-spaces/T-12163/asp-home/codex-homes/agent-spaces_codex-hrcpty-proof/bundles/.versions/948d9f304e7956aebdbed961b52d7f9645cc22f25f58979b7af053d22cab03d1/codex-hrcpty-proof/codex/.asp-runtime-artifacts/system-prompts/4d/4d15bc401772ea1f46e3e9f17463ce6e2b83451449efd71d536bccec7dd93423/system-prompt.md",
+      "bundleIdentity": "bundle:01261e4a644eab26"
+    },
+    "lockedEnv": {
+      "lockedEnvKeys": [
+        "AGENTCHAT_ID",
+        "ASP_AGENT_CACHE_DIR",
+        "ASP_AGENT_LOG_DIR",
+        "ASP_AGENT_NAME",
+        "ASP_AGENT_ROOT",
+        "ASP_AGENT_STATE_DIR",
+        "ASP_AGENT_VAR_DIR",
+        "ASP_HOME",
+        "ASP_PROJECT",
+        "ASP_PROJECT_ID",
+        "ASP_PROJECT_ROOT",
+        "ASP_PROJECT_STATE_DIR",
+        "CODEX_HOME"
+      ]
+    },
+    "diagnostics": [],
+    "planHash": "8a5ae5e231dfc977202dcdb56f4f06cae7530281f4360bad552b3f8e01f449e5"
+  },
+  "sessionMetadata": {},
+  "diagnostics": [],
+  "effectiveEnvironmentHash": "fb4fd087c56a50b844d2d4c1fadabac48fffd1198eb2eb460e200c3eb521ce52"
+}

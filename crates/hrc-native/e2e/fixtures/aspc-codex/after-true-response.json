@@ -1,0 +1,245 @@
+{
+  "schemaVersion": "aspc-compile-harness-invocation-response/v2",
+  "ok": true,
+  "plan": {
+    "schemaVersion": "agent-runtime-plan/v2",
+    "compiler": {
+      "name": "agent-spaces",
+      "version": "0.1.1"
+    },
+    "compileId": "compile_ab261d606c9640edf8ed5c9d2470d594",
+    "createdAt": "2026-10-30T16:33:38.264Z",
+    "agent": {
+      "id": "cody"
+    },
+    "identity": {
+      "requestId": "request_T12163-true",
+      "operationId": "operation_T12163-true",
+      "hostSessionId": "host_T12163-true",
+      "generation": 1,
+      "runtimeId": "runtime_T12163-true",
+      "invocationId": "inv_T12163-true",
+      "initialInputId": "input_T12163-true",
+      "runId": "run_T12163-true",
+      "traceId": "trace_T12163-true",
+      "idempotencyKey": "T12163-true"
+    },
+    "placement": {
+      "agentRoot": "/Users/lherron/praesidium/var/agents/cody",
+      "projectRoot": "/Users/lherron/praesidium/var/scratch/agent-spaces/T-12163/project",
+      "cwd": "/Users/lherron/praesidium/var/scratch/agent-spaces/T-12163/project",
+      "runMode": "task",
+      "bundle": {
+        "kind": "agent-project",
+        "agentName": "cody",
+        "projectRoot": "/Users/lherron/praesidium/var/scratch/agent-spaces/T-12163/project"
+      },
+      "correlation": {
+        "sessionRef": {
+          "scopeRef": "agent:cody:project:agent-spaces",
+          "laneRef": "main"
+        },
+        "hostSessionId": "host_T12163-true"
+      }
+    },
+    "resolvedBundle": {
+      "bundleIdentity": "bundle:dea54d1e07563cd3",
+      "runMode": "task",
+      "cwd": "/Users/lherron/praesidium/var/scratch/agent-spaces/T-12163/project",
+      "instructions": [
+        {
+          "slot": "soul",
+          "ref": "agent-root:///SOUL.md",
+          "contentHash": "sha256:3ac2801ff6a688aea7ad7b691288405213f2eaba43e1545b159db59184a95762"
+        },
+        {
+          "slot": "additional-base",
+          "ref": "agent-root:///ASYNC_COORDINATION.md",
+          "contentHash": "sha256:8c07ca946873cdc099b91e005b007b7368bdd08d2774a00a1b595d623a1ddad4"
+        }
+      ],
+      "spaces": [
+        {
+          "ref": "space:defaults@dev",
+          "resolvedKey": "defaults@dev",
+          "integrity": "sha256:pending"
+        },
+        {
+          "ref": "space:praesidium-defaults@dev",
+          "resolvedKey": "praesidium-defaults@dev",
+          "integrity": "sha256:pending"
+        },
+        {
+          "ref": "space:worker-defaults@dev",
+          "resolvedKey": "worker-defaults@dev",
+          "integrity": "sha256:pending"
+        },
+        {
+          "ref": "space:console-defaults@dev",
+          "resolvedKey": "console-defaults@dev",
+          "integrity": "sha256:pending"
+        }
+      ]
+    },
+    "omitPriming": false,
+    "selection": {
+      "harness": "codex",
+      "modelProvider": "openai-codex",
+      "model": "gpt-6.1-sol",
+      "reasoningEffort": "medium",
+      "presentation": true,
+      "provenance": {
+        "harness": "compile-request",
+        "modelProvider": "compile-request",
+        "model": "compile-request",
+        "reasoningEffort": "agent-profile",
+        "presentation": "compile-request"
+      }
+    },
+    "execution": {
+      "recipeId": "codex-app-server",
+      "driver": "codex-app-server",
+      "protocol": "harness-broker/0.2",
+      "hosting": {
+        "executionTransport": "jsonrpc-stdio",
+        "terminalRequired": true,
+        "terminalHost": "tmux",
+        "processExecution": "broker-process"
+      },
+      "presentationSurface": {
+        "transport": "websocket-unix",
+        "terminalHost": "tmux"
+      },
+      "presentationFulfillment": "attachable",
+      "profile": {
+        "profileId": "profile_0b05eb1b53ffd45c9790ce03c73c2a48",
+        "profileHash": "b2f08369a01eefb9806b66fbf7d3e67dc8669055b38f8aa702cb22fb04ebc572",
+        "compatibilityHash": "23ca057bfd979bf40e8deca994733ee48132164e77787998fc0996861bc423ea",
+        "startRequestHash": "2e65786d766f056b72a898a7bb43a7d8e181655b32a902343d2960afd0ee24d3"
+      },
+      "dispatchRequest": {
+        "startRequest": {
+          "spec": {
+            "specVersion": "harness-broker.invocation/v1",
+            "invocationId": "inv_T12163-true",
+            "harness": {
+              "frontend": "codex",
+              "provider": "openai",
+              "driver": "codex-app-server"
+            },
+            "process": {
+              "command": "/Users/lherron/.local/bin/codex",
+              "args": [
+                "--enable",
+                "goals",
+                "You are cody in agent-spaces working on . cody code rules the world. If this turn carries a message, act on it now; otherwise await instructions.\n\nVerify the codex compile contract.",
+                "--no-alt-screen",
+                "--model",
+                "gpt-6.1-sol",
+                "-c",
+                "model_reasoning_effort=\"medium\"",
+                "--ask-for-approval",
+                "never",
+                "--sandbox",
+                "danger-full-access",
+                "--dangerously-bypass-hook-trust"
+              ],
+              "cwd": "/Users/lherron/praesidium/var/scratch/agent-spaces/T-12163/project",
+              "lockedEnv": {
+                "CODEX_HOME": "/Users/lherron/praesidium/var/scratch/agent-spaces/T-12163/asp-home/codex-homes/agent-spaces_cody",
+                "AGENTCHAT_ID": "cody",
+                "ASP_PROJECT": "agent-spaces",
+                "ASP_HOME": "/Users/lherron/praesidium/var/scratch/agent-spaces/T-12163/asp-home",
+                "ASP_AGENT_ROOT": "/Users/lherron/praesidium/var/agents/cody",
+                "ASP_AGENT_NAME": "cody",
+                "ASP_AGENT_VAR_DIR": "/Users/lherron/praesidium/var/agents/cody/var",
+                "ASP_AGENT_STATE_DIR": "/Users/lherron/praesidium/var/agents/cody/var/state",
+                "ASP_AGENT_CACHE_DIR": "/Users/lherron/praesidium/var/agents/cody/var/cache",
+                "ASP_AGENT_LOG_DIR": "/Users/lherron/praesidium/var/agents/cody/var/logs",
+                "ASP_PROJECT_ROOT": "/Users/lherron/praesidium/var/scratch/agent-spaces/T-12163/project",
+                "ASP_PROJECT_ID": "agent-spaces_cody",
+                "ASP_PROJECT_STATE_DIR": "/Users/lherron/praesidium/var/agents/cody/var/state/projects/agent-spaces_cody"
+              },
+              "harnessTransport": {
+                "kind": "jsonrpc-stdio"
+              },
+              "limits": {
+                "startupTimeoutMs": 10000,
+                "turnTimeoutMs": 10000
+              }
+            },
+            "interaction": {
+              "mode": "interactive",
+              "turnConcurrency": "single",
+              "inputQueue": "fifo"
+            },
+            "driver": {
+              "kind": "codex-app-server",
+              "presentation": "codex-tui",
+              "transport": "websocket-unix",
+              "model": "gpt-6.1-sol",
+              "modelReasoningEffort": "medium",
+              "approvalPolicy": "never",
+              "sandboxMode": "danger-full-access",
+              "permissionPolicy": {
+                "mode": "deny"
+              },
+              "resumeFallback": "fail"
+            },
+            "correlation": {
+              "requestId": "request_T12163-true",
+              "hostSessionId": "host_T12163-true",
+              "operationId": "operation_T12163-true",
+              "runtimeId": "runtime_T12163-true",
+              "runId": "run_T12163-true",
+              "invocationId": "inv_T12163-true",
+              "traceId": "trace_T12163-true",
+              "scopeRef": "agent:cody:project:agent-spaces",
+              "laneRef": "main"
+            }
+          },
+          "initialInput": {
+            "inputId": "input_T12163-true",
+            "kind": "user",
+            "content": [
+              {
+                "type": "text",
+                "text": "You are cody in agent-spaces working on . cody code rules the world. If this turn carries a message, act on it now; otherwise await instructions.\n\nVerify the codex compile contract."
+              }
+            ]
+          }
+        }
+      }
+    },
+    "artifacts": {
+      "materializedBundleRoot": "/Users/lherron/praesidium/var/scratch/agent-spaces/T-12163/asp-home/codex-homes/agent-spaces_cody/bundles/.versions/4edad987cab1a3e61c8074d7dedec7b3971bf8e01e5c310483a4a81a933e15e5/cody/codex",
+      "systemPromptFile": "/Users/lherron/praesidium/var/scratch/agent-spaces/T-12163/asp-home/codex-homes/agent-spaces_cody/bundles/.versions/4edad987cab1a3e61c8074d7dedec7b3971bf8e01e5c310483a4a81a933e15e5/cody/codex/.asp-runtime-artifacts/system-prompts/a6/a685398562ea320f05da1989fad13360054e18039e03ab9ee364e1f96a05dbeb/system-prompt.md",
+      "bundleIdentity": "bundle:dea54d1e07563cd3"
+    },
+    "lockedEnv": {
+      "lockedEnvKeys": [
+        "AGENTCHAT_ID",
+        "ASP_AGENT_CACHE_DIR",
+        "ASP_AGENT_LOG_DIR",
+        "ASP_AGENT_NAME",
+        "ASP_AGENT_ROOT",
+        "ASP_AGENT_STATE_DIR",
+        "ASP_AGENT_VAR_DIR",
+        "ASP_HOME",
+        "ASP_PROJECT",
+        "ASP_PROJECT_ID",
+        "ASP_PROJECT_ROOT",
+        "ASP_PROJECT_STATE_DIR",
+        "CODEX_HOME"
+      ]
+    },
+    "diagnostics": [],
+    "planHash": "e5926205282ae41d3eb9beed13ca09082ba92a5903fa2c12bc484f51415328fa"
+  },
+  "sessionMetadata": {
+    "appearance.color": "#1F7A78",
+    "appearance.terminalBg": "#123635"
+  },
+  "diagnostics": [],
+  "effectiveEnvironmentHash": "42154169608c121b6c9eddd4170774f45eadad7abdf73ebab4231ace5d73eeb9"
+}
