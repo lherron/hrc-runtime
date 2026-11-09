@@ -17,7 +17,6 @@ Current reference for the HRC runtime. Design records live in
 
 ## Runtime and protocols
 
-- [harness-broker-substrate-spec.md](harness-broker-substrate-spec.md) — leased-tmux `harness-broker/0.2` substrate and the T-08690 v2 consumer amendment.
 - [lifecycle-event-tail.md](lifecycle-event-tail.md) — wire contract for `GET /v1/events/tail` bounded, cursor-fenced pages.
 - [monitor-spec.md](monitor-spec.md) — HRC monitor spec: output schema, selectors, and the never-guess-success condition engine.
 - [state-retention.md](state-retention.md) — retention policy for the live `state.sqlite` tables.
@@ -49,6 +48,7 @@ Current reference for the HRC runtime. Design records live in
 - [proposals/hrc-rust-parity.md](proposals/hrc-rust-parity.md) — native Rust parity r2: whole-node owner transfer, packages N0–N6 against current main, product-claim gates and explicitly unsupported cases (P-00866).
 - [proposals/hrc-rust-migration.md](proposals/hrc-rust-migration.md) — proposal: port HRC to Rust embedding cardo-runtime (delivered kernel/facades, isolated native parity, cohesive owner transfer; retirement separately gated); consolidation deferred (P-00862).
 - aspd preparation integration — historical spec and rollout acceptance (T-08542 through T-08562, T-08690 v2 amendment) on completed T-08542, attachment ATT-00428 (`prae task attachment get ATT-00428 --output-file <path>`); shipped authority is the `hrc-runtime.aspd-prepared-execution-release` and `hrc-runtime.asp-toolchain-selection` invariants.
+- Harness broker substrate spec — historical T-01862 leased-tmux `harness-broker/0.2` implementation spec with the T-08690 v2 cutover amendment, on completed T-01862, attachment ATT-00429 (`prae task attachment get ATT-00429 --output-file <path>`); hosting has since moved on (interactive seats on `leased-hrcpty`, headless on aspd-owned `external`), and shipped authority is the `hrc-runtime.aspd-prepared-execution-release` and `hrc-runtime.asp-toolchain-selection` invariants.
 - Viewer extraction design — historical approved rev 3 on completed T-07595 (sidecar build and production validation), attachment ATT-00414 (`wrkq attach get ATT-00414 -o <path>`); shipped authority lives in [the viewer invariant](../architecture/records/invariants/hrc-runtime.viewer-presentation-sidecar.yaml).
 
 ## Policy and process

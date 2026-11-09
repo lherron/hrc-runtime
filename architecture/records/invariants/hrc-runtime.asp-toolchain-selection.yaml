@@ -60,7 +60,7 @@ source:
   - wrkq:T-08690
   - wrkq:T-09274
   - wrkq:T-08542
-  - docs/harness-broker-substrate-spec.md
+  - wrkq:T-01862
   - architecture/records/invariants/hrc-runtime.aspd-prepared-execution-release.yaml
   - architecture/records/invariants/hrc-runtime.declaration-observation-consumer.yaml
   - packages/hrc-server/src/agent-spaces-adapter/aspd-preparation-client.ts
