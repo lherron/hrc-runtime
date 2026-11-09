@@ -8,9 +8,13 @@ composes this skill; anyone can run it by hand the same way. Adapted from Foundr
 **Edit scope:** this skill directory (the feature files, SKILL.md, this file, `hv`). No product code. A product
 defect becomes an hrc-runtime task.
 
-**The last pass** is the newest `verify.upkeep` fact's `head` (`prae project timeline hrc-runtime --type
-verify.upkeep --limit 50 --json | jq -r '.result.entries[-1].projectEvent.attributes.head'`; entries are oldest
-first), or, when there is none, the skill's first commit (`git log --reverse --format=%H --
+**The last pass** is the newest `verify.upkeep` fact's `head`. `prae project timeline` reads one container, and
+the facts sit in two (the project root up to T-12291, `hrc-runtime/verify-upkeep` for T-12756), so read both
+and take the newest:
+`for c in hrc-runtime hrc-runtime/verify-upkeep; do prae project timeline $c --type verify.upkeep --limit 50 --json
+| jq -r '.result.entries[].projectEvent | [.occurredAt, .attributes.head] | @tsv'; done | sort | tail -1`
+(the project-wide `~/.local/bin/wrkp log hrc-runtime --type verify.upkeep --limit 1 --json`, fitkit's reader, agrees),
+or, when there is none, the skill's first commit (`git log --reverse --format=%H --
 spaces/verify-hrc-runtime | head -1`). Every "since the last pass" below means `<that sha>..HEAD`.
 
 **Evidence** goes under the pass task's `artifact_dir` (`~/praesidium/var/wrkq-artifacts/<task>/`), laid out as
@@ -94,13 +98,15 @@ attributes are the `consumes` block of fitkit's `verify-upkeep@2` (`foundry dire
 finish time:
 
 ```bash
-prae project fact post hrc-runtime --type verify.upkeep --action-id verify-upkeep:<task> --task <task> \
+prae project fact post hrc-runtime --type verify.upkeep --action-id verify-upkeep:<task> \
   --summary "verify-hrc-runtime upkeep <task>: <outcome>" \
   --attr outcome=<clean|changed|blocked> --attr features=<n> --attr driven=<n> --attr head=<sha> --attr task=<task> --json
 prae project fact get <uuid from the post> --json          # read it back
 ```
 
-The action id makes a repeated post one fact (replay returns the same uuid, `created: false`). The fitkit
+The action id makes a repeated post one fact (replay returns the same uuid, `created: false`). Leave out
+`--task`: it files the fact under the task's container (`hrc-runtime/verify-upkeep`), which the root timeline
+does not list; the `task` attribute already names the pass. The fitkit
 producer line still names `wrkp post … --key verify-upkeep:<task>`; `wrkp` is not on a prae seat's PATH
 (2026-11-09, T-12756), and the prae post carries the same type, attributes and key. Then complete the task (or leave it open only when it is blocked, and
 say on what).
