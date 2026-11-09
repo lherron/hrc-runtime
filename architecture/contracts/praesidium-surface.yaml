@@ -37,6 +37,31 @@ predicate: >
   and genuine owner read-through DTOs retain their owner contract.
   Persisted projections upgrade while unavailable-source snapshots remain
   readable and visibly stale. No HRC owner-to-kernel dependency is added.
+  T-12771 r2 keeps scopeRef as the seat natural key and makes HRC the
+  producer of session home classification. One HRC resolver supplies
+  home with state local, foreign, unbound or unknown and nodeId naming
+  the home or null. Session records on sessions/page, sessions/get and
+  the presentation reads carry this value independently of runtime presence,
+  for both local and peer kernel bindings. An active local placement row
+  naming this node is local; without active local authority, the existing
+  locate resolver identifies a foreign binding. Absent ledger and registry
+  binding is unbound; unreadable authority is unknown. Ledger commits and
+  registry-binding writes invalidate the authority cache.
+  Walk and event runs publish no seat, generation or runtime upsert for
+  a foreign session. They explicitly remove the scope's seat and the
+  generation and runtime nodes they would have upserted, using Cardo's
+  binding-owned removal semantics at 6c06622; they do not depend on expiry
+  or periodic walks. A previously published unknown copy is retired by
+  the first run that sees foreign authority. Local, unbound and unknown
+  sessions retain existing publication behavior. Each binding exposes
+  foreign sessions as offHomeSessions with scopeRef, laneRef, hostSessionId
+  and homeNodeId in ingest.status. This observation grants no placement
+  authority. Participant join refuses a scope bound to another node with
+  foreign_scope and homeNodeId before registration, under the existing
+  participant-session-lifecycle home boundary. Unbound participant registration
+  is unchanged and outside this amendment. Ledger split-brain, ordered
+  retirement versus participant-registration races, registry-staleness windows
+  and cleanup of off-window legacy duplicates are explicitly unsupported.
   Discovery ownerContract and prae guidance derive from the same catalog,
   including argument-selected owner, fence and reconciliation variants
   and replay meaning. Type writable capabilities summarize owner writes
@@ -102,7 +127,17 @@ authority: >
   Mable's measured work. This supersedes the earlier whole-surface scope,
   cross-node summon/interrupt extension and five non-terminate owner guards;
   the owner-forwarding boundary and remaining approval stand.
+  T-12771 specification r2, etag 5, submitted in EN-48405 and approved by
+  Daedalus on 2026-11-09, adds session home classification and binding-local
+  retirement of foreign projections without changing seat identity.
 source:
+  - wrkq:T-12771
+  - wrkc:EN-48405
+  - architecture/records/invariants/hrc-runtime.federated-session-read.yaml
+  - architecture/records/invariants/hrc-runtime.participant-session-lifecycle.yaml
+  - crates/hrc-native/src/server/placement/federation/mod.rs
+  - crates/hrc-native/src/server/placement/federation/peer_listener.rs
+  - crates/hrc-native/src/server/broker/participants/mod.rs
   - wrkq:T-12245
   - wrkq:T-12662
   - wrkc:EN-45074
@@ -122,6 +157,9 @@ validation_scope: >
   establishes no implementation, installation, activation or product acceptance.
   T-12662 etag 7 replacement, authority and legacy-compatibility acceptance
   remain the requester's work. The operator extension adds no product gate.
+  T-12771 r2 isolated peer-collision, unknown-to-foreign event retirement,
+  participant refusal, regression and installed fleet acceptance remain
+  the requester's work; this is design approval only.
 last_verified: >
   2026-11-04 design read of f84658c7 and its two-line F1 correction;
   source read of kernel ca2756b project key emission, canonical agent
@@ -141,7 +179,18 @@ reopen_when: >
   credential-free compatibility, credential-discovery support scope, restart
   authority, peer-control routing, exclusions or the supported caller model
   changes.
+  Reopen the home-classification amendment when its producer routes,
+  authority precedence, cache invalidation, foreign projection retirement,
+  scope-only seat identity or explicit support boundary changes.
 design_review: >
+  2026-11-09 T-12771 r2, etag 5, APPROVE in reply to EN-48405. Read the
+  revised spec, HRC locate authority and participant join, session and
+  presentation routes, kernel local and peer walk/event read paths, retained
+  feed semantics and Cardo's current-source removal filter and child-first
+  removal ordering. R2 resolves F1 by carrying authority on all session read
+  paths and F2 by explicit retirement in event and walk runs. No build,
+  test, install, restart or live mutation was run for this review; prior
+  last_verified evidence is unchanged.
   2026-11-05 T-12662 specification etag 4 APPROVE, EN-47463. Source read of
   prae credential discovery and write dispatch, the bridge's optional-header
   forwarding, HRC local literal-input and terminate resolution, claim-start
