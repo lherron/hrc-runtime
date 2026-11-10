@@ -211,8 +211,9 @@ pub fn mark_stale(db: &Connection, rt: &db::Rt, payload: &Value) -> Result<()> {
         &now,
         "disposed",
         &format!(
-            "runtime {} is stale after startup reconciliation",
-            rt.runtime_id
+            "runtime {} is stale: {}",
+            rt.runtime_id,
+            payload["reason"].as_str().unwrap_or("reconcile_not_live")
         ),
     )?;
     let mut state = rt.state_object();
@@ -344,7 +345,7 @@ pub async fn reconcile_liveness(server: &Server, runtime_id: &str) -> Result<()>
         return Ok(());
     }
     if let Some((socket, pid)) = supervisor {
-        return hrcpty_liveness(server, &rt, &socket, pid).await;
+        return hrcpty_liveness(server, &rt, &socket, pid).await.map(|_| ());
     }
     let Some(socket) = socket_path(&rt) else {
         return not_live(
@@ -422,26 +423,26 @@ pub(crate) async fn hrcpty_status(socket: &std::path::Path, pid: Option<i64>) ->
 /// An hrcpty seat is live while its supervisor answers `hello` as the
 /// recorded pid, still runs the broker and, for a Claude seat, still runs
 /// Claude; otherwise it is stale and its lease ends (§4.6).
-async fn hrcpty_liveness(
+pub(crate) async fn hrcpty_liveness(
     server: &Server,
     rt: &db::Rt,
     socket: &std::path::Path,
     pid: Option<i64>,
-) -> Result<()> {
+) -> Result<bool> {
     let status = hrcpty_status(socket, pid).await;
     let Some(reason) = hrcpty_dead_reason(rt, status.as_ref()) else {
-        return Ok(());
+        return Ok(false);
     };
     // An unanswered `status` from a supervisor that still runs as this
     // socket's hrc-pty is a slow probe, not death (T-12536).
-    if status.is_none() && pid.is_some_and(|p| hrcpty::identified_by_pid(p, socket)) {
+    if status.is_none() && hrcpty::identify(socket, pid).await.is_some() {
         super::stderr_json(
             "warn",
             "broker",
             "broker.hrcpty_liveness_inconclusive",
             json!({"runtimeId":rt.runtime_id,"socketPath":socket,"supervisorPid":pid}),
         );
-        return Ok(());
+        return Ok(false);
     }
     let payload = json!({"runtimeId":rt.runtime_id,"socketPath":socket,"supervisorPid":pid,"supervisorLive":status.is_some(),"child":status.as_ref().map(|s| s["child"].clone()),"reason":reason});
     not_live(server, &rt.runtime_id, payload.clone())?;
@@ -456,7 +457,7 @@ async fn hrcpty_liveness(
             json!({"payload":payload,"error":error.to_string()}),
         );
     }
-    Ok(())
+    Ok(true)
 }
 
 /// reapBrokerTmuxLease: tear a user-exited lease down once per runtime.

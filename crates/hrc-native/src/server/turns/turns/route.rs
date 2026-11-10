@@ -5,7 +5,7 @@ use super::admission::{Plan, unavailable};
 use crate::server::{
     ApiError, Shared, broker,
     controller::{self, submit::Submit},
-    lease,
+    hrcpty, lease,
     projection::{db, events, turns as projected},
 };
 use axum::http::StatusCode;
@@ -586,6 +586,11 @@ async fn live_unbound(server: &Shared, host: &str) -> Result<Option<db::Rt>, Api
     let Some(rt) = latest.filter(|r| r.status != "terminated") else {
         return Ok(None);
     };
+    if let Some((socket, pid)) = hrcpty::substrate(&rt)
+        && lease::hrcpty_liveness(server, &rt, &socket, pid).await?
+    {
+        return Ok(None);
+    }
     Ok(controller::runtime_broker_answers(server, &rt)
         .await
         .then_some(rt))

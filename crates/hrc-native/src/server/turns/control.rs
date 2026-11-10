@@ -448,7 +448,11 @@ pub async fn terminate(server: &Shared, body: Value) -> Result<Response, ApiErro
             "disposition",
         ));
     }
-    let rt = if external { known } else { available(known)? };
+    let rt = if !external && known.status == "terminated" {
+        available(known)?
+    } else {
+        known
+    };
     if let Some(owner) = action.owner_run_id.as_deref().filter(|_| !external) {
         let protected = {
             let db = server.store.lock().unwrap();

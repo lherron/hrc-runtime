@@ -366,9 +366,8 @@ pub fn substrate(rt: &db::Rt) -> Option<(PathBuf, Option<i64>)> {
 }
 
 /// Follow the supervisor's `events` stream for the runtime's lease. A
-/// `child.exited` is recorded on the runtime and the lease is kept (§4.6
-/// remain-on-exit); a `broker.exited` is logged and recorded, and the b.sock
-/// close it causes takes the existing crash path (no respawn).
+/// Exit is recorded on the runtime. An in-flight turn is reconciled through
+/// lease liveness immediately; an idle child exit keeps remain-on-exit.
 pub fn watch(server: &Shared, runtime_id: &str, socket: &Path) {
     let server = server.clone();
     let runtime_id = runtime_id.to_owned();
@@ -416,6 +415,13 @@ async fn follow(server: &Shared, runtime_id: &str, socket: &Path) -> Result<()> 
             json!({"runtimeId":runtime_id,"exit":frame["params"]}),
         );
         record(server, runtime_id, key, &frame["params"])?;
+        let active = {
+            let db = server.store.lock().unwrap();
+            db::runtime(&db.sqlite, runtime_id)?.is_some_and(|rt| rt.active_run_id.is_some())
+        };
+        if active {
+            super::lease::reconcile_liveness(server, runtime_id).await?;
+        }
     }
     Ok(())
 }

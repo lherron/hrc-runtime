@@ -792,10 +792,6 @@ pub async fn hrcpty_aging(server: &super::Shared) -> std::result::Result<Value, 
             }
             Ok(reason) => reason,
         };
-        if let Some(reason) = reason {
-            *skipped.entry(reason.into()).or_default() += 1;
-            continue;
-        }
         let rt = {
             let db = server.store.lock().unwrap();
             super::projection::db::runtime(&db.sqlite, id)?
@@ -821,7 +817,11 @@ pub async fn hrcpty_aging(server: &super::Shared) -> std::result::Result<Value, 
             continue;
         }
         if super::lease::hrcpty_dead_reason(&rt, status.as_ref()).is_none() {
-            live += 1;
+            if let Some(reason) = reason {
+                *skipped.entry(reason.into()).or_default() += 1;
+            } else {
+                live += 1;
+            }
             continue;
         }
         if let Err(e) = super::lease::reconcile_liveness(server, id).await {
