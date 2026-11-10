@@ -75,7 +75,7 @@ Deleted entries stay listed to explain their removal; their source remains in gi
 | `broker_projection_failure.py` | Owner projection failure preserves a live hrc-pty runtime and credential, reports degradation and recovers; real broker exit crash-marks; transport-only close with running broker averts condemnation (T-12169). | keep-manual |
 | `error_wire.py` | T-13074 List: follow-on conversion; not native-qualified. 422 assertion retained; product-blocked capability admission. | list |
 | `ensure_archived_successor.py` | Native archived succession: generation, inherited intent/continuation, repeat identity and continuity. | keep-manual |
-| `front_door_report.py` | none — task-time acceptance measurement for completed T-11822; front_door.py retains the behavioral gate | delete |
+| `front_door_report.py` | none — task-time acceptance measurement for completed T-11822; the front proxy is now retired (T-13074) | delete |
 | `lifecycle_actions.py` | T-13074 List: follow-on conversion; not native-qualified.  | list |
 | `lifecycle_credentials.py` | Native real-runtime credential rotation, file protection, authorization refusals and revocation. | keep-manual |
 | `lifecycle_peer.py` | T-13074 List: follow-on conversion; not native-qualified.  | list |

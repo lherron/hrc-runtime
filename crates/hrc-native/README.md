@@ -258,17 +258,15 @@ running from the actual atomic release tree can prune shared releases even
 when runtime/state roots are isolated. The copy must report `unmanaged`, emit
 no `server.start.release_prune`, and leave the shared release list unchanged.
 
-The real birth/replacement workflow runs in a clean ghostmux terminal with an
-explicit named copied Bun release and the shared aspd socket. It requires a fresh
-scratch root, creates its own project and ledger, and cleans only its own broker
-leases. It verifies native birth and projection, native restart ownership, and
-a second completed prompt on the same seat under Bun:
+Native cold birth, restart and retained-seat ownership are exercised by
+`e2e/n2_restart.py` and `e2e/hrcpty_substrate.py`. The substrate drive uses a
+private compiler and deterministic broker, needs no model credentials, and
+cleans its own runtime/store/process roots:
 
 ```
-python3 crates/hrc-native/e2e/cold_birth.py --binary crates/target/debug/rusthrc \
-  --bun-release /tmp/hrcn1-T11818/bun-release/release-20261025170058436-58302 \
-  --aspd-socket /Users/lherron/praesidium/var/aspd/run/aspd.sock \
-  --scratch-root /tmp/hrcn1-fresh --artifacts /tmp/hrcn1-results
+python3 crates/hrc-native/e2e/hrcpty_substrate.py \
+  --binary crates/target/aarch64-apple-darwin/debug/rusthrc \
+  --root /tmp/hrc-substrate --artifacts /tmp/hrc-substrate-evidence
 ```
 
 The separate-state Bun proxy is retired. `--bun-socket` and `--front` are
