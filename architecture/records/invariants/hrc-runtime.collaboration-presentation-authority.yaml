@@ -19,11 +19,13 @@ predicate: >
   failed:ignored follow turn terminals observed for the presented runtime, run
   or no run, and failed:runtime_terminated follows that runtime's termination.
   A submission permits body retry only on correlated positive evidence that it
-  was not written or that this exact input was removed. Broker queue withdrawal
-  or expiry qualifies only before driver application; native recall qualifies
-  only when it proves removal of this exact input.
+  was not written or that this exact input was removed. A broker queue
+  withdrawal qualifies only when the broker reports removing this exact
+  submission before driver application; native recall qualifies only when it
+  proves removal of this exact input.
   Rejection reasons, acceptance, missing identity, RPC failure, post-write
-  cancellation or loss, runtime termination, teardown and TTL do not prove that.
+  cancellation or loss, runtime termination, teardown, queue expiry and TTL do
+  not prove that.
   Possible-write ambiguity retains the durable intent without body reinjection,
   presentation, or nonlanding strikes. A possibly_written input.rejected is
   diagnostic and remains eligible for later consumption evidence; absent
