@@ -1,0 +1,74 @@
+id: hrc-runtime.participant-host-requested
+kind: contract
+status: active
+owner_project: hrc-runtime
+scope: participant demand observation and display-only parked reservation disposition
+predicate: >
+  HRC reports demand for a participant host through participant.host_requested
+  in its canonical hrc_events ledger. HRC never starts, signals or calls the
+  host in response; the host observes the existing bounded event stream and
+  owns its response. A knock guarantees neither a host response nor delivery,
+  and does not change the mail kicker's retry budget.
+  One store predicate identifies a not-serving host at a scope and lane:
+  the reservation is held and the address's registration has no attempt,
+  or its latest attempt is SUPERSEDED, ABANDONED or TERMINAL, or its latest
+  attempt is not ACTIVE and establishment work is exhausted. Binding state
+  is not this predicate: external eviction can leave the binding BOUND.
+  ACTIVE and still-establishing hosts do not qualify. Pending refusals,
+  released reservations and absent reservations produce no knock.
+  The refusal points use one helper: participant delivery resolution for
+  retained-session turn admission, participant_substitution for a lazy
+  target, and assert_reserved_address_allows_birth for target ensure and
+  both resume checks. A later refusal point for a held address uses the
+  same helper. On a qualifying refusal HRC appends participant.host_requested
+  with payload scopeRef, laneRef, reservationId, door and requestedAt. Door
+  is turn, turn-lazy, ensure or resume. The event carries no session or
+  runtime and changes no session activity or runtime state. An in-memory
+  limit admits at most one knock per reservation per thirty seconds; restart
+  may admit an extra. Append failure is logged and preserves the refusal.
+  All refusals retain their status, code, reason and retryability.
+  A host reads eventKind=participant.host_requested on
+  GET /v1/events/bounded-stream and persists afterSeq with the ledger
+  incarnation under hrc-runtime.bounded-lifecycle-event-observation. Old-knock
+  disposition belongs to the host. Knock/register ordering and exactly-once
+  observation are not promised. Literal input to a terminated runtime and
+  unknown-runtime refusals that never consult registration are outside this
+  knock contract.
+  POST /v1/terminate accepts optional disposition parked only for an external
+  lifecycle owner on the evict_external path. Other terminates carrying it
+  refuse as invalid before termination. The disposition and its time are
+  recorded on the reservation belonging to the evicted runtime's binding;
+  repeating that eviction records the same thing. A newly admitted
+  registration attempt for the reservation clears both. The target read
+  exposes the disposition and refusal text at the three refusal points
+  reports parked. The two nullable reservation columns are a forward Rust
+  migration. This is display-only: eviction, continuation, binding retention,
+  explicit reservation release and knock behavior are unchanged. Kernel and
+  board projections are outside this contract.
+authority: Daedalus approval of T-13086 specification r2 submitted in wrkc:EN-49738, 2026-11-10; supersedes rejected r1 proposal in EN-49735 without changing its underlying participant lifecycle law
+source:
+  - wrkq:T-13086
+  - wrkc:EN-49738
+  - architecture/records/invariants/hrc-runtime.participant-session-lifecycle.yaml
+  - architecture/records/invariants/hrc-runtime.bounded-lifecycle-event-observation.yaml
+  - crates/hrc-native/src/server/turns/control.rs
+  - crates/hrc-native/src/server/broker/participants/delivery.rs
+  - crates/hrc-native/src/server/turns/turns/admission.rs
+  - crates/hrc-native/src/server/turns/turns/mod.rs
+  - crates/hrc-native/src/server/placement/federation/summon.rs
+  - crates/hrc-store/src/participants.rs
+  - crates/hrc-store/src/participants/succession.rs
+  - crates/hrc-store/src/targets.rs
+  - crates/hrc-store/src/lib.rs
+  - crates/hrc-store/src/events.rs
+  - crates/hrc-native/src/server/projection/streams.rs
+validation_scope: >
+  The requester's r2 gates cover actual external retirement with its retained
+  BOUND binding, each refusal door independently, suppression controls and
+  rate limiting without session activity changes; live and restart replay
+  through the kind-filtered bounded stream; parked display, clearing on new
+  admission and rejection on HRC-owned termination; and installed scratch
+  participant observation through a real mail delivery attempt. This is
+  design approval, not evidence that any gate has passed.
+last_verified: 2026-11-10 r2 source-grounded design review; implementation and acceptance pending, no builds or tests run by the reviewer
+reopen_when: Knock eligibility or refusal coverage, event payload or attribution, rate limit, refusal preservation, host-start authority, parked disposition ownership or clearing, or the existing stream contract changes.
