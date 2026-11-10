@@ -75,6 +75,19 @@ pub(super) fn filters(q: &HashMap<String, String>) -> Result<HashMap<String, Str
             ));
         }
     }
+    // T-13244: liveOnly drops retained rows; false is the default read.
+    match normalized(&q, "liveOnly") {
+        None | Some("true") => {}
+        Some("false") => {
+            q.remove("liveOnly");
+        }
+        Some(raw) => {
+            return Err(ApiError::bad(
+                "liveOnly must be true or false",
+                Some(json!({"field":"liveOnly","value":raw})),
+            ));
+        }
+    }
     if let Some(raw) = normalized(&q, "generation") {
         let n = number(raw)
             .filter(|v| v.is_finite() && v.fract() == 0.0 && *v >= 0.0 && *v < i64::MAX as f64)
@@ -157,6 +170,12 @@ pub fn handle(
                 Some(json!({"field":"ledgerIncarnationId"})),
             ));
         }
+        // T-13244: exclusive lower bound; the newest `limit` rows above it.
+        let after = if normalized(q, "afterSeq").is_some() {
+            integer(q, "afterSeq", 0)?
+        } else {
+            -1
+        };
         let q = filters(q)?;
         let db = server.store.lock().unwrap();
         let tx = db
@@ -165,7 +184,14 @@ pub fn handle(
             .map_err(anyhow::Error::from)?;
         let incarnation = fence(&db, &q)?;
         let head = db.max_hrc_seq()?;
-        let mut rows = db.event_history(&q, 0, before, Some(limit + 1), true, true)?;
+        let mut rows = db.event_history(
+            &q,
+            after.saturating_add(1),
+            before,
+            Some(limit + 1),
+            true,
+            true,
+        )?;
         let truncated = rows.len() > limit as usize;
         rows.truncate(limit as usize);
         rows.reverse();

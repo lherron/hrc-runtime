@@ -196,6 +196,39 @@ pub fn list(server: &Server, q: &HashMap<String, String>) -> Result<Response, Ap
         ));
         values.extend(status.into_iter().map(Sql::Text));
     }
+    // T-13244: time windows compare stored text, as ACP's SQL does.
+    for (key, predicate) in [
+        ("acceptedSince", "accepted_at >= ?"),
+        ("acceptedBefore", "accepted_at < ?"),
+        ("completedSince", "completed_at >= ?"),
+    ] {
+        if let Some(v) = normalized(q, key) {
+            predicates.push(predicate.into());
+            values.push(Sql::Text(v.into()));
+        }
+    }
+    match normalized(q, "open") {
+        None => {}
+        Some("true") => predicates.push("completed_at IS NULL".into()),
+        Some(raw) => {
+            return Err(ApiError::bad(
+                "open accepts only true; omit it to include completed runs",
+                Some(json!({"field":"open","value":raw})),
+            ));
+        }
+    }
+    let order = match normalized(q, "order") {
+        None | Some("updatedAt") => {
+            "updated_at DESC, COALESCE(completed_at, started_at, accepted_at, updated_at) DESC, run_id DESC"
+        }
+        Some("completedAt") => "completed_at DESC, run_id DESC",
+        Some(raw) => {
+            return Err(ApiError::bad(
+                "order must be updatedAt or completedAt",
+                Some(json!({"field":"order","value":raw})),
+            ));
+        }
+    };
     values.push(Sql::Integer(limit.unwrap_or(100)));
     let filter = if predicates.is_empty() {
         String::new()
@@ -205,7 +238,9 @@ pub fn list(server: &Server, q: &HashMap<String, String>) -> Result<Response, Ap
     let db = server.store.lock().unwrap();
     let mut stmt = db
         .sqlite
-        .prepare(&format!("SELECT * FROM runs {filter} ORDER BY updated_at DESC, COALESCE(completed_at, started_at, accepted_at, updated_at) DESC, run_id DESC LIMIT ?"))
+        .prepare(&format!(
+            "SELECT * FROM runs {filter} ORDER BY {order} LIMIT ?"
+        ))
         .map_err(anyhow::Error::from)?;
     let rows = stmt
         .query_map(rusqlite::params_from_iter(values), run_json)

@@ -477,8 +477,8 @@ pub fn event_row(r: &Row<'_>) -> rusqlite::Result<Value> {
             ("replayed", "replayed"),
         ],
     )?;
-    if opt(r, "evidence_origin")?.as_deref() == Some("retained") {
-        v["evidenceOrigin"] = "retained".into();
+    if let Some(origin) = opt(r, "evidence_origin")? {
+        v["evidenceOrigin"] = origin.into();
     }
     // Corrupt JSON reads as an absent payload, like parseJson.
     let payload = parse_json(opt(r, "payload_json")?);

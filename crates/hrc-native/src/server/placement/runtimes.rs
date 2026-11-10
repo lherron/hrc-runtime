@@ -303,6 +303,19 @@ pub fn query(
         clause.push("host_session_id=?");
         values.push(host.to_owned());
     }
+    // T-13244: exact selectors, compared to the stored columns as ACP's SQL
+    // does. `scope` stays the prefix selector.
+    let exact = [
+        ("runtimeId", "runtime_id=?"),
+        ("scopeRef", "scope_ref=?"),
+        ("laneRef", "lane_ref=?"),
+    ];
+    for (key, predicate) in exact {
+        if let Some(v) = optional(q, key) {
+            clause.push(predicate);
+            values.push(v.to_owned());
+        }
+    }
     if let Some(scope) = optional(q, "scope") {
         // The range reaches idx_runtimes_scope_ref; substr stays the authority.
         clause.push("scope_ref >= ? AND scope_ref < ? AND substr(scope_ref,1,length(?))=?");
@@ -336,6 +349,9 @@ pub fn query(
             && transport.is_none_or(|v| r["transport"] == v)
             && (statuses.is_empty() || statuses.iter().any(|s| r["status"] == *s))
             && optional(q, "hostSessionId").is_none_or(|v| r["hostSessionId"] == v)
+            && exact
+                .iter()
+                .all(|(key, _)| optional(q, key).is_none_or(|v| r[*key] == v))
             && optional(q, "scope")
                 .is_none_or(|v| r["scopeRef"].as_str().is_some_and(|s| s.starts_with(v)))
             && optional(q, "agent").is_none_or(|v| r["identity"]["agentId"] == v)

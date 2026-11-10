@@ -428,12 +428,15 @@ fn resolve_stream_selector(
             "runId",
             "category",
             "eventKind",
+            "fromTs",
+            "toTs",
+            "liveOnly",
         ] {
             if let Some(value) = events::normalized(&q, field) {
-                selector[field] = if field == "generation" {
-                    json!(value.parse::<i64>().unwrap())
-                } else {
-                    json!(value)
+                selector[field] = match field {
+                    "generation" => json!(value.parse::<i64>().unwrap()),
+                    "liveOnly" => json!(true),
+                    _ => json!(value),
                 };
             }
         }

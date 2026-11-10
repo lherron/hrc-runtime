@@ -223,6 +223,18 @@ fn field_predicates(
         predicates.push("generation = ?".into());
         values.push(Sql::Integer(value.trim().parse()?));
     }
+    // T-13244: inclusive ts bounds compare stored text, as ACP's SQL does.
+    for (key, op) in [("fromTs", ">="), ("toTs", "<=")] {
+        if let Some(value) = query.get(key).filter(|s| !s.trim().is_empty()) {
+            predicates.push(format!("ts {op} ?"));
+            values.push(Sql::Text(value.trim().to_owned()));
+        }
+    }
+    // T-13244: live rows only. Retained history keeps its old ts under a
+    // fresh hrc_seq, so seq and ts readers must be able to drop it.
+    if query.get("liveOnly").map(|s| s.trim()) == Some("true") {
+        predicates.push("evidence_origin IS NULL".into());
+    }
     Ok(())
 }
 
