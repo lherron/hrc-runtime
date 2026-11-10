@@ -76,19 +76,6 @@
         "typescript": "^5.8.3",
       },
     },
-    "packages/hrc-store-sqlite": {
-      "name": "hrc-store-sqlite",
-      "version": "0.1.0",
-      "dependencies": {
-        "agent-scope": "latest",
-        "ajv": "^8.20.0",
-        "hrc-core": "*",
-      },
-      "devDependencies": {
-        "@types/bun": "1.3.14",
-        "typescript": "^5.8.3",
-      },
-    },
     "packages/hrc-turn-attention": {
       "name": "hrc-turn-attention",
       "version": "0.1.0",
@@ -133,8 +120,6 @@
 
     "agent-scope": ["agent-scope@0.1.1-dev.20261105142018", "http://mini:4873/agent-scope/-/agent-scope-0.1.1-dev.20261105142018.tgz", {}, "sha512-b6k7Uu4VbCn3pr36/DQRFiBAYeioaSYc1XcFF4OhohEOdEA+/m6Tw4NcxgoyxxMvf/UCgvrDiR6AF22cklyIqg=="],
 
-    "ajv": ["ajv@8.20.0", "http://mini:4873/ajv/-/ajv-8.20.0.tgz", { "dependencies": { "fast-deep-equal": "^3.1.3", "fast-uri": "^3.0.1", "json-schema-traverse": "^1.0.0", "require-from-string": "^2.0.2" } }, "sha512-Thbli+OlOj+iMPYFBVBfJ3OmCAnaSyNn4M1vz9T6Gka5Jt9ba/HIR56joy65tY6kx/FCF5VXNB819Y7/GUrBGA=="],
-
     "bun-types": ["bun-types@1.3.14", "http://mini:4873/bun-types/-/bun-types-1.3.14.tgz", { "dependencies": { "@types/node": "*" } }, "sha512-4N0ig0fEomHt5R0KCFWjovxow98rIoRwKolrYdCcknNwMekCXRnWEUvgu5soYV8QXtVsrUD8B95MBOZGPvr6KQ=="],
 
     "cli-kit": ["cli-kit@0.1.1-dev.20261105142018", "http://mini:4873/cli-kit/-/cli-kit-0.1.1-dev.20261105142018.tgz", { "dependencies": { "commander": "^14.0.0" } }, "sha512-3BYSvjPfQI4aIKEeF3xqiu8quSHnSk9Y1H3irB23kCJqp7puL79gnCJtVf2Jpric6foin+CiNo1yjF70OHsR2A=="],
@@ -142,10 +127,6 @@
     "commander": ["commander@14.0.3", "http://mini:4873/commander/-/commander-14.0.3.tgz", {}, "sha512-H+y0Jo/T1RZ9qPP4Eh1pkcQcLRglraJaSLoyOtHxu6AapkjWVCy2Sit1QQ4x3Dng8qDlSsZEet7g5Pq06MvTgw=="],
 
     "diff": ["diff@7.0.0", "http://mini:4873/diff/-/diff-7.0.0.tgz", {}, "sha512-PJWHUb1RFevKCwaFA9RlG5tCd+FO5iRh9A8HEtkmBH2Li03iJriB6m6JIN4rGz3K3JLawI7/veA1xzRKP6ISBw=="],
-
-    "fast-deep-equal": ["fast-deep-equal@3.1.3", "http://mini:4873/fast-deep-equal/-/fast-deep-equal-3.1.3.tgz", {}, "sha512-f3qQ9oQy9j2AhBe/H9VC91wLmKBCCU/gDOnKNAYG5hswO7BLKj09Hc5HYNz9cGI++xlpDCIgDaitVs03ATR84Q=="],
-
-    "fast-uri": ["fast-uri@3.1.2", "http://mini:4873/fast-uri/-/fast-uri-3.1.2.tgz", {}, "sha512-rVjf7ArG3LTk+FS6Yw81V1DLuZl1bRbNrev6Tmd/9RaroeeRRJhAt7jg/6YFxbvAQXUCavSoZhPPj6oOx+5KjQ=="],
 
     "hrc-core": ["hrc-core@workspace:packages/hrc-core"],
 
@@ -155,11 +136,7 @@
 
     "hrc-sdk": ["hrc-sdk@workspace:packages/hrc-sdk"],
 
-    "hrc-store-sqlite": ["hrc-store-sqlite@workspace:packages/hrc-store-sqlite"],
-
     "hrc-turn-attention": ["hrc-turn-attention@workspace:packages/hrc-turn-attention"],
-
-    "json-schema-traverse": ["json-schema-traverse@1.0.0", "http://mini:4873/json-schema-traverse/-/json-schema-traverse-1.0.0.tgz", {}, "sha512-NM8/P9n3XjXhIZn1lLhkFaACTOURQXjWhV4BA/RnOv8xvgqtqpAX9IO4mRQxSx1Rlo4tqzeqb0sOlruaOy3dug=="],
 
     "lefthook": ["lefthook@2.1.10", "http://mini:4873/lefthook/-/lefthook-2.1.10.tgz", { "optionalDependencies": { "lefthook-darwin-arm64": "2.1.10", "lefthook-darwin-x64": "2.1.10", "lefthook-freebsd-arm64": "2.1.10", "lefthook-freebsd-x64": "2.1.10", "lefthook-linux-arm64": "2.1.10", "lefthook-linux-x64": "2.1.10", "lefthook-openbsd-arm64": "2.1.10", "lefthook-openbsd-x64": "2.1.10", "lefthook-windows-arm64": "2.1.10", "lefthook-windows-x64": "2.1.10" }, "bin": { "lefthook": "bin/index.js" } }, "sha512-K7mM4WoqMwqfXYK11EHy+lSH1uW8XHni3Yn/bSqyerPkUPygGdf3xn18JoV5HyA06xuQL3ofGAOjG01QX9oJ4w=="],
 
@@ -182,8 +159,6 @@
     "lefthook-windows-arm64": ["lefthook-windows-arm64@2.1.10", "http://mini:4873/lefthook-windows-arm64/-/lefthook-windows-arm64-2.1.10.tgz", { "os": "win32", "cpu": "arm64" }, "sha512-5Q6etF0Fla2DDA4ilDySrdNgiR5+W7cJZwnZ69Je3kvWCaWm4wnkuc8FEdjp3kiL2x3ZXipdI00f5vpO8aWmog=="],
 
     "lefthook-windows-x64": ["lefthook-windows-x64@2.1.10", "http://mini:4873/lefthook-windows-x64/-/lefthook-windows-x64-2.1.10.tgz", { "os": "win32", "cpu": "x64" }, "sha512-c/XH8YZtylG4XaxzqFfXluvq2LXq2W/p54Bnzn3+Z7E5X2Fk3JlFJAibulMbIt2+w8T7UI/r97ok5GqE4kGaeA=="],
-
-    "require-from-string": ["require-from-string@2.0.2", "http://mini:4873/require-from-string/-/require-from-string-2.0.2.tgz", {}, "sha512-Xf0nWe6RseziFMu+Ap9biiUbmplq6S9/p+7w7YXP/JBHhrUDDUhwa+vANyubuqfZWTveU//DYVGsDG7RKL/vEw=="],
 
     "smol-toml": ["smol-toml@1.6.1", "http://mini:4873/smol-toml/-/smol-toml-1.6.1.tgz", {}, "sha512-dWUG8F5sIIARXih1DTaQAX4SsiTXhInKf1buxdY9DIg4ZYPZK5nGM1VRIYmEbDbsHt7USo99xSLFu5Q1IqTmsg=="],
 

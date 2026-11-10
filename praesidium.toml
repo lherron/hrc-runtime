@@ -18,8 +18,6 @@ publishes = [
   "hrc-sdk",
   "hrc-frame-render",
   "hrc-events",
-  "hrc-store-sqlite",
-  "hrc-server",
 ]
 consumes = [
   "agent-scope",

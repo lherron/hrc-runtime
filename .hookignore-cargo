@@ -4,7 +4,6 @@
 !crates/
 !contract/
 !conformance/
-!packages/hrc-store-sqlite/src/migrations*
 !justfile
 !lefthook.yml
 !.githooks/
