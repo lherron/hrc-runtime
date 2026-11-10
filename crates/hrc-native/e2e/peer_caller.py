@@ -13,14 +13,14 @@ import secrets
 from urllib.parse import quote
 
 from n2_scratch import UnixHTTP
-from n4_federation import Node, free_port, local_tailnet_address
+from n4_federation import LEDGER_ACTIVE, Node, free_port, local_tailnet_address
 
 
 def main():
     p = argparse.ArgumentParser()
-    for key in ('binary', 'installed-release', 'aspd-socket', 'scratch-root', 'artifacts'):
+    for key in ('binary', 'aspd-socket', 'scratch-root', 'artifacts'):
         p.add_argument('--' + key, type=Path, required=True)
-    p.add_argument('--baseline', action='store_true')
+    p.add_argument('--installed-release', type=Path, help='accepted and ignored')
     args = p.parse_args()
     args.artifacts.mkdir(parents=True, exist_ok=True)
     host = local_tailnet_address()
@@ -29,8 +29,6 @@ def main():
     a, b = [Node(args.scratch_root / name, args.installed_release,
                  args.aspd_socket, args.artifacts, name, args.binary) for name in ('a', 'b')]
     binary = args.binary.resolve()
-    if binary.is_relative_to(args.installed_release.resolve()):
-        binary = a.release / binary.relative_to(args.installed_release.resolve())
     scope = 'agent:tabularasa:project:n4-t11872:task:peer-caller'
     a.write_config({'nodeId': 'caller-a', 'peers': {'caller-b': {
         'endpoint': f'http://{host}:{ports[1]}', 'registryEndpoint': f'http://{host}:{ports[2]}', 'token': token}},
@@ -41,8 +39,8 @@ def main():
         'registry': {'bind': f'http://{host}:{ports[2]}'},
         'gate': {'mode': 'off', 'registryHost': 'caller-b'}})
     for node in (a, b):
-        node.bun_store('binding', 'const db=openHrcDatabase(a[0]);'
-                       'createPlacementLedgerRepository(db.sqlite).installActive({scopeRef:a[1],homeNodeId:"caller-b",updatedAt:"2026-11-05T00:00:00Z"});db.close()', node.db, scope)
+        at = '2026-11-05T00:00:00Z'
+        node.sql(node.db, [(LEDGER_ACTIVE, (scope, 'caller-b', at, at))])
     observations = []
     expected = []
 
@@ -90,7 +88,7 @@ def main():
     peer = [line for line in lines if line.get('event') in ('http.request', 'http.stream.open') and line['data'].get('listener') == 'peer']
     result['peerRequests'] = peer
     (args.artifacts / 'result.json').write_text(json.dumps(result, indent=2) + '\n')
-    wanted = Counter((path, 'unknown' if args.baseline else caller) for path, caller in expected)
+    wanted = Counter(expected)
     actual = Counter((v['data']['path'], v['data']['caller']) for v in peer)
     assert actual == wanted, (actual, wanted)
     assert all(v['data']['peer'] == 'caller-a' and v['data']['client'] == 'hrc-server/0.1.0' for v in peer), peer
@@ -98,9 +96,8 @@ def main():
     for path, caller in expected:
         if path != '/v1/federation/locate':
             continue
-        want = 'unknown' if args.baseline else caller
-        assert any(v['caller'] == want and v['peer'] == 'caller-a' and v['client'] == 'hrc-server/0.1.0' for v in registry), (want, registry)
-    print(json.dumps({'pass': True, 'baseline': args.baseline, 'peerRequests': len(peer)}))
+        assert any(v['caller'] == caller and v['peer'] == 'caller-a' and v['client'] == 'hrc-server/0.1.0' for v in registry), (caller, registry)
+    print(json.dumps({'pass': True, 'peerRequests': len(peer)}))
 
 
 if __name__ == '__main__':

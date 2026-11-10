@@ -3,7 +3,7 @@
 
 Failure modes: missing route, missing bearer enforcement, an unbounded peer
 page, changed exclusive cursor/fence semantics, or forwarding a node page.
-Seed more than the cap through the real repository so a missing clamp fails.
+Seed more than the cap through the native append (n3_events) so a missing clamp fails.
 T-12432: an unscoped peer bounded-stream must follow the receiving node's own
 ledger (ready, then the rows after afterSeq, exclusive) with the local route's
 incarnation fence, still require the bearer, and leave tail/runs scope-only.
@@ -16,6 +16,7 @@ import socket
 from urllib.error import HTTPError
 from urllib.request import Request, urlopen
 
+from n3_events import append_events
 from n4_federation import Node, free_port, local_tailnet_address
 
 
@@ -49,8 +50,9 @@ def follow(endpoint, path, token, want):
 
 def main():
     parser = argparse.ArgumentParser()
-    for key in ('binary', 'installed-release', 'aspd-socket', 'scratch-root', 'artifacts'):
+    for key in ('binary', 'aspd-socket', 'scratch-root', 'artifacts'):
         parser.add_argument('--' + key, type=Path, required=True)
+    parser.add_argument('--installed-release', type=Path, help='accepted and ignored')
     args = parser.parse_args()
     args.artifacts.mkdir(parents=True, exist_ok=True)
     node = Node(args.scratch_root, args.installed_release, args.aspd_socket, args.artifacts, 'events', args.binary)
@@ -75,9 +77,8 @@ def main():
                            'peers': {'other': {'endpoint': f'http://{address}:1', 'token': token}},
                            'peerListener': {'bind': endpoint},
                            'gate': {'mode': 'off', 'registryHost': 'events-test'}})
-        node.bun_store('events', '''const db=openHrcDatabase(a[0]);
-for(let i=0;i<250;i++) db.hrcEvents.append({ts:new Date(1700000000000+i).toISOString(),hostSessionId:'hrc-server',scopeRef:'server:hrc',laneRef:'main',generation:0,category:'server',eventKind:'server.test.peer',payload:{i}});
-db.close();''', node.db)
+        seeded = append_events(node.db, [{'ts': '2023-11-14T22:13:20.%03dZ' % i, 'eventKind': 'server.test.peer', 'payload': {'i': i}} for i in range(250)])
+        assert len(seeded) == 250, seeded
         node.up('native', args.binary.resolve(), 'page')
         path = '/v1/events/page?afterSeq=0&limit=2'
         for route in (path, '/v1/sessions/page?limit=2'):

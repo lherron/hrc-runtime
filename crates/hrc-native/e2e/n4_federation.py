@@ -292,6 +292,11 @@ def registry_cases(endpoint, token):
     return out
 
 
+# federation/mod.rs install_active: the native placement-ledger install statement.
+LEDGER_ACTIVE = ("INSERT INTO placement_ledger (scope_ref, home_node_id, state, retired_at, retirement_reason, created_at, updated_at) "
+                 "VALUES (?, ?, 'active', NULL, NULL, ?, ?)")
+
+
 def scope(task):
     return f'agent:{AGENT}:project:{PROJECT}:task:{task}'
 
@@ -304,8 +309,7 @@ def seed_native(a, b, now):
     designate-birth in registry_listener.rs), with the fixture's fixed clock.
     B boots once natively so its owner creates the binding registry schema.
     """
-    active = ("INSERT INTO placement_ledger (scope_ref, home_node_id, state, retired_at, retirement_reason, created_at, updated_at) "
-              "VALUES (?, ?, 'active', NULL, NULL, ?, ?)")
+    active = LEDGER_ACTIVE
     retire = ("UPDATE placement_ledger SET state='retired',retired_at=?,retirement_reason=?,updated_at=? "
               "WHERE scope_ref=? AND home_node_id=? AND state='active'")
     # A's placement ledger: local, retired and ledger-foreign scopes.

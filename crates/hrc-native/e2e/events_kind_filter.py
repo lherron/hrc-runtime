@@ -10,21 +10,23 @@ F5 a reconnect from the last delivered seq duplicates a row, or misses one
    written while it was away, when skipped rows sit on both sides of the cut;
 F6 the bounded stream resume does the same;
 F7 a list of only commas silently widens to the whole ledger;
-F8 hrc-sdk's watch() drops rows the server sent: its client-side matcher
-   compares a list by equality, or ANDs category with eventKind.
-The baseline is the installed rusthrc on the same seeded ledger; the subject
-is the build under test. Ground truth is the unfiltered history, filtered here.
+(F8, hrc-sdk's client-side watch() matcher, is TypeScript and left this driver
+with its TypeScript probe; it belongs in the hrc-sdk suite.)
+Ground truth is the seed: every row is appended with the native store's own
+append (n3_events.append_events) and its category/kind/scope are known here,
+so each unfiltered and single-value read is checked against the seed, and
+every surface (history, follow, tail, bounded stream) against history.
 """
 import argparse
 import json
 import socket
-import subprocess
 import threading
 import time
 from pathlib import Path
 from urllib.parse import urlencode
 
 from n2_scratch import UnixHTTP
+from n3_events import append_events
 from n4_federation import Node
 
 KINDS = [('runtime', 'runtime.ensured'), ('turn', 'turn.started'), ('turn', 'turn.tool_call'),
@@ -35,11 +37,23 @@ CATS = 'runtime,session'
 EVENT_KINDS = 'turn.started,turn.completed,turn.attention'
 
 
-def seed_js(start, count):
-    return f'''const db=openHrcDatabase(a[0]);const k={json.dumps(KINDS)};
-for(let i={start};i<{start + count};i++){{const [c,e]=k[i%k.length];
-db.hrcEvents.append({{ts:new Date(1700000000000+i).toISOString(),hostSessionId:'hsid-'+(i%3),scopeRef:'agent:t:project:p:task:T-'+(i%3),laneRef:'main',generation:1,category:c,eventKind:e,payload:{{i,pad:'x'.repeat(200)}}}});}}
-db.close();'''
+def seed(node, start, count, live=True):
+    """Append rows start..start+count natively; returns {hrcSeq: row} for the seeded rows."""
+    rows = []
+    for i in range(start, start + count):
+        c, e = KINDS[i % len(KINDS)]
+        rows.append({'ts': '2023-11-14T22:13:%02d.%03dZ' % (20 + i // 1000, i % 1000), 'hostSessionId': f'hsid-{i % 3}',
+                     'scopeRef': f'agent:t:project:p:task:T-{i % 3}', 'laneRef': 'main', 'generation': 1,
+                     'category': c, 'eventKind': e, 'payload': {'i': i, 'pad': 'x' * 200}})
+    seqs = append_events(node.db, rows)
+    assert len(seqs) == count, seqs
+    if live:
+        # A follow wakes only on an owner commit (streams.rs): one real owner write
+        # after the append, whose own session rows the history-derived truth includes.
+        status, body, _ = node.http('POST', '/v1/sessions/resolve',
+                                    {'sessionRef': f'agent:t:project:p:task:wake-{start}/lane:main', 'create': True})
+        assert status == 200, (status, body)
+    return dict(zip(seqs, rows))
 
 
 def wanted(row, cats=None, kinds=None):
@@ -131,34 +145,49 @@ def capture(node, head, incarnation):
 
 def main():
     p = argparse.ArgumentParser()
-    for k in ('binary', 'baseline-binary', 'installed-release', 'aspd-socket', 'scratch-root', 'artifacts'):
+    for k in ('binary', 'aspd-socket', 'scratch-root', 'artifacts'):
         p.add_argument('--' + k, type=Path, required=True)
+    p.add_argument('--installed-release', type=Path, help='accepted and ignored')
     a = p.parse_args()
     a.artifacts.mkdir(parents=True, exist_ok=True)
     node = Node(a.scratch_root, a.installed_release, a.aspd_socket, a.artifacts, 'kind', a.binary)
     report = {'failureModes': [l for l in __doc__.split('\n') if l[:1] == 'F' or l.startswith('   ')]}
     try:
-        node.bun_store('seed', seed_js(0, 120), node.db)
-
-        # F1/F2: baseline (installed) then subject on the same ledger.
-        owner = node.up('native', a.baseline_binary.resolve(), 'baseline')
+        seeded = seed(node, 0, 120, live=False)
+        owner = node.up('native', a.binary.resolve(), 'subject')
         page = node.http('GET', '/v1/events/page?afterSeq=0&limit=1000')[1]
         incarnation = page['ledgerIncarnationId']
-        head = max(r['hrcSeq'] for r in page['rows'] if r['category'] != 'server')
-        base = capture(node, head, incarnation)
-        # Discriminator: the baseline treats a list as one literal value.
-        baseline_list = len(history(node, f'category={CATS}'))
-        assert baseline_list == 0, ('baseline already filters lists; F3 proves nothing', baseline_list)
-        report['baselineListRows'] = {f'category={CATS}': baseline_list}
-        node.down(owner)
-        owner = node.up('native', a.binary.resolve(), 'subject')
+        head = max(seeded)
         subj = capture(node, head, incarnation)
-        diffs = {k: (len(base[k]), len(subj[k])) for k in base if base[k] != subj[k]}
-        assert not diffs, ('F1/F2 unfiltered or single-value output changed', diffs)
-        assert all(base[k] for k in base), {k: len(v) for k, v in base.items()}
-        report['unchanged'] = {'seededHead': head, 'cases': {k: {'lines': len(v), 'bytes': sum(map(len, v)),
-                                                                 'byteIdentical': True} for k, v in base.items()}}
-
+        # F1/F2: every unfiltered and single-value read selects exactly the seeded rows it must.
+        seqs = lambda lines: [json.loads(l)['hrcSeq'] for l in lines]
+        pick = lambda f: [q for q, r in sorted(seeded.items()) if f(r)]
+        expect = {'history:cat_turn': pick(lambda r: r['category'] == 'turn'),
+                  'history:kind_started': pick(lambda r: r['eventKind'] == 'turn.started'),
+                  'history:cat_turn_from': [q for q in pick(lambda r: r['category'] == 'turn') if q >= 40],
+                  'history:runtime_scope': pick(lambda r: r['scopeRef'] == 'agent:t:project:p:task:T-1')}
+        for name, want in expect.items():
+            assert seqs(subj[name]) == want and want, ('F2 single value', name, seqs(subj[name])[:10], want[:10])
+        every = {json.loads(l)['hrcSeq']: json.loads(l) for l in subj['history:all']}
+        for q, r in seeded.items():
+            got = every.get(q)
+            assert got and (got['category'], got['eventKind'], got['scopeRef'], got['payload']) == \
+                (r['category'], r['eventKind'], r['scopeRef'], r['payload']), ('F1 seeded row', q, got)
+        assert seqs(subj['history:all']) == sorted(every), 'F1 history out of order'
+        # F1: the follow and bounded stream carry history's bytes; tail its rows.
+        def first_diff(x, y):
+            i = next((i for i, (p, q) in enumerate(zip(x, y)) if p != q), min(len(x), len(y)))
+            return len(x), len(y), x[i:i + 1], y[i:i + 1]
+        line = lambda name: [l.rstrip('\n') for l in subj[name]]  # follow keeps the NDJSON newline, history splits it off
+        assert line('follow:all') == line('history:all'), ('F1 follow differs from history', first_diff(line('follow:all'), line('history:all')))
+        assert line('follow:cat_turn') == line('history:cat_turn'), ('F1 filtered follow differs', first_diff(line('follow:cat_turn'), line('history:cat_turn')))
+        assert [json.dumps(json.loads(l)['event'], sort_keys=True) for l in subj['bounded:all']] == \
+            [json.dumps(json.loads(l), sort_keys=True) for l in subj['history:all']], 'F1 bounded stream differs'
+        tail_rows = sorted(json.loads(l)['hrcSeq'] for l in subj['tail'])
+        assert tail_rows == seqs(subj['history:all'])[-50:], ('F1 tail', tail_rows)
+        assert all(json.loads(l) == every[json.loads(l)['hrcSeq']] for l in subj['tail']), 'F1 tail row differs'
+        report['unchanged'] = {'seededHead': head, 'cases': {k: {'lines': len(v), 'bytes': sum(map(len, v))}
+                                                             for k, v in subj.items()}}
         # F3: lists and the union against ground truth.
         truth = [json.loads(l) for l in history(node)]
         cases = {'category=runtime,session': (set(CATS.split(',')), None),
@@ -172,27 +201,6 @@ def main():
             exp = [r['hrcSeq'] for r in truth if wanted(r, cats, kinds)]
             assert got == exp and got, ('F3', q, got[:10], exp[:10])
             report['lists'][q] = {'rows': len(got), 'matchesGroundTruth': True}
-
-        # F8: the SDK's typed lists, through the server and its client matcher.
-        sdk = Path(__file__).resolve().parents[3] / 'packages/hrc-sdk/src/index.ts'
-        probe = (f'const {{HrcClient}}=await import({json.dumps(str(sdk))});'
-                 'const c=new HrcClient(process.argv[1]);const o=JSON.parse(process.argv[2]);const out=[];'
-                 'for await (const e of c.watch(o)) out.push(e.hrcSeq);console.log(JSON.stringify(out));')
-        report['sdk'] = {}
-        for opts, (cats, kinds) in [
-            ({'category': ['runtime', 'session']}, ({'runtime', 'session'}, None)),
-            ({'category': ['runtime', 'session'], 'eventKind': EVENT_KINDS.split(',')},
-             ({'runtime', 'session'}, set(EVENT_KINDS.split(',')))),
-            ({'category': 'turn', 'eventKind': 'runtime.status'}, ({'turn'}, {'runtime.status'})),
-            ({'eventKind': EVENT_KINDS}, (None, set(EVENT_KINDS.split(',')))),
-        ]:
-            r = subprocess.run(['bun', '-e', probe, str(node.socket), json.dumps({'fromSeq': 1, **opts})],
-                               cwd=sdk.parents[3], capture_output=True, text=True, timeout=60)
-            assert r.returncode == 0, (opts, r.stdout, r.stderr)
-            got = json.loads(r.stdout.strip().splitlines()[-1])
-            exp = [x['hrcSeq'] for x in truth if wanted(x, cats, kinds)]
-            assert got == exp and got, ('F8 sdk', opts, got[:10], exp[:10])
-            report['sdk'][json.dumps(opts)] = {'rows': len(got), 'matchesGroundTruth': True}
 
         # F7: comma-only lists refuse instead of widening.
         report['refusals'] = {}
@@ -209,7 +217,10 @@ def main():
         start = json.loads(live_from[-1])['hrcSeq'] + 1
         unfilt = Follow(node, f'/v1/events?follow=true&fromSeq={start}')
         f1 = Follow(node, f'/v1/events?follow=true&fromSeq={start}&{filt}')
-        node.bun_store('live-1', seed_js(1000, 36), node.db)  # i=1032..1035 are skipped kinds: the cut has skipped rows after it
+        seed(node, 1000, 36)
+        # i=1042..1045 are skipped kinds written after the wake (the wake's session rows
+        # are wanted): the cut has skipped rows after it, which the resume must step over.
+        seed(node, 1042, 4, live=False)
         after1 = [json.loads(l) for l in history(node, f'fromSeq={start}')]
         exp1 = [r['hrcSeq'] for r in after1 if wanted(r, cats, kinds)]
         f1.wait(lambda r: [x['hrcSeq'] for x in r][-1:] == exp1[-1:])
@@ -221,9 +232,9 @@ def main():
         last = got1[-1]
         skipped_tail = [r['hrcSeq'] for r in after1 if r['hrcSeq'] > last]
         assert skipped_tail, 'cut must leave skipped rows after the last delivered seq'
-        node.bun_store('away', seed_js(2000, 23), node.db)
+        seed(node, 2000, 23)
         f2 = Follow(node, f'/v1/events?follow=true&fromSeq={last + 1}&{filt}')
-        node.bun_store('live-2', seed_js(3000, 15), node.db)
+        seed(node, 3000, 15)
         everything = [json.loads(l) for l in history(node, f'fromSeq={start}')]
         exp_all = [r['hrcSeq'] for r in everything if wanted(r, cats, kinds)]
         f2.wait(lambda r: [x['hrcSeq'] for x in r][-1:] == exp_all[-1:])
@@ -256,7 +267,7 @@ def main():
         b1.close()
         assert bseq1 == exp_all, ('F6 bounded replay', bseq1, exp_all)
         cut = bseq1[len(bseq1) // 2]
-        node.bun_store('bounded-away', seed_js(4000, 19), node.db)
+        seed(node, 4000, 19)
         b2 = Follow(node, '/v1/events/bounded-stream?' + urlencode(
             {'follow': 'true', 'afterSeq': cut, 'ledgerIncarnationId': incarnation,
              'category': CATS, 'eventKind': EVENT_KINDS}))
