@@ -432,6 +432,17 @@ async fn hrcpty_liveness(
     let Some(reason) = hrcpty_dead_reason(rt, status.as_ref()) else {
         return Ok(());
     };
+    // An unanswered `status` from a supervisor that still runs as this
+    // socket's hrc-pty is a slow probe, not death (T-12536).
+    if status.is_none() && pid.is_some_and(|p| hrcpty::identified_by_pid(p, socket)) {
+        super::stderr_json(
+            "warn",
+            "broker",
+            "broker.hrcpty_liveness_inconclusive",
+            json!({"runtimeId":rt.runtime_id,"socketPath":socket,"supervisorPid":pid}),
+        );
+        return Ok(());
+    }
     let payload = json!({"runtimeId":rt.runtime_id,"socketPath":socket,"supervisorPid":pid,"supervisorLive":status.is_some(),"child":status.as_ref().map(|s| s["child"].clone()),"reason":reason});
     not_live(server, &rt.runtime_id, payload.clone())?;
     // Ending the lease stops a broker that may still run (a Claude child

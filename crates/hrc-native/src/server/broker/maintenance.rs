@@ -362,9 +362,14 @@ async fn liveness(server: &Server, r: &Value, facts: &Value) -> Result<Option<St
     });
     // An hrcpty seat is live while its supervisor runs (T-12046 §4.6).
     if r["controllerKind"] == "harness-broker" && hosting["substrate"]["kind"] == "leased-hrcpty" {
+        let socket = std::path::Path::new(
+            hosting["substrate"]["socketPath"]
+                .as_str()
+                .unwrap_or_default(),
+        );
         let live = hosting["substrate"]["pid"]
             .as_i64()
-            .is_some_and(super::hrcpty::alive);
+            .is_some_and(|pid| super::hrcpty::identified_by_pid(pid, socket));
         return Ok(live.then(|| "live_broker_lease".into()));
     }
     if r["controllerKind"] == "harness-broker"
@@ -805,7 +810,7 @@ pub async fn hrcpty_aging(server: &super::Shared) -> std::result::Result<Value, 
                 .or_default() += 1;
             continue;
         };
-        let supervisor = pid.is_some_and(super::hrcpty::alive);
+        let supervisor = pid.is_some_and(|pid| super::hrcpty::identified_by_pid(pid, &socket));
         let status = if supervisor {
             super::lease::hrcpty_status(&socket, pid).await
         } else {

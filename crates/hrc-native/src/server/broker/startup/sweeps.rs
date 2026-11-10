@@ -238,9 +238,81 @@ pub(super) async fn observe_claim(
     ))
 }
 
+/// An hrcpty supervisor outliving its runtime is ended (T-12046 §4.6) once
+/// identified and its broker no longer answers; a row whose supervisor is
+/// gone is settled once (T-12536).
+async fn hrcpty_orphans(server: &Shared, brokers: &[db::Rt], r: &mut Value) {
+    let bump = |r: &mut Value, k: &str| r[k] = (r[k].as_i64().unwrap_or(0) + 1).into();
+    // Its socket lives in bipc, never in btmux.
+    for rt in brokers {
+        let Some((socket, pid)) = hrcpty::substrate(rt) else {
+            continue;
+        };
+        if !lease::unavailable(&rt.status) || hrcpty::settled(rt) || !pid.is_some_and(hrcpty::alive)
+        {
+            continue;
+        }
+        // A pid in use is not a supervisor (T-12536): the OS reuses pids.
+        let Some(supervisor) = hrcpty::identify(&socket, pid).await else {
+            match hrcpty::settle(server, &rt.runtime_id, pid, "supervisor_gone") {
+                Ok(()) => bump(r, "settledGoneSupervisors"),
+                Err(_) => bump(r, "errors"),
+            }
+            continue;
+        };
+        // broker_lease_rows carries only `broker` (T-12413); the probe needs
+        // the whole row, executionRelease included, or every hello mismatches.
+        let full = {
+            let db = server.store.lock().unwrap();
+            db::runtime(&db.sqlite, &rt.runtime_id)
+        };
+        let full = match full {
+            Ok(Some(full)) if lease::unavailable(&full.status) => full,
+            Ok(_) => continue,
+            Err(_) => {
+                bump(r, "errors");
+                continue;
+            }
+        };
+        // An out-of-service row is no death evidence (T-12228): a broker
+        // that answers still holds a live harness.
+        if controller::runtime_broker_answers(server, &full).await {
+            bump(r, "preservedClaimed");
+            log(
+                "warn",
+                "broker.hrcpty_orphan_preserved",
+                json!({"runtimeId":rt.runtime_id,"status":rt.status,"socketPath":socket,"pid":supervisor,"reason":"broker_answers"}),
+            );
+            continue;
+        }
+        let reason = match hrcpty::end_lease(&socket, Some(supervisor)).await {
+            Ok(true) => {
+                bump(r, "killedLiveLeaseServers");
+                log(
+                    "info",
+                    "broker.hrcpty_orphan_ended",
+                    json!({"runtimeId":rt.runtime_id,"status":rt.status,"socketPath":socket,"pid":supervisor}),
+                );
+                "ended"
+            }
+            Ok(false) => {
+                bump(r, "settledGoneSupervisors");
+                "supervisor_gone"
+            }
+            Err(_) => {
+                bump(r, "errors");
+                continue;
+            }
+        };
+        if hrcpty::settle(server, &rt.runtime_id, pid, reason).is_err() {
+            bump(r, "errors");
+        }
+    }
+}
+
 /// sweepOrphanedBrokerTmuxLeases (removeDeadSocketFiles + killLiveLeaseServers).
 pub(super) async fn lease_sweep(server: &Shared, grace: i64) -> Result<Value> {
-    let mut r = json!({"scanned":0,"killedLiveLeaseServers":0,"removedDeadSocketFiles":0,"preservedClaimed":0,"reapedClaimedOrphans":0,"staledClaimedRuntimes":0,"removedBrokerIpcDirs":0,"skippedClaimed":0,"skippedWithinGrace":0,"errors":0});
+    let mut r = json!({"scanned":0,"killedLiveLeaseServers":0,"settledGoneSupervisors":0,"removedDeadSocketFiles":0,"preservedClaimed":0,"reapedClaimedOrphans":0,"staledClaimedRuntimes":0,"removedBrokerIpcDirs":0,"skippedClaimed":0,"skippedWithinGrace":0,"errors":0});
     let bump = |r: &mut Value, k: &str| r[k] = (r[k].as_i64().unwrap_or(0) + 1).into();
     let dir = server.runtime.join("btmux");
     let mut entries: Vec<String> = std::fs::read_dir(&dir)
@@ -257,35 +329,7 @@ pub(super) async fn lease_sweep(server: &Shared, grace: i64) -> Result<Value> {
         let db = server.store.lock().unwrap();
         db::broker_lease_rows(&db.sqlite)?
     };
-    // An hrcpty supervisor outliving its runtime is ended (T-12046 §4.6); its
-    // socket lives in bipc, never in btmux.
-    for rt in &brokers {
-        if let Some((socket, pid)) = hrcpty::substrate(rt)
-            && lease::unavailable(&rt.status)
-            && pid.is_some_and(hrcpty::alive)
-        {
-            // An out-of-service row is no death evidence (T-12228): a broker
-            // that answers still holds a live harness.
-            if controller::runtime_broker_answers(server, rt).await {
-                bump(&mut r, "preservedClaimed");
-                log(
-                    "warn",
-                    "broker.hrcpty_orphan_preserved",
-                    json!({"runtimeId":rt.runtime_id,"status":rt.status,"socketPath":socket,"pid":pid,"reason":"broker_answers"}),
-                );
-                continue;
-            }
-            match hrcpty::end_lease(&socket, pid).await {
-                Ok(()) => bump(&mut r, "killedLiveLeaseServers"),
-                Err(_) => bump(&mut r, "errors"),
-            }
-            log(
-                "info",
-                "broker.hrcpty_orphan_ended",
-                json!({"runtimeId":rt.runtime_id,"status":rt.status,"socketPath":socket,"pid":pid}),
-            );
-        }
-    }
+    hrcpty_orphans(server, &brokers, &mut r).await;
     for rt in brokers {
         let id = rt.runtime_id.clone();
         let socket = rt_hosting(&rt)
@@ -882,6 +926,7 @@ pub(super) async fn gc_once(server: &Shared) {
             let changed = n(&renderer, "removed")
                 + n(&renderer, "errors")
                 + n(&broker, "killedLiveLeaseServers")
+                + n(&broker, "settledGoneSupervisors")
                 + n(&broker, "removedDeadSocketFiles")
                 + n(&broker, "reapedClaimedOrphans")
                 + n(&broker, "staledClaimedRuntimes")

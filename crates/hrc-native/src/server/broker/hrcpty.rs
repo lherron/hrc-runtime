@@ -204,29 +204,50 @@ pub async fn capture(socket: &Path) -> Result<Value> {
 
 /// §4.6 lease end: TERM the child, then `shutdown` (hrc-pty TERMs the broker,
 /// KILLs a child that outlives 5 s, removes its socket and exits). A
-/// supervisor still alive after that is KILLed by its recorded pid.
-pub async fn end_lease(socket: &Path, pid: Option<i64>) -> Result<()> {
+/// supervisor still alive after that is KILLed, but only once identified as
+/// this socket's hrc-pty (T-12536). True when a supervisor was ended.
+pub async fn end_lease(socket: &Path, pid: Option<i64>) -> Result<bool> {
+    let mut pid = pid;
+    let mut ended = false;
     if let Ok(ops) = Ops::connect(socket).await {
-        let pid = pid.or_else(|| ops.hello["pid"].as_i64());
+        // The token-gated socket's own answer names the supervisor.
+        pid = ops.hello["pid"].as_i64().or(pid);
         // A child that already exited answers no_child; shutdown still runs.
         let _ = ops.call("signal", json!({"signal":"TERM"})).await;
         let _ = ops.call("shutdown", json!({})).await;
         drop(ops);
+        ended = true;
         if let Some(pid) = pid {
             wait_gone(pid, SHUTDOWN_GRACE).await;
         }
     }
-    if let Some(pid) = pid.filter(|p| alive(*p) && supervises(*p, socket)) {
-        // SAFETY: kill(2) on a pid the pid file still names for this socket.
+    if let Some(pid) = pid.filter(|p| identified_by_pid(*p, socket)) {
+        // SAFETY: kill(2) on a live hrc-pty the pid file names for this socket.
         unsafe { libc::kill(pid as i32, libc::SIGKILL) };
         wait_gone(pid, Duration::from_secs(1)).await;
         let _ = std::fs::remove_file(socket);
+        ended = true;
     }
-    Ok(())
+    Ok(ended)
 }
 pub fn alive(pid: i64) -> bool {
     // SAFETY: signal 0 only probes for existence.
     pid > 0 && unsafe { libc::kill(pid as i32, 0) } == 0
+}
+/// The supervisor of `socket` (T-12536): the pid its ops socket reports in
+/// `hello`, else the recorded pid when it is identified by pid. A pid that is
+/// merely in use is no identity: the OS reuses pids, and a pid file in bipc
+/// outlives a reboot.
+pub async fn identify(socket: &Path, pid: Option<i64>) -> Option<i64> {
+    if let Some(hello) = hello(socket).await {
+        return hello["pid"].as_i64().or(pid);
+    }
+    pid.filter(|p| identified_by_pid(*p, socket))
+}
+/// Alive, named by the pid file beside the socket, and itself `hrc-pty serve
+/// --socket <socket>` (an `hrc-pty attach` client of the same seat is not).
+pub fn identified_by_pid(pid: i64, socket: &Path) -> bool {
+    alive(pid) && supervises(pid, socket) && serves(pid, socket)
 }
 /// The pid file beside the socket still names this pid.
 fn supervises(pid: i64, socket: &Path) -> bool {
@@ -235,6 +256,96 @@ fn supervises(pid: i64, socket: &Path) -> bool {
         .and_then(|dir| std::fs::read_to_string(dir.join("hrcpty.pid")).ok())
         .and_then(|s| s.trim().parse::<i64>().ok())
         == Some(pid)
+}
+/// The process's own argv is `hrc-pty serve ... --socket <socket>`; the
+/// daemonizing forks keep the argv `serve` was started with.
+fn serves(pid: i64, socket: &Path) -> bool {
+    let Some(argv) = argv(pid) else {
+        return false;
+    };
+    let socket = socket.to_string_lossy();
+    argv.first()
+        .and_then(|a| Path::new(a).file_name())
+        .is_some_and(|n| n == "hrc-pty")
+        && argv.get(1).is_some_and(|a| a == "serve")
+        && argv
+            .windows(2)
+            .any(|w| w[0] == "--socket" && w[1] == *socket)
+}
+#[cfg(target_os = "macos")]
+fn argv(pid: i64) -> Option<Vec<String>> {
+    let mut mib = [libc::CTL_KERN, libc::KERN_PROCARGS2, pid as i32];
+    let mut size: libc::size_t = 0;
+    // SAFETY: a size query with a null buffer.
+    let sized = unsafe {
+        libc::sysctl(
+            mib.as_mut_ptr(),
+            3,
+            std::ptr::null_mut(),
+            &mut size,
+            std::ptr::null_mut(),
+            0,
+        )
+    };
+    if sized != 0 || size < 4 {
+        return None;
+    }
+    let mut buf = vec![0u8; size];
+    // SAFETY: the kernel writes at most `size` bytes into `buf`.
+    let read = unsafe {
+        libc::sysctl(
+            mib.as_mut_ptr(),
+            3,
+            buf.as_mut_ptr().cast(),
+            &mut size,
+            std::ptr::null_mut(),
+            0,
+        )
+    };
+    if read != 0 || size < 4 {
+        return None;
+    }
+    buf.truncate(size);
+    // argc, the exec path, NUL padding, then argc NUL-terminated strings.
+    let argc = i32::from_ne_bytes(buf[..4].try_into().ok()?) as usize;
+    let rest = &buf[4..];
+    let mut at = rest.iter().position(|b| *b == 0)?;
+    while rest.get(at) == Some(&0) {
+        at += 1;
+    }
+    Some(
+        rest[at..]
+            .split(|b| *b == 0)
+            .take(argc)
+            .map(|s| String::from_utf8_lossy(s).into_owned())
+            .collect(),
+    )
+}
+#[cfg(not(target_os = "macos"))]
+fn argv(pid: i64) -> Option<Vec<String>> {
+    let raw = std::fs::read(format!("/proc/{pid}/cmdline")).ok()?;
+    Some(
+        raw.split(|b| *b == 0)
+            .filter(|s| !s.is_empty())
+            .map(|s| String::from_utf8_lossy(s).into_owned())
+            .collect(),
+    )
+}
+/// A row the lease sweep already settled: its supervisor was ended or found
+/// gone, so a pid the OS later reuses never selects it again.
+pub fn settled(rt: &db::Rt) -> bool {
+    rt.state_object()["broker"]["substrate"]["endedAt"].is_string()
+}
+/// Mark the row's hrcpty substrate settled, fenced on the pid it recorded.
+pub fn settle(server: &Server, runtime_id: &str, pid: Option<i64>, reason: &str) -> Result<()> {
+    let db = server.store.lock().unwrap();
+    db.sqlite.execute(
+        "UPDATE runtimes SET runtime_state_json=json_set(runtime_state_json,'$.broker.substrate.endedAt',?1,'$.broker.substrate.endedReason',?2) \
+         WHERE runtime_id=?3 AND json_valid(runtime_state_json) AND json_extract(runtime_state_json,'$.broker.substrate.kind')=?4 \
+         AND json_extract(runtime_state_json,'$.broker.substrate.pid') IS ?5",
+        rusqlite::params![hrc_store::timestamp(), reason, runtime_id, SUBSTRATE, pid],
+    )?;
+    Ok(())
 }
 async fn wait_gone(pid: i64, budget: Duration) {
     let deadline = tokio::time::Instant::now() + budget;

@@ -757,8 +757,14 @@ pub async fn reconcile(server: &Shared) -> Result<()> {
         .and_then(|v| v.parse::<i64>().ok())
         .filter(|v| *v >= 0)
         .unwrap_or(DEFAULT_ORPHAN_GRACE_MS);
-    if let Err(e) = lease_sweep(server, grace).await {
-        startup_issue("broker orphan lease sweep failed", json!({}), &e);
+    match lease_sweep(server, grace).await {
+        // The boot pass settles what the recurring ticks then skip (T-12536).
+        Ok(broker) => log(
+            "info",
+            "broker.lease_gc_sweep_complete",
+            json!({"cadence":"startup","broker":broker}),
+        ),
+        Err(e) => startup_issue("broker orphan lease sweep failed", json!({}), &e),
     }
     let holder_timeout = std::env::var("HRC_HOLDER_ENUMERATION_TIMEOUT_MS")
         .ok()
