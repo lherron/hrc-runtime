@@ -44,12 +44,12 @@ source:
   - architecture/records/invariants/hrc-runtime.asp-toolchain-selection.yaml
   - architecture/records/invariants/hrc-runtime.continuation-history-resume.yaml
   - architecture/records/invariants/hrc-runtime.mobile-suffix-roster-provisioning.yaml
-  - packages/hrc-server/src/agent-spaces-adapter/aspd-preparation-client.ts
-  - packages/hrc-server/src/broker-run-preview.ts
-  - packages/hrc-server/src/session-resume-continuation.ts
-  - packages/hrc-server/src/target-message-handlers.ts
-  - packages/hrc-server/src/broker/event-mapper.ts
-  - packages/hrc-cli/src/selector-resolve.ts
+  - crates/hrc-native/src/server/placement/aspc.rs
+  - crates/hrc-native/src/server/turns/preview.rs
+  - crates/hrc-native/src/server/turns/resume.rs
+  - crates/hrc-native/src/server/placement/runtime_views.rs
+  - crates/hrc-native/src/server/placement/federation/gate.rs
+  - crates/hrc-cli/src/selectors.rs
 required_tests:
   - just architecture-records
   - T-08564 D-1 through D-18 and O-1 through O-14b prove every HRC consumer route, explicit failure projection, complete committed-session lookup, and named changed dependency

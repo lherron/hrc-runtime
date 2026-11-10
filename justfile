@@ -67,10 +67,6 @@ test-unit:
 test-contract:
     bun run test:contract
 
-# Full server fixture suite; required for release qualification, not pre-push.
-release-test:
-    bun run test:release
-
 # Report authored-test source pressure (>=800 lines). This becomes a hard
 # 1,000-line gate once the structural split campaign clears the baseline.
 
@@ -78,35 +74,9 @@ release-test:
 test-size:
     bun run test:size
 
-# Run integration tests
-test-integration:
-    bun run test:integration
-
 # Run live tests against the installed surface
 installed-live-test:
     bun run test:installed-live
-
-# Portable behavior rung: real HRC instances and stores over fixture-only
-# loopback transport. The runner mechanically selects the fixture-marked corpus
-# and fails if no marked case actually starts.
-
-# Run the federation corpus over fixture-only loopback transport
-test-federation-loopback:
-    bun scripts/run-federation-corpus.ts loopback
-
-# Live-interface qualification rung. Absence of a tailnet interface is failure;
-# loopback mode is intentionally not in this command's environment.
-
-# Run the federation corpus over a live tailnet interface
-test-federation-live:
-    bun scripts/run-federation-corpus.ts live
-
-# smoke-live covers everything that needs this host's live installation or
-# network: the installed-surface e2e and the federation corpus over the real
-# tailnet interface. `verify` stays self-contained (T-10161).
-
-# Run the live-installation and real-tailnet checks.
-smoke-live: installed-live-test test-federation-live
 
 # Run linter
 lint:
@@ -125,9 +95,7 @@ check:
     bun scripts/check-dependency-pins.ts
     bun scripts/check-lock-coherence.ts
     bun scripts/check-boundaries.ts
-    bun scripts/check-admission-entry.ts
     bun scripts/check-manifest-edges.ts
-    bun scripts/check-cli-surface.ts
     bun scripts/check-public-surface.ts
     bun scripts/check-suppressions.ts
     bun scripts/check-env-hygiene.ts
@@ -186,7 +154,7 @@ sync-agent-scope-fixtures:
 # once this run ends, however it ends, unless an operator `env-up` also holds
 # it (T-10329).
 
-# Bun/TS verification, run by hand only (env-up + check + lint + typecheck + test + loopback)
+# Bun/TS verification, run by hand only (env-up + check + lint + typecheck + test)
 verify-bun:
     #!/usr/bin/env bash
     set -euo pipefail
@@ -198,7 +166,6 @@ verify-bun:
     just lint
     just typecheck
     just test
-    just test-federation-loopback
 
 # Rust's path-scoped landing leg. No TS build/import is involved.
 cargo-check:
@@ -253,7 +220,6 @@ e2e:
     eval "$(bash scripts/dev-env.sh env)"
     echo "[e2e] daemon ${HRC_RUNTIME_DIR}/hrc.sock, agents ${ASP_AGENTS_ROOT}"
     bun run test
-    just test-federation-loopback
     just e2e-annotations
     just e2e-hrc-pty
 
@@ -351,7 +317,7 @@ install *options:
 #   aspd          ASP preparation service (built in a throwaway agent-spaces
 #                 worktree at the target -> immutable release under
 #                 ~/praesidium/var/aspd, launchd com.praesidium.aspd)
-#   hrc-server    this repo (atomic release, launchd com.praesidium.hrc-server)
+#   rusthrc       this repo (atomic release, launchd com.praesidium.hrc-server)
 #   mail injector hrc-mail-injector, bunx-pinned from Verdaccio (launchd
 #                 com.praesidium.hrc-mail-injector)
 # Each takes its own target. `@max3` means what max3 is RUNNING right now;
@@ -1107,7 +1073,7 @@ _deploy-node ssh-target expected-node target-ref="origin/main" aspd-ref="origin/
     aspd_release="$(jq -r '.release.releaseId' <<<"$aspd_now")"
     echo "[aspd] ${aspd_label} pid ${aspd_job_pid} serving ${aspd_release} (${aspd_sha})"
 
-    # ---- 2. hrc-server ------------------------------------------------------
+    # ---- 2. rusthrc ---------------------------------------------------------
     cd "$repo"
     if (( hrc_current == 1 )); then
       echo "[hrc] already at ${target_sha}: checkout, installed release, and running daemon agree"
@@ -1296,14 +1262,8 @@ _node-readback ssh-target expected-node target-sha aspd-sha aspd-release injecto
       [[ "$(jq -r '.release.releaseId // ""' <<<"$status_after")" == "${release_root##*/}" ]] ||
         fail "release.releaseId does not name ${release_root##*/}"
     else
-      owner=bun
-      release_path="$(jq -er '.packagePath' <<<"$status_after")" ||
-        fail 'post-restart status did not report packagePath'
-      release_root="${release_path%/packages/hrc-server}"
-      [[ "$release_root" == "$HOME/.bun/install/hrc-runtime-releases/release-"* ]] ||
-        fail "packagePath is not an atomic HRC release: $release_path"
-      [[ "$binary_path" == "$release_root/"* ]] ||
-        fail "binaryPath and packagePath name different releases: $binary_path vs $release_path"
+      # A release has carried no Bun daemon since T-13157; only rusthrc can own.
+      fail "the supervisor plist does not exec rusthrc: $(plutil -extract ProgramArguments json -o - "$supervisor_plist")"
     fi
 
     # Release IDENTITY, not just release shape. Everything above proves a healthy

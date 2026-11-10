@@ -12,8 +12,7 @@ Admission class is selected by the endpoint or CLI flag, never by a policy field
 
 The current owner and CLI are native Rust. Admission and turn disposition live
 in `crates/hrc-native/src/server/turns/turns/`; CLI validation and transport live
-in `crates/hrc-cli/src/turn/`. The retained Bun counterparts under `packages/`
-are useful for comparison, not proof of the running owner's behavior. Follow
+in `crates/hrc-cli/src/turn/`. Follow
 the [operations runbook](operations-runbook.md) for owner readback and restart
 authority. Keep ledger reads scoped to the recorded invocation/runtime ids.
 

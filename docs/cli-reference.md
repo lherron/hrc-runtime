@@ -438,8 +438,8 @@ single admitted run to observe and emits no frame. A prompt, `-`, `--file`, or
 any dispatch/sender option is invalid with `--attach`. `messageId` is omitted
 from `turn_stacked` when the originating input identity is unavailable.
 
-`hrc turn` is registered and executed by `hrc-cli`. The `hrcchat` package and
-binary have been removed.
+`hrc turn` is declared in `crates/hrc-cli/surface.json` and executed natively by
+`crates/hrc-cli/src/turn/`. The `hrcchat` package and binary have been removed.
 
 ---
 
@@ -503,7 +503,7 @@ Usage/selector rejection exits 2 before arm and emits no terminal event.
 
 ---
 
-Source of truth: command registration in `packages/hrc-cli/src/cli/build-program.ts` and `cli/register-*.ts` (scope-verb flags in `cli/scope-verb-options.ts`); monitor exit codes in `packages/hrc-core/src/monitor/exit-codes.ts`; turn exit codes in `packages/hrc-cli/src/turn/commands/turn-terminals.ts`. Checked against checkout `--help` output on 2026-10-18 (T-11318). Run `hrc <command> --help` for the complete flag set.
+Source of truth: the hand-maintained command graph, flags and help text in `crates/hrc-cli/surface.json` (scope-verb flags included); execution in `crates/hrc-cli/src`; monitor exit codes in `crates/hrc-cli/src/monitor/engine.rs` (`exit`); turn exit codes in `crates/hrc-cli/src/turn/`. Command names checked against `surface.json` on 2026-11-10 (T-13157). Run `hrc <command> --help` for the complete flag set.
 
 ### Seat work (native)
 

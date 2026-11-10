@@ -58,11 +58,13 @@ source:
   - wrkq:T-07595
   - wrkq:T-07729
   - wrkq:T-07595/attachments/ATT-00414
-  - packages/hrc-server/src/runtime-io-handlers.ts
+  - crates/hrc-native/src/server/turns/io.rs
+  - crates/hrc-store/src/presentation.rs
+  - crates/hrc-store/src/surfaces.rs
   - wrkq:T-08623
   - wrkq:T-09269
   - wrkq:T-09270
-  - packages/hrc-server/src/runtime-control-handlers/session-rotation.ts
+  - crates/hrc-native/src/server/turns/context.rs
 required_tests:
   - just architecture-records
   - viewer side-effect-free HRC route and SDK allowlist gates

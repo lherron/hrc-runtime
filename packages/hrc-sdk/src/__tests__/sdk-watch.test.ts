@@ -25,7 +25,7 @@
  *
  * Test strategy:
  *   - Socket discovery tests use real filesystem (no mock)
- *   - Client round-trip tests spin up a real hrc-server on a temp socket
+ *   - Client round-trip tests spin up a stub daemon on a temp socket
  *   - Error parsing tests use a minimal Bun.serve stub that returns known error shapes
  */
 import { afterEach, beforeEach, describe, expect, it } from 'bun:test'
@@ -237,13 +237,6 @@ describe('watch NDJSON parsing', () => {
   })
 })
 
-// ---------------------------------------------------------------------------
-// 4. Round-trip tests (require a real hrc-server)
-// ---------------------------------------------------------------------------
-// These tests need hrc-server to be implemented. They demonstrate the full
-// SDK → server round-trip. They will initially fail with import errors on
-// hrc-server, which is expected in the RED phase. When both packages are
-// implemented, these tests validate the integration seam.
 // ---------------------------------------------------------------------------
 // 5. Phase 6 diagnostics round-trip (T-00973 / T-00974)
 //

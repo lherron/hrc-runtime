@@ -4,10 +4,10 @@ status: active
 owner_project: hrc-runtime
 scope: resident broker-transcript indexing, search ranking, pointer projection, and source-ledger deletion coupling
 predicate: >
-  HRC transcript search is a resident hrc-server-maintained, rebuildable bounded
+  HRC transcript search is a resident daemon-maintained, rebuildable bounded
   projection of broker_invocation_events and is never source-of-truth state or a
-  manual freshness step. Its implementation begins as the separate
-  hrc-transcript-index package, with projection tables owned by hrc-store-sqlite
+  manual freshness step. Its implementation is the native daemon's resident
+  transcript follower, with projection tables owned by the hrc-store crate
   and thin operator/query surfaces in the hrc CLI. One document represents one
   terminated invocation turn: each turn.completed, turn.failed, or
   turn.interrupted terminal closes the exact invocation-sequence segment since
@@ -43,10 +43,15 @@ source:
   - architecture/records/invariants/hrc-runtime.collaboration-presentation-authority.yaml
   - architecture/records/invariants/hrc-runtime.ledger-tool-result-storage.yaml
   - packages/hrc-core/src/broker-lifecycle-policy.ts
-  - packages/hrc-server/src/broker/event-mapper.ts
-  - packages/hrc-store-sqlite/src/repositories/runtime-repositories.ts
+  - crates/hrc-native/src/server/projection/transcript.rs
+  - crates/hrc-store/src/transcript_index.rs
+  - crates/hrc-store/src/maintenance.rs
+  - crates/hrc-store/tests/transcript_search.rs
+  - crates/hrc-cli/src/monitor/search.rs
 required_tests:
   - just architecture-records
+  - cargo test -p hrc-store --test transcript_search (search_hits_match_the_pre_fix_query_exactly, broad_term_search_is_bounded)
+  - cargo test -p hrc-native transcript_boot_retry_and_coalesced_commits
   - T-08015 cold-start and live cursor-ceiling, atomic emission, crash-recovery, and late-arrival invocation-repair gates
   - T-08015 completed, failed, and interrupted segment-boundary, no-start, scrambled-id, and terminal-less exclusion gates
   - T-08015 prose-only extraction, shared-finality, truncation, and tool-result exclusion gates

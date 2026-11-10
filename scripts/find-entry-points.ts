@@ -33,13 +33,7 @@ const repoRoot = process.cwd()
 const topicLower = topic.toLowerCase()
 
 function isEntryPointCandidate(file: string): boolean {
-  if (file === 'packages/hrc-cli/src/cli/build-program.ts') {
-    return true
-  }
   if (file === 'packages/hrcchat-cli/src/main.ts') {
-    return true
-  }
-  if (file.startsWith('packages/hrc-cli/src/commands/')) {
     return true
   }
   if (/^packages\/[^/]+\/src\/index\.ts$/.test(file)) {
@@ -71,14 +65,8 @@ function roleFor(file: string, lineText: string, classification: string): string
   if (isSpecCandidate(file)) {
     return `acceptance/spec coverage: ${lineText}`
   }
-  if (file === 'packages/hrc-cli/src/cli/build-program.ts') {
-    return `hrc CLI command registry: ${lineText}`
-  }
   if (file === 'packages/hrcchat-cli/src/main.ts') {
     return `hrcchat CLI entry: ${lineText}`
-  }
-  if (file.startsWith('packages/hrc-cli/src/commands/')) {
-    return `hrc CLI command entry: ${lineText}`
   }
   if (/^packages\/[^/]+\/src\/index\.ts$/.test(file)) {
     return `exported package surface: ${lineText}`
@@ -96,9 +84,7 @@ function scoreHit(file: string, lineText: string): number {
   if (lowerFile.includes(topicLower)) score += 80
   if (basename(file).toLowerCase().includes(topicLower)) score += 20
   if (lowerLine.includes(topicLower)) score += 60
-  if (file === 'packages/hrc-cli/src/cli/build-program.ts') score += 25
   if (file === 'packages/hrcchat-cli/src/main.ts') score += 25
-  if (file.startsWith('packages/hrc-cli/src/commands/')) score += 20
   if (/^packages\/[^/]+\/src\/index\.ts$/.test(file)) score += 10
   if (isSpecCandidate(file)) score -= 60
   return score

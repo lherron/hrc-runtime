@@ -18,16 +18,13 @@ cargo leg only when Rust inputs changed (`scripts/validation-scope.ts`,
 |---|---|---|
 | A test process never inherits GIT_DIR/GIT_WORK_TREE or a live wrkq locator | `scripts/hermetic-test.ts` + `scripts/lib/hermetic-test-env.ts`; the preload refuses a bypassing run | every test run |
 | Every test root registers the preload, runs through the hermetic runner, and sits in one verify tier | `scripts/check-test-hermetic.ts` | check |
-| Daemon code runs subprocesses only through `runBoundedSubprocess`; no synchronous spawn in hrc-server or its workspace deps | `scripts/check-daemon-subprocess.ts` (raw-spawn baseline is `{}`: any raw spawn fails) | check |
+| Resident TypeScript (`hrc-turn-attention` and its workspace deps) runs subprocesses only through `runBoundedSubprocess`; no synchronous spawn | `scripts/check-daemon-subprocess.ts` (raw-spawn baseline is `{}`: any raw spawn fails) | check |
 | A test double is typed against the production interface it stands in for and type-checks; a new or changed double for a cross-project producer (wrkq ledger, aspd, ghostmux) cites a captured wire fixture | `scripts/check-test-doubles.ts` (ratchet: `scripts/test-double-baseline.json` only goes down); see [test-doubles.md](test-doubles.md) | check |
-| A scope verb's flags (`start`/`run`/`resume`) are declared once | architecture: `packages/hrc-cli/src/cli/scope-verb-options.ts`; `packages/hrc-cli/src/__tests__/scope-verb-options.test.ts` | pre-commit (typecheck), verify |
-| Delivery executors require an `AdmittedPlan` first; handlers cannot import executors or the plan constructor, or call legacy dispatch entries | `scripts/check-admission-entry.ts` (no baseline) | pre-commit, check |
 | HRC source does not import ACP-owned packages | `scripts/check-boundaries.ts` | pre-commit, check |
 | Member dependency specifiers match the root `overrides` pin table | `scripts/check-dependency-pins.ts` | pre-commit, check |
 | Every bare import is declared in its manifest | `scripts/check-manifest-edges.ts` | pre-commit, check |
 | No partial ASP set in bun.lock | `scripts/check-lock-coherence.ts`; `scripts/check-lock-hygiene.ts` | check, install; pre-commit/pre-push (hygiene) |
-| `hrc` help/info match the live command registry | `scripts/check-cli-surface.ts` | pre-commit, check |
-| Status-JSON paths named in docs exist in the formatter | `scripts/check-server-status-source-contract.ts` (its test) | verify |
+| `hrc` help/info match the command graph, and each command's flags (scope verbs included) are declared once | architecture: parser, help and info all read the one `crates/hrc-cli/surface.json` (`crates/hrc-cli/src/lib.rs`) | build |
 | Public package exports change only with the baseline | `scripts/check-public-surface.ts` | pre-commit, check |
 | A lint/type suppression carries `EXCEPTION(T-…)` | `scripts/check-suppressions.ts` | pre-commit, check |
 | No credential-class key in an auto-loaded `.env*` | `scripts/check-env-hygiene.ts` | check |

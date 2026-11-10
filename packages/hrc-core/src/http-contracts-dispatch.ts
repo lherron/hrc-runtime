@@ -3,7 +3,7 @@ import type { SessionIdentity } from './session-metadata.js'
 import type { HrcRuntimeStatus } from './status-contracts.js'
 
 /**
- * Shared HTTP wire request/response DTOs consumed by both hrc-server and hrc-sdk.
+ * Shared HTTP wire request/response DTOs served by the HRC daemon (crates/hrc-native) and consumed by hrc-sdk.
  * Canonical source for R-3 deduplication (T-00990).
  */
 import type {
@@ -540,7 +540,7 @@ export type PreemptSubmissionRequest = HrcSessionBoundSubmissionRequest & {
  * it does not implement interruption — while `authority-denied` is a fact about
  * the caller. They are answers to different questions, and an operator reading a
  * refused hold needs to tell them apart, so the door does not collapse them into
- * one boolean. It lives here because both the HTTP door (hrc-server) and the
+ * one boolean. It lives here because both the HTTP door (the daemon) and the
  * mail-delivery owners have to name the same three answers during migration.
  */
 export type PreemptAdmission = 'authorized' | 'authority-denied' | 'preempt-unsupported'

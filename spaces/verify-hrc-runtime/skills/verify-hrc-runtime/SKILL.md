@@ -26,9 +26,9 @@ Scratch or live:
   `hv run <name> -- ~/.bun/bin/hrc …`. It is a real daemon with a fresh store: it births real harness runtimes (through
   the live aspd, which only prepares), and it never touches the live `state.sqlite`, ledger, ACP webhook or
   federation. Use it for starts, turns, sends, terminates, resumes, sweeps, captures and the HTTP API.
-  - **Never run a daemon from the installed or owner tree.** A Bun daemon whose package sits in a release
-    under `hrc-runtime-releases` reports `release.mode: atomic` and prunes that tree when it starts; one
-    started that way deleted production's running release on 2026-10-26 (04:50Z, EN-36056). `rusthrc`
+  - **Never run a daemon from the installed or owner tree.** A Bun daemon started from a release under
+    `hrc-runtime-releases` reported `release.mode: atomic` and pruned that tree when it started; one deleted
+    production's running release on 2026-10-26 (04:50Z, EN-36056). `rusthrc`
     prunes nothing, but from a production tree it pins itself to that release. The copy reports `unmanaged`
     (`releaseId` null in status; `hv scratch up` prints `engine`, `binaryPath`, `copyOf` and `sourceCommit`),
     `hv` refuses a root that names `hrc-runtime-releases`/`hrc-owner` or a copy carrying an
@@ -40,7 +40,7 @@ Scratch or live:
     own. Its daemon PATH appends `~/.local/bin` for internal owner clients; the
     calling shell keeps its filtered PATH. No child reaches the caller's broker, tmux server, the live ledger or the production launchd job (a
     native daemon whose `XPC_SERVICE_NAME` equals its label answers a granted stop with `launchctl bootout` of
-    that job). Since T-12677, native and Bun lifecycle project publication requires a validated atomic
+    that job). Since T-12677, lifecycle project publication requires a validated atomic
     release on the canonical production runtime/state roots. A scratch keeps its local lifecycle facts
     but does not post `server.started` or `server.stopped`; native advances its excluded publication cursor.
     `HRC_WRKQ_DB` still isolates session facts and other ledger traffic: posts fail against the empty

@@ -1,5 +1,5 @@
 /**
- * Shared HTTP wire request/response DTOs consumed by both hrc-server and hrc-sdk.
+ * Shared HTTP wire request/response DTOs served by the HRC daemon (crates/hrc-native) and consumed by hrc-sdk.
  * Canonical source for R-3 deduplication (T-00990).
  */
 import type {

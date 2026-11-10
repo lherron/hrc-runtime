@@ -63,10 +63,9 @@ source:
   - wrkq:T-01862
   - architecture/records/invariants/hrc-runtime.aspd-prepared-execution-release.yaml
   - architecture/records/invariants/hrc-runtime.declaration-observation-consumer.yaml
-  - packages/hrc-server/src/agent-spaces-adapter/aspd-preparation-client.ts
-  - packages/hrc-server/src/broker/controller.ts
-  - packages/hrc-server/src/broker/controller/dispatch.ts
-  - packages/hrc-server/src/broker/runtime-hosting.ts
+  - crates/hrc-native/src/server/placement/aspc.rs
+  - crates/hrc-native/src/server/broker/compile.rs
+  - crates/hrc-native/src/server/broker/broker.rs
 required_tests:
   - just architecture-records
   - v2 compile fixtures prove omitted selection reaches ASP absent, raw snake_case summon directives are forwarded unchanged, and explicit presentation false survives

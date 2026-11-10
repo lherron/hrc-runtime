@@ -55,28 +55,15 @@ T-12266 reproduced this with `selfRestartResumePrompt.handoff` and
 After pulling changes in an existing checkout, rebuild before typechecking too:
 stale sibling `dist/*.d.ts` declarations can produce the same errors.
 
-Run the full hrc-server suite from the repository root:
-
-```sh
-bun run test:integration > /tmp/hrc-server-suite.log 2>&1
-```
-
-This selects the package's hermetic runner, sets `TMPDIR=/tmp`, uses loopback
-federation, and gives each test a 10-second default timeout. Bun writes test
-results and its final summary to **stderr**; capturing stdout alone saves server
-logs but loses the verdict.
-
 | Entry point | Coverage |
 | --- | --- |
-| `bun run test:fast` | Script, unit, and contract tiers; excludes hrc-server |
-| `bun run test:integration` | All hrc-server tests, including admission conformance |
+| `bun run test:fast` | Script, unit, and contract tiers of the Bun packages |
 | `just verify` | Architecture records, plus the cargo leg when Rust inputs changed; no Bun suites |
-| `just verify-bun` | By hand, only for Bun/TS changes: ephemeral environment, structural checks, lint, typecheck, all test tiers, and the federation loopback corpus |
+| `just verify-bun` | By hand, only for Bun/TS changes: ephemeral environment, structural checks, lint, typecheck and all test tiers |
 
-Bare `bun test` in the package bypasses the root's loopback switch and the
-wrapper that cleans the environment **before** Bun starts. Without loopback,
-federation fixtures use the available tailnet interface or skip cases that
-require one. Loopback changes fixture transport, not production peer config.
+Bun writes test results and its final summary to **stderr**; capturing stdout
+alone loses the verdict. Bare `bun test` in a package bypasses the wrapper
+(`scripts/hermetic-test.ts`) that cleans the environment **before** Bun starts.
 The preload isolates in-process ledger reads, but cannot change what a child
 spawned without an explicit environment inherits; use the wrapper to isolate
 those children too.
@@ -84,23 +71,18 @@ those children too.
 For a slow suite, time each authored file independently:
 
 ```sh
-bun run test:observability --root packages/hrc-server --retries 0 \
-  --file-timeout-ms 120000 --output /tmp/hrc-server-timing.json
+bun run test:observability --root packages/<package> --retries 0 \
+  --file-timeout-ms 120000 --output /tmp/<package>-timing.json
 ```
 
-The timing runner uses the same hermetic startup environment, loopback
-federation, and per-test timeout. It keeps both output streams in
-`/tmp/hrc-server-timing.json.logs/`, updates the JSON after every file, writes a
-Markdown summary, and prints a final pass/fail count. A file exceeding its
-deadline has exit 124 and `timedOut: true`; its fixture process group is killed.
-Dependency tests under `node_modules` are excluded. The worst-case test-process
-budget is file count × file deadline × (retries + 1), plus discovery and report
-writes. Individual-file timings do not detect interactions between files, so
-also run the full integration tier.
-
-The full suite starts over a thousand fixture daemons. A ten-minute aggregate
-limit can expire while tests are still progressing; diagnose from file timing
-and both output streams before treating that cutoff as a hung test.
+The timing runner uses the same hermetic startup environment and per-test
+timeout. It keeps both output streams in `<output>.logs/`, updates the JSON
+after every file, writes a Markdown summary, and prints a final pass/fail count.
+A file exceeding its deadline has exit 124 and `timedOut: true`; its fixture
+process group is killed. Dependency tests under `node_modules` are excluded.
+The worst-case test-process budget is file count × file deadline × (retries +
+1), plus discovery and report writes. Individual-file timings do not detect
+interactions between files, so also run the whole tier.
 
 ## Dependency Pins
 

@@ -35,6 +35,16 @@ predicate: >
   responses. Operator starts without an explicit node directive remain
   explicit-local. Retryable peer failure is synchronous runtime_unavailable and
   does not use the message outbox.
+  Known gap, not enforced since the Rust cutover of 2026-10-26: the receiver
+  half of the rosterStart peer verb (independent preflight before mutation,
+  runtime-intent localization, and home-side ownership of the claim and
+  durable idempotency record). Today a remote-home rosterStart between Rust nodes is
+  a safe refusal before any mutation: the Rust peer listener advertises no
+  rosterStart capability and answers POST /v1/federation/roster-start with 404
+  peer_upgrade_required, and the origin's claim_start refuses with 409
+  stale_context reason peer_upgrade_required (retryable false) without sending
+  the start. wrkq:T-11933 (native peer listener: home-side roster-start,
+  exact-start and establish) restores the receiver.
 authority: Lance / wrkq:T-07398 / wrkq:T-08407 / wrkq:T-08564 revision 4 architecture approval, 2026-09-17
 source:
   - wrkq:T-12316
@@ -45,9 +55,10 @@ source:
   - wrkq:T-08407
   - wrkq:T-08564
   - architecture/records/invariants/hrc-runtime.declaration-observation-consumer.yaml
-  - packages/hrc-server/src/roster-claim.ts
-  - packages/hrc-server/src/federation/runtime-intent-localization.ts
-  - packages/hrc-server/src/federation/peer-protocol.ts
+  - crates/hrc-native/src/server/placement/federation/gate.rs
+  - crates/hrc-native/src/server/placement/federation/claim_start.rs
+  - crates/hrc-native/src/server/placement/federation/peer_listener.rs
+  - wrkq:T-11933
   - docs/federation-peer-protocol.md
 required_tests:
   - python3 crates/hrc-native/e2e/runtimes_start.py --deferred-message-only (T-12316 deferred claim binding and pinned-turn replay)

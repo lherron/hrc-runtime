@@ -32,11 +32,11 @@ the errors that start inside a double.
 Prefer `satisfies`:
 
 ```ts
-import type { WrkqLedgerClient } from '../wrkq/ledger-client'
+import type { HrcClient } from 'hrc-sdk'
 
-const fakeLedger = {
-  close: async () => {},
-} satisfies Partial<WrkqLedgerClient>
+const fakeClient = {
+  listTargets: async () => [],
+} satisfies Partial<HrcClient>
 ```
 
 The baseline (`scripts/test-double-baseline.json`, key `nonconforming`) holds
@@ -48,10 +48,9 @@ any entry.
 ## 2. Cross-project producers need a captured fixture
 
 A double is a **producer double** when its declared type names an identifier
-imported from a module in `PRODUCER_MODULES`: the wrkq ledger
-(`packages/hrc-server/src/wrkq/ledger-client.ts`), aspd
-(`spaces-aspc-protocol`), or ghostmux. Those types describe another project's
-wire. Several of the wrkq ones are `any`, so typing alone proves little.
+imported from a module in `PRODUCER_MODULES`: aspd (`spaces-aspc-protocol`)
+or ghostmux. Those types describe another project's wire, so typing alone
+proves little.
 
 A producer double that predates the rule is listed in the baseline (key
 `uncaptured`) by a hash of its text. Adding a producer double, or changing a
@@ -59,16 +58,15 @@ listed one, requires a captured fixture. There is no big-bang recapture.
 
 ### Capturing a fixture
 
-1. Make one real call against the real producer: the installed `wrkq` (for
-   example `wrkq rpc --stdio` with the method the double fakes), the running
-   aspd socket, or `ghostmux`.
+1. Make one real call against the real producer: the running aspd socket or
+   `ghostmux`.
 2. Save it verbatim under the package's `src/__tests__/fixtures/captured/` as
    JSON:
 
    ```json
    {
-     "producer": "wrkq",
-     "producerVersion": "<output of `wrkq version`, or the aspd/ghostmux build>",
+     "producer": "aspd",
+     "producerVersion": "<the aspd or ghostmux build>",
      "capturedAt": "2026-10-04T12:00:00Z",
      "request": "<the exact command or JSON-RPC request sent>",
      "response": <the response, unedited>
@@ -79,8 +77,8 @@ listed one, requires a captured fixture. There is no big-bang recapture.
    double's file>`:
 
    ```ts
-   /** @captured ./captured/wrkq-room-say.json */
-   export class FakeWrkqLedger implements WrkqLedgerClient { … }
+   /** @captured ./captured/aspd-execution-release.json */
+   const fakeRelease = { … } satisfies AspcExecutionRelease
    ```
 
 4. Validate the double against it: a test in the same package must read the

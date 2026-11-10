@@ -31,12 +31,14 @@ source:
   - architecture/records/invariants/hrc-runtime.harness-broker-committed-observation-control.yaml
   - architecture/records/invariants/hrc-runtime.continuation-history-resume.yaml
   - architecture/records/invariants/hrc-runtime.participant-session-lifecycle.yaml
-  - packages/hrc-server/src/server-lifecycle-credentials.ts
-  - packages/hrc-server/src/broker/dispatch-observability.ts
-  - packages/hrc-server/src/broker/event-mapper.ts
-  - packages/hrc-server/src/event-notification-handlers.ts
-  - packages/hrc-server/src/runtime-control-handlers/session-rotation.ts
-  - packages/hrc-server/src/target-message-handlers.ts
+  - crates/hrc-native/src/server/lifecycle/lifecycle/credentials.rs
+  - crates/hrc-native/src/server/lifecycle/self_restart.rs
+  - crates/hrc-native/src/server/broker/controller/seat.rs
+  - crates/hrc-native/src/server/turns/restart.rs
+  - crates/hrc-native/src/server/turns/context.rs
+  - crates/hrc-native/src/server/lifecycle/handoff/mod.rs
+  - crates/hrc-native/e2e/n2_restart_self.py
+  - crates/hrc-cli/e2e/restartme.py
 required_tests:
   - just architecture-records
   - T-09872 exact runtime invocation and turn identity gate, including an older terminal after arming

@@ -132,7 +132,7 @@ function nodeIdFromFederationConfig(path: string | undefined): string | undefine
 /**
  * Containment fallback when neither the daemon nor its config can answer.
  *
- * Mirrors `deriveNodeIdFromHostname` in hrc-server (short name, lowercased) but
+ * Mirrors `derive_node_id` in crates/hrc-common/src/federation.rs (short name, lowercased) but
  * is deliberately NOT an identity source: nothing keys ledger or registry rows
  * off this value. It exists so a guest with its daemon down and its config
  * missing still refuses, instead of taking the absence as permission.

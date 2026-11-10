@@ -20,18 +20,17 @@ agent-control-plane (ACP), the external gateway (Discord/iOS) into the
 collective. HRC consumes ASP packages as pinned Verdaccio dev-snapshots and
 publishes a subset of its own packages back to Verdaccio for ACP.
 
-This page describes shipped architecture, not aspiration. For the Bun daemon's
-module breakdown see `docs/hrc-server-architecture.md` in the repo;
-this page is the platform-docs-facing summary plus the pieces that page does
-not cover (crate and package topology, state locations at a glance).
+This page describes shipped architecture, not aspiration: the platform-docs-facing
+summary of the daemon, crate and package topology, and state locations at a
+glance. For the native daemon's internals see `crates/hrc-native/README.md`.
 
 ## The daemon: `rusthrc`
 
 Every fleet node (max3, svc, hrcdev) runs the native Rust owner, `rusthrc`
 (`crates/hrc-native`, T-11893); `just fleet-status` reads it in the `OWNER`
-column. The Bun `hrc-server` package is no node's owner. It remains the
-rollback owner, the ephemeral daemon `just verify-bun` provisions, and the
-source of the store migration graph. The daemon is managed by launchd:
+column. There is no Bun daemon (its package was deleted in T-13157);
+`just verify-bun` and `just e2e` provision an ephemeral native daemon through
+`scripts/dev-env.sh`. The daemon is managed by launchd:
 
 - Launchd label: `com.praesidium.hrc-server` (`ProgramArguments`:
   `praesidium-launch <owner exe> server serve`, where the owner exe is
@@ -69,10 +68,11 @@ import it).
   lifecycle, restart authority, handoff, mail hooks, project-event
   publication).
 - `hrc-cli` — the `hrc` command surface, linked into `rusthrc`. Its command
-  graph and help are generated from the Bun registrations in `packages/hrc-cli`
-  into `surface.json`.
-- `hrc-store` — SQLite access, row shapes and event append. It admits the
-  schema the Bun migration graph defines and never migrates.
+  graph and help text are the hand-maintained `surface.json`; the admin route
+  inventory `src/admin/route-inventory.json` is hand-owned too.
+- `hrc-store` — SQLite access, row shapes and event append. It owns schema
+  migration (`src/migrate/`, T-12840): only the owner at boot and
+  `rusthrc store migrate` migrate; every other open admits or refuses.
 - `hrc-domain` — the six operator operations behind rusthrc's ops-only kernel
   provider (`hrc-kernel.sock`); seat and runtime reads belong to the
   Praesidium kernel (`prae seat`, `prae runtime`).
@@ -83,20 +83,15 @@ import it).
 `crates/README.md` holds the allowed dependency edges, enforced by
 `scripts/check-rust-crate-edges.py` in `just verify`.
 
-## Package topology (11 Bun packages, built in dependency order)
+## Package topology (6 Bun packages, built in dependency order)
 
 | Package | Role |
 | --- | --- |
 | `agent-action-render` | Shared rendering semantics for agent tool/action lines (tool emoji, action lines, admission labels) — shared with ACP's gateway-discord |
 | `hrc-core` | Runtime/session/run DTOs, HTTP contracts, errors, path resolution, monitor condition engine |
 | `hrc-events` | Canonical HRC event payload types, Zod schemas, and the monitor event schema |
-| `hrc-store-sqlite` | SQLite migrations + repositories for HRC state; the migration graph `hrc-store` admits |
-| `hrc-capture-verifier` | Provider transcript capture verification against the broker ledger |
 | `hrc-sdk` | Typed client (`HrcClient`) for the HRC daemon over the unix socket |
 | `hrc-frame-render` | Projects HRC lifecycle/message events into RenderFrames/timeline |
-| `hrc-server` | The Bun daemon: rollback owner and `verify-bun`'s ephemeral daemon |
-| `hrc-cli` | Bun CLI (private): command registrations for the generated native surface, and `hrc.js server serve` for the Bun daemon |
-| `hrc-transcript-index` | Resident FTS5 projection and search over HRC transcript turns |
 | `hrc-turn-attention` | Node-local turn attention classifier subscriber (`bunx hrc-turn-attention@<version>`, activated separately) |
 
 ## Transports
@@ -132,11 +127,9 @@ examples.
 
 ## "Awaiting user input" bracket
 
-A turn parked on a user question is modeled as a first-class durable state.
-In the Bun daemon the bracket (`ask-bracket.ts`) is the reaper authority, which
-prevents the active-run reaper from killing a turn that is legitimately waiting
-on a human/agent response. The native daemon projects it as the
-`awaiting_input` runtime status and `turn.awaiting_input` event.
+A turn parked on a user question is modeled as a first-class durable state:
+the daemon projects it as the `awaiting_input` runtime status and the
+`turn.awaiting_input` event.
 
 ## System boundaries (what HRC is NOT)
 
@@ -152,7 +145,7 @@ Enforced by `bun run check:boundaries` (`scripts/check-boundaries.ts`):
   `wlearn`, and must not assert ACP-source invariants even in tests.
 - **Not the task store.** HRC does not own tasks, handoffs, comments or
   conversations — that is wrkq. HRC reaches wrkq only through its ledger
-  client (`packages/hrc-server/src/wrkq/`; native `lifecycle/`): it answers
+  client (`crates/hrc-native/src/server/lifecycle/`): it answers
   mail hooks, reads and posts room messages, and publishes session/turn
   project events. HRC source still may not import `wrkq-lib`.
 - **Not the workflow engine.** Scheduling/runs/effects belong to wrkf; HRC
@@ -166,15 +159,11 @@ Enforced by `bun run check:boundaries` (`scripts/check-boundaries.ts`):
   `@praesidium/agent-loop`; HRC is the local daemon those flows ultimately
   reach.
 
-## Module-shape invariants
+## Validation bar
 
-- No parser file exceeds 1,000 lines.
-- No `hrc-server` source file exceeds 1,500 lines. The files once
-  grandfathered (`broker/controller.ts`, `startup-reconcile.ts`, `index.ts`)
-  have since been split below it. Neither ceiling is enforced by a check.
-- Validation bar: `just verify` (architecture records, the Rust crate-edge
-  check, and `just cargo-check` when Rust inputs changed; no Bun suites);
-  `just verify-bun` (ephemeral daemon, `check` — the boundary, manifest,
-  dependency-pin and other repository checks — lint, typecheck, test) when
-  Bun/TS code changed. A CLI change smokes after `just install`; a daemon
-  change needs Mable's `just deploy-max3` and a `sourceCommit` readback.
+`just verify` (architecture records, the Rust crate-edge check, and
+`just cargo-check` when Rust inputs changed; no Bun suites); `just verify-bun`
+(ephemeral daemon, `check` — the boundary, manifest, dependency-pin and other
+repository checks — lint, typecheck, test) when Bun/TS code changed. A CLI
+change smokes after `just install`; a daemon change needs Mable's
+`just deploy-max3` and a `sourceCommit` readback.

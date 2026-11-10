@@ -11,7 +11,7 @@
  * tests against the operator's live environment from 1c0c9c7d until this check;
  * the preload alone never reached child processes at all (159a4c26).
  *
- * The root `test:unit` / `test:contract` / `test:integration` tiers name their
+ * The root `test:unit` / `test:contract` tiers name their
  * packages by hand, so a test-bearing package outside every tier never runs in
  * `just verify`. That is checked here too.
  */
@@ -20,7 +20,7 @@ import { dirname, join, resolve } from 'node:path'
 
 export const HERMETIC_PRELOAD = 'scripts/test-preload-hermetic-env.ts'
 export const HERMETIC_RUNNER = 'scripts/hermetic-test.ts'
-const ROOT_TIERS = ['test:unit', 'test:contract', 'test:integration'] as const
+const ROOT_TIERS = ['test:unit', 'test:contract'] as const
 
 /** The directory bun runs tests from for a tracked test file: its package, or the root. */
 export function testRootFor(path: string): string {

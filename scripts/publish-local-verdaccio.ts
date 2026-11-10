@@ -428,14 +428,14 @@ async function packageNames(): Promise<Set<string>> {
 // reason. `bin` is the surface that bit us and the one nothing checked.
 //
 // NOTE the limit, measured not assumed: `bun pm pack` FORCE-INCLUDES the bin
-// entry file even when `files` excludes it (verified — packing hrc-cli with
+// entry file even when `files` excludes it (verified — packing the retired TS CLI package with
 // bin=./src/cli.ts yielded exactly one src file, src/cli.ts, and none of its
 // imports). So "bin entry missing from tarball" is nearly unreachable and this
 // assertion is close to a no-op. It is kept as a cheap backstop for a bin path
 // that does not exist on disk at all.
 //
 // It does NOT catch the defect family that actually ships broken binaries:
-// a packaged bin whose IMPORTS are unshipped (agent-spaces T-06648; hrc-cli's
+// a packaged bin whose IMPORTS are unshipped (agent-spaces T-06648; the retired TS CLI's
 // pre-fix bin=./src/cli.ts, whose ./cli/program.js was left out). The only
 // guard for that is installing the tarball outside the monorepo and starting
 // the binary. Do not treat a green publish as evidence a binary runs.

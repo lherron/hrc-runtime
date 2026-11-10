@@ -47,40 +47,26 @@ export type DependencyGraph = {
 
 export const hrcPackages = [
   'agent-action-render',
-  'hrc-capture-verifier',
-  'hrc-cli',
   'hrc-core',
   'hrc-events',
   'hrc-frame-render',
   'hrc-sdk',
-  'hrc-server',
-  'hrc-store-sqlite',
 ]
 
 export const layers: Layer[] = [
   {
     name: 'HRC Core Contracts',
     roots: ['packages/hrc-core/src', 'packages/hrc-events/src'],
-    forbidden: ['hrc-server', 'hrc-cli', 'acp-', 'gateway-', 'wrkq-lib', 'wlearn'],
-  },
-  {
-    name: 'HRC Storage',
-    roots: ['packages/hrc-store-sqlite/src'],
-    forbidden: ['hrc-server', 'hrc-cli', 'acp-', 'gateway-', 'wrkq-lib', 'wlearn'],
+    forbidden: ['acp-', 'gateway-', 'wrkq-lib', 'wlearn'],
   },
   {
     name: 'HRC Rendering',
     roots: ['packages/agent-action-render/src', 'packages/hrc-frame-render/src'],
-    forbidden: ['hrc-server', 'hrc-cli', 'acp-', 'gateway-', 'wrkq-lib', 'wlearn'],
-  },
-  {
-    name: 'HRC Runtime',
-    roots: ['packages/hrc-capture-verifier/src', 'packages/hrc-sdk/src', 'packages/hrc-server/src'],
     forbidden: ['acp-', 'gateway-', 'wrkq-lib', 'wlearn'],
   },
   {
-    name: 'HRC Operator CLIs',
-    roots: ['packages/hrc-cli/src'],
+    name: 'HRC Runtime',
+    roots: ['packages/hrc-sdk/src'],
     forbidden: ['acp-', 'gateway-', 'wrkq-lib', 'wlearn'],
   },
 ]

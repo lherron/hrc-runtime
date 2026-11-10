@@ -171,46 +171,48 @@ describe('a typed double is type-checked although tsconfig excludes tests', () =
 })
 
 describe('cross-project producer doubles need a captured fixture', () => {
-  const PATH = 'packages/hrc-server/src/__tests__/fixtures/fake-ledger.ts'
-  const FIXTURE = 'packages/hrc-server/src/__tests__/fixtures/captured/wrkq-room-say.json'
-  const body = `import type { WrkqLedgerClient } from '../../wrkq/ledger-client'
-export const fakeLedger = { close: async () => {} } satisfies Partial<WrkqLedgerClient>
+  const PATH = 'packages/hrc-sdk/src/__tests__/fixtures/fake-release.ts'
+  const FIXTURE = 'packages/hrc-sdk/src/__tests__/fixtures/captured/aspd-release.json'
+  const body = `import type { AspcExecutionRelease } from 'spaces-aspc-protocol'
+export const fakeRelease = { releaseId: 'r1' } satisfies Partial<AspcExecutionRelease>
 `
-  const captured = `import type { WrkqLedgerClient } from '../../wrkq/ledger-client'
-/** @captured ./captured/wrkq-room-say.json */
-export const fakeLedger = { close: async () => {} } satisfies Partial<WrkqLedgerClient>
+  const captured = `import type { AspcExecutionRelease } from 'spaces-aspc-protocol'
+/** @captured ./captured/aspd-release.json */
+export const fakeRelease = { releaseId: 'r1' } satisfies Partial<AspcExecutionRelease>
 `
   const reader: TestSource = {
-    path: 'packages/hrc-server/src/__tests__/ledger.test.ts',
-    source: "const wire = readFixture('wrkq-room-say.json')\n",
+    path: 'packages/hrc-sdk/src/__tests__/release.test.ts',
+    source: "const wire = readFixture('aspd-release.json')\n",
   }
   const fixture = JSON.stringify({
-    producer: 'wrkq',
-    producerVersion: 'wrkq 0.42.0 (abc1234)',
+    producer: 'aspd',
+    producerVersion: 'aspd 0.42.0 (abc1234)',
     capturedAt: '2026-10-04T12:00:00Z',
-    request: 'wrkq rpc --stdio: {"method":"wrkq.room.say"}',
+    request: 'GET /v1/releases/r1',
     response: { ok: true },
   })
 
   test('the double is classified by the import its type names', () => {
-    expect(findDoubles(PATH, body)[0]?.producer).toBe('wrkq')
-    const aspd =
-      "import type { AspcExecutionRelease } from 'spaces-aspc-protocol'\nconst fakeRelease: AspcExecutionRelease = {} as never\n"
-    expect(findDoubles(PATH, aspd)[0]?.producer).toBe('aspd')
+    expect(findDoubles(PATH, body)[0]?.producer).toBe('aspd')
+    const unrelated = "import type { Api } from '../api'\nconst fakeApi: Api = {} as never\n"
+    expect(findDoubles(PATH, unrelated)[0]?.producer).toBeUndefined()
   })
 
   test('a new producer double without a capture fails', () => {
     const found = violations([{ path: PATH, source: body }])
-    expect(found[0]?.message).toContain('new or changed wrkq double without a captured fixture')
+    expect(found[0]?.message).toContain('new or changed aspd double without a captured fixture')
   })
 
   test('a baselined producer double passes until its text changes', () => {
     const hash = findDoubles(PATH, body)[0]?.hash
-    const baseline: Baseline = { nonconforming: {}, uncaptured: { [PATH]: [`fakeLedger:${hash}`] } }
+    const baseline: Baseline = {
+      nonconforming: {},
+      uncaptured: { [PATH]: [`fakeRelease:${hash}`] },
+    }
     expect(violations([{ path: PATH, source: body }], baseline)).toEqual([])
-    const changed = body.replace('close: async () => {}', 'close: async () => undefined')
+    const changed = body.replace("releaseId: 'r1'", "releaseId: 'r2'")
     const found = violations([{ path: PATH, source: changed }], baseline)
-    expect(found.map((v) => v.message).join('\n')).toContain('new or changed wrkq double')
+    expect(found.map((v) => v.message).join('\n')).toContain('new or changed aspd double')
   })
 
   test('a capture that exists, records the producer version and is read by a test passes', () => {
@@ -229,7 +231,7 @@ export const fakeLedger = { close: async () => {} } satisfies Partial<WrkqLedger
     ).toContain('no "producerVersion" string')
     const read = (path: string) => (path === FIXTURE ? fixture : undefined)
     expect(violations([{ path: PATH, source: captured }], EMPTY, read)[0]?.message).toContain(
-      'no test in the package reads wrkq-room-say.json'
+      'no test in the package reads aspd-release.json'
     )
   })
 })

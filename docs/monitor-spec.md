@@ -2,16 +2,16 @@
 
 **Status:** CANONICAL monitor contract reference. The current CLI and daemon
 are native Rust. Supersedes `MONITOR_HARNESS_AUDIT.md` and the never-committed
-`MONITOR_PROPOSAL.md`. Retained Bun code and tests still cite this file's
-sections; their source paths below describe that implementation, not the
-installed owner. The harness audit in §§8–9 is retained history.
+`MONITOR_PROPOSAL.md`. The retained Bun packages `hrc-core` and `hrc-events`
+still cite this file's sections. The harness audit in §§8–9 is retained
+history; its source paths name the Bun daemon and CLI deleted in T-13157.
 
 **Source of truth is the code, not this document.** Where this spec and the implementation disagree, the implementation wins and this doc is the bug. The authoritative artifacts are:
 
 - Native monitor output and projection — `crates/hrc-cli/src/monitor/show.rs`, `state.rs`, and `watch/` (paths relative to that monitor directory)
 - Native condition waits, exit codes and status levels — `crates/hrc-cli/src/monitor/engine.rs`, with selector plans in `spec.rs` and entry handling in `wait.rs`
 - Native selector grammar and role-tree resolution — `crates/hrc-cli/src/monitor/selector.rs` and `reader.rs`
-- Retained Bun schema and implementation — `packages/hrc-events/src/monitor-schema.ts`, `packages/hrc-cli/src/monitor/engine.ts`, `packages/hrc-core/src/monitor/exit-codes.ts`, `status-levels.ts` in the same directory, and `packages/hrc-core/src/selectors.ts`
+- Retained Bun schema and contracts — `packages/hrc-events/src/monitor-schema.ts`, `packages/hrc-core/src/monitor/exit-codes.ts`, `status-levels.ts` in the same directory, and `packages/hrc-core/src/selectors.ts`
 
 ---
 
@@ -120,7 +120,7 @@ The `seq:` value must match `^[0-9]+$` and be a safe integer; otherwise `message
 
 ## 6. Condition engine
 
-Defined in native `crates/hrc-cli/src/monitor/engine.rs`, shared by `monitor wait` and `monitor watch --until*`. Retained Bun counterpart: `packages/hrc-cli/src/monitor/engine.ts` (`runMonitorUntilPlan`).
+Defined in native `crates/hrc-cli/src/monitor/engine.rs`, shared by `monitor wait` and `monitor watch --until*`.
 
 **Conditions**: levels `idle`, `busy`, `runtime-dead`; edges `turn-finished`, `response`. Flags are repeatable ORs. Baked unions are not conditions.
 
@@ -188,8 +188,8 @@ Every normally settled armed wait terminates with exactly one `monitor.completed
 ### 7.3 Exit-code mapping (authoritative)
 
 Native codes and outcome mapping live in `monitor/engine.rs` (`exit` and
-`outcome`). The retained Bun equivalents are `MONITOR_EXIT_CODES`
-(`packages/hrc-core/src/monitor/exit-codes.ts`) and `monitorOutcome()`:
+`outcome`). The retained Bun constant is `MONITOR_EXIT_CODES`
+(`packages/hrc-core/src/monitor/exit-codes.ts`):
 
 | Result                            | exitCode | Carries |
 | --------------------------------- | -------- | ------- |
@@ -202,7 +202,7 @@ Native codes and outcome mapping live in `monitor/engine.rs` (`exit` and
 | `stalled`                         | 21       | `outcome:not_matched`, emitted as `monitor.stalled` |
 | `context_changed`                 | 22       | `outcome:not_matched` |
 | `monitor_error`                   | 23       | `outcome:error` |
-| `interrupted`                     | 130      | retained Bun abort-signal path only; native CLI SIGINT emits no event |
+| `interrupted`                     | 130      | SIGINT; the native CLI emits no terminal event |
 
 ## 8. Retained Bun harness signal audit
 

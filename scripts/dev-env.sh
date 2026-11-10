@@ -4,7 +4,7 @@
 # needs, from a fresh clone, using nothing but image substrate.
 #
 # WHY THIS EXISTS. hrc-runtime is a daemon project, and its suites are honest
-# about it: hrc-cli talks to a real HRC daemon over a real unix socket, and the
+# about it: the hrc CLI talks to a real HRC daemon over a real unix socket, and the
 # hrcchat/dm paths resolve a real agent home before they will address anything.
 # Historically both were satisfied *ambiently* — the operator's production
 # daemon at ~/praesidium/var/run/hrc/hrc.sock and the operator's agent homes at
@@ -193,7 +193,7 @@ provision_build() {
 # production state, and every call waits on a remote round trip — ~5s each when
 # that ledger is slow, 100+ calls per run, which is what made the pre-push gate
 # slow and flaky (T-09868). No assertion depends on that ledger's contents (the
-# hrc-cli suite passes 839/839 with wrkq unavailable), so the environment gets
+# retired TS CLI suite passed 839/839 with wrkq unavailable), so the environment gets
 # its own empty, migrated ledger like it gets its own daemon, and so does that
 # daemon (its wrkq authority reads HRC_WRKQ_DB). The path-named aliases are
 # cleared: wrkq refuses a WRKQ_DB_PATH/WRKQ_DB_PATH_FILE that disagrees with

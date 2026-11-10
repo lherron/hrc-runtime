@@ -22,19 +22,23 @@ predicate: >
 authority: wrkq:T-06958; wrkq:T-08596 aspContracts amendment (Daedalus approval EN-14687, 2026-09-18); wrkq:T-08559 (Daedalus approval EN-18147, 2026-09-26); wrkq:T-08137 lastRestart amendment (Daedalus approval EN-19426, 2026-09-28)
 source:
   - packages/hrc-core/src/contracts.ts
-  - packages/hrc-server/src/release-provenance.ts
-  - packages/hrc-server/src/__tests__/t06958-release-provenance.test.ts
+  - crates/hrc-native/src/server/front/release.rs
+  - crates/hrc-native/src/server/front/hosting.rs
+  - crates/hrc-native/e2e/lifecycle_publication.py
   - scripts/atomic-install.ts
   - scripts/atomic-install-live-harness.test.ts
   - scripts/t08559-install-publish-split.test.ts
-  - packages/hrc-cli/src/cli-runtime.ts
-  - packages/hrc-server/src/server-lifecycle.ts
+  - crates/hrc-cli/src/server_status.rs
+  - crates/hrc-native/src/server.rs
+  - crates/hrc-native/src/server/lifecycle/lifecycle/rows.rs
+  - crates/hrc-native/e2e/lifecycle_rows.py
+  - crates/hrc-cli/e2e/status.py
 required_tests:
-  - bun test packages/hrc-server/src/__tests__/t06958-release-provenance.test.ts
+  - python3 crates/hrc-native/e2e/lifecycle_publication.py --binary <rusthrc> --artifacts <dir>
   - bun test scripts/atomic-install-live-harness.test.ts
   - bun test scripts/t08559-install-publish-split.test.ts
-  - bun test packages/hrc-cli/src/__tests__/cli.test.ts
-  - bun test packages/hrc-cli/src/__tests__/t07646-server-status-json-parity.test.ts
+  - python3 crates/hrc-cli/e2e/status.py --binary <rusthrc> --artifacts <dir>
+  - python3 crates/hrc-native/e2e/lifecycle_rows.py --binary <rusthrc> --artifacts <dir>
 last_verified: 2026-09-26 focused regression and build; installed smoke pending
 reopen_when: Atomic release layout, package provenance, daemon startup, the server.started provenance payload, or status projection changes.
 supersedes: []

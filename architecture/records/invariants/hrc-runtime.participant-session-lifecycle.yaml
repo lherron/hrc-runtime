@@ -206,9 +206,9 @@ source:
   - architecture/records/invariants/hrc-runtime.harness-broker-committed-observation-control.yaml
   - architecture/records/invariants/hrc-runtime.harness-broker-admission-client.yaml
   - architecture/records/invariants/hrc-runtime.continuation-history-resume.yaml
-  - packages/hrc-server/src/broker/controller/dispatch.ts
-  - packages/hrc-server/src/broker-interactive-handlers/substrate-allocator.ts
-  - packages/hrc-server/src/participant-registration-handlers.ts
+  - crates/hrc-native/src/server/broker/broker.rs
+  - crates/hrc-native/src/server/broker/participants/descriptor.rs
+  - crates/hrc-native/src/server/broker/participants/mod.rs
 required_tests:
   - T-12619 crates/hrc-native/e2e/participant_eviction.py proves both terminate and context eviction with a real ASP broker fixture, HRC token removal, old-attempt refusal after owner restart, idempotent audit, preserved external process and presentation, continuation, placement and held reservation
   - T-12431 isolated real broker and native daemon prove exhausted attempt without runtime row returns 409 participant_establishment_exhausted, exhausted attempt with runtime row retains the previous runtime inspect view, and unrelated unknown runtime returns 404 unknown_runtime; installed Foundry waiter observes no-row terminal refusal with bounded inspect calls in the native owner log

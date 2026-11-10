@@ -16,9 +16,9 @@ Run the byte/exit comparator:
 python3 crates/hrc-cli/e2e/differential.py --binary crates/target/debug/rusthrc --artifacts /tmp/n5-report
 ```
 
-Add `--runtime-root /tmp/<isolated-root>/run` for daemon cases. Supply
-`--oracle <copied-release>/packages/hrc-cli/bin/hrc.js` for the named installed
-Bun reference. Never point mutation cases at production. Reports retain both
+Add `--runtime-root /tmp/<isolated-root>/run --state-root /tmp/<isolated-root>/state`
+for daemon cases. Expected outputs are the frozen literals under `--fixtures`;
+there is no Bun reference. Never point mutation cases at production. Reports retain both
 stdout/stderr streams, exit status, the exact argv and declared normalization.
 
 Atomic packaging builds both native executables, reuses each previous binary

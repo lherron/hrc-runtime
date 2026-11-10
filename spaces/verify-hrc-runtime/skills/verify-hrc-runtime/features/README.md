@@ -10,23 +10,23 @@ Proven when. The last lines of each file name the drive that last proved it and 
 | 3 | Turns and monitor (`turn`, `turn --attach`, `monitor show/watch/wait/events/transcript/stats/search/session-report`) | [03-turns-monitor.md](03-turns-monitor.md) | scratch; live read-only |
 | 4 | HTTP API on the daemon socket (`/v1/health`, `/v1/events/tail` paging and refusals, `/v1/events/head`, `/v1/events/page`, retired routes) | [04-http-api.md](04-http-api.md) | scratch |
 | 5 | Placement and federation (`target locate`, `target bindings`, doctor's node/federation/placement rows) | [05-placement-federation.md](05-placement-federation.md) | live read-only; scratch |
-| 6 | Install and release (atomic release, manifest, `runningEqualsInstalled`, the owner tree and staging, release pruning and held releases, the dirty guard; the front door is obsolete on owner nodes) | [06-install-release.md](06-install-release.md) | live read-only; install needs operator |
+| 6 | Install and release (atomic release, manifest, `runningEqualsInstalled`, the owner tree and staging, release pruning and held releases, the dirty guard) | [06-install-release.md](06-install-release.md) | live read-only; install needs operator |
 | 7 | Maintenance (`admin runs`, `admin metrics`, `admin status`, `runtime diagnostics`, `runtime sweep/prune` dry-runs, `capture status`, `broker-verify candidates/run`, `worktrees audit`, native nightly retention) | [07-maintenance.md](07-maintenance.md) | scratch; live read-only |
 | 8 | Attach (`~/.bun/bin/hrc attach` in a real TTY through ghostmux to an `hrc-pty` seat, detach, the attach descriptor) | [08-attach.md](08-attach.md) | scratch |
 
 Since 2026-10-26 the installed CLI and the live daemon are native (`rusthrc`); `hv scratch up` starts the
-native daemon from a release copy, and every file grades that unless it says "Bun only".
+native daemon from a release copy, and every file grades that. "Bun only" marks behavior of the Bun daemon
+and CLI deleted in T-13157: history, not drivable.
 
 Not mapped here: the viewer (it ships from ACP now) and the mail injector (agent-control-plane's
-`hrc-mail-injector`). `~/.bun/bin/hrc federation retire`, `~/.bun/bin/hrc server restart|stop`, `just install|publish|deploy-*`,
-`just front-door-enable|disable` are named in their features but are operator steps, never driven by this skill.
+`hrc-mail-injector`). `~/.bun/bin/hrc federation retire`, `~/.bun/bin/hrc server restart|stop` and `just install|publish|deploy-*`
+are named in their features but are operator steps, never driven by this skill.
 Also not mapped, from the live surface on 2026-10-05 (T-10350), rechecked 2026-10-26 (T-11864), 2026-11-02
 (T-12291, native CLI) and 2026-11-09 (T-12756; `index/help-*.txt` in that task's artifacts):
 
 - Continuity writes `session rotate`, `session meta set|clear`, `session retitle` (deprecated alias of meta),
   `session drop-continuation`, and run plumbing `runtime interrupt`: feature 2 names them;
-  terminate and resume prove the continuation path, and nothing in this skill yet needs them driven. `meta
-  set|clear`, `retitle` still run the Bun CLI against the native daemon.
+  terminate and resume prove the continuation path, and nothing in this skill yet needs them driven.
 - `admin surface bind`: low-level surface plumbing that ACP and the viewer drive; prove it from
   those consumers. (`admin bridge …` and `admin registrations gc` are gone since 4c7c3653, T-11542: `unknown
   command`, and their routes answer 404; 2026-10-26, T-11864.)
@@ -37,8 +37,7 @@ Also not mapped, from the live surface on 2026-10-05 (T-10350), rechecked 2026-1
   `hrc`; its own `ops` socket verbs (status, shutdown) are not driven (never send `shutdown`).
 - `admin events drain` (a dead container's ledger): operator repair on real state.
 - `hrc-owner.sh stage|boot-check|refresh-plist`, `just refresh-owner-exe`: owner
-  operator steps (feature 6), never driven. `just front-door-*` is obsolete on a rusthrc owner node: enable and
-  disable refuse it.
+  operator steps (feature 6), never driven.
 
 ## Keeping the map honest
 

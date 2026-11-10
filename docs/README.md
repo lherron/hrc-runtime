@@ -7,7 +7,6 @@ Current reference for the HRC runtime. Design records live in
 ## Orientation
 
 - [architecture-overview.md](architecture-overview.md) — map of the HRC packages, daemon, store, and how ASP/ACP connect to them.
-- [hrc-server-architecture.md](hrc-server-architecture.md) — hrc-server internals: module topology, handler registration, and request parsing.
 - [target-handles.md](target-handles.md) — grammar for target handles and ScopeRefs accepted by the CLI and API.
 
 ## CLI

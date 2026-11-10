@@ -44,8 +44,8 @@ describe('test observability CLI', () => {
         join(root, 'scripts', 'probe.test.ts'),
         `import { test, expect } from 'bun:test';
 test('startup environment', async () => {
-  const child = Bun.spawn([process.execPath, '-e', 'console.log(JSON.stringify({wrkq:process.env.WRKQ_DB, federation:process.env.HRC_FEDERATION_TEST_MODE}))'], {stdout:'pipe'});
-  expect(JSON.parse(await new Response(child.stdout).text())).toEqual({wrkq:'rpc://127.0.0.1:1', federation:'loopback'});
+  const child = Bun.spawn([process.execPath, '-e', 'console.log(JSON.stringify({wrkq:process.env.WRKQ_DB}))'], {stdout:'pipe'});
+  expect(JSON.parse(await new Response(child.stdout).text())).toEqual({wrkq:'rpc://127.0.0.1:1'});
   expect(await child.exited).toBe(0);
 });`
       )
@@ -71,7 +71,6 @@ test('startup environment', async () => {
             ...process.env,
             WRKQ_DB: 'rpc://127.0.0.1:9',
             HRC_WRKQ_DB: 'rpc://127.0.0.1:9',
-            HRC_FEDERATION_TEST_MODE: '',
           },
           stdout: 'pipe',
           stderr: 'pipe',

@@ -50,18 +50,18 @@ source:
   - architecture/records/invariants/hrc-runtime.aspd-prepared-execution-release.yaml
   - architecture/records/invariants/hrc-runtime.participant-session-lifecycle.yaml
   - architecture/records/invariants/hrc-runtime.collaboration-presentation-authority.yaml
-  - packages/hrc-server/src/turn-admission-gate.ts
-  - packages/hrc-server/src/turn-admission/submit.ts
-  - packages/hrc-server/src/turn-dispatch-submission-handlers.ts
-  - packages/hrc-server/src/turn-admission/routes/broker-headless-queue.ts
-  - packages/hrc-server/src/selector-message-handlers/selector-input.ts
+  - crates/hrc-native/src/server/turns/turns/admission.rs
+  - crates/hrc-native/src/server/turns/turns/mod.rs
+  - crates/hrc-native/src/server/turns/turns/route.rs
+  - crates/hrc-native/src/server/broker/recovery.rs
+  - crates/hrc-native/src/server/turns/input.rs
 required_tests:
   - T-10232 exhaustive HTTP door-by-driver conformance with typed production-interface boundary fakes and explicit inapplicable cells
   - T-10232 E0 refusal cells preserve session invocation broker and pane for freshContext plus format mismatch or unauthorized preempt
   - T-10232 same-key changed-format refusal and matching replay without a new run
   - T-10232 drain closure waits through leased routing and refuses new submissions on every door
   - T-10232 format2 uncertainty and unfenced projection throws remain possible_write without pipeline terminalization, preserve route protection, and permit subsequent committed landing projection
-  - T-10232 format1 timeout remains possible_write in the pipeline while preserving the route's failed run and timed-out input fence, with late events skipped_fenced as in broker-input-fence.test.ts and no additional pipeline state changes
+  - T-10232 format1 timeout remains possible_write in the pipeline while preserving the route's failed run and timed-out input fence, with late events skipped_fenced through the broker_input_fenced_at gate in crates/hrc-native/src/server/projection/projection/mod.rs (cargo test -p hrc-native a_kept_binding_timeout_fails_only_its_run) and no additional pipeline state changes
   - T-10232 cold-launch carry per intent and internal cold-enqueue restart/drain coverage with existing queue identity preserved
   - T-10232 seal check in just check prevents executor bypasses
   - T-10232 each phase preserves just verify and supplies installed per-door admission-event and delivery evidence, including live tmux handoff and literal paste-then-Enter

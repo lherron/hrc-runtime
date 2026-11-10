@@ -14,8 +14,8 @@ import { join } from 'node:path'
  * a registry the CLI honors and the daemon does not is exactly the divergence
  * that made ledger-born seats unplaceable for `agents` while `hrc start` on the
  * identical scope worked (T-07749). That reader is the daemon's cached
- * `wrkq.project.listView` over its ledger client (hrc-server
- * federation/project-registry-roots.ts); the policy here takes the loaded
+ * `wrkq.project.listView` over its ledger client (crates/hrc-native's
+ * federation project-registry roots); the policy here takes the loaded
  * registry as input and never shells wrkq itself (T-08783).
  */
 export interface WrkqProjectRegistryEntry {

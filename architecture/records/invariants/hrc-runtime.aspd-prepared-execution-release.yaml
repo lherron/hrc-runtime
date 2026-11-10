@@ -115,16 +115,13 @@ source:
   - architecture/records/invariants/hrc-runtime.asp-toolchain-selection.yaml
   - architecture/records/invariants/hrc-runtime.harness-broker-admission-client.yaml
   - architecture/records/invariants/hrc-runtime.harness-broker-committed-observation-control.yaml
-  - packages/hrc-server/src/agent-spaces-adapter/aspd-preparation-client.ts
-  - packages/hrc-server/src/agent-spaces-adapter/compile-adapter.ts
-  - packages/hrc-server/src/aspd-headless-start.ts
-  - packages/hrc-server/src/broker-interactive-handlers/substrate-allocator.ts
-  - packages/hrc-server/src/broker/controller/allocation.ts
-  - packages/hrc-server/src/broker/controller/dispatch.ts
-  - packages/hrc-server/src/broker/controller/persistence.ts
-  - packages/hrc-server/src/broker/runtime-hosting.ts
-  - packages/hrc-server/src/broker/runtime-state.ts
-  - packages/hrc-server/src/startup-reconcile.ts
+  - crates/hrc-native/src/server/placement/aspc.rs
+  - crates/hrc-native/src/server/broker/compile.rs
+  - crates/hrc-native/src/server/broker/broker.rs
+  - crates/hrc-store/src/broker.rs
+  - crates/hrc-store/tests/broker_creation.rs
+  - crates/hrc-native/src/server/broker/controller/attach.rs
+  - crates/hrc-native/src/server/broker/startup/mod.rs
 required_tests:
   - just architecture-records
   - v2 preparation atomically persists the complete selected response before hosting, and launch consumes only reread frozen bytes

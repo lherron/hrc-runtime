@@ -62,14 +62,11 @@ retention: `broker/ledger_prune.rs`, `broker/ledger_prune/retention.rs` and
   worktrees (shells the bare name `wrkq` and `git worktree list`: `admin/worktrees.rs:263,277,392`).
   **Fails in a prae seat**, whose PATH has no `wrkq`: "wrkq projects failed: spawnSync wrkq ENOENT", rc 1; with
   `PATH=$HOME/.local/bin:$PATH` it answered `summary {matched 9, wouldPrune 1}` (2026-11-09; product gap
-  T-12759). `worktrees prune` is Bun (not driven).
+  T-12759). `worktrees prune` (native) is not driven.
 - Nightly retention is native (`ledger_prune/retention.rs`): backups, three metadata
   tables, first-turn bundles, mark-gated runtime prune, PASSIVE checkpoint and
   incremental vacuum.
   The 04:00–04:25 local schedule produces `retention.report` and `prune.report`.
-  The historical Bun script keeps only `--strip-envelope-payloads` and
-  `--restub-tool-results`, required by analytics integration tests; bare `--apply`
-  is refused before opening a database. Neither operation is scheduled.
 - Not the cellar but they terminate HRC runtimes: launchd `com.praesidium.reap-headless-ghostmux` (every 30 min,
   `-y`) reaps paneless ready runtimes idle more than 12 h (54535197); and native seat retirement (T-12236)
   logs `runtime.seat_retirement_complete` (the scratch's: `skippedByReason: {standing_seat: 1}`, 2026-11-02,

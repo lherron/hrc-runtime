@@ -25,7 +25,7 @@
  *
  * Test strategy:
  *   - Socket discovery tests use real filesystem (no mock)
- *   - Client round-trip tests spin up a real hrc-server on a temp socket
+ *   - Client round-trip tests spin up a stub daemon on a temp socket
  *   - Error parsing tests use a minimal Bun.serve stub that returns known error shapes
  */
 import { afterEach, beforeEach, describe, expect, it } from 'bun:test'

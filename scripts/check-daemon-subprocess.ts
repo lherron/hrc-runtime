@@ -9,8 +9,12 @@
  * spawnSync of `wrkq projects` / `git worktree list` on placement paths
  * (9db3c633). The next spawn copied whichever neighbour it opened.
  *
- * - A synchronous spawn in hrc-server or any workspace package it depends on
- *   fails outright.
+ * The HRC daemon itself is Rust now (crates/hrc-native); the TypeScript code
+ * that still runs resident is hrc-turn-attention's launchd service. It and the
+ * workspace packages it depends on (hrc-core, hrc-sdk) keep this rule.
+ *
+ * - A synchronous spawn in hrc-turn-attention or any workspace package it
+ *   depends on fails outright.
  * - A raw async spawn (`Bun.spawn`, `spawn`, `execFile`) outside
  *   packages/hrc-core/src/bounded-subprocess.ts fails when a file has more
  *   than scripts/daemon-subprocess-baseline.json records. The baseline is {}
@@ -19,18 +23,22 @@
 import { existsSync, readFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 
+/** The resident TypeScript service, hrc-turn-attention's launchd daemon. */
+export const RESIDENT_PACKAGE = 'hrc-turn-attention'
+
 /**
- * hrc-server and every workspace package it depends on at runtime, read from
- * its manifest so a new dependency is covered without editing this file.
+ * The resident package and every workspace package it depends on at runtime,
+ * read from its manifest so a new dependency is covered without editing this
+ * file.
  */
 export function daemonPackages(repoRoot: string): string[] {
   const manifest = JSON.parse(
-    readFileSync(join(repoRoot, 'packages/hrc-server/package.json'), 'utf8')
+    readFileSync(join(repoRoot, 'packages', RESIDENT_PACKAGE, 'package.json'), 'utf8')
   ) as { dependencies?: Record<string, string> }
   const workspace = Object.keys(manifest.dependencies ?? {}).filter((name) =>
     existsSync(join(repoRoot, 'packages', name, 'package.json'))
   )
-  return ['hrc-server', ...workspace]
+  return [RESIDENT_PACKAGE, ...workspace]
 }
 
 export const BOUNDED_MODULE = 'packages/hrc-core/src/bounded-subprocess.ts'

@@ -83,13 +83,15 @@ source:
   - architecture/records/invariants/hrc-runtime.mobile-session-index.yaml
   - docs/federation-peer-protocol.md
   - docs/federation-registry-retirement.md
-  - packages/hrc-server/src/federation/home-authority.ts
-  - packages/hrc-server/src/federation/peer-protocol.ts
-  - packages/hrc-server/src/session-metadata-handlers.ts
-  - packages/hrc-server/src/server-session-methods.ts
-  - packages/hrc-server/src/event-handlers.ts
-  - packages/hrc-server/src/runtime-list-handlers.ts
+  - crates/hrc-native/src/server/placement/federation/mod.rs
+  - crates/hrc-native/src/server/placement/federation/routing.rs
+  - crates/hrc-native/src/server.rs
+  - crates/hrc-native/src/server/projection/sessions.rs
+  - crates/hrc-native/src/server/projection/lifecycle_events.rs
+  - crates/hrc-native/src/server/projection/runs.rs
   - crates/hrc-native/src/server/placement/federation/peer_listener.rs
+  - crates/hrc-native/src/server/placement/federation/annotations_local_tests.rs
+  - crates/hrc-native/src/server/placement/federation/session_home_tests.rs
 required_tests:
   - T-12362 annotations and sessions/get on a retired unbound scope default and false refuse session_home_pending; unix localOnly=true returns the existing local handler response; authenticated peer true refuses local_only_forbidden; ordinary peer reads remain local
   - crates/hrc-native/e2e/peer_events_page.py authenticated page, 200-row cap, bearer refusal, local-only cursor and fence checks

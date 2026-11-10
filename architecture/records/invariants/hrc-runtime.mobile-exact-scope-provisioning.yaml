@@ -56,6 +56,16 @@ predicate: >
   refuses the unknown materialization field before mutation, while old callers
   retain started responses. Retryable peer failure is synchronous
   runtime_unavailable and does not use the message outbox.
+  Known gap, not enforced since the Rust cutover of 2026-10-26: the receiver
+  half of the exactStart peer verb (independent preflight before mutation,
+  runtime-intent localization, and home-side ownership of the claim and
+  durable idempotency record). Today a remote-home exactStart between Rust nodes is
+  a safe refusal before any mutation: the Rust peer listener advertises no
+  exactStart capability and answers POST /v1/federation/exact-start with 404
+  peer_upgrade_required, and the origin's claim_start refuses with 409
+  stale_context reason peer_upgrade_required (retryable false) without sending
+  the start. wrkq:T-11933 (native peer listener: home-side roster-start,
+  exact-start and establish) restores the receiver.
 authority: Lance / wrkq:T-07398 / wrkq:T-07655 / wrkq:T-08407
 source:
   - wrkq:T-12316
@@ -66,10 +76,10 @@ source:
   - wrkq:T-07398
   - wrkq:T-07655
   - wrkq:T-08407
-  - packages/hrc-server/src/scope-claim-core.ts
-  - packages/hrc-server/src/exact-claim.ts
-  - packages/hrc-server/src/roster-claim.ts
-  - packages/hrc-server/src/federation/exact-start-client.ts
+  - crates/hrc-native/src/server/placement/federation/gate.rs
+  - crates/hrc-native/src/server/placement/federation/claim_start.rs
+  - crates/hrc-native/src/server/placement/federation/peer_listener.rs
+  - wrkq:T-11933
 required_tests:
   - python3 crates/hrc-native/e2e/runtimes_start.py --deferred-message-only (T-12316 deferred claim binding and pinned-turn replay)
   - just verify

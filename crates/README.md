@@ -9,8 +9,8 @@ external libraries, but no HRC crate.
 store grammars (including terminal statuses and process identity). The sibling
 `store-owns-*` tasks consolidate those definitions here. It may depend on
 `hrc-common` and external libraries, never the CLI, daemon, domain, or kernel.
-Its build script derives schema admission from the Bun migration graph; it does
-not execute those migrations.
+It owns schema migration (`src/migrate/`, T-12840): only the daemon at boot and
+`rusthrc store migrate` migrate; every other open admits or refuses.
 
 `hrc-domain` declares HRC's six operator operations and uses an injected
 in-process owner binding. Its only HRC dependency is `hrc-common`; external

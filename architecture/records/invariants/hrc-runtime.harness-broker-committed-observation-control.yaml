@@ -186,8 +186,8 @@ predicate: >
 authority: wrkq:T-11700 broker disposition retention design approval (EN-34727; Mable rule acceptance EN-34723), 2026-10-23; wrkq:T-10632 spec revision 2 age-bound directory holds and expired-revivable death-evidence admission (Daedalus approval), 2026-10-09; wrkq:T-08566 H1 directory-hold reconciliation revision 3 (Daedalus approval), 2026-09-17; wrkq:T-08566 stages 2-3 retained-evidence consumer and verifier revision 5 (Daedalus approval), 2026-09-16; wrkq:T-08566 stage-1 launch-wrapper ingest retirement (Daedalus approval EN-13178), 2026-09-17; Lance HCS T-07827 / Daedalus approvals wrkq:T-07853, companion design wrkq:T-08098, wrkq:T-08201 revision 5 (C-19938), and wrkq:T-08207 revisions 10 and 11 (2026-09-26)
 source:
   - wrkq:T-11700
-  - packages/hrc-server/src/broker/event-mapper/project-envelope.ts
-  - packages/hrc-store-sqlite/src/repositories/broker-invocation-event-repository.ts
+  - crates/hrc-native/src/server/projection/projection/mod.rs
+  - crates/hrc-store/src/broker_reads.rs
   - crates/hrc-native/src/server/broker/ledger_prune/retention.rs
   - crates/hrc-store/src/maintenance.rs
   - docs/state-retention.md
@@ -203,12 +203,13 @@ source:
   - commit:6d04d5de
   - architecture/records/invariants/hrc-runtime.harness-broker-admission-client.yaml
   - architecture/records/invariants/hrc-runtime.ledger-tool-result-storage.yaml
-  - packages/hrc-server/src/broker/controller.ts
-  - packages/hrc-server/src/broker/event-mapper.ts
-  - packages/hrc-server/src/broker/event-mapper/runtime-state.ts
-  - packages/hrc-server/src/broker/controller/persistence.ts
-  - packages/hrc-store-sqlite/src/repositories/runtime-repositories.ts
-  - packages/hrc-store-sqlite/src/migrations/broker-migrations.ts
+  - crates/hrc-native/src/server/broker/controller/mod.rs
+  - crates/hrc-native/src/server/broker/controller/attach.rs
+  - crates/hrc-native/src/server/projection/projection/owners.rs
+  - crates/hrc-native/src/server/projection/projection/turns.rs
+  - crates/hrc-native/src/server/projection/projection/db.rs
+  - crates/hrc-store/src/broker.rs
+  - crates/hrc-store/src/migrate/baseline.sql
 required_tests:
   - T-13046 keep-manual real-store differential and writer-plan evidence (crates/hrc-native/e2e/nightly_retention.py)
   - normalized broker append failure publishes nothing to HRC

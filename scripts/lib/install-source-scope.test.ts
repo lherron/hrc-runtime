@@ -9,7 +9,7 @@ import {
 
 describe('isInstallSourcePath', () => {
   test('package, script, and tool code is source', () => {
-    expect(isInstallSourcePath('packages/hrc-server/src/launch/broker.ts')).toBe(true)
+    expect(isInstallSourcePath('packages/hrc-sdk/src/client.ts')).toBe(true)
     expect(isInstallSourcePath('scripts/atomic-install.ts')).toBe(true)
     expect(isInstallSourcePath('tools/fitkit/s6-hrc-runtime-verify-evidence.mjs')).toBe(true)
     expect(isInstallSourcePath('integration-tests/fixtures/example/harness')).toBe(true)
@@ -33,7 +33,7 @@ describe('isInstallSourcePath', () => {
 
   test('prose is prose wherever it sits, including beside the code it describes', () => {
     expect(isInstallSourcePath('CLAUDE.md')).toBe(false)
-    expect(isInstallSourcePath('packages/hrc-server/src/wrkq/notes.md')).toBe(false)
+    expect(isInstallSourcePath('packages/hrc-sdk/src/wrkq/notes.md')).toBe(false)
     expect(isInstallSourcePath('docs/html/T-04901.HTML')).toBe(false)
   })
 
@@ -58,12 +58,12 @@ describe('partitionInstallScope', () => {
     expect(
       partitionInstallScope([
         'docs/atomic-install.md',
-        'packages/hrc-cli/src/cli.ts',
+        'packages/hrc-sdk/src/cli-helpers.ts',
         'architecture/RISKS.md',
         'bun.lock',
       ])
     ).toEqual({
-      source: ['packages/hrc-cli/src/cli.ts', 'bun.lock'],
+      source: ['packages/hrc-sdk/src/cli-helpers.ts', 'bun.lock'],
       documentation: ['docs/atomic-install.md', 'architecture/RISKS.md'],
     })
   })

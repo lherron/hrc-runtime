@@ -183,7 +183,7 @@ export type {
   UnbindSurfaceRequest,
 } from 'hrc-core'
 
-// -- SDK-only types (not duplicated in hrc-server) ----------------------------
+// -- SDK-only types (not part of the daemon wire) ----------------------------
 
 export type SessionFilter = {
   scopeRef?: string | undefined
@@ -325,7 +325,7 @@ export type BrokerForensicsOptions = {
 /**
  * Filter options for `HrcClient.listLatestEventBySession()`.
  *
- * Mirrors the indexed query in hrc-store-sqlite. `fromSeq` / `follow` are
+ * Mirrors the daemon's indexed event query (crates/hrc-store). `fromSeq` / `follow` are
  * intentionally absent: this endpoint returns a single row per
  * (hostSessionId, generation) and is not a stream.
  */

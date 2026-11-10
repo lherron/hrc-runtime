@@ -17,8 +17,7 @@ daemon `crates/hrc-native/src/main.rs` (`server serve` dispatch), `server.rs` (`
   `~/praesidium/var/hrc-owner/hrc-runtime-current/bin/rusthrc` (not the fixed `var/hrc-owner/bin/rusthrc`; feature 6). Scratch: `release.mode unmanaged`, `releaseId
   null`, `binaryPath <copy>/bin/rusthrc`, `.node {nodeId max3, nodeIdProvenance derived, mode single-node,
   configExists false}` (2026-11-02, T-12291). `.api.listenSocketPath` is hard-coded equal to `.api.socketPath`
-  (Gotchas). `just front-door-status` still runs; live printed `hrc-bun.sock: no answer` (2026-11-02): the
-  Bun-behind-rusthrc front door is a retained fallback, not production.
+  (Gotchas). The Bun-behind-rusthrc front door and its `just front-door-*` recipes are deleted (e60e97a3).
 - `~/.bun/bin/hrc doctor [target] [--json] [--strict]`: rows `hrc-daemon`, `node-identity`, `federation-config`,
   one `federation-peer:<node>` per peer (`healthy, answered … in Nms`; back since a46bdc4f, 2026-11-09),
   `placement-skew`, `placement-policy` (one warn row per cause for bindings with a live runtime, plus one `+` row
@@ -72,7 +71,6 @@ default), then `hv run <task> -- ~/.bun/bin/hrc server status --json` and `hv ru
 ~/.bun/bin/hrc doctor --json | jq -c '.[] | select(.name|test("placement-policy|federation-peer")) | {name,status,count}'
 ~/.bun/bin/hrc doctor --strict >/dev/null; echo "strict rc=$?"   # 1 only while a live binding warns
 curl -s -w ' http=%{http_code}' --unix-socket /tmp/hv/<task>/run/hrc.sock http://hrc/v1/doctor | head -c 300
-cd ~/praesidium/hrc-runtime && just front-door-status 2>&1 | tail -5   # hrc-bun.sock: no answer
 hv run <task> -- ~/.bun/bin/hrc server status --json | jq -c '{release: .release|{mode,releaseId}, node, binaryPath}'   # unmanaged, null, derived
 hv run <task> -- ~/.bun/bin/hrc doctor                           # four + rows: single-node, no bindings
 grep -m1 '"server.listening"' /tmp/hv/<task>/serve.log   # owner rusthrc, role native
@@ -92,8 +90,7 @@ curl -s --unix-socket ~/praesidium/var/run/hrc/hrc.sock http://hrc/v1/status | j
   2026-11-02). Assert `.release.mode` first (`atomic` live, `unmanaged` scratch).
 - **`listenSocketPath == socketPath` cannot be wrong on native.** Both come from `<runtime>/hrc.sock`
   (`crates/hrc-native/src/server.rs:1061`), equal on live and scratch alike (2026-11-02). Prove which daemon
-  answered by the log's `server.listening` / `servedBy:"native"` lines, not by that comparison or
-  `front-door-status`.
+  answered by the log's `server.listening` / `servedBy:"native"` lines, not by that comparison.
 - **Nothing guards `rusthrc server serve` in an agent shell.** It creates a missing store and boots, and its births
   inherit your `CLAUDECODE` and friends (source-only, 2026-11-02: `crates/hrc-native/src/main.rs:34-47`). An empty store is no isolation guard. Start real daemons only through `hv scratch up`
   (scrubbed env, own ghostmux tab). Never run `~/.bun/bin/hrc server start` with scratch env vars: it kickstarts the loaded

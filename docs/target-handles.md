@@ -142,9 +142,8 @@ selectors use plain `--until`. `show` accepts one exact selector.
 - Monitor parsing and task/prefix families are in
   `crates/hrc-cli/src/monitor/selector.rs` and `monitor/spec.rs`. Other
   operator selector resolution is in `crates/hrc-cli/src/selectors.rs`.
-- TypeScript consumers use ASP's `agent-scope` package and HRC's
-  `packages/hrc-cli/src/cli/scope.ts`, `profile-aware-selector.ts`, and
-  `selector-resolve.ts`; monitor families use `monitor/selector-shape.ts`.
+- TypeScript consumers use ASP's `agent-scope` package; the retained
+  `packages/hrc-core/src/selectors.ts` parses monitor selectors.
 - Command-level detail is in [CLI surface](https://github.com/lherron/hrc-runtime/blob/main/docs/cli-surface.md).
 
 ## Federation note

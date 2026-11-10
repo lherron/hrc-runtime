@@ -2,7 +2,7 @@ id: hrc-runtime.continuation-history-resume
 kind: invariant
 status: active
 owner_project: hrc-runtime
-scope: provider continuation retention, automatic reuse, explicit resume, and historical repair
+scope: provider continuation retention, automatic reuse, and explicit resume
 predicate: >
   A non-empty provider continuation key recorded on an HRC session or runtime is
   durable history: clear, drop, and end operations retain it while recording
@@ -18,26 +18,39 @@ predicate: >
   keyless inactive current successor may be bound atomically, a same-key inactive
   successor may be reused idempotently, and a live or different-key successor
   conflicts. The read-only session resolve surface exposes retained continuation
-  history independently of automatic-reuse state. Startup repair restores only
-  NULL historical session and runtime keys from each owner's latest non-empty
-  durable broker continuation.updated event, never overwrites a current key,
-  preserves ordinary fresh-start disposition, is idempotent, and completes
-  before request service begins.
+  history independently of automatic-reuse state. The projection records a
+  continuation as it applies the broker's continuation.updated event
+  (crates/hrc-native/src/server/projection/projection/state.rs), storing the
+  key the broker sends and enabling reuse. The startup repair clause (restore
+  NULL historical keys from the latest non-empty continuation.updated) is
+  retired and not enforced since the Rust cutover of 2026-10-26: it existed for
+  a TypeScript-era defect that nulled keys, and the TypeScript daemon ran it at
+  every start until the cutover. The projection stores the key the broker
+  sends; the broker protocol declares key a string, and no HRC code emits the
+  event. On max3's live store, 2474 sessions updated since the cutover carry a
+  stored continuation and 0 have a non-text key (mable, T-13157, 2026-11-10).
+  A broker sending a keyless event breaks its protocol and is unsupported.
 authority: Lance HCS T-07894 / Daedalus approval wrkq:T-07899 revision 2, 2026-09-02
 source:
   - wrkq:T-07899
   - architecture/records/invariants/hrc-runtime.harness-broker-committed-observation-control.yaml
   - architecture/records/invariants/hrc-runtime.ledger-tool-result-storage.yaml
-  - packages/hrc-server/src/session-resume-continuation.ts
-  - packages/hrc-server/src/target-message-handlers.ts
-  - packages/hrc-server/src/broker/event-mapper.ts
+  - crates/hrc-native/src/server/turns/resume.rs
+  - crates/hrc-native/src/server/turns/context.rs
+  - crates/hrc-native/src/server/turns/control.rs
+  - crates/hrc-native/src/server/broker/broker.rs
+  - crates/hrc-native/src/server/broker/compile.rs
+  - crates/hrc-native/src/server/projection/projection/state.rs
+  - crates/hrc-native/src/server/projection/sessions.rs
+  - crates/hrc-cli/e2e/resume.py
+  - crates/hrc-native/e2e/steer_timeout.py
 required_tests:
   - just architecture-records
   - T-07899 key-retention, automatic-reuse suppression, and resolve-exposure gates
   - T-07899 barrier-neutral selection and locked exact-key successor gates
-  - T-07899 startup-repair ordering and idempotency gates
+  - python3 crates/hrc-native/e2e/steer_timeout.py (S.continuation-recorded)
   - T-07899 installed max3 continuation-recall and historical-seat smoke
 last_verified: 2026-09-02 design approval; implementation gates pending
-reopen_when: Continuation retention, automatic reuse authority, explicit-resume selection or successor fencing, resolve exposure, broker-ledger repair authority, or repair ordering changes.
+reopen_when: Continuation retention, automatic reuse authority, explicit-resume selection or successor fencing, resolve exposure, or the continuation.updated fold changes.
 supersedes: []
 superseded_by: []

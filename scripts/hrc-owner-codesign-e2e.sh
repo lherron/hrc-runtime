@@ -145,7 +145,7 @@ check "create is idempotent (second run skips the import)" grep -q '1/4 skip: ce
 
 log "scratch store and owner plist"
 mkdir -p "$scratch/state" "$scratch/run" "$scratch/LaunchAgents" "$scratch/tmux"
-(cd "$B" && bun -e 'import {openHrcDatabase} from "./packages/hrc-store-sqlite/src/database.ts"; openHrcDatabase(process.argv[1]).close()' "$scratch/state/state.sqlite")
+"$B/bin/rusthrc" store migrate "$scratch/state/state.sqlite"
 cat > "$PLIST" <<EOF
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">

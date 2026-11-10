@@ -86,7 +86,7 @@ export type RunPreviewRequest = {
 
 /**
  * T-08596 (T-08569A closure) — the broker-run preview wire shape, moved here
- * from hrc-server so the SDK and CLI consume daemon previews without importing
+ * from the daemon so the SDK and CLI consume daemon previews without importing
  * server code. Pure data: the daemon compiles via aspd and projects the
  * admitted plan plus prompt zones into this shape.
  */

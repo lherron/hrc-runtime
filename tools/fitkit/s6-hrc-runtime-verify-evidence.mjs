@@ -6,7 +6,6 @@ const PREDICATE_ID = 'fit:s6/hrc-runtime-lefthook-verify-closure'
 
 const VERIFY_LEAF_ORDER = [
   'check:boundaries',
-  'check:cli-surface',
   'check:manifests',
   'check:public-surface',
   'check:suppressions',
@@ -17,7 +16,6 @@ const VERIFY_LEAF_ORDER = [
 
 const CHECK_COMMAND_LABELS = [
   [/check-boundaries\.ts\b/, 'check:boundaries'],
-  [/check-cli-surface\.ts\b/, 'check:cli-surface'],
   [/check-manifest-edges\.ts\b/, 'check:manifests'],
   [/check-public-surface\.ts\b/, 'check:public-surface'],
   [/check-suppressions\.ts\b/, 'check:suppressions'],
@@ -25,7 +23,6 @@ const CHECK_COMMAND_LABELS = [
 
 const HOOK_COVERAGE = {
   'check:boundaries': /check-boundaries\.ts\b/,
-  'check:cli-surface': /check-cli-surface\.ts\b/,
   'check:manifests': /check-manifest-edges\.ts\b/,
   'check:public-surface': /check-public-surface\.ts\b/,
   'check:suppressions': /check-suppressions\.ts\b/,

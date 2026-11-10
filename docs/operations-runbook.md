@@ -12,8 +12,7 @@ provenance: authored
 
 Current operations for the native `rusthrc` daemon and `hrc` CLI. max3, svc
 (mini), and hrcdev use the native owner under the launchd label
-`com.praesidium.hrc-server`. The retained Bun implementation and its launchd
-template are not evidence of the running owner.
+`com.praesidium.hrc-server`.
 
 ## Runtime locations and owner readback
 
@@ -26,8 +25,7 @@ Default roots on max3:
   T-12224; a plist not yet refreshed by `just refresh-owner-exe` execs
   `~/praesidium/var/hrc-owner/hrc-runtime-current/bin/rusthrc`)
 
-Read the installed plist and live status rather than assuming the checked-in
-Bun template describes the node:
+Read the installed plist and live status:
 
 ```bash
 bash scripts/hrc-owner.sh kind
@@ -45,8 +43,8 @@ The owner log currently differs by node: max3 uses
 `~/praesidium/var/logs/hrc-runtime/rusthrc-owner.log`; svc and hrcdev use
 `~/praesidium/var/logs/rusthrc-owner.log`. `hrc-owner.sh log-path` reads the
 node's installed plist. The structured log uses JSON lines with `ts`, `level`,
-`component`, `event`, and `data`. The old `hrc-server.log` path describes the
-Bun owner, not the native owner's current output.
+`component`, `event`, and `data`. `hrc-server.log` is the retired Bun owner's
+frozen log, not the native owner's output.
 
 For routine seat/runtime inspection use the kernel projection, avoiding a
 whole-table daemon scan:
@@ -192,9 +190,9 @@ apply path-scoped validation; do not substitute stale `.git/hooks` templates.
 
 A docs-only change needs its applicable structural checks and landing hooks,
 not an install or restart. A runtime change additionally needs validation of
-the installed native surface with real configuration. The justfile exposes
-`just e2e-native-full` for the native workflow; select the relevant driver
-under `crates/hrc-native/e2e/` or `crates/hrc-cli/e2e/` for narrower changes.
+the installed native surface with real configuration. Select the relevant driver
+under `crates/hrc-native/e2e/` (its README maps the scripts) or
+`crates/hrc-cli/e2e/`.
 Record the source commit, installed/running identity, commands, and artifacts.
 
 An isolated daemon is appropriate for probes that write or need controlled
@@ -211,8 +209,8 @@ The native foreground path retains the harness guard against
 `CLAUDECODE`, `CLAUDE_CODE_ENTRYPOINT`, and `CODEX_SANDBOX` inheritance
 (`crates/hrc-cli/src/server_start.rs`). Start an isolated native daemon in a
 clean external terminal, never by bypassing the guard in the agent turn.
-If running the Bun-only gate, inspect its ephemeral daemon log on startup
-failure; do not force-boot the production daemon under harness environment.
+If running `just verify-bun` or `just e2e`, inspect the ephemeral daemon log on
+startup failure; do not force-boot the production daemon under harness environment.
 
 ## Retention and long-running turns
 

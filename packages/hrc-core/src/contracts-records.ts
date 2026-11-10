@@ -151,7 +151,7 @@ export type HrcRuntimeSnapshot = {
   status: HrcRuntimeStatus
   /** Causal timestamp of the most recent runtime status transition. */
   statusChangedAt?: string | undefined
-  /** Opaque tmux session metadata. Validated by hrc-server at runtime creation, not by SDK consumers. */
+  /** Opaque tmux session metadata. Validated by the HRC daemon at runtime creation, not by SDK consumers. */
   tmuxJson?: Record<string, unknown> | undefined
   supportsInflightInput: boolean
   activeRunId?: string | undefined
@@ -164,7 +164,7 @@ export type HrcRuntimeSnapshot = {
   activeInvocationId?: string | undefined
   planHash?: string | undefined
   selectedProfileHash?: string | undefined
-  /** Opaque RuntimeState blob (runtime-state/v1). Validated at the hrc-server boundary. */
+  /** Opaque RuntimeState blob (runtime-state/v1). Validated at the HRC daemon boundary. */
   runtimeStateJson?: Record<string, unknown> | undefined
   lifecycleTerminalReason?: string | undefined
   /**

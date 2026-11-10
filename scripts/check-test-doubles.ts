@@ -46,7 +46,7 @@
  *
  * CROSS-PROJECT PRODUCERS. A double is a producer double when its declared
  * type names an identifier imported from a module in PRODUCER_MODULES (the
- * wrkq ledger, aspd, ghostmux). A producer double carries a `@captured <path>`
+ * aspd, ghostmux). A producer double carries a `@captured <path>`
  * tag in its leading comment, naming a fixture under
  * `__tests__/fixtures/captured/` that exists, records the producer and its
  * version (see docs/test-doubles.md), and is referenced from a test file in
@@ -62,7 +62,7 @@ import ts from 'typescript'
 export const BASELINE_PATH = 'scripts/test-double-baseline.json'
 export const CAPTURED_DIR = '__tests__/fixtures/captured/'
 
-export type Producer = 'wrkq' | 'aspd' | 'ghostmux'
+export type Producer = 'aspd' | 'ghostmux'
 
 /**
  * Module specifiers (bare packages, matched with any subpath) and repo paths
@@ -70,7 +70,6 @@ export type Producer = 'wrkq' | 'aspd' | 'ghostmux'
  * producer's wire contract.
  */
 export const PRODUCER_MODULES: ReadonlyArray<{ producer: Producer; module: string }> = [
-  { producer: 'wrkq', module: 'packages/hrc-server/src/wrkq/ledger-client.ts' },
   { producer: 'aspd', module: 'spaces-aspc-protocol' },
   // HRC has no ghostmux client module today; the first one is covered on import.
   { producer: 'ghostmux', module: 'ghostmux' },

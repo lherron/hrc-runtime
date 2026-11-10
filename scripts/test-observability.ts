@@ -97,14 +97,13 @@ async function runFile(
     // One shared file descriptor preserves both streams without holding a pipe
     // open when a test spawns descendants. Evidence survives a runner timeout.
     const logFd = openSync(logPath, 'a')
-    // Match the root integration tier, including the environment a child with
+    // Match the root test tiers, including the environment a child with
     // no explicit env inherits. A preload alone cannot seal that environment.
     const proc = Bun.spawn([process.execPath, 'test', '--timeout', '10000', `./${file}`], {
       cwd: process.cwd(),
       env: {
         ...hermeticTestEnvironment(process.env),
         TMPDIR: '/tmp',
-        HRC_FEDERATION_TEST_MODE: 'loopback',
       },
       stdout: logFd,
       stderr: logFd,

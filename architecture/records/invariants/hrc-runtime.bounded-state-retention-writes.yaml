@@ -21,7 +21,7 @@ predicate: >
 authority: daedalus@hrc-runtime:T-07200 revision 2 approval, 2026-09-01
 source:
   - wrkq:T-07200
-  - packages/hrc-store-sqlite/src/database.ts
+  - crates/hrc-store/src/migrate/mod.rs
   - crates/hrc-native/src/server/broker/ledger_prune/retention.rs
   - crates/hrc-store/src/maintenance.rs
   - docs/state-retention.md
@@ -29,6 +29,7 @@ required_tests:
   - T-13046 non-incremental-store bundle refusal (crates/hrc-native/e2e/retention_auto_vacuum.py; keep-manual)
   - T-13046 keep-manual real-store differential and writer-plan evidence (crates/hrc-native/e2e/nightly_retention.py)
   - just architecture-records
+  - cargo test -p hrc-store fresh_stores_have_creation_pragmas_and_distinct_incarnations (create() sets auto_vacuum=INCREMENTAL before journal_mode and baseline DDL)
   - T-07200 fresh incremental-auto-vacuum and existing-mode refusal gates
   - T-07200 indexed read-discovery and bounded primary-key writer-plan gates
   - T-07200 authority-race safety recheck and old-ineligible-prefix gates

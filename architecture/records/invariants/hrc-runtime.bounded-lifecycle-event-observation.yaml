@@ -45,10 +45,13 @@ source:
   - wrkq:T-07719
   - wrkq:T-10418
   - architecture/records/invariants/hrc-runtime.federated-session-read.yaml
-  - packages/hrc-server/src/event-handlers.ts
+  - crates/hrc-native/src/server/projection/lifecycle_events.rs
+  - crates/hrc-native/src/server/projection/streams.rs
+  - crates/hrc-native/src/server/projection/streams_idle_tests.rs
+  - crates/hrc-native/src/server/placement/federation/routing.rs
   - packages/hrc-sdk/src/client.ts
-  - packages/hrc-store-sqlite/src/repositories/event-repositories.ts
-  - packages/hrc-server/src/server-lifecycle.ts
+  - crates/hrc-store/src/events.rs
+  - crates/hrc-native/src/server/lifecycle/lifecycle/rows.rs
 required_tests:
   - just architecture-records
   - bounded tail query-plan and one-transaction incarnation/head/page gate
@@ -58,7 +61,10 @@ required_tests:
   - ledger replacement before admission and during a pinned stream gates
   - T-10418 installed peer failure before headers and mid-follow, cursor resume, malformed and oversize relay refusal gates
   - T-10418 healthy downstream paused over thirty seconds, bounded relay handoff and exactly one ledger-replacement terminal gates
-  - bun test packages/hrc-server/src/__tests__/t08137-daemon-lifecycle-provenance.test.ts
+  - python3 crates/hrc-native/e2e/lifecycle_rows.py --binary <rusthrc> --artifacts <dir>
+  - cargo test --manifest-path crates/Cargo.toml -p hrc-native history_reads_in_chunks_and_honors_limit
+  - cargo test --manifest-path crates/Cargo.toml -p hrc-native idle_followers_measurement
+  - cargo test --manifest-path crates/Cargo.toml -p hrc-store scope_shapes_plan_on_scope_index_bounded_by_seq_without_sort
 last_verified: 2026-10-06 T-10418 Spec rev 3 reviewed against source and active records; relay implementation and installed acceptance pending; prior local-stream implementation gates remain pending evidence
 reopen_when: The lifecycle envelope, ledger incarnation authority, forward or reverse cursor fence, exact-filter ordering, stream ordering, admission bounds, relay timeout or backpressure behavior, terminal control semantics, or replacement behavior changes.
 supersedes: []

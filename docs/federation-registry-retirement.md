@@ -32,10 +32,9 @@ old home's permanent fence prevents local resurrection.
 
 Registry deletion also removes live birth designations and records the last
 home in `binding_retirement_audit`. That audit supports later routing hints;
-it is not a binding or a shared fence. Current native implementations are
+it is not a binding or a shared fence. The implementation is
 `crates/hrc-native/src/server/placement/federation/retirement.rs` and
-`registry_listener.rs` in the same directory; the retained Bun implementation
-is `packages/hrc-server/src/federation/retirement.ts`.
+`registry_listener.rs` in the same directory.
 
 After retirement, follow the cache refresh and visible-replay procedure in
 [Binding registry rebuild and cache refresh](federation-binding-registry-rebuild.md).

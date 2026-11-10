@@ -109,11 +109,13 @@ source:
   - wrkq:T-08098
   - commit:1c5d5e43
   - packages/hrc-core/src/hrcchat-contracts.ts
-  - packages/hrc-cli/src/cli/register-top.ts
-  - packages/hrc-cli/src/turn/commands/turn.ts
-  - packages/hrc-server/src/broker/controller.ts
-  - packages/hrc-server/src/turn-dispatch-handlers.ts
-  - packages/hrc-server/src/agent-spaces-adapter/compile-adapter.ts
+  - crates/hrc-cli/src/turn/options.rs
+  - crates/hrc-cli/src/turn/mod.rs
+  - crates/hrc-native/src/server/broker/controller/submit.rs
+  - crates/hrc-native/src/server/turns/turns/mod.rs
+  - crates/hrc-native/src/server/turns/turns/parse.rs
+  - crates/hrc-native/src/server/turns/turns/admission.rs
+  - crates/hrc-native/src/server/broker/compile.rs
 required_tests:
   - T-08562 launch-primed cold summons, cold invoke and cold enqueue on an aspd-prepared claude-code-tmux birth keep the T-07920, T-08004, T-08012 and T-08531 launch-turn, receipt and rendezvous facts
   - the public HRC submission surface exposes exactly one method per admission class and all broker traffic routes through one of the four

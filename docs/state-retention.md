@@ -47,9 +47,7 @@ SQLite commit/fsync and rollback cannot be preempted by the VM progress handler.
 Pacing releases the owner mutex between steps. Vacuum always has an explicit
 page argument and never returns more than its nightly budget.
 
-The historical Bun entry point now requires `--strip-envelope-payloads` or
-`--restub-tool-results`, for hrc-analytics integration callers. It cannot perform
-nightly retention, delta backlog deletion or historical tool-result spilling.
+The historical Bun prune script is deleted (888278a0, T-13053).
 
 Once a node has a prune window, `hrc monitor transcript`, broker forensics,
 capture verification, `/v1/events` replay, transcript search, prior-session
@@ -434,9 +432,9 @@ still resolve: a bounded *view* must never become a lost *capability*.
 
 ### The idle-archive sweep
 
-hrc-server runs the archival pass on its own daily timer
+The daemon runs the archival pass on its own daily timer
 (`HRC_SESSION_RETENTION_SWEEP_ENABLED=0` disables it), through the internal
-`archiveIdleSessions` function. The unused HTTP trigger was retired in T-11569.
+`archive_idle_sessions` function (`crates/hrc-native/src/server/broker/sweeps.rs`). The unused HTTP trigger was retired in T-11569.
 It writes `sessions.status` and nothing else — it never deletes a row and never touches `continuation_json`.
 
 A non-primary `active` session is archived when all of the following hold:
@@ -500,10 +498,10 @@ terminated 7079 / stale 1381 / dead 72 / ready 37 / busy 2. This is a tiny table
 paths are primary-key lookups, indexed joins, or tiny scans, so no missing index
 matters at this row count:
 
-- `hrc-cli/src/cli-runtime.ts` (`listInFlightWork`) filters
-  `rt.status = 'busy'`, which selected about two rows at audit time, and joins
-  runs through `active_run_id`; `idx_runtimes_active_run_id` covers that join.
-- `hrc-capture-verifier/src/sqlite.ts` joins `runtimes` on `runtime_id` (PK).
+- At audit time the Bun CLI's `listInFlightWork` (`rt.status = 'busy'`, about
+  two rows, joined to runs through `active_run_id`, covered by
+  `idx_runtimes_active_run_id`) and the capture verifier (a PK join) also read
+  `runtimes`; both packages were deleted in T-13157.
 - ACP disposition confirmed by inspecting
   `agent-control-plane/packages/acp-server/src/real-launcher.ts` on 2026-07-18:
   the live-runtime read near line 887 issues `SELECT runtime_id, status FROM runtimes`

@@ -1,5 +1,5 @@
 {
-  "generatedBy": "crates/hrc-cli/src/admin/generate-route-inventory.ts",
+  "owner": "hand-owned, like crates/hrc-cli/surface.json: edit it in the change that adds or removes a route; nothing generates it",
   "inventory": [
     {
       "listener": "main",

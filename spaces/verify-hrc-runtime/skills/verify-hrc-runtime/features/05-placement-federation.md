@@ -7,7 +7,7 @@ peers. Native since 2026-10-26. Code: CLI `crates/hrc-cli/src/commands.rs` (`tar
 /v1/doctor`), `crates/hrc-native/src/server/placement/federation/`
 (`locate.rs` for locate and the bindings scan, `projection.rs` for `--all-nodes`, `routing.rs`,
 `peer_listener.rs`, `registry_listener.rs`, `retirement.rs`); config `crates/hrc-common/src/federation.rs`.
-The Bun handlers (`handlers-federation.ts`, `placement-federation-handlers.ts`) no longer serve max3. Docs:
+Docs:
 `docs/federation-peer-protocol.md`, `docs/federation-registry-retirement.md`,
 `docs/federation-binding-registry-rebuild.md`.
 
@@ -18,7 +18,7 @@ The Bun handlers (`handlers-federation.ts`, `placement-federation-handlers.ts`) 
   `observed` (`scope: local-node-only`, `nodeId`, `runtimeCount`, runtimes), plus `ledger`, `registry`
   (`not-consulted` when the local ledger is authoritative) and `designation` (2026-11-02, T-12291). Exit 0
   even with skew; 2 on an unparsable scope (`'not a scope!!'`, 2026-11-02, T-12291); 1 with `--fail-on-skew`
-  and skew (source-only, 2026-11-02: commands.rs:61-77). `target --help` passes through to Bun.
+  and skew (source-only, 2026-11-02: commands.rs:61-77).
 - `~/.bun/bin/hrc doctor` rows: `node-identity`, `federation-config`, one `federation-peer:<node>` per peer,
   `placement-skew` (bindings counted, disagreements), `placement-policy` (one warn per cause for live bindings,
   one `+` row counting dormant ones). Peer rows are back on native since a46bdc4f: the owner probes
@@ -44,7 +44,7 @@ The Bun handlers (`handlers-federation.ts`, `placement-federation-handlers.ts`) 
   server/front/index.rs:1-27).
 - `~/.bun/bin/hrc admin registrations gc` is gone (4c7c3653, T-11542): `/v1/registrations/gc` is 404 on native,
   `route.not_served` (2026-11-02, T-12291, `04-http-api`); the CLI was `unknown command`, rc 2 (2026-10-26).
-- Not driven: `~/.bun/bin/hrc federation retire <scope>` (Bun CLI over native `POST /v1/federation/retire`), the
+- Not driven: `~/.bun/bin/hrc federation retire <scope>` (native CLI over `POST /v1/federation/retire`), the
   registry rebuild. Both are operator steps on a real scope.
 
 ## How to get to it

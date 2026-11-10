@@ -18,7 +18,7 @@ describe('hook scope ignore syntax', () => {
 
     expect(ignore.ignores('docs/reference.md')).toBeTrue()
     expect(ignore.ignores('docs/deep/nested/reference.md')).toBeTrue()
-    expect(ignore.ignores('packages/hrc-server/docs/notes.md')).toBeTrue()
+    expect(ignore.ignores('packages/hrc-sdk/docs/notes.md')).toBeTrue()
     // A trailing `/` names the contents, and a sibling with the same prefix is
     // not the directory.
     expect(ignore.ignores('docsy/app.ts')).toBeFalse()
@@ -125,10 +125,10 @@ describe("this repository's hook scope ignore list", () => {
     expect(ignore.ignores('architecture/index.jsonl')).toBeTrue()
     expect(ignore.ignores('architecture/INVARIANTS.md')).toBeTrue()
     expect(ignore.ignores('docs/operations-runbook.md')).toBeTrue()
-    expect(ignore.ignores('packages/hrc-server/src/wrkq/notes.md')).toBeTrue()
+    expect(ignore.ignores('packages/hrc-sdk/src/wrkq/notes.md')).toBeTrue()
 
     for (const path of [
-      'packages/hrc-server/src/index.ts',
+      'packages/hrc-sdk/src/index.ts',
       'scripts/run-if-code-changed.ts',
       'lefthook.yml',
       'package.json',

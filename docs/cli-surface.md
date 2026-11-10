@@ -294,4 +294,4 @@ error. Replacements: `hrc monitor show` (was `hrc status` /
 Source of truth: hand-maintained command graph, arguments, flags and help text in
 `crates/hrc-cli/surface.json`; execution in `crates/hrc-cli/src`; monitor-wait
 codes in `crates/hrc-cli/src/monitor/engine.rs` (`exit` constants). The native
-CLI parses every command itself and never delegates to the retained Bun CLI.
+CLI parses every command itself; there is no Bun CLI.

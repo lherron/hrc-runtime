@@ -76,7 +76,7 @@ hv run <task> -- ~/.bun/bin/hrc monitor watch $T --last 20 --format compact
 hv run <task> -- ~/.bun/bin/hrc monitor events $R --ndjson | jq -c '{seq, type}' | tail -6
 hv run <task> -- ~/.bun/bin/hrc monitor stats $R --json
 hv run <task> -- ~/.bun/bin/hrc monitor transcript $R --tail 20
-hv run <task> -- ~/.bun/bin/hrc monitor search TWO --json | head -c 800                     # Bun CLI; grep serve.log for hrc-cli/0.1.0
+hv run <task> -- ~/.bun/bin/hrc monitor search TWO --json | head -c 800                     # native FTS search
 hv run <task> -- ~/.bun/bin/hrc turn --attach $T; echo "rc=$?"                                # 6: no active turn
 hv run <task> -- ~/.bun/bin/hrc monitor wait $T --until bogus --timeout 1s; echo "rc=$?"     # 2
 hv run <task> -- ~/.bun/bin/hrc monitor wait $T --until-any idle --timeout 1s; echo "rc=$?"  # 2: exact selectors require --until
@@ -138,7 +138,7 @@ hv run <task> -- ~/.bun/bin/hrc monitor session-report --runtime $R --json
 
 `turn --wait final` returns `outcome: completed`, `effectiveDoor: steer` and the expected `finalMessage`;
 `monitor watch` shows that run's `turn.user_prompt`, `turn.message`, `turn.completed`; `events`/`stats` count
-the turns; `search` (the Bun CLI, `hrc-cli/0.1.0` in serve.log) finds the prompt; `wait --until idle` exits 10;
+the turns; `search` finds the prompt; `wait --until idle` exits 10;
 `turn --attach` with nothing in flight exits 6; an invalid condition exits 2; `--until-all turn-finished` on a set
 exits 2 and `--until-all idle` exits 10 when its armed members are the live runtimes (on a resumed scope only
 once T-11869 is fixed or the live hsid is shown not to sort last).

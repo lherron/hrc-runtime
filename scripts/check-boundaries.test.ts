@@ -6,7 +6,6 @@ import { join } from 'node:path'
 import {
   type Violation,
   collectRequiredTsFiles,
-  findMailScopedViolation,
   formatBoundaryViolationDiagnostic,
   isForbidden,
   layers,
@@ -54,47 +53,5 @@ describe('check-boundaries diagnostics', () => {
     )
     expect(isForbidden('hrc-mail-injector', 'hrc-mail-injector')).toBe(true)
     expect(isForbidden('hrc-injector-core/policy', 'hrc-injector-core')).toBe(true)
-  })
-
-  test('broker-scoped imports explain the broker seam', () => {
-    const violation: Violation = {
-      file: 'packages/hrc-server/src/broker/controller/dispatch.ts',
-      specifier: 'spaces-harness-codex',
-      reason: 'broker-path files must not import concrete spaces-harness-codex APIs',
-    }
-
-    const diagnostic = formatBoundaryViolationDiagnostic('HRC broker-path scoped', violation).join(
-      '\n'
-    )
-
-    expect(diagnostic).toContain('FIX:')
-    expect(diagnostic).toContain('broker client/protocol seam')
-    expect(diagnostic).toContain('WHY:')
-    expect(diagnostic).toContain('broker-path files are the runtime-control boundary')
-    expect(diagnostic).toContain('EXCEPTION:')
-  })
-
-  // The companion ingress guard died with packages/hrc-server/src/mail at the
-  // T-07612 flag day, and findMailScopedViolation lost its layer argument with
-  // it. Only mail persistence still has files to guard.
-  test('mail persistence scoped guard keeps server orchestration out', () => {
-    expect(
-      findMailScopedViolation(
-        'packages/hrc-store-sqlite/src/mail/delivery-repository.ts',
-        'hrc-server'
-      )
-    ).toContain('persistence')
-    expect(
-      findMailScopedViolation(
-        'packages/hrc-store-sqlite/src/mail/delivery-repository.ts',
-        'hrc-server/dist/broker.js'
-      )
-    ).toContain('persistence')
-    expect(
-      findMailScopedViolation(
-        'packages/hrc-store-sqlite/src/mail/delivery-repository.ts',
-        './delivery-types.js'
-      )
-    ).toBeUndefined()
   })
 })

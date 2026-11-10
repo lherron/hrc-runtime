@@ -12,8 +12,7 @@ type CommandRosterProgram = {
 /**
  * Render the top-level command roster from the live Commander registry — the single source of
  * truth. Generated (not hand-maintained) so the `info` COMMANDS block can never drift out of sync
- * with the registered commands. The CLI-surface conformance gate (scripts/check-cli-surface.ts)
- * relies on the roster being registry-derived rather than a hand-kept list.
+ * with the registered commands.
  */
 export function renderCommandRoster(program: CommandRosterProgram): string {
   const commands = program

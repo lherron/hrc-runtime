@@ -44,7 +44,6 @@ function hrcRuntimeFixture(): string {
 check:
     bun scripts/check-boundaries.ts
     bun scripts/check-manifest-edges.ts
-    bun scripts/check-cli-surface.ts
     bun scripts/check-public-surface.ts
     bun scripts/check-suppressions.ts
 
@@ -74,8 +73,6 @@ pre-commit:
       run: bun scripts/check-boundaries.ts
     manifests:
       run: bun scripts/check-manifest-edges.ts
-    cli-surface:
-      run: bun scripts/check-cli-surface.ts
     public-surface:
       run: bun scripts/check-public-surface.ts
     suppressions:
@@ -122,7 +119,6 @@ describe('S6 hrc-runtime verify evidence predicate', () => {
       })
       expect(payload.artifacts?.currentRun?.facts?.verifyLeaves).toEqual([
         'check:boundaries',
-        'check:cli-surface',
         'check:manifests',
         'check:public-surface',
         'check:suppressions',
@@ -133,7 +129,6 @@ describe('S6 hrc-runtime verify evidence predicate', () => {
       expect(payload.artifacts?.currentRun?.facts?.hookCommands).toEqual(
         expect.arrayContaining([
           'bun scripts/check-boundaries.ts',
-          'bun scripts/check-cli-surface.ts',
           'bun scripts/check-manifest-edges.ts',
           'bun scripts/check-public-surface.ts',
           'bun scripts/check-suppressions.ts',

@@ -19,7 +19,7 @@ gui LaunchAgent and each with its own target:
 | order | process | source | launchd label | proven by |
 |---|---|---|---|---|
 | 1 | aspd | throwaway detached worktree of `~/praesidium/agent-spaces` at the target → immutable release in `~/praesidium/var/aspd/releases` | `com.praesidium.aspd` | HRC's live probe `.api.aspd.release.sourceCommit` + a launchd-owned pid |
-| 2 | hrc-server | this repo → atomic release | `com.praesidium.hrc-server` | `.release.hrcBuild.sourceCommit`, `runningEqualsInstalled`, launchd owns the pid with the plist env |
+| 2 | rusthrc (`crates/hrc-native`) | this repo → atomic release | `com.praesidium.hrc-server` | `.release.hrcBuild.sourceCommit`, `runningEqualsInstalled`, launchd owns the pid with the plist env |
 | 3 | hrc-mail-injector | `bunx hrc-mail-injector@<pinned>` from Verdaccio | `com.praesidium.hrc-mail-injector` | job pid argv names the pinned version, logged `"status":"running"`, same pid 10s later |
 
 aspd goes first because HRC refuses every birth without a reachable aspd. The
@@ -29,7 +29,7 @@ lifecycle is agent-spaces' own (`scripts/aspd-service.ts`: `supervise`,
 the deploy lane only sequences it. The injector plist is rendered from
 `launchd/com.praesidium.hrc-mail-injector.plist` by `just
 install-mail-injector-launchd <version>`, which takes node ID and socket from HRC
-status and the wrkq endpoint from the node's hrc-server plist, and retires any
+status and the wrkq endpoint from the node's `com.praesidium.hrc-server` plist, and retires any
 earlier injector on this node's socket (ad-hoc `launchctl submit` jobs and loose
 processes alike — two injectors are two mail writers). It needs the injector
 state store to already carry its one-time kicker-store import marker.
@@ -146,7 +146,7 @@ daemon (T-09861). Changing plist env = edit `EnvironmentVariables`
 **and reload the job** (`launchctl bootout gui/<uid>/<label>`, then `bootstrap
 gui/<uid> <plist>`) — `restart`/`kickstart` do NOT re-read the plist.
 
-hrcdev's hrc-server job is **not** unsupervised: the claim that it ran with no
+hrcdev's `com.praesidium.hrc-server` job is **not** unsupervised: the claim that it ran with no
 plist, orphaned to PID 1, was wrong and is what let T-07957 pass as a green deploy
 over a detached daemon carrying none of the plist's environment. Until T-07958 it
 also declared a second, root `/Library/LaunchDaemons` job for the same label; that
@@ -215,8 +215,7 @@ configured so that macOS TCC grants survive releases (T-12224;
 - **Readback** (`_node-readback`) also requires
   this boot's `broker.warmup.complete` with `attached == total` in the log the
   plist names.
-- `front-door-enable` and `front-door-disable` refuse on a rusthrc owner.
-  `launchd-install` manages only auxiliary jobs; the native owner plist is node-maintained
+- `launchd-install` manages only auxiliary jobs; the native owner plist is node-maintained
   by `hrc-owner.sh`, with no checkout template.
 
 ## hrcdev — the Tart VM (max3)
@@ -262,6 +261,6 @@ linger. Two traps that cost real time:
   PostToolUse hook exit 127 on the guest. Shebangs in `var/agents/spaces/**/hooks`
   are fleet-wide — keep them at `python3`.
 
-Bun rollback plists saved before the CLI switch may still name `~/.bun/bin/hrc`.
-Before using one, replace that argument with the explicit Bun entrypoint above
-(and keep any existing `bun` interpreter). The PATH CLI no longer selects Bun.
+There is no Bun owner to roll back to: the Bun daemon and CLI packages were
+deleted in T-13157. A saved Bun rollback plist names an entrypoint that no
+release contains; recover by deploying a previous rusthrc release.
