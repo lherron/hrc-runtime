@@ -73,12 +73,11 @@ Scratch or live:
   `bin/rusthrc`, the native CLI) and a byte copy of that release as the scratch daemon, not the checkout. A
   change is not testable here until it is installed; until then say so. Since 2026-10-26 production is native
   on both sides: the live daemon is `rusthrc server serve` from the owner tree
-  (`~/praesidium/var/hrc-owner/hrc-runtime-current`) and the CLI is `rusthrc`. Some CLI verbs still hand off to
-  the retained Bun CLI (`crates/hrc-cli/command-scope.json`): `admin metrics`, `monitor search`,
-  `session meta set|clear`, `session retitle`, `federation retire`, and `admin worktrees prune`,
-  plus their containing groups. Other groups with native leaves answer natively;
-  they talk to the same native daemon, which has no Bun
-  fallback, so a Bun verb whose route native never ported answers 404 (`route.not_served` in the serve log). Say which engine you graded: a drive on `--engine bun` proves nothing about production. To tell
+  (`~/praesidium/var/hrc-owner/hrc-runtime-current`) and the CLI is `rusthrc`. Every CLI verb, its help and grammar errors are native; the hand-maintained
+  `crates/hrc-cli/surface.json` owns the grammar. The CLI has no Bun fallback.
+  `admin events drain` refuses incompatible ledgers without migrating: unsupported
+  baseline/ahead sets name the runner's refusal, and pending forward migrations
+  require `rusthrc store migrate <path>` before draining again. Say which engine you graded: a drive on `--engine bun` proves nothing about production. To tell
   which daemon answered a socket read, read the serve log's `server.listening` line (`owner: "rusthrc"`) or the
   per-request `http.request … servedBy: "native"`; `.api.listenSocketPath == .api.socketPath` is hard-coded
   on native and proves nothing (feature 1).

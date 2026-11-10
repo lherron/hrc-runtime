@@ -379,3 +379,49 @@ fn unknown_command(parsed: &Parsed<'_>) -> Error {
         names.join(", ")
     ))
 }
+
+/// Recover the command path before argument validation, for turn JSON errors.
+pub(crate) fn intent_path(surface: &Value, args: &[String]) -> String {
+    let mut node = surface;
+    let mut index = 0;
+    while let Some(arg) = args.get(index) {
+        match arg.as_str() {
+            "--agent" | "--human" => {
+                index += 1;
+                continue;
+            }
+            "--output" => {
+                index += 2;
+                continue;
+            }
+            _ if arg.starts_with("--output=") => {
+                index += 1;
+                continue;
+            }
+            _ => {}
+        }
+        let child = node["children"].as_array().and_then(|children| {
+            children.iter().find(|c| {
+                c["name"] == *arg
+                    || c["aliases"]
+                        .as_array()
+                        .is_some_and(|a| a.iter().any(|v| v == arg))
+            })
+        });
+        let Some(child) = child else {
+            break;
+        };
+        node = child;
+        index += 1;
+    }
+
+    node["path"]
+        .as_array()
+        .map(|p| {
+            p.iter()
+                .filter_map(|v| v.as_str())
+                .collect::<Vec<_>>()
+                .join(" ")
+        })
+        .unwrap_or_default()
+}

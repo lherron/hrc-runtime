@@ -348,45 +348,25 @@ def main():
     fresh(['admin', 'events', 'drain', str(dead), '--source-ref', 'n5b-admin-empty', '--json'], drain_setup('empty'), base, name='drain empty ledger --json')
     fresh(drain, drain_setup(), scratch_env(fix / 'no-ingest-run', args.state_root), name='drain with the ingest socket absent')
 
-    # An older-schema dead ledger (the normal case for this recovery tool) is
-    # handed to the same-release Bun CLI with identical argv (mable EN-35470).
-    # 0127 is DROP TABLE IF EXISTS, so removing its ledger row is a faithful
-    # pre-0127 ledger.
+    # Drain never migrates: only owner boot and `store migrate` may do so.
+    # Removing a legacy marker is unsupported by the runner, with Bun absent.
     older = fix / 'drain' / 'pristine' / 'older.sqlite'
     shutil.copyfile(fix / 'drain' / 'pristine' / 'dead.sqlite', older)
     with sqlite3.connect(older) as db:
         db.execute("DELETE FROM hrc_migrations WHERE id = '0127_permission_audit_removal'")
-    bun_dir = str(Path(runner.bun).parent)
-    # Bun's migration appends a store.migrated event (own pid/argv0/ts) to each
-    # ledger copy, so only runs after a warm-up see the same receiver state;
-    # the process identity in that one log line is declared nondeterministic.
-    import re
-    migrated_identity = (r'("pid":)\d+(,"argv0":)"[^"]*"', r'\1<pid>\2"<argv0>"')
-
-    def same(a, b):
-        strip = lambda o: {k: re.sub(*migrated_identity, v) if isinstance(v, str) else v for k, v in normalize(o, runner.normalization).items()}
-        return strip(a) == strip(b)
-    drain_setup('older')()
-    warm = runner.observe(drain, False, base)
+    db.close()
     for flags in ([], ['--json']):
         argv = drain + flags
         drain_setup('older')()
-        oracle = runner.observe(argv, False, base)
-        drain_setup('older')()
-        no_bun = runner.observe(argv, True, base)
-        drain_setup('older')()
-        with_bun = subprocess.run([str(runner.binary)] + argv, cwd=runner.cwd, text=True, capture_output=True, timeout=60,
-                                  env=dict(base, PATH=f'{runner.subject_path}:{bun_dir}'))
-        subject = dict(exit=with_bun.returncode, stdout=with_bun.stdout, stderr=with_bun.stderr)
-        with sqlite3.connect(f'file:{dead}?mode=ro', uri=True) as db:
-            migrated = db.execute("SELECT COUNT(*) FROM hrc_migrations WHERE id = '0127_permission_audit_removal'").fetchone()[0]
-        ok = (same(oracle, subject)
-              and no_bun['exit'] == 1 and 'cannot exec Bun CLI' in no_bun['stderr'] and migrated == 1)
-        runner.results.append(dict(case='drain older-schema ledger via same-release Bun ' + ' '.join(flags), argv=argv,
-                                   oracle=oracle, subject=subject, subjectWithoutBun=no_bun, migratedAfter=migrated, warmup=warm,
-                                   normalizedHere=[list(migrated_identity)], **{'pass': ok}))
+        before = dead.read_bytes()
+        subject = runner.observe(argv, True, base)
+        unchanged = dead.read_bytes() == before
+        ok = (subject['exit'] == 1 and subject['stdout'] == ''
+              and 'store_below_baseline' in subject['stderr'] and unchanged)
+        runner.results.append(dict(case='drain refuses below-baseline ledger ' + ' '.join(flags), argv=argv,
+                                   subject=subject, ledgerUnchanged=unchanged, **{'pass': ok}))
 
-    # Approved UNSUPPORTED (mable EN-35470): Bun creates a store at a missing path.
+    # Retained Bun comparison: its missing-path creation differs from native refusal.
     missing = {side: work / f'missing-{side}' / 'x.sqlite' for side in ('oracle', 'subject')}
     shutil.rmtree(work, ignore_errors=True)
     for path in missing.values():

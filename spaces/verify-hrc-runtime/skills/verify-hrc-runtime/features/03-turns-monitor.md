@@ -5,9 +5,9 @@ invocation ledger (invocation-local `seq`). Native code (installed `hrc` = rusth
 `crates/hrc-cli/src/monitor/` (spec.rs, wait.rs, engine.rs, state.rs, watch/), `crates/hrc-cli/src/forensics.rs`
 (events, transcript, stats), `crates/hrc-store/src/monitor_read.rs`; daemon `crates/hrc-native/src/server/turns/`,
 `server/projection/{forensics,transcript}.rs`, `server/projection/projection/{events,context}.rs`. `monitor search`
-is the one Bun verb here (`crates/hrc-cli/command-scope.json` `implementation: bun` →
-`packages/hrc-cli/src/transcript-search.ts`); its route `POST /v1/transcript-search` is native (server.rs:526,
-transcript.rs:483). Docs: `docs/cli-surface.md` (turn, monitor), `docs/monitor-spec.md`.
+is native (`crates/hrc-cli/src/monitor/search.rs`, with the FTS index in
+`crates/hrc-store/src/transcript_index.rs`); its route `POST /v1/transcript-search`
+is native too (`server/projection/transcript.rs`). Docs: `docs/cli-surface.md` (turn, monitor), `docs/monitor-spec.md`.
 
 ## Sub-features
 
@@ -50,11 +50,10 @@ transcript.rs:483). Docs: `docs/cli-surface.md` (turn, monitor), `docs/monitor-s
   (2026-11-02, T-12291); stats also emits `turnCount`, `toolCallCount`, `perTurn[]` (2026-11-09, T-12756).
 - A cold-scope turn (no session; births through `/v1/messages/turn-handoff`) writes one `message.response`
   lifecycle row; a warm steer writes none (1 vs 0 on 2026-11-09, `T-12756/03-turns-monitor/drive-extra.txt`).
-- `~/.bun/bin/hrc monitor search <query> [--json]`: Bun CLI passthrough over the native index; serve.log shows the request as
-  `client: hrc-cli/0.1.0` (every native verb is `rusthrc/0.1.0`). Answer `{mode: "discovery", hits: [{turnRowid,
-  invocationId, runtimeId, scopeRef, generation, seqFrom, seqTo, terminalStatus, userText, finalText, …}]}`
-  (2026-11-02, T-12291). Needs `bun` on PATH and the release's `packages/` tree ("Bun CLI not found in rusthrc
-  release" otherwise) (source-only, 2026-11-02: crates/hrc-cli/src/passthrough.rs:73-90).
+- `~/.bun/bin/hrc monitor search <query> [--json]`: native FTS search, including local read-only
+  searches of the native index. Answer `{mode: "discovery", hits: [{turnRowid, invocationId,
+  runtimeId, scopeRef, generation, seqFrom, seqTo, terminalStatus, userText, finalText, …}]}`.
+  It needs neither Bun on PATH nor the retained CLI package (T-13053, T-13058).
 - `~/.bun/bin/hrc monitor session-report --runtime <id> [--json]`: `{target, runtimeId, scopeLabel, finalSummary,
   finalSummaryRecovery}`; on a ready runtime `finalSummary: null`, `state: terminal_fenced`, "runtime is ready;
   report-only summary recovery skipped" (2026-11-02, T-12291).

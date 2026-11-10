@@ -3,9 +3,9 @@
 //! event-ingest forwarder.ts, forward-sweep.ts, ingest-client.ts,
 //! forward-cursors.ts).
 //!
-//! Bun opens the ledger with `migrate: true`; the native CLI never owns schema,
-//! so it opens only a ledger already at this release's migration set
-//! (`hrc_store::Store::open`) and fails closed otherwise.
+//! Drain admits only a ledger already at this build's migration set. The Rust
+//! runner's read-only plan explains refusals; only owner boot and the explicit
+//! `rusthrc store migrate` verb may migrate a ledger.
 use super::database_path;
 use crate::js::{self, json_roundtrip};
 use crate::{Error, Result, parse::Parsed};
@@ -541,17 +541,31 @@ pub(super) fn command(args: &Parsed<'_>) -> Result<()> {
     }
     let store = match hrc_store::Store::open(Path::new(db_path)) {
         Ok(store) => store,
-        // An older-schema dead ledger is the normal case for this recovery
-        // tool. Bun migrates it in place and drains; rusthrc owns no schema, so
-        // it hands the exact argv to the same-release Bun CLI (mable EN-35470).
+        // Store::open checks admission through a read-only handle first. Use
+        // the runner's read-only plan to explain a mismatch; drain never
+        // migrates or creates cursor files on a refused ledger.
         Err(error)
             if error
                 .root_cause()
                 .to_string()
                 .starts_with("schema: migration set mismatch") =>
         {
-            let argv = std::env::args().skip(1).collect::<Vec<_>>();
-            return crate::passthrough::exec(&argv).map(|_| ());
+            let reason = match hrc_store::migrate::plan(
+                Path::new(db_path),
+                hrc_store::migrate::FORWARD,
+            ) {
+                Err(error) => error.to_string(),
+                Ok(Some(pending)) if !pending.is_empty() => {
+                    let ids = pending.iter().map(|m| m.id).collect::<Vec<_>>();
+                    format!(
+                        "pending forward migrations {ids:?}; run `rusthrc store migrate {db_path}` first, then drain again"
+                    )
+                }
+                // A concurrent operator can change the ledger after admission.
+                // Keep refusing this invocation, even if the plan is current.
+                _ => error.root_cause().to_string(),
+            };
+            return Err(Error::failure(format!("cannot drain {db_path}: {reason}")));
         }
         Err(error) => {
             return Err(Error::failure(super::sqlite_message(

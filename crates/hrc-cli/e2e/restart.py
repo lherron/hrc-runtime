@@ -26,7 +26,6 @@ def main():
     env.update(HRC_RUNTIME_DIR=str(a.runtime_root), HRC_STATE_DIR=str(a.state_root), NO_COLOR='1', FORCE_COLOR='0')
     commands = [('oracle', [shutil.which('bun'), str(a.oracle.resolve())]), ('subject', [str(a.binary.resolve())])]
     results = []
-    native = next(row for row in json.loads((ROOT / 'crates/hrc-cli/command-scope.json').read_text())['commands'] if row['command'] == 'restart')['implementation'] == 'native'
 
     def run(label, cmd, argv):
         c = subprocess.run(cmd + argv, cwd=a.runtime_root.parent / 'project', env=env if label == 'oracle' else dict(env, PATH=str(a.artifacts / 'no-bun')), capture_output=True, text=True, timeout=60)
@@ -67,26 +66,25 @@ def main():
                     raw.append(dict(out))
                     after = call('/v1/sessions/resolve', {'sessionRef': ref})
                     evidence = dict(before=before, after=after, oldRuntimeId=old_runtime)
-                    if label == 'oracle' or native:
-                        assert after['generation'] == before['generation'] + int(live), (out, evidence)
-                        assert (after['hostSessionId'] != before['hostSessionId']) is live, evidence
-                        assert out['exit'] == (0 if live else 1), out
-                        if '--json' in flags:
-                            value = json.loads(out['stdout'])
-                            if live:
-                                assert value['hostSessionId'] == after['hostSessionId'] and value['generation'] == after['generation'], value
-                                assert value['ok'] is True and value['launch']['status'] == 'started', value
-                            else:
-                                assert value['ok'] is False and value['code'] == 'missing_runtime_intent', value
-                        if old_runtime:
-                            evidence['oldRuntime'] = call('/v1/runtimes/inspect', {'runtimeId': old_runtime})
-                            assert evidence['oldRuntime']['status'] == 'terminated', evidence
+                    assert after['generation'] == before['generation'] + int(live), (out, evidence)
+                    assert (after['hostSessionId'] != before['hostSessionId']) is live, evidence
+                    assert out['exit'] == (0 if live else 1), out
+                    if '--json' in flags:
+                        value = json.loads(out['stdout'])
+                        if live:
+                            assert value['hostSessionId'] == after['hostSessionId'] and value['generation'] == after['generation'], value
+                            assert value['ok'] is True and value['launch']['status'] == 'started', value
+                        else:
+                            assert value['ok'] is False and value['code'] == 'missing_runtime_intent', value
+                    if old_runtime:
+                        evidence['oldRuntime'] = call('/v1/runtimes/inspect', {'runtimeId': old_runtime})
+                        assert evidence['oldRuntime']['status'] == 'terminated', evidence
                     effects.append(evidence)
                     for key in ('stdout', 'stderr'):
                         out[key] = out[key].replace(target, '<owned-target>')
                         for host in (before['hostSessionId'], after['hostSessionId']):
                             out[key] = out[key].replace(host, '<owned-host>')
-                        if '--json' in flags and out['stdout'].strip() and (label == 'oracle' or native):
+                        if '--json' in flags and out['stdout'].strip():
                             value = json.loads(out['stdout'])
                             rid = value.get('launch', {}).get('runtimeId')
                             if rid:

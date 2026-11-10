@@ -6,9 +6,9 @@ Births, reads and ends a managed runtime for a scope, and carries its conversati
 `commands/sessions.rs` (`session list|get`), `commands/messaging.rs` (send, summon, restart); daemon
 `crates/hrc-native/src/server.rs` (routes), `server/turns/{control,resume,restart,io,input}.rs` (terminate, resume,
 restart, capture, send) and `server/broker/{broker,start,hrcpty}.rs` (births, hrc-pty seats).
-`session meta set|clear` and `session retitle` are Bun passthroughs (`crates/hrc-cli/command-scope.json`). Docs:
+`session meta set|clear` and `session retitle` are native (`crates/hrc-cli/src/commands/sessions.rs`). Docs:
 `docs/cli-surface.md` (run/start/attach), `docs/target-handles.md`. Seat handoffs and seat work: CLI
-`hrc handoff …`, `hrc seat work …` (native in `command-scope.json`), routes `/v1/seat-handoffs…`, `/v1/sessions/work`.
+`hrc handoff …`, `hrc seat work …` (native; grammar in `crates/hrc-cli/surface.json`), routes `/v1/seat-handoffs…`, `/v1/sessions/work`.
 
 ## Sub-features
 
@@ -71,7 +71,7 @@ restart, capture, send) and `server/broker/{broker,start,hrcpty}.rs` (births, hr
   `compile.rs:108-140`; the CLI's `send`/`turn` take no `host:` selector to reach it).
 - Not driven here: `start --force-restart|--new-session|--no-viewer|--app-server-viewer|--on-conflict`,
   `~/.bun/bin/hrc run` (feature 8 covers attach), `~/.bun/bin/hrc restartme`, `session rotate`, `session drop-continuation`, `runtime
-  interrupt`, and the Bun passthroughs `session meta set|clear`, `session retitle`.
+  interrupt`, and the native metadata writes `session meta set|clear`, `session retitle`.
 
 ## How to get to it
 

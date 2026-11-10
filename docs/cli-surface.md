@@ -14,9 +14,8 @@ provenance: authored
 identity, preserves continuity across launches, manages live runtimes, and
 lets an operator or another agent inspect/attach/start/interrupt a runtime.
 `~/.bun/bin/hrc` links to the installed release's native `rusthrc` binary;
-execution is Rust (`crates/hrc-cli`), while the command graph and help text are
-generated from the Bun registrations in `packages/hrc-cli` into
-`crates/hrc-cli/surface.json`. This page
+grammar, help and execution are Rust-owned (`crates/hrc-cli`). The command
+graph and help text live in the hand-maintained `crates/hrc-cli/surface.json`. This page
 covers the common command surface; run `hrc <group> <cmd> --help` for the
 complete flag set of any command.
 
@@ -292,9 +291,7 @@ error. Replacements: `hrc monitor show` (was `hrc status` /
 `hrc server health`). `hrcchat dm` itself is gone; send agent messages with
 `wrkc say`.
 
-Source of truth: command registration and help text in
-`packages/hrc-cli/src/cli/build-program.ts` and `cli/register-*.ts` (scope-verb
-flags in `cli/scope-verb-options.ts`), generated into
-`crates/hrc-cli/surface.json` by `bun crates/hrc-cli/generate-surface.ts`;
-execution in `crates/hrc-cli/src`; monitor-wait codes in
-`crates/hrc-cli/src/monitor/engine.rs` (`exit` constants).
+Source of truth: hand-maintained command graph, arguments, flags and help text in
+`crates/hrc-cli/surface.json`; execution in `crates/hrc-cli/src`; monitor-wait
+codes in `crates/hrc-cli/src/monitor/engine.rs` (`exit` constants). The native
+CLI parses every command itself and never delegates to the retained Bun CLI.

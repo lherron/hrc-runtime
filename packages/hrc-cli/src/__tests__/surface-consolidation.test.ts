@@ -21,7 +21,7 @@ describe('consolidated hrc command graph', () => {
   const program = buildProgram()
 
   // `federation` and `session retitle` (with `session meta set|clear`) are
-  // rusthrc-only since T-13049: generate-surface.ts declares them in place.
+  // rusthrc-only since T-13049: the Rust-owned surface.json declares them in place.
   test('exposes the top-level noun groups', () => {
     const visibleTop = visibleChildren(program)
     const nounGroups = ['server', 'session', 'monitor', 'admin', 'capture', 'runtime', 'target']

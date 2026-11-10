@@ -1,15 +1,14 @@
 # rusthrc operator CLI
 
 `hrc-native` owns the `rusthrc` executable and dispatches CLI work to this
-library. Runtime execution is entirely Rust. `surface.json` is build-time data
-from Bun's command registrations, including complete help text and footnotes.
-Regenerate it with `bun crates/hrc-cli/generate-surface.ts`; `--check` detects drift.
+library. Grammar, help and execution are entirely Rust-owned. `surface.json`
+is hand-maintained source, including complete help text, footnotes, options,
+arguments and native-only declarations. Edit it directly when changing the
+CLI contract; every group and leaf parses and runs natively, with no Bun exec.
 
-N5 is being delivered incrementally. Current execution: runtime list (including
-pagination), session list and session resolve. Runtime inspect JSON and status
-have initial implementations still awaiting selector/render qualification.
-Unimplemented execution fails explicitly; help availability is not execution
-coverage. The differential result file lists those gaps.
+`admin events drain` never migrates a dead ledger. It reports the Rust runner's
+`store_below_baseline` or `store_ahead` refusal for unsupported sets. For pending
+forward migrations, run `rusthrc store migrate <path>` first, then drain again.
 
 Run the byte/exit comparator:
 

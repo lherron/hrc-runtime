@@ -1,9 +1,12 @@
 # CLI workflow tests
 
 The landing gate (`just cargo-check`) starts `differential.py`, which actually
-runs `status.py`, `metrics.py`, `passthrough.py`, `daemon_entrypoints.py` and
+runs `status.py`, `metrics.py`, `native_surface.py`, `daemon_entrypoints.py` and
 `client_errors.py`. Coverage-obligation names in differential's report do not
-mean those other scripts ran. `metrics_isolation.py` is a shared helper.
+mean those other scripts ran. `metrics_isolation.py` is a shared helper. `native_surface.py` replaces the
+retired CLI passthrough driver: every help node and grammar refusal must run
+without Bun. The separate native daemon proxy driver was also deleted: its
+only workflow required the retired `--bun-socket` flag.
 
 `just e2e-native-full` is the separate, run-by-hand native workflow set; it does
 not imply the remaining CLI qualification corpus ran. The scripts below stay

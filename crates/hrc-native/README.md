@@ -275,20 +275,15 @@ python3 crates/hrc-native/e2e/cold_birth.py --binary crates/target/debug/rusthrc
   --scratch-root /tmp/hrcn1-fresh --artifacts /tmp/hrcn1-results
 ```
 
-`rusthrc server [serve] --bun-socket <abs>` forwards unimplemented routes to a
-separately managed Bun listener (an explicit argument; the environment carries
-no role, and `HRC_BUN_PASSTHROUGH_SOCKET` is no longer read). Rust preserves the
-request method, URI, headers and streaming body, and relays response status,
-headers and body without buffering live responses. It never launches Bun; an
-unreachable Bun answers 502 `runtime_unavailable` per request. Without the
-argument, unimplemented routes return the ordinary 404. N1 tests
-use separate native/Bun state roots; N6 owns the serve-only production design.
+The separate-state Bun proxy is retired. `--bun-socket` and `--front` are
+refused; native owns execution and does not forward unsupported routes to Bun.
+The old `e2e/passthrough.py` proxy driver was deleted in T-13058 because its
+only execution path required those retired flags. Paired Bun/native owner
+qualification for other features remains in the other e2e drivers.
 
-`e2e/passthrough.py` drives that separate-state workflow against the named Bun
-copy, including large requests, malformed JSON, query strings, postponed N1
-routes and a live bounded-event stream.
+## Historical front-door role (T-11822, retired)
 
-## Front-door role (T-11822)
+The following describes the retired front mode; these flags now refuse.
 
 `rusthrc server --front --bun-socket <abs>` is the node's front door. It binds
 the public `<runtime>/hrc.sock` while Bun, still the execution owner, runs

@@ -1,7 +1,7 @@
 # 4. HTTP API on the daemon socket
 
 The daemon's HTTP surface on its unix socket, served by `rusthrc server serve`. Every native `hrc` verb rides it
-(serve.log `client: rusthrc/0.1.0`), the Bun passthrough verbs too (`hrc-cli/0.1.0`), and the harness broker
+(serve.log `client: rusthrc/0.1.0`), alongside the harness broker
 (`harness-broker/0.1.0`); ACP and the viewer are its other clients; the hosted kernel enters the dispatcher
 in-process. 103 method+path routes at 846648d8 (101 at 9861ae0e, plus `GET /v1/doctor` and `GET
 /v1/broker-stats`, 2c947087): 87 literals in `implemented()`, the `/v1/sessions/by-host/` prefix,

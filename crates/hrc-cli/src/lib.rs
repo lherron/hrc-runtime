@@ -22,7 +22,6 @@ mod local;
 mod metrics;
 mod monitor;
 mod parse;
-mod passthrough;
 mod preview;
 mod process;
 mod restartme;
@@ -204,68 +203,48 @@ pub fn run(args: Vec<String>) -> i32 {
         serde_json::from_str(include_str!("../surface.json")).expect("CLI declaration");
     let raw_json_errors = args.windows(2).any(|a| a == ["--output", "json"])
         || args.iter().any(|a| a == "--output=json")
-        || (passthrough::intent_path(&surface, &args) == "turn"
+        || (parse::intent_path(&surface, &args) == "turn"
             && args.iter().any(|a| a == "--json" || a == "--json=true"));
     let parsed = parse::parse(&surface, &args);
     let json_errors = parsed.as_ref().map_or(raw_json_errors, |p| {
         p.value("output") == Some("json") || (p.path() == "turn" && p.flag("json"))
     });
-    // Parse only to select an already implemented native command. Postponed
-    // commands (including their help/grammar failures) receive the original argv.
-    let native = parsed
-        .as_ref()
-        .is_err_and(|e| e.message.starts_with("unknown command:"))
-        || passthrough::native_intent(&surface, &args)
-        || parsed.as_ref().is_ok_and(|p| {
-            passthrough::native_command(&p.path())
-                || p.help
-                    && (p.path() == "server"
-                        || p.node["children"].as_array().is_some_and(|children| {
-                            children.iter().any(|child| child["nativeOnly"] == true)
-                        }))
-        });
-    if native {
-        metrics::begin(&args, &surface);
-    }
-    let result = if !native {
-        passthrough::exec(&args)
-    } else {
-        parsed.and_then(|parsed| {
-            if parsed.help
-                || args.is_empty()
-                || (parsed.positionals.is_empty()
-                    && !parsed.node["actionUsage"].is_string()
-                    && parsed.node["children"]
-                        .as_array()
-                        .is_some_and(|a| !a.is_empty()))
-            {
-                let human = parsed.flag("human")
-                    || (!parsed.flag("agent")
-                        && ["ASP_AGENT_ID", "AGENT_ID", "HRC_SESSION_REF"]
-                            .iter()
-                            .all(|k| std::env::var(k).unwrap_or_default().trim().is_empty())
-                        && std::io::IsTerminal::is_terminal(&std::io::stdout()));
-                let help = parsed.node[if human { "humanHelp" } else { "help" }]
-                    .as_str()
-                    .unwrap_or_default();
-                if args.is_empty() {
-                    eprint!("{help}");
-                    return Ok(2);
-                }
-                if parsed.help {
-                    crate::cli_print!("{help}");
-                    if matches!(parsed.path().as_str(), "server" | "server serve") {
-                        crate::cli_print!("{}", include_str!("../server-help.txt"));
-                    }
-                } else {
-                    eprint!("{help}");
-                }
-                return Ok(0);
+    metrics::begin(&args, &surface);
+    let result = parsed.and_then(|parsed| {
+        if parsed.help
+            || args.is_empty()
+            || (parsed.positionals.is_empty()
+                && !parsed.node["actionUsage"].is_string()
+                && parsed.node["children"]
+                    .as_array()
+                    .is_some_and(|a| !a.is_empty()))
+        {
+            let human = parsed.flag("human")
+                || (!parsed.flag("agent")
+                    && ["ASP_AGENT_ID", "AGENT_ID", "HRC_SESSION_REF"]
+                        .iter()
+                        .all(|k| std::env::var(k).unwrap_or_default().trim().is_empty())
+                    && std::io::IsTerminal::is_terminal(&std::io::stdout()));
+            let help = parsed.node[if human { "humanHelp" } else { "help" }]
+                .as_str()
+                .unwrap_or_default();
+            if args.is_empty() {
+                eprint!("{help}");
+                return Ok(2);
             }
-            commands::execute(&parsed)?;
-            Ok(0)
-        })
-    };
+            if parsed.help {
+                crate::cli_print!("{help}");
+                if matches!(parsed.path().as_str(), "server" | "server serve") {
+                    crate::cli_print!("{}", include_str!("../server-help.txt"));
+                }
+            } else {
+                eprint!("{help}");
+            }
+            return Ok(0);
+        }
+        commands::execute(&parsed)?;
+        Ok(0)
+    });
     let code = match result {
         Ok(code) => code,
         Err(error) => report_error(error, json_errors),

@@ -22,7 +22,6 @@ def main():
     env = {k: v for k, v in os.environ.items() if not k.startswith(('ASP_', 'HRC_', 'WRKQ'))}
     env.update(HRC_RUNTIME_DIR=str(a.runtime_root), HRC_STATE_DIR=str(a.state_root), NO_COLOR='1', FORCE_COLOR='0')
     commands = [('oracle', [shutil.which('bun'), str(a.oracle.resolve())]), ('subject', [str(a.binary.resolve())])]
-    native = next(row for row in json.loads((ROOT / 'crates/hrc-cli/command-scope.json').read_text())['commands'] if row['command'] == 'summon')['implementation'] == 'native'
     results = []
 
     def run(label, cmd, argv, extra=None):
@@ -59,20 +58,19 @@ def main():
             resolved = call('/v1/sessions/resolve', {'sessionRef': ref})
             rows = []
             try:
-                if label == 'oracle' or native:
-                    assert out['exit'] == 0 and resolved['found'] is True, (out, resolved)
-                    assert resolved['identity']['taskId'] == task, resolved
-                    host = resolved['hostSessionId']
-                    rows = call('/v1/runtimes?hostSessionId=' + host)
-                    assert all(row['hostSessionId'] == host for row in rows), rows
-                    if '--json' in flags:
-                        value = json.loads(out['stdout'])
-                        assert value['sessionRef'] == ref and value['activeHostSessionId'] == host and value['generation'] == 1, value
-                    for key in ('stdout', 'stderr'):
-                        out[key] = out[key].replace(ref, '<owned-session>').replace(host, '<owned-host>')
-                        for row in rows:
-                            out[key] = out[key].replace(row['runtimeId'], '<owned-runtime>')
-                        out[key] = out[key].replace(task, '<owned-task>')
+                assert out['exit'] == 0 and resolved['found'] is True, (out, resolved)
+                assert resolved['identity']['taskId'] == task, resolved
+                host = resolved['hostSessionId']
+                rows = call('/v1/runtimes?hostSessionId=' + host)
+                assert all(row['hostSessionId'] == host for row in rows), rows
+                if '--json' in flags:
+                    value = json.loads(out['stdout'])
+                    assert value['sessionRef'] == ref and value['activeHostSessionId'] == host and value['generation'] == 1, value
+                for key in ('stdout', 'stderr'):
+                    out[key] = out[key].replace(ref, '<owned-session>').replace(host, '<owned-host>')
+                    for row in rows:
+                        out[key] = out[key].replace(row['runtimeId'], '<owned-runtime>')
+                    out[key] = out[key].replace(task, '<owned-task>')
                 effects.append(dict(resolved=resolved, runtimes=rows))
                 records.append(normalize(out))
             finally:

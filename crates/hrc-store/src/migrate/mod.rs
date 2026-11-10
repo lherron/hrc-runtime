@@ -218,9 +218,13 @@ pub fn backup(db: &Path, dest: &Path) -> anyhow::Result<()> {
     copied
 }
 
+/// Inspect through a read-only connection without migrating or taking ownership.
 /// `None` for a store to create (no file, or an empty database); otherwise
-/// the pending forward steps, or the refusal.
-fn plan<'a>(db: &Path, registry: &'a [Forward]) -> Result<Option<Vec<&'a Forward>>, MigrateError> {
+/// the pending forward steps, or the runner's refusal.
+pub fn plan<'a>(
+    db: &Path,
+    registry: &'a [Forward],
+) -> Result<Option<Vec<&'a Forward>>, MigrateError> {
     if !db.exists() {
         return Ok(None);
     }

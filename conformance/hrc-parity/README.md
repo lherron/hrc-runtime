@@ -181,12 +181,10 @@ preserves their identity across subsequent reads. Shared snapshot timestamps
 and identities compare exactly. This suite does not qualify the nine P0
 workflows or full parity.
 
-`compare --suite n1-passthrough` compares the separate-state Bun proxy workflow
-from `crates/hrc-native/e2e/passthrough.py`. It requires every postponed N1 route,
-a nonempty Bun target response, and a live event-stream response. The workflow
-also verifies no-socket refusal, request-size transparency and separate stores.
-The observed-use route list is published under T-11820; postponed routes stay
-on Bun until use is confirmed.
+`compare --suite n1-passthrough` remains available to read historical separate-state
+Bun proxy captures. The proxy and its only driver retired; native refuses
+`--bun-socket` and never forwards requests to Bun. New qualification uses the
+native execution owner and the feature-specific paired drivers.
 
 `compare --suite n1-participants` compares direct registration and attachment
 from `crates/hrc-native/e2e/participants.py`: full responses and canonical rows,

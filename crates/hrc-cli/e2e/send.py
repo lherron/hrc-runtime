@@ -24,7 +24,6 @@ def main():
     env = {k: v for k, v in os.environ.items() if not k.startswith(('ASP_', 'HRC_', 'WRKQ'))}
     env.update(HRC_RUNTIME_DIR=str(a.runtime_root), HRC_STATE_DIR=str(a.state_root), NO_COLOR='1', FORCE_COLOR='0')
     commands = [('oracle', [shutil.which('bun'), str(a.oracle.resolve())]), ('subject', [str(a.binary.resolve())])]
-    native = next(row for row in json.loads((ROOT / 'crates/hrc-cli/command-scope.json').read_text())['commands'] if row['command'] == 'send')['implementation'] == 'native'
     results = []
 
     def run(label, cmd, argv, stdin=''):
@@ -69,13 +68,12 @@ def main():
                     events = call('/v1/events/tail?limit=100&runtimeId=' + rid)['events']
                     effects.append(dict(runtimeId=rid, hostSessionId=host, events=events))
                     (a.artifacts / (label + '-' + rid + '.json')).write_text(json.dumps(dict(output=out, effects=effects[-1]), indent=2))
-                    if label == 'oracle' or native:
-                        assert out['exit'] == 0, out
-                        value = json.loads(out['stdout'])
-                        assert value['delivered'] is True and value['sessionRef'] == ref and value['runtimeId'] == rid and value['hostSessionId'] == host, value
-                        literal = [e for e in events if e['eventKind'] == 'target.literal-input']
-                        assert len(literal) == 1 and literal[0]['payload']['enter'] is enter and literal[0]['payload']['payloadLength'] == (0 if enter else 1), literal
-                        assert not any(e['eventKind'] == 'turn.started' for e in events), events
+                    assert out['exit'] == 0, out
+                    value = json.loads(out['stdout'])
+                    assert value['delivered'] is True and value['sessionRef'] == ref and value['runtimeId'] == rid and value['hostSessionId'] == host, value
+                    literal = [e for e in events if e['eventKind'] == 'target.literal-input']
+                    assert len(literal) == 1 and literal[0]['payload']['enter'] is enter and literal[0]['payload']['payloadLength'] == (0 if enter else 1), literal
+                    assert not any(e['eventKind'] == 'turn.started' for e in events), events
                     for key in ('stdout', 'stderr'):
                         for old, new in ((ref, '<owned-session>'), (rid, '<owned-runtime>'), (host, '<owned-host>')):
                             out[key] = out[key].replace(old, new)

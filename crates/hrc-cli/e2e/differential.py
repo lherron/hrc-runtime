@@ -51,13 +51,6 @@ def main():
         env['HRC_RUNTIME_DIR'] = str(args.runtime_root.resolve())
         env['HRC_STATE_DIR'] = str(args.state_root.resolve())
     surface = json.loads((ROOT / 'crates/hrc-cli/surface.json').read_text())
-    # Native-only commands (surface-native.json) have no Bun oracle: their help
-    # must be the declared text and their grammar refusal native, and the
-    # parent's grafted Commands row is the only difference from Bun's help.
-    grafts = json.loads((ROOT / 'crates/hrc-cli/surface-native.json').read_text())['grafts']
-    grafted_rows = {}
-    for g in grafts:
-        grafted_rows.setdefault(' '.join(g['parent']), []).append(g['commandLine'][0])
     cases, native_only = [], {}
     for node in nodes(surface):
         if node.get('nativeOnly'):
@@ -66,13 +59,8 @@ def main():
             cases.append((f"help:{' '.join(node['path'])}:{view}", [f'--{view}', *node['path'], '--help']))
         if any(a['required'] for a in node['arguments']):
             cases.append((f"missing:{' '.join(node['path'])}", node['path']))
-    # Ported commands (generate-surface.ts declarePorted, T-13049) are
-    # native-only nodes Bun no longer registers, declared at their old place,
-    # so their parents' help (column widths and sections included) is the
-    # declared text, not Bun's.
-    grafted = [' '.join(g['parent'] + [g['node']['name']]) for g in grafts]
-    ported_parents = {' '.join(node['path'][:-1]) for path, node in native_only.items()
-                      if not any(path == g or path.startswith(g + ' ') for g in grafted)}
+    # Parents containing native-only declarations use the hand-owned help.
+    ported_parents = {' '.join(node['path'][:-1]) for node in native_only.values()}
     for argv in ([], ['runtime'], ['wat'], ['runtime', 'nonsense'], ['runtime', 'list', 'extra'], ['runtime', 'status', 'a', 'b'], ['server', 'status', 'extra', '--json'], ['runtime', 'list', '--output', 'xml'], ['--output', 'json', 'wat']):
         cases.append(('grammar:' + ' '.join(argv), argv))
     if args.runtime_root:
@@ -131,9 +119,6 @@ def main():
         expected = dict(observed[0])
         if name in {f'help:{path}:{view}' for path in ('server', 'server serve') for view in ('agent', 'human')}:
             expected['stdout'] += rust_server_help
-        if kind == 'help' and path in grafted_rows:
-            prefixes = tuple(f'  {row} ' for row in grafted_rows[path])
-            observed[1] = dict(observed[1], stdout=''.join(line for line in observed[1]['stdout'].splitlines(True) if not line.startswith(prefixes)))
         results.append({'case': name, 'argv': argv, 'pass': normalize(expected) == normalize(observed[1]), 'oracle': observed[0], 'subject': observed[1]})
     if args.inventory:
         coverage = json.loads(args.inventory.read_text())
@@ -141,9 +126,8 @@ def main():
         inventory_dir = args.artifacts / 'inventory'
         subprocess.run(['python3', str(ROOT / 'conformance/hrc-parity/run.py'), 'inventory', '--source-ref', 'HEAD', '--out', str(inventory_dir)], cwd=ROOT, check=True, stdout=subprocess.DEVNULL)
         coverage = json.loads((inventory_dir / 'coverage-report.json').read_text())
-    scope = json.loads((ROOT / 'crates/hrc-cli/command-scope.json').read_text())
     # This bounded run proves grammar; execution belongs to the named suites.
-    # Report the current declared native/Bun split.
+    # Every grammar node is native; the map names its execution qualification.
     families = {
         'runtime.py': 'runtime list|runtime inspect|runtime status|show|ls|session list|session get|session meta get|admin status',
         'continuity.py': 'session resolve',
@@ -169,8 +153,7 @@ def main():
         'session_meta_retire.py': 'session meta set|session meta clear|session retitle|federation retire',
     }
     suites = {command: suite for suite, commands in families.items() for command in commands.split('|')}
-    decisions = {item['command']: item for item in scope['commands']}
-    assert set(suites) == {key for key, value in decisions.items() if value['disposition'] == 'IMPLEMENT'}
+    assert set(suites) == {' '.join(node['path']) for node in nodes(surface)}
     qualification, unsupported = [], []
     for item in coverage['items']:
         # N5's lines are its n5-* cases plus the outside-native UNSUPPORTED lines.
@@ -179,19 +162,16 @@ def main():
         row = {'line': item['id']}
         if item['kind'] == 'cli-command':
             command = item['id'].removeprefix('cli:hrc').strip()
-            decision = decisions[command]
             if command == 'server':
                 row.update(suite='daemon_entrypoints.py', reason='Bare server is the native daemon entrypoint; its help is native too.')
-            elif decision['disposition'] == 'IMPLEMENT':
+            else:
                 if command.startswith('seat'):
                     row['suiteRoot'] = 'crates/hrc-native/e2e'
                 row.update(suite=suites[command], **({'requiredArguments': ['--extended']} if command == 'session resolve' else {}), reason='Native execution qualification is in this separate suite; help alone does not qualify it.')
-            else:
-                row.update(suite='passthrough.py', reason='POSTPONED by T-11820 observed-use audit; exact argv/streams/PID/exit exec the same-release Bun CLI.')
         elif item['kind'] == 'cli-alias':
             row.update(suite='continuity.py', requiredArguments=['--extended'], reason='list aliases ls; both spellings execute against Bun and native owners.')
         elif item['kind'] == 'package-bin':
-            row.update(suite='passthrough.py', reason='Release resolution and exec identity; installed PATH provenance is a separate Gate 4 drive.')
+            row.update(suite='native_surface.py', reason='Every CLI grammar node is native without Bun; installed PATH provenance is a separate Gate 4 drive.')
         elif item['id'] == 'public:POST:/v1/server/lifecycle':
             row.update(suite='lifecycle_actions.py', suiteRoot='crates/hrc-native/e2e', reason='N5 native owner grant/refusal, stop/restart effects, canonical rows and successor attribution; remote origins are separately driven by lifecycle_peer.py.')
         elif item['id'] == 'file:lifecycle-credentials':
@@ -223,7 +203,7 @@ def main():
     contract = {i['id'] for i in coverage['items'] if i['target'] == 'UNSUPPORTED' and i.get('reason') == OUTSIDE_NATIVE}
     agreement = {'contractOnly': sorted(contract - {r['line'] for r in unsupported}),
                  'driverOnly': sorted({r['line'] for r in unsupported} - contract)}
-    report = {'contractAgreement': agreement, 'commandScope': scope, 'normalization': NORMALIZATION, 'rustHelpAddition': {'paths': ['server', 'server serve'], 'text': rust_server_help}, 'pass': sum(r['pass'] for r in results), 'fail': sum(not r['pass'] for r in results), 'cases': results, 'qualification': qualification, 'qualificationNote': 'Suite names are coverage obligations, not behavioral PASS results. Aggregate qualification supplies their actual results.', 'unsupported': unsupported}
+    report = {'contractAgreement': agreement, 'nativeCommands': sorted(suites), 'normalization': NORMALIZATION, 'rustHelpAddition': {'paths': ['server', 'server serve'], 'text': rust_server_help}, 'pass': sum(r['pass'] for r in results), 'fail': sum(not r['pass'] for r in results), 'cases': results, 'qualification': qualification, 'qualificationNote': 'Suite names are coverage obligations, not behavioral PASS results. Aggregate qualification supplies their actual results.', 'unsupported': unsupported}
     (args.artifacts / 'results.json').write_text(json.dumps(report, indent=2) + '\n')
     print(json.dumps({k: report[k] for k in ('pass', 'fail')}))
     for r in results:
@@ -232,7 +212,7 @@ def main():
     if args.runtime_root:
         status_args += ['--runtime-root', str(args.runtime_root.resolve()), '--state-root', str(args.state_root.resolve())]
     status = subprocess.run(status_args, cwd=ROOT)
-    passthrough = subprocess.run(['python3', str(ROOT / 'crates/hrc-cli/e2e/passthrough.py'), '--binary', str(args.binary.resolve()), '--oracle', str(args.oracle.resolve()), '--artifacts', str(args.artifacts / 'passthrough')], cwd=ROOT)
+    native = subprocess.run(['python3', str(ROOT / 'crates/hrc-cli/e2e/native_surface.py'), '--binary', str(args.binary.resolve()), '--artifacts', str(args.artifacts / 'native-surface')], cwd=ROOT)
     metric_args = ['python3', str(ROOT / 'crates/hrc-cli/e2e/metrics.py'), '--binary', str(args.binary.resolve()), '--oracle', str(args.oracle.resolve()), '--artifacts', str(args.artifacts / 'metrics')]
     if args.runtime_root:
         metric_args += ['--runtime-root', str(args.runtime_root.resolve())]
@@ -243,7 +223,7 @@ def main():
     disagree = bool(agreement['contractOnly'] or agreement['driverOnly'])
     if disagree:
         print('FAIL contract/driver UNSUPPORTED disagreement', json.dumps(agreement))
-    return int(bool(report['fail']) or disagree or any(p.returncode != 0 for p in (status, passthrough, metrics, daemon, transport, caller)))
+    return int(bool(report['fail']) or disagree or any(p.returncode != 0 for p in (status, native, metrics, daemon, transport, caller)))
 
 
 if __name__ == '__main__':

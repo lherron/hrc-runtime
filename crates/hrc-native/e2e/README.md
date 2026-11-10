@@ -131,7 +131,6 @@ Deleted entries stay listed to explain their removal; their source remains in gi
 | `owner_relative_controls.py` | Mutate real ready captures; the named owner-relative gate must discriminate. (requires explicit scratch/capture inputs; retained qualification) | keep-manual |
 | `participant_live.py` | Actual participant-owned bootstrap broker, real ASP compile, blank claude profile. (requires explicit scratch/capture inputs; retained qualification) | keep-manual |
 | `participants.py` | Direct join/attach HTTPs against sequential owners of empty scratch state. (requires explicit scratch/capture inputs; retained qualification) | keep-manual |
-| `passthrough.py` | Proxy workflow: real copied Bun, separate stores, buffered and live responses. (requires explicit scratch/capture inputs; retained qualification) | keep-manual |
 | `preparation.py` | Real ASP declaration workflow; no broker or model starts. (requires explicit scratch/capture inputs; retained qualification) | keep-manual |
 | `routes.py` | Finite N1 API workflow on a real Bun-created scratch store. (protected by T-11933) | keep-manual |
 | `runtime_key_order.py` | none — completed T-11880 capture analysis; promoted maintenance and existing conformance key-order comparisons retain wire checks | delete |
