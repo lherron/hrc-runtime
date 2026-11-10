@@ -9,7 +9,11 @@ predicate: >
   verification through the daemon's existing lifecycle credential
   binding and a Mable primary scope, using the same predicate as restart.
   Terminate additionally admits a verified caller whose scope matches the
-  target runtime's stored scope, including other lanes of the same seat.
+  target runtime's stored scope, including other lanes of the same seat, and
+  a verified caller that is the node's own Mable seat (mable@<project>:minisvc
+  on svc, mable@hrc-runtime:hrcdev on hrcdev, declared node id only), for any
+  runtime on that node; this is the predicate restart already uses for a
+  node-local caller.
   Partial, invalid, mismatched and revoked credentials fail closed with HTTP
   403, server_lifecycle_refused and the lifecycle refusal detail before
   route side effects. Claimed caller headers alone confer no authority.
@@ -25,6 +29,8 @@ authority: >
   and tmux exclusion, 2026-11-05). T-12662 etag 7 and EN-47477 narrow the
   scope on Lance's instruction to terminate only, withdrawing the five
   other guards without changing the retained owner admission boundary.
+  Lance ruling 2026-11-09 (asks row node-seat-archive, recorded on T-12984):
+  node Mable seats may archive any runtime on their own node.
 source:
   - wrkq:T-12662
   - wrkq:T-12664
@@ -35,7 +41,7 @@ source:
 required_tests:
   - cargo test --manifest-path crates/Cargo.toml -p hrc-native --locked operator_authority_tests
   - just architecture-records
-last_verified: 2026-11-05 T-12664 dispatcher fixture; installed activation explicitly deferred to Mable
+last_verified: 2026-11-09 dispatcher fixture, including terminate_node_mable_seat
 reopen_when: The protected route set, headerless compatibility, credential verification, Mable-primary predicate or terminate scope ownership changes.
 supersedes: []
 superseded_by: []

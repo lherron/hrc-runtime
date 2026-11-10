@@ -1,5 +1,9 @@
 //! Behavioral checks through the real HTTP dispatcher and migrated store.
-use crate::server::{dispatch, lifecycle::credentials, turns::admission::tests::server};
+use crate::server::{
+    dispatch,
+    lifecycle::credentials,
+    turns::admission::tests::{server, server_on_node},
+};
 use axum::{
     body::{Body, to_bytes},
     extract::{Request, State},
@@ -8,7 +12,17 @@ use axum::{
 use serde_json::{Value, json};
 
 fn fixture(scope: &str) -> anyhow::Result<(impl Sized, crate::server::Shared, HeaderMap)> {
-    let (scratch, server) = server("off", false)?;
+    fixture_on(scope, None)
+}
+
+fn fixture_on(
+    scope: &str,
+    node: Option<&str>,
+) -> anyhow::Result<(impl Sized, crate::server::Shared, HeaderMap)> {
+    let (scratch, server) = match node {
+        Some(node) => server_on_node(node)?,
+        None => server("off", false)?,
+    };
     {
         let mut db = server.store.lock().unwrap();
         for (id, scope, lane) in [
@@ -86,6 +100,37 @@ async fn terminate_operator_authority() -> anyhow::Result<()> {
                 |r| r.get(0),
             )?;
             assert_eq!(status, "ready");
+        }
+    }
+    Ok(())
+}
+
+/// A node's own Mable seat may terminate any runtime on that node, as it may
+/// restart the node. The seat of another node, or another agent, may not.
+#[tokio::test]
+async fn terminate_node_mable_seat() -> anyhow::Result<()> {
+    for (node, scope, expected) in [
+        ("svc", "agent:mable:project:fixture:task:minisvc", 200),
+        ("hrcdev", "agent:mable:project:hrc-runtime:task:hrcdev", 200),
+        ("hrcdev", "agent:mable:project:fixture:task:minisvc", 403),
+        ("svc", "agent:mable:project:hrc-runtime:task:hrcdev", 403),
+        ("svc", "agent:test:project:fixture:task:minisvc", 403),
+        ("max3", "agent:mable:project:fixture:task:minisvc", 403),
+    ] {
+        let (_scratch, server, headers) = fixture_on(scope, Some(node))?;
+        let body = json!({"runtimeId":"other","dropContinuation":false});
+        let (status, value) = call(&server, "/v1/terminate", body, headers).await?;
+        assert_eq!(status, expected, "{node} {scope}: {value}");
+        let status: String = server.store.lock().unwrap().sqlite.query_row(
+            "SELECT status FROM runtimes WHERE runtime_id='other'",
+            [],
+            |r| r.get(0),
+        )?;
+        if expected == 403 {
+            assert_eq!(value["error"]["detail"]["refusal"], "not_authorized");
+            assert_eq!(status, "ready");
+        } else {
+            assert_eq!(status, "terminated");
         }
     }
     Ok(())

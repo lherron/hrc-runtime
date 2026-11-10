@@ -47,13 +47,32 @@ pub fn refused(
         refusal_text(action, target, project, detail),
     )
 }
-/// lifecycleRefusalText plus the parenthesized detail.
-pub fn refusal_text(action: &str, target: &str, project: &str, detail: &str) -> String {
-    let node_seat = match target {
+/// How a refusal names the node's own Mable seat, on a node that has one.
+fn node_seat_text(node: &str) -> &'static str {
+    match node {
         "svc" => ", this node's Mable seat (mable@<project>:minisvc)",
         "hrcdev" => ", this node's Mable seat (mable@hrc-runtime:hrcdev)",
         _ => "",
-    };
+    }
+}
+/// A satellite node's own Mable seat: mable@<project>:minisvc on svc,
+/// mable@hrc-runtime:hrcdev on hrcdev, and only where the node id is declared.
+fn node_mable_seat(server: &Server, scope: &str) -> bool {
+    hrc_common::scope::ScopeRef::parse(scope).is_ok_and(|p| {
+        p.project.is_some()
+            && p.task.is_some()
+            && p.role.is_none()
+            && p.agent == "mable"
+            && server.federation.config.node_id_provenance == "declared"
+            && ((p.task == Some("minisvc") && server.federation.node_id() == "svc")
+                || (p.project == Some("hrc-runtime")
+                    && p.task == Some("hrcdev")
+                    && server.federation.node_id() == "hrcdev"))
+    })
+}
+/// lifecycleRefusalText plus the parenthesized detail.
+pub fn refusal_text(action: &str, target: &str, project: &str, detail: &str) -> String {
+    let node_seat = node_seat_text(target);
     format!(
         "only mable@<project>:primary{node_seat} or Lance may {action} the HRC server on {target}; request it from mable@{project}:primary ({detail})"
     )
@@ -66,7 +85,8 @@ pub fn mable_primary(scope: &str) -> bool {
 }
 /// Operator routes preserve the legacy headerless contract. Any lifecycle
 /// header opts into verified owner authority, including partial credentials.
-/// Termination additionally permits another runtime belonging to this seat.
+/// Termination additionally permits another runtime belonging to this seat,
+/// and any runtime on this node when the caller is the node's own Mable seat.
 pub fn authorize_operator(
     server: &Server,
     headers: &HeaderMap,
@@ -85,7 +105,12 @@ pub fn authorize_operator(
             server.federation.node_id(),
             code,
             format!(
-                "only mable@<project>:primary{} may {action}; request it from mable@{}:primary ({detail})",
+                "only mable@<project>:primary{}{} may {action}; request it from mable@{}:primary ({detail})",
+                if own_runtime.is_some() {
+                    node_seat_text(server.federation.node_id())
+                } else {
+                    ""
+                },
                 if own_runtime.is_some() {
                     " or the runtime's own seat"
                 } else {
@@ -98,6 +123,9 @@ pub fn authorize_operator(
     let binding = credentials::verify_caller(server, headers)
         .map_err(|e| refusal(e.code, e.scope_ref.as_deref(), &e.detail))?;
     if mable_primary(&binding.scope_ref) {
+        return Ok(());
+    }
+    if own_runtime.is_some() && node_mable_seat(server, &binding.scope_ref) {
         return Ok(());
     }
     if let Some(id) = own_runtime {
@@ -128,19 +156,8 @@ pub fn authorize(
         refused(server, action, target, project(e.scope_ref.as_deref()), e.code, &detail)
     })?;
     let scope = &binding.scope_ref;
-    let parsed = hrc_common::scope::ScopeRef::parse(scope).ok();
     let primary = mable_primary(scope);
-    let local = parsed.is_some_and(|p| {
-        p.project.is_some()
-            && p.task.is_some()
-            && p.role.is_none()
-            && p.agent == "mable"
-            && server.federation.config.node_id_provenance == "declared"
-            && ((p.task == Some("minisvc") && server.federation.node_id() == "svc")
-                || (p.project == Some("hrc-runtime")
-                    && p.task == Some("hrcdev")
-                    && server.federation.node_id() == "hrcdev"))
-    });
+    let local = node_mable_seat(server, scope);
     if !primary && !local {
         return Err(refused(
             server,

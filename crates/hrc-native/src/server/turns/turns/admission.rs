@@ -743,12 +743,25 @@ pub(crate) mod tests {
         configured: bool,
         lock: impl FnOnce(hrc_store::Store) -> crate::server::store_lock::StoreLock,
     ) -> anyhow::Result<(fixture::ScratchStore, Shared)> {
+        build(mode, configured, ("test-node", "config"), lock)
+    }
+    /// `server` as a node whose id is declared, as svc and hrcdev are.
+    pub(crate) fn server_on_node(node_id: &str) -> anyhow::Result<(fixture::ScratchStore, Shared)> {
+        let lock = crate::server::store_lock::StoreLock::new;
+        build("off", false, (node_id, "declared"), lock)
+    }
+    fn build(
+        mode: &str,
+        configured: bool,
+        (node_id, node_id_provenance): (&str, &'static str),
+        lock: impl FnOnce(hrc_store::Store) -> crate::server::store_lock::StoreLock,
+    ) -> anyhow::Result<(fixture::ScratchStore, Shared)> {
         let (scratch, store) = fixture::ScratchStore::new()?;
         let runtime = scratch.root.join("run");
         let state = scratch.root.join("state");
         let config = hrc_common::federation::FederationConfig {
-            node_id: "test-node".into(),
-            node_id_provenance: "config",
+            node_id: node_id.into(),
+            node_id_provenance,
             source_path: String::new(),
             source_exists: configured,
             peers: vec![],
