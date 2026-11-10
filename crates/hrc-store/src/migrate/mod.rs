@@ -42,11 +42,6 @@ pub const FORWARD: &[Forward] = &[
         rebuild: false,
         apply: forward::m0133_participant_parked_disposition,
     },
-    Forward {
-        id: "0134_submission_record",
-        rebuild: false,
-        apply: forward::m0134_submission_record,
-    },
 ];
 
 /// Who moved the store, recorded in the `store.migrated` row of an upgrade.

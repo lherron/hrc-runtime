@@ -6,10 +6,7 @@
 //! Busy seats, seats with a run or protected input in flight, seats a person
 //! is attached to read-write, primaries, standing seats and app scopes are
 //! never touched.
-use super::{
-    Shared, control, hrcpty, lease,
-    projection::{db, events},
-};
+use super::{Shared, control, hrcpty, lease, projection::db};
 use rusqlite::params;
 use serde_json::{Map, Value, json};
 use std::collections::{BTreeMap, HashMap};
@@ -100,20 +97,6 @@ fn close(server: &Shared, rt: &db::Rt) -> anyhow::Result<bool> {
             ],
         )?;
     }
-    events::append(
-        &tx,
-        "runtime.idle_cleanup_started",
-        &events::Ev {
-            ts: now.clone(),
-            host_session_id: rt.host_session_id.clone(),
-            scope_ref: rt.scope_ref.clone(),
-            lane_ref: rt.lane_ref.clone(),
-            generation: rt.generation,
-            runtime_id: Some(rt.runtime_id.clone()),
-            ..Default::default()
-        },
-        &json!({"runtimeId":rt.runtime_id,"status":"stopping","source":SOURCE}),
-    )?;
     tx.commit()?;
     Ok(true)
 }

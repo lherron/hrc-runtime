@@ -117,7 +117,7 @@ impl Store {
             &json!({"authority":"durable-start-graph"}),
         )?;
         if let Some(run) = id["runId"].as_str() {
-            tx.execute("INSERT INTO runs(run_id,host_session_id,runtime_id,scope_ref,lane_ref,generation,transport,status,accepted_at,updated_at,operation_id,invocation_id,dispatch_idempotency_key,dispatched_input_id,broker_submission_id,origin_actor,origin_kind,origin_causation_ref,execution_format,correlation_json,envelope_id) VALUES (?,?,?,?,?,?,?,'accepted',?,?,?,?,?,?,?,?,?,?,'format1',?,?)",params![run,s(id,"hostSessionId")?,s(id,"runtimeId")?,s(session,"scopeRef")?,crate::storage_lane(s(session,"laneRef")?),id["generation"].as_i64(),run_transport,now,now,s(id,"operationId")?,s(id,"invocationId")?,record["dispatchIdempotencyKey"].as_str(),start["initialInput"]["inputId"].as_str(),start["initialInput"]["inputId"].as_str(),origin.and_then(|o|o["actor"].as_str()),origin.and_then(|o|o["kind"].as_str()),origin.and_then(|o|o["causationRef"].as_str()),if start.get("initialInput").is_none(){Some(json!({"kind":"launch_carried_invoke_turn"}).to_string())}else{None},origin.and_then(|o|o["envelopeId"].as_str())])?;
+            tx.execute("INSERT INTO runs(run_id,host_session_id,runtime_id,scope_ref,lane_ref,generation,transport,status,accepted_at,updated_at,operation_id,invocation_id,dispatch_idempotency_key,dispatched_input_id,broker_submission_id,origin_actor,origin_kind,origin_causation_ref,execution_format,correlation_json) VALUES (?,?,?,?,?,?,?,'accepted',?,?,?,?,?,?,?,?,?,?,'format1',?)",params![run,s(id,"hostSessionId")?,s(id,"runtimeId")?,s(session,"scopeRef")?,crate::storage_lane(s(session,"laneRef")?),id["generation"].as_i64(),run_transport,now,now,s(id,"operationId")?,s(id,"invocationId")?,record["dispatchIdempotencyKey"].as_str(),start["initialInput"]["inputId"].as_str(),start["initialInput"]["inputId"].as_str(),origin.and_then(|o|o["actor"].as_str()),origin.and_then(|o|o["kind"].as_str()),origin.and_then(|o|o["causationRef"].as_str()),if start.get("initialInput").is_none(){Some(json!({"kind":"launch_carried_invoke_turn"}).to_string())}else{None}])?;
             event(
                 &tx,
                 session,
@@ -242,19 +242,6 @@ impl Store {
                 "runtime",
                 "runtime.presentation",
                 &json!({"invocation":{"operatorAttachPending":operator_attach_pending},"presentation":presentation,"hrcpty":{"socketPath":h["socketPath"],"attachCommand":h["attachCommand"]}}),
-            )?;
-        }
-        // The started snapshot publishes capabilities and runtime status even
-        // without an operator presentation (notably a headless seat).
-        if allocation.get("tuiWindow").is_none() && hrcpty.is_none() {
-            event(
-                &tx,
-                &session,
-                id,
-                None,
-                "runtime",
-                "runtime.ensured",
-                &json!({"runtimeId":id["runtimeId"],"status":status,"admissionClasses":capabilities["admission"]["classes"],"authority":"broker-started-snapshot"}),
             )?;
         }
         tx.commit()?;

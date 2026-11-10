@@ -62,19 +62,3 @@ pub fn m0133_participant_parked_disposition(conn: &Connection) -> anyhow::Result
     )?;
     Ok(())
 }
-
-/// The submission record (T-13242 section 5): the envelope on the run row,
-/// written before the broker call, and the broker evidence beside the
-/// disposition it already holds. Nullable additions; no backfill.
-pub fn m0134_submission_record(conn: &Connection) -> anyhow::Result<()> {
-    conn.execute_batch(
-        "ALTER TABLE runs ADD COLUMN envelope_id TEXT;
-         CREATE INDEX idx_runs_envelope_id ON runs(envelope_id) WHERE envelope_id IS NOT NULL;
-         ALTER TABLE submission_admissions ADD COLUMN requested_door TEXT;
-         ALTER TABLE submission_admissions ADD COLUMN handed_at TEXT;
-         ALTER TABLE submission_admissions ADD COLUMN turn_id TEXT;
-         ALTER TABLE submission_admissions ADD COLUMN reason TEXT;
-         ALTER TABLE submission_admissions ADD COLUMN delivery_evidence TEXT;",
-    )?;
-    Ok(())
-}

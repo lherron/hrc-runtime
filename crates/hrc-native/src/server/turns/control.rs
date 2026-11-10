@@ -481,7 +481,6 @@ pub async fn terminate(server: &Shared, body: Value) -> Result<Response, ApiErro
                     ],
                 )?;
             }
-            let changed = db::runtime(db, &rt.runtime_id)?.is_some_and(|r| r.status != "stopping");
             db::update_runtime(
                 db,
                 &rt.runtime_id,
@@ -490,17 +489,7 @@ pub async fn terminate(server: &Shared, body: Value) -> Result<Response, ApiErro
                     ("status_changed_at", db::text(now.as_str())),
                     ("updated_at", db::text(now.as_str())),
                 ],
-            )?;
-            if changed {
-                let ev = session_event(db, &rt, &now).map_err(|e| anyhow::anyhow!(e.message))?;
-                events::append(
-                    db,
-                    "runtime.reassociated",
-                    &ev,
-                    &json!({"runtimeId":rt.runtime_id,"status":"stopping","cause":"terminate-admission-closed"}),
-                )?;
-            }
-            Ok(())
+            )
         })?;
     }
     terminate_runtime(server, &rt, options).await
@@ -882,34 +871,16 @@ pub async fn dispose(
         Ok(Ok(())) => {
             let now = hrc_store::timestamp();
             let db = server.store.lock().unwrap();
-            let changed: anyhow::Result<()> = (|| {
-                let tx = db.sqlite.unchecked_transaction()?;
-                let Some(current) = db::runtime(&tx, runtime_id)? else {
-                    return Ok(());
-                };
-                db::update_runtime(
-                    &tx,
-                    runtime_id,
-                    &[
-                        ("status", db::text("disposed")),
-                        ("status_changed_at", db::text(now.as_str())),
-                        ("updated_at", db::text(now.as_str())),
-                    ],
-                )?;
-                if current.status != "disposed" {
-                    let ev = session_event(&tx, &current, &now)
-                        .map_err(|e| anyhow::anyhow!(e.message))?;
-                    events::append(
-                        &tx,
-                        "runtime.reassociated",
-                        &ev,
-                        &json!({"runtimeId":runtime_id,"status":"disposed","cause":"broker-disposed"}),
-                    )?;
-                }
-                tx.commit()?;
-                Ok(())
-            })();
-            changed.map_err(|e| BrokerError {
+            db::update_runtime(
+                &db.sqlite,
+                runtime_id,
+                &[
+                    ("status", db::text("disposed")),
+                    ("status_changed_at", db::text(now.as_str())),
+                    ("updated_at", db::text(now.as_str())),
+                ],
+            )
+            .map_err(|e| BrokerError {
                 code: "broker_dispose_failed".into(),
                 message: e.to_string(),
                 detail: json!({}),

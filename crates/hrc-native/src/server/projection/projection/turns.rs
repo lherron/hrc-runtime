@@ -357,18 +357,15 @@ fn late_start(
     Ok(())
 }
 
-/// The broker's disposition with its turn and reason (the submission record's
-/// `disposition`). Live evidence is last-wins, as it always was.
 fn record_disposition(
     db: &Connection,
     submission: &str,
     disposition: &str,
     at: &str,
-    payload: &Value,
 ) -> Result<()> {
     db.execute(
-        "INSERT INTO submission_admissions (submission_id, disposition, disposed_at, turn_id, reason) VALUES (?, ?, ?, ?, ?) ON CONFLICT(submission_id) DO UPDATE SET disposition = excluded.disposition, disposed_at = excluded.disposed_at, turn_id = COALESCE(excluded.turn_id, submission_admissions.turn_id), reason = COALESCE(excluded.reason, submission_admissions.reason)",
-        params![submission, disposition, at, payload["turnId"].as_str(), payload["reason"].as_str()],
+        "INSERT INTO submission_admissions (submission_id, disposition, disposed_at) VALUES (?, ?, ?) ON CONFLICT(submission_id) DO UPDATE SET disposition = excluded.disposition, disposed_at = excluded.disposed_at",
+        params![submission, disposition, at],
     )?;
     Ok(())
 }
@@ -450,8 +447,7 @@ pub fn project(
     let run_id = ctx.run_id.as_deref();
     let reason = payload["reason"].as_str();
     match kind {
-        "input.accepted" | "input.rejected" | "input.queued" | "admission.rejected" => {
-            crate::server::submission_record::record_delivery(db, envelope)?;
+        "input.accepted" | "input.rejected" | "input.queued" => {
             if let Some(r) = run_id {
                 db::update_run(db, r, &[("updated_at", text(now))])?;
             }
@@ -460,9 +456,8 @@ pub fn project(
             if let Some(r) = run_id {
                 db::update_run(db, r, &[("updated_at", text(now))])?;
             }
-            crate::server::submission_record::record_delivery(db, envelope)?;
             if let Some(sub) = owners::payload_submission_id(payload) {
-                record_disposition(db, &sub, "withdrawn", time, payload)?;
+                record_disposition(db, &sub, "withdrawn", time)?;
             }
         }
         "submission.executed" | "submission.absorbed" => {
@@ -474,7 +469,6 @@ pub fn project(
                     sub,
                     if executed { "executed" } else { "absorbed" },
                     time,
-                    payload,
                 )?;
             }
             if let Some(r) = run_id {
@@ -516,7 +510,7 @@ pub fn project(
                     "submission.expired" => "expired",
                     _ => "cancelled",
                 };
-                record_disposition(db, &sub, d, time, payload)?;
+                record_disposition(db, &sub, d, time)?;
             }
             if let Some(r) = run_id {
                 complete_if_open(
@@ -538,7 +532,7 @@ pub fn project(
         }
         "submission.lost" => {
             if let Some(sub) = owners::payload_submission_id(payload) {
-                record_disposition(db, &sub, "lost", time, payload)?;
+                record_disposition(db, &sub, "lost", time)?;
             }
             if let Some(r) = run_id {
                 complete_if_open(

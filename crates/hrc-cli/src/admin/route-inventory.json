@@ -509,16 +509,6 @@
     {
       "listener": "main",
       "method": "GET",
-      "route": "/v1/submissions"
-    },
-    {
-      "listener": "main",
-      "method": "GET",
-      "route": "/v1/submissions/:submissionId"
-    },
-    {
-      "listener": "main",
-      "method": "GET",
       "route": "/v1/active-run-contributions/:inputApplicationId"
     },
     {

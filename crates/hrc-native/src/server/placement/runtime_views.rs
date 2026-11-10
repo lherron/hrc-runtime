@@ -521,74 +521,6 @@ pub async fn list_targets(
     });
     Ok(Json(views).into_response())
 }
-/// HRC's runtime choice, in the store's creation order (also used by targets).
-pub fn select_seat_runtime(runtimes: &[Value]) -> Option<&Value> {
-    let rows: Vec<_> = runtimes.iter().collect();
-    rows.iter()
-        .rev()
-        .find(|r| r["transport"] == "tmux" && !unavailable(r))
-        .or_else(|| rows.iter().rev().find(|r| !unavailable(r)))
-        .or_else(|| rows.last())
-        .copied()
-        .filter(|r| {
-            !unavailable(r)
-                && ["sdk", "tmux", "headless", "hrcpty"]
-                    .iter()
-                    .any(|s| r["transport"] == *s)
-        })
-}
-
-/// Pure target state. Stored reads pass unknown for external artifact health.
-pub fn seat_state(session: &Value, view: Option<&Value>, artifact: &str) -> &'static str {
-    if session["status"] == "archived" {
-        if session["continuation"]["key"]
-            .as_str()
-            .is_none_or(|s| s.is_empty())
-            || artifact == "missing"
-        {
-            "broken"
-        } else {
-            "dormant"
-        }
-    } else if session["status"] != "active" {
-        "broken"
-    } else if let Some(r) = view {
-        if r.get("activeRunId").is_some() || r["status"] == "busy" || r["status"] == "starting" {
-            "busy"
-        } else if r["transport"] == "headless" {
-            "summoned"
-        } else {
-            "bound"
-        }
-    } else {
-        "summoned"
-    }
-}
-
-/// Stored seat facts only. Archived artifact health is unknown, as on the
-/// targets list; the fresh by-session-ref route can instead report broken.
-/// Unavailable runtime rows and their retained probes are never active facts.
-pub fn stored_seat_read(db: &hrc_store::Store, session: &Value) -> Result<Value, ApiError> {
-    let runtimes = db.runtimes_where(
-        "host_session_id=? AND generation=?",
-        rusqlite::params![
-            session["hostSessionId"].as_str(),
-            session["generation"].as_i64()
-        ],
-    )?;
-    let runtime = select_seat_runtime(&runtimes);
-    let probe =
-        runtime.map(|r| &r["runtimeStateJson"]["brokerDispatchDiagnostics"]["liveSeatProbe"]);
-    let probe = probe.filter(|p| p.is_object()).map(|p| json!({"availability":p["availability"],"state":p["state"],"turnId":p["turnId"],"observedAt":p["observedAt"],"brokerHeldDepth":p["brokerHeldDepth"]})).unwrap_or(Value::Null);
-    let classes = super::projection::db::admission_classes(
-        &db.sqlite,
-        runtime.and_then(|r| r["activeInvocationId"].as_str()),
-    )?;
-    Ok(
-        json!({"activeRuntime":runtime.map(|r| json!({"runtimeId":r["runtimeId"],"status":r["status"],"transport":r["transport"],"activeRunId":r["activeRunId"]})),"probe":probe,"admissionClasses":classes,"state":seat_state(session, runtime, "unknown")}),
-    )
-}
-
 pub async fn target_session_view(
     server: &Shared,
     session: &Value,
@@ -606,8 +538,15 @@ pub async fn target_session_view(
         "host_session_id=?",
         [session["hostSessionId"].as_str().unwrap_or("")],
     )?;
-    let r = select_seat_runtime(&runtimes);
-    let view=r.map(|r|{
+    let rows: Vec<_> = runtimes.iter().collect();
+    let r = rows
+        .iter()
+        .rev()
+        .find(|r| r["transport"] == "tmux" && !unavailable(r))
+        .or_else(|| rows.iter().rev().find(|r| !unavailable(r)))
+        .or_else(|| rows.last())
+        .copied();
+    let view=r.filter(|r|!unavailable(r) && ["sdk","tmux","headless","hrcpty"].iter().any(|s|r["transport"]==*s)).map(|r|{
         let h=hosting(r);let operator=h.as_ref().is_some_and(|h|h["presentation"]["kind"]!="none");
         // target-view.ts toTargetRuntimeView key order.
         let mut v=json!({"runtimeId":r["runtimeId"],"transport":r["transport"],"status":r["status"],"supportsLiteralSend":r["transport"]=="tmux" || operator,"supportsCapture":r["transport"]!="headless" || operator});
@@ -643,7 +582,29 @@ pub async fn target_session_view(
                 .to_owned();
         }
     }
-    let state = seat_state(session, view.as_ref(), &artifact);
+    let state = if session["status"] == "archived" {
+        if session["continuation"]["key"]
+            .as_str()
+            .is_none_or(|s| s.is_empty())
+            || artifact == "missing"
+        {
+            "broken"
+        } else {
+            "dormant"
+        }
+    } else if session["status"] != "active" {
+        "broken"
+    } else if let Some(r) = &view {
+        if r.get("activeRunId").is_some() || r["status"] == "busy" || r["status"] == "starting" {
+            "busy"
+        } else if r["transport"] == "headless" {
+            "summoned"
+        } else {
+            "bound"
+        }
+    } else {
+        "summoned"
+    };
     let mode = match view.as_ref().map(|r| r["transport"].as_str().unwrap_or("")) {
         Some("sdk") => "nonInteractive",
         Some("tmux" | "headless" | "hrcpty") => "headless",

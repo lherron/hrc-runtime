@@ -277,9 +277,6 @@ fn route(method: &str, path: &str) -> String {
         if path.starts_with("/v1/active-run-contributions/") {
             return "/v1/active-run-contributions/:inputApplicationId".into();
         }
-        if crate::server::submission_record::submission_id(path).is_some() {
-            return "/v1/submissions/:submissionId".into();
-        }
     }
     // Native-only routes are absent from the retained Bun inventory. Use
     // dispatch's own exact inventory after normalizing parameterized paths.
@@ -581,11 +578,6 @@ mod route_tests {
             route("GET", "/v1/runtimes/rt-123/seat"),
             "/v1/runtimes/:runtimeId/seat"
         );
-        assert_eq!(
-            route("GET", "/v1/submissions/sub-123"),
-            "/v1/submissions/:submissionId"
-        );
-        assert_eq!(route("GET", "/v1/submissions"), "/v1/submissions");
         assert_eq!(route("GET", "/unknown/arbitrary-id"), "unmatched");
         assert_eq!(route("DELETE", "/v1/sessions/attention"), "unmatched");
     }

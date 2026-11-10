@@ -167,11 +167,6 @@ pub fn publish_presentation(
     Ok(())
 }
 
-/// The submission's `origin.envelopeId`, written with the run row.
-fn envelope<'a>(o: &Options<'a>) -> Option<&'a str> {
-    o.submission_origin.and_then(|x| x["envelopeId"].as_str())
-}
-
 fn run_active(status: &str) -> bool {
     matches!(status, "accepted" | "started" | "running")
 }
@@ -210,8 +205,10 @@ async fn input_turn(
                     json!({"runtimeId":rt.runtime_id,"runId":o.run_id,"status":r.status,"route":route}),
                 ));
             }
-            Some(_) => {
-                let mut cols = vec![
+            Some(_) => db::update_run(
+                &db.sqlite,
+                o.run_id,
+                &[
                     ("runtime_id", db::text(rt.runtime_id.as_str())),
                     ("invocation_id", db::text(invocation.as_str())),
                     (
@@ -219,16 +216,12 @@ async fn input_turn(
                         db::opt_text(rt.active_operation_id.as_deref()),
                     ),
                     ("updated_at", db::text(now.as_str())),
-                ];
-                if let Some(e) = envelope(o) {
-                    cols.push(("envelope_id", db::text(e)));
-                }
-                db::update_run(&db.sqlite, o.run_id, &cols)?;
-            }
+                ],
+            )?,
             None => {
                 db.sqlite.execute(
-                    "INSERT INTO runs (run_id, host_session_id, runtime_id, scope_ref, lane_ref, generation, transport, status, accepted_at, updated_at, invocation_id, operation_id, dispatch_idempotency_key, origin_actor, origin_kind, origin_causation_ref, execution_format, envelope_id) VALUES (?, ?, ?, ?, ?, ?, ?, 'accepted', ?, ?, ?, ?, ?, ?, ?, ?, 'format1', ?)",
-                    params![o.run_id, session["hostSessionId"].as_str(), rt.runtime_id, session["scopeRef"].as_str(), session["laneRef"].as_str().map(hrc_store::storage_lane), session["generation"].as_i64(), transport, now, now, invocation, rt.active_operation_id, o.idempotency_key, o.origin.and_then(|x| x["actor"].as_str()), o.origin.and_then(|x| x["kind"].as_str()), o.origin.and_then(|x| x["causationRef"].as_str()), envelope(o)],
+                    "INSERT INTO runs (run_id, host_session_id, runtime_id, scope_ref, lane_ref, generation, transport, status, accepted_at, updated_at, invocation_id, operation_id, dispatch_idempotency_key, origin_actor, origin_kind, origin_causation_ref, execution_format) VALUES (?, ?, ?, ?, ?, ?, ?, 'accepted', ?, ?, ?, ?, ?, ?, ?, ?, 'format1')",
+                    params![o.run_id, session["hostSessionId"].as_str(), rt.runtime_id, session["scopeRef"].as_str(), session["laneRef"].as_str().map(hrc_store::storage_lane), session["generation"].as_i64(), transport, now, now, invocation, rt.active_operation_id, o.idempotency_key, o.origin.and_then(|x| x["actor"].as_str()), o.origin.and_then(|x| x["kind"].as_str()), o.origin.and_then(|x| x["causationRef"].as_str())],
                 ).map_err(anyhow::Error::from)?;
             }
         }
@@ -317,24 +310,14 @@ async fn input_turn(
                 ("updated_at", db::text(now.as_str())),
             ],
         )?;
-        let requested = plan.door_report["requestedDoor"].as_str().unwrap_or(door);
         db.sqlite.execute(
-            "INSERT INTO submission_admissions (submission_id, run_id, runtime_id, invocation_id, door, envelope_id, admitted_at, requested_door) VALUES (?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT(submission_id) DO UPDATE SET run_id = excluded.run_id, runtime_id = excluded.runtime_id, invocation_id = excluded.invocation_id, door = COALESCE(excluded.door, submission_admissions.door), envelope_id = COALESCE(excluded.envelope_id, submission_admissions.envelope_id), admitted_at = excluded.admitted_at, requested_door = excluded.requested_door",
-            params![submission, o.run_id, rt.runtime_id, invocation, door, origin["envelopeId"].as_str(), now, requested],
+            "INSERT INTO submission_admissions (submission_id, run_id, runtime_id, invocation_id, door, envelope_id, admitted_at) VALUES (?, ?, ?, ?, ?, ?, ?) ON CONFLICT(submission_id) DO UPDATE SET run_id = excluded.run_id, runtime_id = excluded.runtime_id, invocation_id = excluded.invocation_id, door = COALESCE(excluded.door, submission_admissions.door), envelope_id = COALESCE(excluded.envelope_id, submission_admissions.envelope_id), admitted_at = excluded.admitted_at",
+            params![submission, o.run_id, rt.runtime_id, invocation, door, origin["envelopeId"].as_str(), now],
         ).map_err(anyhow::Error::from)?;
         if response["admission"] == "rejected" {
             let reason = response["reason"]
                 .as_str()
                 .unwrap_or("broker rejected submission");
-            // The broker (or HRC, for a preempt the seat cannot take) refused
-            // the submission at admission: nothing was handed to the harness.
-            crate::server::submission_record::refused_at_admission(
-                &db.sqlite,
-                &submission,
-                Some(reason),
-                &now,
-            )
-            .map_err(anyhow::Error::from)?;
             db::mark_run_completed(
                 &db.sqlite,
                 o.run_id,
@@ -387,17 +370,13 @@ async fn wait_run(
         if let Some(r) = run.filter(|r| !run_active(&r.status)) {
             if !interactive {
                 let db = server.store.lock().unwrap();
-                let tx = db
-                    .sqlite
-                    .unchecked_transaction()
-                    .map_err(anyhow::Error::from)?;
-                if let Some(current) = db::runtime(&tx, runtime_id)?
-                    .filter(|x| x.active_run_id.as_deref() == Some(run_id))
+                if db::runtime(&db.sqlite, runtime_id)?
+                    .is_some_and(|x| x.active_run_id.as_deref() == Some(run_id))
                 {
                     let now = hrc_store::timestamp();
-                    tx.execute("UPDATE runtimes SET active_run_id = NULL, updated_at = ? WHERE runtime_id = ?", params![now, runtime_id]).map_err(anyhow::Error::from)?;
+                    db.sqlite.execute("UPDATE runtimes SET active_run_id = NULL, updated_at = ? WHERE runtime_id = ?", params![now, runtime_id]).map_err(anyhow::Error::from)?;
                     db::update_runtime(
-                        &tx,
+                        &db.sqlite,
                         runtime_id,
                         &[
                             ("status", db::text("ready")),
@@ -408,23 +387,6 @@ async fn wait_run(
                             ("updated_at", db::text(now.as_str())),
                         ],
                     )?;
-                    events::append(
-                        &tx,
-                        "runtime.settled",
-                        &events::Ev {
-                            ts: now.clone(),
-                            host_session_id: current.host_session_id,
-                            scope_ref: current.scope_ref,
-                            lane_ref: current.lane_ref,
-                            generation: current.generation,
-                            runtime_id: Some(runtime_id.into()),
-                            ..Default::default()
-                        },
-                        &json!({"runtimeId":runtime_id,"clearedRunId":run_id,"status":"ready","cause":"completion-repair"}),
-                    )?;
-                    tx.commit().map_err(anyhow::Error::from)?;
-                    drop(db);
-                    server.ledger_committed();
                 }
             }
             if r.status != "completed" {
@@ -477,10 +439,9 @@ fn input_failure(
     let binding_missing = error.code == "broker_runtime_not_active";
     let result: anyhow::Result<bool> = (|| {
         let db = server.store.lock().unwrap();
-        let tx = db.sqlite.unchecked_transaction()?;
         let now = hrc_store::timestamp();
-        let inv_state = db::invocation(&tx, invocation)?.map(|i| i.invocation_state);
-        let current = db::runtime(&tx, &rt.runtime_id)?;
+        let inv_state = db::invocation(&db.sqlite, invocation)?.map(|i| i.invocation_state);
+        let current = db::runtime(&db.sqlite, &rt.runtime_id)?;
         let reaped = current
             .as_ref()
             .is_some_and(|c| lease::unavailable(&c.status));
@@ -497,10 +458,10 @@ fn input_failure(
             || message.contains("Cannot accept input in state: starting")
             || message.contains("Cannot accept input in state: stopping");
         if timeout {
-            tx.execute("UPDATE runs SET broker_input_fenced_at=?, broker_input_fence_reason=?, updated_at=? WHERE run_id=?", params![now, error.code, now, run_id])?;
+            db.sqlite.execute("UPDATE runs SET broker_input_fenced_at=?, broker_input_fence_reason=?, updated_at=? WHERE run_id=?", params![now, error.code, now, run_id])?;
         }
         db::mark_run_completed(
-            &tx,
+            &db.sqlite,
             run_id,
             db::Completion {
                 status: "failed",
@@ -511,7 +472,7 @@ fn input_failure(
             },
         )?;
         if timeout {
-            tx.execute(
+            db.sqlite.execute(
                 "UPDATE runtimes SET active_run_id = NULL, updated_at = ? WHERE runtime_id = ?",
                 params![now, rt.runtime_id],
             )?;
@@ -523,7 +484,7 @@ fn input_failure(
             ),
             ("status_changed_at", db::text(now.as_str())),
         ];
-        cols.extend(db::activity_cols(&tx, &rt.runtime_id, &now, &now)?);
+        cols.extend(db::activity_cols(&db.sqlite, &rt.runtime_id, &now, &now)?);
         if reprovision {
             let mut state = current.as_ref().unwrap_or(rt).state_object();
             state["status"] = "stale".into();
@@ -535,33 +496,7 @@ fn input_failure(
             state["terminalInvocation"] = terminal;
             cols.push(("runtime_state_json", db::text(state.to_string())));
         }
-        db::update_runtime(&tx, &rt.runtime_id, &cols)?;
-        if let (Some(before), Some(after)) = (&current, db::runtime(&tx, &rt.runtime_id)?)
-            && (!hrc_store::status::UNAVAILABLE.contains(&before.status.as_str())
-                || !hrc_store::status::UNAVAILABLE.contains(&after.status.as_str()))
-            && (before.status != after.status || before.active_run_id != after.active_run_id)
-        {
-            let kind = if before.status != "stale" && after.status == "stale" {
-                "runtime.stale"
-            } else {
-                "runtime.reassociated"
-            };
-            events::append(
-                &tx,
-                kind,
-                &events::Ev {
-                    ts: now.clone(),
-                    host_session_id: before.host_session_id.clone(),
-                    scope_ref: before.scope_ref.clone(),
-                    lane_ref: before.lane_ref.clone(),
-                    generation: before.generation,
-                    runtime_id: Some(rt.runtime_id.clone()),
-                    ..Default::default()
-                },
-                &json!({"runtimeId":rt.runtime_id,"status":after.status,"activeRunId":after.active_run_id,"cause":"input-failure","errorCode":error.code}),
-            )?;
-        }
-        tx.commit()?;
+        db::update_runtime(&db.sqlite, &rt.runtime_id, &cols)?;
         Ok(reprovision)
     })();
     server.ledger_committed();
@@ -712,12 +647,6 @@ pub async fn execute(server: &Shared, plan: &Plan, o: &Options<'_>) -> Result<Va
             if let (Some(a), Some(i)) = (o.repair, intent.as_object_mut()) {
                 let _ = (a, i);
             }
-            // The run row a birth writes carries the submission's envelope.
-            let birth_origin = envelope(o).map(|e| {
-                let mut origin = o.origin.cloned().unwrap_or_else(|| json!({}));
-                origin["envelopeId"] = e.into();
-                origin
-            });
             let born = broker::birth(
                 server,
                 broker::Birth {
@@ -726,7 +655,7 @@ pub async fn execute(server: &Shared, plan: &Plan, o: &Options<'_>) -> Result<Va
                     prompt: o.prompt,
                     run_id: o.run_id,
                     idempotency: o.idempotency_key.map(Value::from).as_ref(),
-                    origin: birth_origin.as_ref().or(o.origin),
+                    origin: o.origin,
                     response_format: o.response_format,
                     first_turn_timeout_ms: o.first_turn_timeout_ms,
                     attach: o.attach.and_then(|g| g.lock().unwrap().take()),

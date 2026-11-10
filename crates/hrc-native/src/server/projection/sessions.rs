@@ -9,9 +9,6 @@ use rusqlite::OptionalExtension;
 use serde_json::{Value, json};
 use std::collections::HashMap;
 
-/// GET /v1/sessions/get serves stored seat facts without broker or ASP probes;
-/// archived artifact health stays unknown like the targets list, while the
-/// fresh targets/by-session-ref route can report a missing artifact as broken.
 pub async fn handle(
     server: &Server,
     method: &Method,
@@ -128,10 +125,6 @@ pub async fn handle(
         }
         result["identity"] = session["identity"].clone();
         result["generation"] = json!({"hostSessionId":session["hostSessionId"],"generation":session["generation"],"status":session["status"],"createdAt":session["createdAt"],"lastAppliedIntent":session.get("lastAppliedIntentJson").cloned().unwrap_or(json!({})),"continuation":session.get("continuation").cloned().unwrap_or(json!({}))});
-        let seat_read = super::runtime_views::stored_seat_read(&db, &session)?;
-        for key in ["activeRuntime", "probe", "admissionClasses", "state"] {
-            result[key] = seat_read[key].clone();
-        }
         result["facts"] = facts;
         result["metadata"] = stored["metadata"].clone();
         result["metadataSources"] = stored["metadataSources"].clone();
