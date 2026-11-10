@@ -95,32 +95,31 @@ Deleted entries stay listed to explain their removal; their source remains in gi
 | `ledger_prune.py` | Mark-gated runtime prune on copies of a real ledger: every refusal deletes nothing, only runtimes behind the mark go, the scheduled task (TZ-shifted to 04:00) reports `no_window` or deletes, and the deadline stops it (T-12855). Takes `--source <state.sqlite backup>`. | keep-manual |
 | `ledger_prune_resume.py` | A seat whose every runtime was pruned through the mark-gated task is started again with its stored continuation, handoff and session intact (T-12855, contract gate 5). Live model turns. | keep-manual |
 | `maintenance.py` | Real live-seat safety and Bun-authored orphan maintenance in both modes. | promote |
-| `n2_attached.py` | N2 attached-run door on one owner (bun or native), recorded for `compare --suite n2-attached`. (requires explicit scratch/capture inputs; retained qualification) | keep-manual |
-| `n2_continuation.py` | A seat re-born on a scope with a stored continuation compiles with it and continues. (protected by T-11899) | keep-manual |
+| `n2_attached.py` | `hrc run` attached-run door on an hrcpty seat in a real pty: parked promptless birth, gate after the committed start, warm run on the same seat, refusals. Live model turns. | keep-manual |
 | `n2_continuation_harness.py` | A respawn after the profile drifts (codex-hrcpty to claude-hrcpty) keeps the session's applied harness and resumes the Codex thread. An explicit cross-provider harness on that continuation is refused `continuation_harness_mismatch` before any operation is recorded (T-12419). Needs live codex credentials; scratch root under /tmp (socket path length). | keep-manual |
-| `n2_inspect_crash.py` | N2 broker death mid-turn, then broker inspect with recoverFinalSummary, on (requires explicit scratch/capture inputs; retained qualification) | keep-manual |
-| `n2_lanes.py` | N2 non-main lane on one owner (bun or native), for `compare --suite n2-lanes`. (requires explicit scratch/capture inputs; retained qualification) | keep-manual |
+| `n2_inspect_crash.py` | Broker SIGKILL mid-turn settles the runtime terminal and the run failed; inspect with recoverFinalSummary answers terminal-fenced. Live model turns. | keep-manual |
+| `n2_lanes.py` | Non-main lane seat: warm turn, selector echo, canonical API lane, raw stored lane_ref in every table. Live model turns. | keep-manual |
 | `n2_participant.py` | Real participant-owned EPR broker: staged replay, live turn, clean exit; `--mode delivery` drives addressed steer/turn/literal into it pending, ACTIVE and absorbing, for `compare --suite n2-participant-delivery` (T-11960). `--mode respawn` drives a same-incarnation respawn onto the live runtime (advance) plus three refused controls, for `compare --suite n2-participant-respawn` (T-11996). (requires explicit scratch/capture inputs; retained qualification) | keep-manual |
-| `n2_quit.py` | N2 human /quit on one owner (bun or native), for `compare --suite n2-quit`. (requires explicit scratch/capture inputs; retained qualification) | keep-manual |
-| `n2_recovery.py` | N2 cold-boot input recovery on one owner (bun or native), for `compare --suite n2-recovery`. (requires explicit scratch/capture inputs; retained qualification) | keep-manual |
-| `n2_restart.py` | N2 gate 2: restart rusthrc mid-turn, then hand the seat to the named Bun copy. | promote |
-| `n2_restart_self.py` | Real restart-self workflow on Bun first, then native, using copied releases. (requires explicit scratch/capture inputs; retained qualification) | keep-manual |
-| `n2_retained.py` | N2 retained-evidence recovery on one owner (bun or native), for (requires explicit scratch/capture inputs; retained qualification) | keep-manual |
+| `n2_quit.py` | Human `/quit` through the hrc-pty attach client ends the seat `user_initiated_session_end`, once, and ends the lease. Live model turns. | keep-manual |
+| `n2_recovery.py` | Cold-boot input recovery on restart: owed prompt delivered once, the runtime-less and non-durable runs failed `cold_input_continuation_lost`. Live model turns. | keep-manual |
+| `n2_restart.py` | Restart rusthrc mid-turn (no lost, duplicated or replayed rows), then restart idle and take a warm turn; drained-stop log per shutdown. Live model turns. | promote |
+| `n2_restart_self.py` | Restart-self arm/cancel/execute with handoff refusals and a fresh compile; `--negative-control` must fail. Live model turns. | keep-manual |
+| `n2_retained.py` | Owner killed, operator turn and `/quit` while down, supervisor killed: startup recovers the tail as retained rows equal to the broker ledger. Live model turns. | keep-manual |
 | `n2_routes.py` | none — task-time acceptance for completed T-11823; promoted n3_submissions covers the standing submission doors | delete |
-| `n2_startup.py` | N2 startup reconciliation and broker lease GC on one owner (bun or native), (requires explicit scratch/capture inputs; retained qualification) | keep-manual |
-| `n2_turns.py` | N2 turn workflow on one owner (bun or native), dumped for per-case compare. (requires explicit scratch/capture inputs; retained qualification) | keep-manual |
-| `n3_edges.py` | Real HTTP subscriber-name identity and combined-error precedence edges. (requires explicit scratch/capture inputs; retained qualification) | keep-manual |
-| `n3_events.py` | Compare native event history to the named Bun copy on one scratch ledger. (requires explicit scratch/capture inputs; retained qualification) | keep-manual |
-| `n3_handoff.py` | Semantic handoff's refusal order, before any durable target/message write. (requires explicit scratch/capture inputs; retained qualification) | keep-manual |
-| `n3_injector.py` | Unchanged injector + wrkc reply, with the Rust owner replaced mid-delivery. (requires explicit scratch/capture inputs; retained qualification) | keep-manual |
+| `n2_startup.py` | Startup reconciliation: live hrcpty seat reattached and takes a turn, dead seat and legacy row staled, terminal run settled once. Live model turns. | keep-manual |
+| `n2_turns.py` | Cold and Skill-tool warm turns checked against the seat's own broker ledger; Skill rows; N2 reads answer 200. Live model turns. | keep-manual |
+| `n3_edges.py` | Subscriber name identity across routes, UTF-16 name cap, and combined-error parse order on /v1/events. | keep-manual |
+| `n3_events.py` | Event history reads over rows seeded with the native append: filters, inclusive/exclusive cursors, tail/page limits, head vs allocated head, incarnation fences, refusals. | keep-manual |
+| `n3_handoff.py` | Semantic handoff refusal order before any durable write; `--turns` adds warm, restart-held and cold real turns with one durable response each. | keep-manual |
+| `n3_injector.py` | Production `bunx hrc-mail-injector` + wrkc reply with the native owner replaced mid-delivery. Still starts the Bun injector (T-13068 List). | keep-manual |
 | `n3_kernel_volume.py` | Historical independent-kernel survival workflow; superseded by embedded kernel checks (T-12141). | delete |
-| `n3_mail.py` | Stop gate on real private wrkc obligations, with identical Bun/native drives. (requires explicit scratch/capture inputs; retained qualification) | keep-manual |
-| `n3_messages.py` | Message filters/row shape against real Bun repo inserts and HTTP responses. (requires explicit scratch/capture inputs; retained qualification) | keep-manual |
-| `n3_publication.py` | Replay real Bun lifecycle rows through both publication observers. (requires explicit scratch/capture inputs; retained qualification) | keep-manual |
-| `n3_replay.py` | Bun/native stream replay, receipt headers and bounded-loss wire parity. (requires explicit scratch/capture inputs; retained qualification) | keep-manual |
-| `n3_streams.py` | Replay/live/reconnect streams and the unchanged kernel on real HTTP writes. (requires explicit scratch/capture inputs; retained qualification) | keep-manual |
-| `n3_submissions.py` | Real HTTP submission doors: parser order, unavailable target, broker withdraw. | promote |
-| `n3_subscribers.py` | Real copied-Bun/native subscriber and broker evidence parity on a private DB. (requires explicit scratch/capture inputs; retained qualification) | keep-manual |
+| `n3_mail.py` | Stop gate on real private wrkc obligations: unseen clear, presented block, refusal cap and reset, reply clears; malformed bodies 400, unknown runtime fails open. | keep-manual |
+| `n3_messages.py` | Message filters/row shape against Bun repository inserts and a Bun baseline (T-13068 List: needs a native seed). | keep-manual |
+| `n3_publication.py` | Live project-event publication, then a from-zero replay with a withheld wrkq reply: no duplicate, created=false retry, live and replay facts agree. Live model turns. | keep-manual |
+| `n3_replay.py` | Bounded replay gaps (replay_window, event_oversize) over rows seeded with the native append, broker follow equals finite read, receipt ACK, selector refusals. | keep-manual |
+| `n3_streams.py` | Replay/live/reconnect streams over an owner restart on real HTTP writes. | keep-manual |
+| `n3_submissions.py` | Submission doors: parser refusal codes, absent target unavailable, withdraw refusals, real enqueue/steer/preempt turns. Live model turns. | promote |
+| `n3_subscribers.py` | Subscriber declare/follow/ACK doors on a private DB: undeclared and wrong-token refusals, retained refused for delivery, inclusive retry, stale ACK. Live model turns. | keep-manual |
 | `n4_federation.py` | N4 federation reads on two scratch nodes, recorded for a per-case compare. (protected by T-11872) | keep-manual |
 | `n4_gate.py` | N4 summon gate on one owner (bun or native), recorded for a compare. (requires explicit scratch/capture inputs; retained qualification) | keep-manual |
 | `n4_history.py` | N4 collective history on two scratch nodes: origin n4a and authority svc. (requires explicit scratch/capture inputs; retained qualification) | keep-manual |

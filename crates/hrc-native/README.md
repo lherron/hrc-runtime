@@ -210,7 +210,7 @@ the accepted-never-started settlement in reconcile (T-11306) and the retained
 evidence passes. Startup cold-boot input recovery (`server/recovery.rs`)
 re-delivers an accepted headless run's durable owed prompt once the seat probes
 live and its priming turn has ended, or fails it `cold_input_continuation_lost`
-(`e2e/n2_recovery.py`, `--suite n2-recovery`).
+(`e2e/n2_recovery.py`).
 A broker client's `close()` half-closes and drains the
 frames the broker already sent (`invocation.disposed` follows the dispose
 reply). While a terminate finalizes a runtime, its projected exit writes no
@@ -219,17 +219,13 @@ external-participant terminate (both refused with `runtime_unavailable`), and
 the retained-evidence terminal outcome.
 
 `e2e/n2_routes.py` records per-case requests on a real seat for
-`run.py compare --suite n2-routes`. `e2e/n2_continuation.py` re-births a seat
-on a stored continuation behind a logging aspd proxy; `--suite
-n2-continuation` compares both compile requests field for field and requires
-the re-born harness to recall the first birth's code word.
+`run.py compare --suite n2-routes`. `e2e/n2_continuation_harness.py` re-births
+a seat on a stored continuation behind a logging aspd proxy and requires the
+re-born harness to recall the first birth's code word.
 
-`e2e/n2_turns.py` runs one workflow on a named Bun copy or rusthrc; compare
-two dumps with `run.py compare --suite n2-turns`. Each side's raw rows are
-checked against its own broker ledger, then the sides are compared on raw key
-order, run/runtime rows, per-turn lifecycle shapes, Skill rows and the
-human-typed turn. `e2e/n2_restart.py` restarts rusthrc mid-turn and then hands
-the seat to the Bun copy for another turn.
+`e2e/n2_turns.py` runs cold and Skill-tool warm turns on rusthrc and checks
+the raw rows against the seat's own broker ledger. `e2e/n2_restart.py`
+restarts rusthrc mid-turn, then restarts it idle and takes another turn.
 
 Session continuity and layered metadata reads/writes now preserve Bun lane
 formatting, validation, source precedence, lifecycle events and idempotent writes.

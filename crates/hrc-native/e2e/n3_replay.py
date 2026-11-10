@@ -1,16 +1,19 @@
 #!/usr/bin/env python3
-"""Bun/native stream replay, receipt headers and bounded-loss wire parity.
+"""Stream replay, receipt headers and bounded-loss wire on rusthrc.
 
-Bun's real repositories write the fixture with the owner down. A count overflow
-and an oversized final event must become explicit replay/oversize gaps, while
-raw broker follow reconstructs payload-less envelopes identically to a finite
-read. Native never writes the seeded projection.
+After a real birth, 2050 server events and one 16 MiB event are appended with
+the native store's own append while the owner is down. A count overflow and an
+oversized final event must become explicit replay_window/event_oversize gaps,
+raw broker follow must reconstruct the finite read frame for frame, a consumer
+receipt is served and ACKed, and malformed or fenced broker-event selectors
+are refused.
 """
-import argparse,json,sqlite3,subprocess
+import argparse,json
 from pathlib import Path
 from urllib.parse import urlencode
 from n3_scratch import Scratch,UnixHTTP
 from n3_streams import Follow
+from n3_events import append_events
 
 def exercise(s,runtime,invocation,generation):
     out={};page=s.http('GET','/v1/events/page?afterSeq=0&limit=1')[1];inc=page['ledgerIncarnationId']
@@ -42,24 +45,20 @@ def main():
     for k in ('binary','installed-release','aspd-socket','scratch-root','artifacts'):p.add_argument('--'+k,type=Path,required=True)
     a=p.parse_args();s=Scratch(a.scratch_root,a.installed_release,a.aspd_socket,a.binary,a.artifacts,project_id='n3-t11839')
     try:
-        s.init_substrate();bun=s.up('bun','replay-birth');scope='agent:tabularasa:project:n3-t11839:task:replay'
+        s.init_substrate();owner=s.up('native','replay-birth');scope='agent:tabularasa:project:n3-t11839:task:replay'
         start=s.command('birth',['hrc','start',scope,'--project-id',s.project_id,'--project-root',s.project,'--cwd',s.project,'--json','-p','Reply with exactly the word OK and nothing else. No tools.'])
-        rt=start['runtime'];runtime=rt['runtimeId'];generation=rt['generation'];s.wait_completed(rt['runId']);invocation=s.rows('SELECT active_invocation_id FROM runtimes WHERE runtime_id=?',(runtime,))[0]['active_invocation_id'];s.down(bun)
-        module=s.release/'packages/hrc-store-sqlite/src/database.ts'
-        script='import {openHrcDatabase} from '+json.dumps(str(module))+''';const db=openHrcDatabase(process.argv[1]);
-for(let i=0;i<2050;i++)db.hrcEvents.append({ts:'2026-01-01T00:00:00.000Z',hostSessionId:'hrc-server',scopeRef:'server:hrc',laneRef:'main',generation:0,category:'server',eventKind:'server.n3.replay',payload:{i}});
-db.hrcEvents.append({ts:'2026-01-01T00:00:00.000Z',hostSessionId:'hrc-server',scopeRef:'server:hrc',laneRef:'main',generation:0,category:'server',eventKind:'server.n3.replay',payload:{oversize:'x'.repeat(16*1024*1024)}});db.close();'''
-        s.command('Bun-replay-fixture',['bun','-e',script,s.db_path]);bun=s.up('bun','replay')
-        expected=exercise(s,runtime,invocation,generation);snapshot=s.root/'history.sqlite'
-        with sqlite3.connect(s.db_path) as source,sqlite3.connect(snapshot) as target:source.backup(target)
-        s.down(bun)
-        with sqlite3.connect(snapshot) as source,sqlite3.connect(s.db_path) as target:source.backup(target)
-        s.up('native','replay');actual=exercise(s,runtime,invocation,generation)
-        for side,v in [('bun',expected),('native',actual)]:
-            directory=a.artifacts/side;directory.mkdir(exist_ok=True);(directory/'replay.json').write_text(json.dumps(v,indent=1)+'\n')
-        runner=Path(__file__).resolve().parents[3]/'conformance/hrc-parity/run.py';result=subprocess.run(['python3',str(runner),'compare','--suite','n3-replay','--baseline',str(a.artifacts/'bun'),'--candidate',str(a.artifacts/'native'),'--out',str(a.artifacts/'compare')],capture_output=True,text=True)
+        rt=start['runtime'];runtime=rt['runtimeId'];generation=rt['generation'];s.wait_completed(rt['runId']);invocation=s.rows('SELECT active_invocation_id FROM runtimes WHERE runtime_id=?',(runtime,))[0]['active_invocation_id'];s.down(owner)
+        fixture=[{'ts':'2026-01-01T00:00:00.000Z','eventKind':'server.n3.replay','payload':{'i':i}} for i in range(2050)]
+        fixture.append({'ts':'2026-01-01T00:00:00.000Z','eventKind':'server.n3.replay','payload':{'oversize':'x'*(16*1024*1024)}})
+        append_events(s.db_path,fixture)
+        s.up('native','replay');out=exercise(s,runtime,invocation,generation)
         s.assert_no_duplicate_turn_messages()
-        (a.artifacts/'compare.stdout').write_text(result.stdout);(a.artifacts/'compare.stderr').write_text(result.stderr);assert result.returncode==0,(result.stdout[-4000:],result.stderr)
-        print(json.dumps({'pass':True,'compared':len(expected),'artifacts':str(a.artifacts)}))
+        (a.artifacts/'replay.json').write_text(json.dumps({k:v for k,v in out.items() if k!='bounded-overflow'},indent=1)+'\n')
+        assert out['receipt-ack'][0]==200 and out['receipt-ack'][1]['disposition']=='advanced',out['receipt-ack']
+        refused={k:out[k][0] for k in ('missing','generation','invalid-generation','invalid-after','nonfollow-receipt')}
+        assert all(v==400 for v in refused.values()),refused
+        assert out['unknown'][0]==400 and out['unknown'][1]['error']['code']=='invalid_selector',out['unknown']
+        assert out['fence'][0]==400 and out['fence'][1]['error']['code']=='invalid_fence',out['fence']
+        print(json.dumps({'pass':True,'cases':len(out),'artifacts':str(a.artifacts)}))
     finally:s.cleanup('agent:tabularasa:project:n3-t11839:task:')
 if __name__=='__main__':main()

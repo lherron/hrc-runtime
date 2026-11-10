@@ -1,5 +1,8 @@
 #!/usr/bin/env python3
-"""Unchanged injector + wrkc reply, with the Rust owner replaced mid-delivery.
+"""The production hrc-mail-injector + wrkc reply, with the Rust owner replaced mid-delivery.
+
+The injector is the fleet's Bun package (`bunx hrc-mail-injector`), the one Bun
+process this driver still starts; the owner is native throughout.
 
 Failure modes: wrong wrkq authority, subscriber receipt loss on reconnect,
 delivery repeated after owner restart, Stop allowing presented reply debt,
@@ -15,10 +18,10 @@ def main():
     for k in ('binary','installed-release','aspd-socket','scratch-root','artifacts'):p.add_argument('--'+k,type=Path,required=True)
     a=p.parse_args();s=Scratch(a.scratch_root,a.installed_release,a.aspd_socket,a.binary,a.artifacts,project_id='n3-t11839')
     try:
-        s.init_substrate();bun=s.up('bun','injector-birth')
+        s.init_substrate();native=s.up('native','injector-birth')
         scope='agent:tabularasa:project:n3-t11839:task:injector';seat='tabularasa@n3-t11839:injector';sender='cody@n3-t11839:primary'
         start=s.command('birth',['hrc','start',scope,'--project-id',s.project_id,'--project-root',s.project,'--cwd',s.project,'--json','-p','Reply with exactly the word READY and nothing else. No tools.'])
-        rt=start['runtime'];s.wait_completed(rt['runId']);s.down(bun);native=s.up('native','injector-subject')
+        rt=start['runtime'];s.wait_completed(rt['runId'])
         env={**s.env,'HRC_SOCKET_PATH':str(s.socket),'HRC_NODE_ID':s.project_id,'HRC_MAIL_INJECTOR_STATE_PATH':str(s.root/'state/injector.sqlite')}
         argv=['bunx','--bun','--silent','hrc-mail-injector@'+a.injector]
         unmarked=subprocess.run(argv,env=env,cwd=s.project,capture_output=True,text=True,timeout=120)

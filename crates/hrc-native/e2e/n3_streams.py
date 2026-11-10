@@ -4,7 +4,7 @@
 Failure modes: a replay/live gap, duplicate boundary rows, coalesced/missed wake
 stranding a follower, an inclusive cursor on reconnect, an unbounded replay,
 and non-NDJSON framing.
-Latency is measured against Bun, never a budget gate.
+Follow latency is recorded, never a budget gate.
 """
 import argparse,json,queue,socket,subprocess,threading,time
 from http.client import HTTPException
@@ -36,11 +36,11 @@ class Follow:
         self.connection.close()
 
 def main():
-    p=argparse.ArgumentParser();p.add_argument('--owner',choices=['bun','native'],required=True)
+    p=argparse.ArgumentParser()
     for k in ('binary','installed-release','aspd-socket','scratch-root','artifacts'):p.add_argument('--'+k,type=Path,required=True)
     a=p.parse_args();s=Scratch(a.scratch_root,a.installed_release,a.aspd_socket,a.binary,a.artifacts,project_id='n3-t11839');followers=[];out={}
     try:
-        s.init_substrate();owner=s.up(a.owner,'stream')
+        s.init_substrate();owner=s.up('native','stream')
         def create(label):
             scope='agent:tabularasa:project:n3-t11839:task:stream-'+label
             status,value=s.http('POST','/v1/sessions/resolve',{'sessionRef':scope+'/lane:main','create':True,'summonIntent':'explicit_local'})
@@ -57,7 +57,7 @@ def main():
         legacy_event=legacy.next();assert legacy_event==event['event'],(legacy_event,event)
         cursor=event['event']['hrcSeq'];assert cursor>ready['replayHeadHrcSeq']
         bounded.close();legacy.close();s.down(owner)
-        owner=s.up(a.owner,'stream-restart')
+        owner=s.up('native','stream-restart')
         resumed=Follow(s,'/v1/events/bounded-stream?'+urlencode({'follow':'true','afterSeq':cursor,'ledgerIncarnationId':incarnation,'category':'session'}));followers.append(resumed)
         restart_ready=resumed.next();assert restart_ready['type']=='ready' and restart_ready['acceptedAfterHrcSeq']==cursor,restart_ready
         scope3=create('resumed');event3=resumed.next();assert event3['type']=='event' and event3['event']['scopeRef']==scope3,event3
@@ -66,8 +66,8 @@ def main():
         actual=s.http('GET','/v1/events?category=session')[1]
         rows=[json.loads(line) for line in actual.splitlines()] if isinstance(actual,str) else [actual]
         assert seqs==[r['hrcSeq'] for r in rows],(seqs,rows)
-        out={'owner':a.owner,'pass':True,'followLatencySeconds':elapsed,'frames':[ready,*replay,event,restart_ready,event3],'sequences':seqs}
-        (a.artifacts/'streams.json').write_text(json.dumps(out,indent=2)+'\n');print(json.dumps({'owner':a.owner,'pass':True,'followLatencySeconds':elapsed}))
+        out={'pass':True,'followLatencySeconds':elapsed,'frames':[ready,*replay,event,restart_ready,event3],'sequences':seqs}
+        (a.artifacts/'streams.json').write_text(json.dumps(out,indent=2)+'\n');print(json.dumps({'pass':True,'followLatencySeconds':elapsed}))
     finally:
         for follower in followers:
             try:follower.close()

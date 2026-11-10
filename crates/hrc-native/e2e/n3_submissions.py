@@ -4,9 +4,13 @@
 Failures include a missing route returning a convenient 404, withdrawal by the
 wrong identifier, a parser skipping ownerRunId, and bypassing N2 admission.
 """
-import argparse,json,sys,time
+import argparse,json,time
 from pathlib import Path
 from n3_scratch import Scratch
+
+MALFORMED=('null','primitive','array','empty','missing-body','missing-origin','wait-string')
+UNKNOWN_FIELD=('unknown-field','origin-extra')
+WITHDRAW_MALFORMED=('null','primitive','array','empty','owner-error','neither','both','id-empty','reason-missing')
 
 def exercise(s,runtime):
     out={};cuts={}
@@ -42,26 +46,28 @@ def main():
     for k in ('binary','installed-release','aspd-socket','scratch-root','artifacts'):p.add_argument('--'+k,type=Path,required=True)
     a=p.parse_args();s=Scratch(a.scratch_root,a.installed_release,a.aspd_socket,a.binary,a.artifacts,project_id='n3-t11839')
     try:
-        s.init_substrate();bun=s.up('bun','submission-baseline')
+        s.init_substrate();s.up('native','submission-subject')
         scope='agent:tabularasa:project:n3-t11839:task:submission'
         start=s.command('birth',['hrc','start',scope,'--no-viewer','--project-id',s.project_id,'--project-root',s.project,'--cwd',s.project,'--json','-p','Reply with exactly the word OK and nothing else. No tools.'])
         rt=start['runtime'];s.wait_completed(rt['runId'])
-        import sqlite3
-        snapshot=s.root/'before-submissions.sqlite'
-        with sqlite3.connect(s.db_path) as source,sqlite3.connect(snapshot) as target:source.backup(target)
-        expected=exercise(s,rt['runtimeId'])
-        (a.artifacts/'submissions-baseline.json').write_text(json.dumps(expected,indent=2)+'\n')
-        s.down(bun)
-        with sqlite3.connect(snapshot) as source,sqlite3.connect(s.db_path) as target:source.backup(target)
-        s.up('native','submission-subject');actual=exercise(s,rt['runtimeId'])
-        for side,v in [('bun',expected),('native',actual)]:
-            directory=a.artifacts/side;directory.mkdir(exist_ok=True);(directory/'submissions.json').write_text(json.dumps(v,indent=2)+'\n')
-        import subprocess
-        runner=Path(__file__).resolve().parents[3]/'conformance/hrc-parity/run.py'
-        compared=subprocess.run(['python3',str(runner),'compare','--suite','n3-submissions','--baseline',str(a.artifacts/'bun'),'--candidate',str(a.artifacts/'native'),'--out',str(a.artifacts/'compare')],capture_output=True,text=True)
-        (a.artifacts/'compare.stdout').write_text(compared.stdout);(a.artifacts/'compare.stderr').write_text(compared.stderr)
-        assert compared.returncode==0,(compared.stdout,compared.stderr)
-        assert expected['withdraw:submission-not-held'][0]==200,expected
-        print(json.dumps({'pass':True,'cases':len(expected),'artifacts':str(a.artifacts)}))
+        out=exercise(s,rt['runtimeId'])
+        (a.artifacts/'submissions.json').write_text(json.dumps(out,indent=2)+'\n')
+        status={k:v[0] for k,v in out.items()}
+        code={k:(v[1].get('error') or {}).get('code') if isinstance(v[1],dict) else None for k,v in out.items()}
+        problems={}
+        for door in ('steer','enqueue','preempt','preempt/admission'):
+            for label in MALFORMED:
+                if (status[door+':'+label],code[door+':'+label])!=(400,'malformed_request'):problems[door+':'+label]=out[door+':'+label]
+            for label in UNKNOWN_FIELD:
+                if (status[door+':'+label],code[door+':'+label])!=(422,'unknown_field'):problems[door+':'+label]=out[door+':'+label]
+            # An absent target is unavailable, never a convenient 404.
+            if (status[door+':absent-target'],code[door+':absent-target'])!=(503,'runtime_unavailable'):problems[door+':absent-target']=out[door+':absent-target']
+        for label in WITHDRAW_MALFORMED:
+            if (status['withdraw:'+label],code['withdraw:'+label])!=(400,'malformed_request'):problems['withdraw:'+label]=out['withdraw:'+label]
+        if (status['withdraw:unknown-runtime'],code['withdraw:unknown-runtime'])!=(404,'unknown_runtime'):problems['withdraw:unknown-runtime']=out['withdraw:unknown-runtime']
+        for label in ('submission-not-held','envelope-not-held'):
+            if status['withdraw:'+label]!=200:problems['withdraw:'+label]=out['withdraw:'+label]
+        assert not problems,problems
+        print(json.dumps({'pass':True,'cases':len(out),'artifacts':str(a.artifacts)}))
     finally:s.cleanup('agent:tabularasa:project:n3-t11839:task:')
 if __name__=='__main__':main()

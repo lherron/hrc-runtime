@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Real restart-self workflow on Bun first, then native, using copied releases.
+"""Real restart-self workflow on rusthrc.
 
 Failure modes: missing-handoff refusal lost, arm fires before its bound turn,
 cancel still rotates, terminal's zero-delay timer never fires, duplicate
@@ -18,7 +18,6 @@ from n3_scratch import Scratch
 
 def main():
     p = argparse.ArgumentParser(description=__doc__)
-    p.add_argument('--owner', choices=['bun', 'native'], required=True)
     for key in ('binary', 'installed-release', 'aspd-socket', 'scratch-root', 'artifacts'):
         p.add_argument('--' + key, type=Path, required=True)
     p.add_argument('--negative-control', action='store_true')
@@ -37,7 +36,7 @@ def main():
         # A genuinely unfederated scratch has no registry to consult. An
         # existing config with zero peers instead refuses scoped reads.
         (s.root / 'federation.json').unlink()
-        s.up(a.owner, 'restart-self')
+        s.up('native', 'restart-self')
         status, observed = s.http('GET', '/v1/status')
         assert status == 200 and observed['capabilities']['selfRestart'] is True, observed
         s.steps.append({'name': 'observed-status', 'value': observed})
@@ -115,16 +114,16 @@ def main():
         compiles = proxy.requests('aspc.compileHarnessInvocation')
         checks['freshCompile'] = len(compiles) == 2 and 'continuation' not in compiles[-1]['params']['compileRequest']
         assert all(v is True for v in checks.values() if isinstance(v, bool)), checks
-        result = {'owner': a.owner, 'checks': checks, 'execution': payload,
+        result = {'checks': checks, 'execution': payload,
                   'compiles': [c['params'] for c in compiles], 'negativeControl': a.negative_control}
-        (a.artifacts / (a.owner + '.json')).write_text(json.dumps(result, indent=2) + '\n')
-        s.dump(a.owner + '-rows', {'messages': s.rows('SELECT * FROM messages')})
-        print(json.dumps({'owner': a.owner, 'pass': True, 'checks': checks}))
+        (a.artifacts / 'restart-self.json').write_text(json.dumps(result, indent=2) + '\n')
+        s.dump('rows', {'messages': s.rows('SELECT * FROM messages')})
+        print(json.dumps({'pass': True, 'checks': checks}))
     finally:
         for gate in gates:
             gate.touch(exist_ok=True)
-        (a.artifacts / (a.owner + '-steps.json')).write_text(json.dumps({'checks': checks, 'steps': s.steps}, indent=2) + '\n')
-        s.dump(a.owner + '-rows', {'messages': s.rows('SELECT * FROM messages')})
+        (a.artifacts / 'steps.json').write_text(json.dumps({'checks': checks, 'steps': s.steps}, indent=2) + '\n')
+        s.dump('rows', {'messages': s.rows('SELECT * FROM messages')})
         s.cleanup(prefix)
         proxy.close()
 

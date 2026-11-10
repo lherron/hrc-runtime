@@ -1,21 +1,22 @@
 #!/usr/bin/env python3
-"""N2 startup reconciliation and broker lease GC on one owner (bun or native),
-for `compare --suite n2-startup`.
+"""N2 startup reconciliation on rusthrc with real hrcpty seats.
 
 Two real seats are born and go idle; the owner stops. While it is down, seat
-B's lease tmux server is killed, an unclaimed live lease server, a dead lease
-socket file and an unheld renderer-control socket are planted under btmux/, and
-two rows are planted: a legacy runtime with no controller kind, and a terminated
-runtime still naming an accepted run. The owner restarts with a zero orphan
-grace. Seat A must be attached (and take a warm turn), seat B staled with
-Bun's reason, the orphans reclaimed, the legacy row staled, the terminal run
-settled, the warmup summary equal to Bun's, and one recurring GC tick logged. Failure modes: a dead seat left
-ready, a live seat staled, a claimed lease killed, an unclaimed one kept, a
-held or young socket removed, and the warmup counting rows the classifier staled.
+B's hrc-pty supervisor is killed with its tree, and two rows are planted: a
+legacy runtime with no controller kind, and a terminated runtime still naming
+an accepted run. On restart seat A must be reattached ready (and take a warm
+turn), seat B staled with a reason, the legacy row staled, the terminal run
+settled once, and warmup logged. Failure modes: a dead seat left ready, a live
+seat staled, a terminal runtime's run left accepted, and the warmup counting
+rows the classifier staled.
+
+The tmux lease GC half (btmux orphan servers, dead lease sockets, renderer
+control sockets, the 300 s GC tick) is gone with the substrate.
 """
 import argparse
 import json
-import socket
+import os
+import signal
 import sqlite3
 import subprocess
 import time
@@ -57,22 +58,24 @@ def plant_rows(db_path, template_runtime):
     db.close()
 
 
-def plant_files(btmux):
-    btmux.mkdir(parents=True, exist_ok=True)
-    orphan = btmux / 'n2-orphan.sock'
-    subprocess.run(['tmux', '-S', str(orphan), 'new-session', '-d', '-s', 'hrc-n2-orphan', 'sleep 900'], check=True)
-    dead = btmux / 'n2-dead.sock'
-    dead.write_text('')
-    renderer = btmux / 'codex-app-server-renderer-control.n2.sock'
-    sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
-    sock.bind(str(renderer))
-    sock.close()
-    # Age every planted entry past any grace by mtime.
-    old = time.time() - 3600
-    for p in (orphan, dead, renderer):
-        import os
-        os.utime(p, (old, old), follow_symlinks=False)
-    return orphan, dead, renderer
+def kill_tree(runtime):
+    """SIGKILL the runtime's hrc-pty supervisor and everything under it (a dead lease)."""
+    out = subprocess.run(['/bin/ps', '-axo', 'pid=,ppid=,command='], capture_output=True, text=True).stdout
+    procs = [(int(x), int(y), c) for x, y, c in (l.split(None, 2) for l in out.splitlines() if len(l.split(None, 2)) == 3)]
+    doomed = {pid for pid, _, cmd in procs if 'hrc-pty serve' in cmd and runtime in cmd}
+    roots, grew = sorted(doomed), True
+    while grew:
+        grew = False
+        for pid, ppid, _ in procs:
+            if ppid in doomed and pid not in doomed:
+                doomed.add(pid)
+                grew = True
+    for pid in doomed:
+        try:
+            os.kill(pid, signal.SIGKILL)
+        except ProcessLookupError:
+            pass
+    return roots
 
 
 def events_for(s, runtime, before):
@@ -94,7 +97,6 @@ def log_events(path, name):
 
 def main():
     p = argparse.ArgumentParser()
-    p.add_argument('--owner', choices=['bun', 'native'], required=True)
     p.add_argument('--binary', type=Path, required=True)
     p.add_argument('--installed-release', type=Path, required=True)
     p.add_argument('--aspd-socket', type=Path, required=True)
@@ -106,21 +108,18 @@ def main():
     out = {}
     try:
         s.init_substrate()
-        owner = s.up(args.owner, 'a')
-        a, host_a = born(s, prefix + 'startup-a-' + args.owner)
-        b, _ = born(s, prefix + 'startup-b-' + args.owner)
+        owner = s.up('native', 'a')
+        a, host_a = born(s, prefix + 'startup-a')
+        b, _ = born(s, prefix + 'startup-b')
         time.sleep(2)
         out['downExit'] = s.down(owner)
-        state_b = json.loads(s.rows('SELECT runtime_state_json FROM runtimes WHERE runtime_id=?', (b,))[0]['runtime_state_json'])
-        lease_b = state_b['broker']['brokerWindow']['socketPath']
-        subprocess.run(['tmux', '-S', lease_b, 'kill-server'], check=False)
-        btmux = (s.root / 'run') / 'btmux'
-        orphan, dead, renderer = plant_files(btmux)
+        out['killedB'] = kill_tree(b)
+        assert out['killedB'], 'no hrc-pty supervisor for seat B'
+        time.sleep(1)
         plant_rows(s.db_path, a)
         before = s.rows('SELECT COALESCE(MAX(hrc_seq),0) AS m FROM hrc_events')[0]['m']
-        s.env['HRC_BROKER_ORPHAN_SWEEP_GRACE_MS'] = '0'
-        owner = s.up(args.owner, 'b')
-        log = args.artifacts / f'{args.owner}-b.log'
+        owner = s.up('native', 'b')
+        log = args.artifacts / 'native-b.log'
         s.wait(lambda: log_events(log, 'broker.warmup.complete'), 120, 'warmup complete')
         labels = {a: 'seatA', b: 'seatB', 'rt-n2-legacy': 'legacy', 'rt-n2-terminal': 'terminal'}
         out['runtimes'] = {}
@@ -131,27 +130,28 @@ def main():
                                       'staleReason': st.get('staleReason'), 'control': st.get('control'),
                                       'events': events_for(s, rid, before)}
         out['terminalRun'] = s.rows("SELECT status, error_code, error_message FROM runs WHERE run_id='run-n2-terminal'")[0]
-        out['files'] = {'orphanSocket': orphan.exists(), 'deadSocket': dead.exists(), 'renderer': renderer.exists(),
-                        'orphanServerAlive': subprocess.run(['tmux', '-S', str(orphan), 'has-session'], capture_output=True).returncode == 0}
         out['warmup'] = log_events(log, 'broker.warmup.complete')
         out['warmupRuntimes'] = [dict(d, runtimeId=labels.get(d.get('runtimeId'), d.get('runtimeId'))) for d in log_events(log, 'broker.warmup.runtime')]
-        out['renderer'] = [{k: v for k, v in d.items() if k not in ('holderEnumerationMs',)} for d in log_events(log, 'broker.renderer_control_socket_sweep_complete')]
-        out['orphanSwept'] = [d.get('sessions') for d in log_events(log, 'broker.orphan_lease_swept')]
-        out['deadRemoved'] = len(log_events(log, 'broker.dead_lease_socket_removed'))
         out['terminalReconciled'] = [{k: d.get(k) for k in ('priorStatus', 'runStatusBefore', 'runStatusAfter')}
                                      for d in log_events(log, 'runtime.terminal_active_run.reconciled')]
         status, warm = s.http('POST', '/v1/turns', {'hostSessionId': host_a, 'prompt': PROMPT, 'waitFor': 'terminal'}, timeout=600)
         out['warmTurn'] = {'status': status, 'outcome': warm.get('outcome') if isinstance(warm, dict) else None}
-        # The recurring lease GC ticks one 300 s cadence after boot.
-        s.wait(lambda: log_events(log, 'broker.lease_gc_sweep_complete'), 420, 'recurring lease GC tick')
-        out['gcTick'] = log_events(log, 'broker.lease_gc_sweep_complete')[0]
-        (args.artifacts / f'{args.owner}.json').write_text(json.dumps(out, indent=1, default=str) + '\n')
-        s.dump(args.owner + '-rows')
-        print(json.dumps({'owner': args.owner, 'warmup': out['warmup'], 'files': out['files']}))
+        (args.artifacts / 'startup.json').write_text(json.dumps(out, indent=1, default=str) + '\n')
+        s.dump('rows')
+        rts = out['runtimes']
+        assert rts['seatA']['status'] == 'ready' and not rts['seatA']['activeRun'], rts['seatA']
+        assert out['warmTurn'] == {'status': 200, 'outcome': 'completed'}, out['warmTurn']
+        assert rts['seatB']['status'] == 'stale' and rts['seatB']['staleReason'], rts['seatB']
+        assert rts['legacy']['status'] == 'stale', rts['legacy']
+        assert rts['terminal']['status'] == 'terminated' and not rts['terminal']['activeRun'], rts['terminal']
+        assert out['terminalRun']['status'] not in ('accepted', 'running'), out['terminalRun']
+        assert len(out['terminalReconciled']) == 1 and out['terminalReconciled'][0]['runStatusBefore'] == 'accepted', out['terminalReconciled']
+        # Only seat A is warmed: rows the classifier staled are not counted.
+        assert len(out['warmup']) == 1 and out['warmup'][0]['total'] == 1 and out['warmup'][0]['attached'] == 1, out['warmup']
+        print(json.dumps({'pass': True, 'warmup': out['warmup'], 'seatB': rts['seatB']['staleReason']}))
     finally:
-        (args.artifacts / f'{args.owner}-steps.json').write_text(json.dumps(s.steps, indent=1) + '\n')
+        (args.artifacts / 'steps.json').write_text(json.dumps(s.steps, indent=1) + '\n')
         s.cleanup(prefix)
-        subprocess.run(['tmux', '-S', str((s.root / 'run') / 'btmux' / 'n2-orphan.sock'), 'kill-server'], capture_output=True)
 
 
 if __name__ == '__main__':

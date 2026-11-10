@@ -1,12 +1,14 @@
 #!/usr/bin/env python3
-"""N2 non-main lane on one owner (bun or native), for `compare --suite n2-lanes`.
+"""N2 non-main lane on rusthrc.
 
-A seat on lane `side` is born through the unchanged Bun CLI, then a warm
-/v1/turns turn and a capture-by-selector address it. Every stored lane_ref
-(sessions, continuities, runtimes, runs, hrc_events) and the selector echo must
-equal Bun's. Failure modes: the API's canonical `lane:side` written into rows
-or used as a SQL predicate (404 unknown_host_session on the warm turn), and a
-doubled `lane:lane:side` selector.
+A seat on lane `side` is born through `hrc start <handle>~side`, then a warm
+/v1/turns turn and a capture-by-selector address it. The warm turn must
+complete, the selector must echo `<scope>/lane:side`, the session view must
+report the canonical laneRef `lane:side`, and every stored lane_ref (sessions, continuities,
+runtimes, runs, hrc_events, first-turn watch) must be the raw lane `side`.
+Failure modes: the API's canonical `lane:side` written into rows or used as a
+SQL predicate (404 unknown_host_session on the warm turn), and a doubled
+`lane:lane:side` selector.
 """
 import argparse
 import json
@@ -19,7 +21,6 @@ PROMPT = 'Reply with exactly the word OK and nothing else. No tools.'
 
 def main():
     p = argparse.ArgumentParser()
-    p.add_argument('--owner', choices=['bun', 'native'], required=True)
     p.add_argument('--binary', type=Path, required=True)
     p.add_argument('--installed-release', type=Path, required=True)
     p.add_argument('--aspd-socket', type=Path, required=True)
@@ -28,11 +29,11 @@ def main():
     args = p.parse_args()
     s = Scratch(args.scratch_root, args.installed_release, args.aspd_socket, args.binary, args.artifacts)
     prefix = 'agent:tabularasa:project:n2-t11823:task:'
-    task = 'lanes-' + args.owner
+    task = 'lanes'
     out = {}
     try:
         s.init_substrate()
-        s.up(args.owner, 'lanes')
+        s.up('native', 'lanes')
         cold = s.command('cold-start', ['hrc', 'start', f'tabularasa@{s.project_id}:{task}~side', '--project-id', s.project_id,
                                         '--project-root', s.project, '--cwd', s.project, '--json', '-p', PROMPT])
         host = cold['hostSessionId']
@@ -54,10 +55,16 @@ def main():
             'hrc_events': sorted({r['lane_ref'] for r in s.rows('SELECT lane_ref FROM hrc_events WHERE host_session_id=?', (host,))}),
             'firstTurnWatch': sorted({r['lane_ref'] for r in s.rows('SELECT lane_ref FROM runtime_first_turn_watch WHERE host_session_id=?', (host,))}),
         }
-        (args.artifacts / f'{args.owner}.json').write_text(json.dumps(out, indent=1) + '\n')
-        print(json.dumps({'owner': args.owner, **out}))
+        (args.artifacts / 'lanes.json').write_text(json.dumps(out, indent=1) + '\n')
+        assert out['warm'] == {'status': 200, 'error': None, 'outcome': 'completed'}, out['warm']
+        assert out['capture'] == {'status': 200, 'sessionRef': prefix + task + '/lane:side'}, out['capture']
+        # The API view is canonical; only the stored rows keep the raw lane.
+        assert out['sessionView'] == 'lane:side', out['sessionView']
+        bad = {table: lanes for table, lanes in out['stored'].items() if lanes != ['side']}
+        assert not bad, ('stored lane_ref is not the raw lane', bad)
+        print(json.dumps({'pass': True, **out}))
     finally:
-        (args.artifacts / f'{args.owner}-steps.json').write_text(json.dumps(s.steps, indent=1) + '\n')
+        (args.artifacts / 'steps.json').write_text(json.dumps(s.steps, indent=1) + '\n')
         s.cleanup(prefix)
 
 

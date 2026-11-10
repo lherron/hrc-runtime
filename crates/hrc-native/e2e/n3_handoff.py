@@ -6,7 +6,7 @@ this door, intent materialization before refusal, or an absent native route
 being mistaken for a valid unknown-session refusal, or losing/repeating the
 durable semantic response across owner replacement while its tool is running.
 """
-import argparse,json,shlex,time,subprocess
+import argparse,json,shlex,time
 from pathlib import Path
 from n3_scratch import Scratch
 
@@ -70,41 +70,18 @@ def turns(s,owner,process):
     finally:release.touch(exist_ok=True)
 
 def main():
-    p=argparse.ArgumentParser();p.add_argument('--owner',choices=['bun','native'],required=True);p.add_argument('--turns',action='store_true');p.add_argument('--baseline',type=Path)
+    p=argparse.ArgumentParser();p.add_argument('--turns',action='store_true')
     for k in ('binary','installed-release','aspd-socket','scratch-root','artifacts'):p.add_argument('--'+k,type=Path,required=True)
     a=p.parse_args();s=Scratch(a.scratch_root,a.installed_release,a.aspd_socket,a.binary,a.artifacts,project_id='n3-t11839')
     try:
-        s.init_substrate();process=s.up(a.owner,'handoff-refusals');observed=refusals(s)
+        s.init_substrate();process=s.up('native','handoff-refusals');observed=refusals(s)
         (a.artifacts/'handoff-refusals.json').write_text(json.dumps(observed,indent=2)+'\n')
         assert observed['body-number'][0]==400,('missing real handoff handler',observed['body-number'])
         assert observed['unknown-target'][0]==404 and observed['unknown-target'][1]['error']['code']=='unknown_session',observed['unknown-target']
-        result={'pass':True,'owner':a.owner,'cases':len(observed),'noTargetOrMessageWrite':True}
-        matrix={'refusal:'+name:value for name,value in observed.items()}
+        result={'pass':True,'cases':len(observed),'noTargetOrMessageWrite':True}
         if a.turns:
-            flows=turns(s,a.owner,process)
-            aliases={}
-            for name,flow in flows.items():
-                receipt=flow['response'][1]
-                for key in ('messageId','runId'):aliases[receipt[key]]=name+':'+key
-                for key in ('runtimeId','hostSessionId'):
-                    aliases.setdefault(receipt[key],name+':'+key)
-                aliases[flow['responseRows'][0]['message_id']]=name+':reply'
-            def normalize(v):
-                if isinstance(v,dict):return {k:'<time>' if k in ('created_at','createdAt') else normalize(x) for k,x in v.items()}
-                if isinstance(v,list):return [normalize(x) for x in v]
-                if isinstance(v,str):return aliases.get(v,v.replace(str(s.root),'<scratch>'))
-                return v
-            for name,flow in flows.items():
-                receipt=json.loads(json.dumps(flow['response']));receipt[1]['fromSeq']-=flow['beforeHrcSeq']
-                matrix['turn:'+name]=normalize({'response':receipt,'request':flow['request'],'responseRows':flow['responseRows']})
+            turns(s,'native',process)
             result.update(realTurns=3,restartBetweenDispatchAndReply=True,oneDurableResponsePerRequest=True)
-        (a.artifacts/'handoff.json').write_text(json.dumps(matrix,indent=2)+'\n')
-        if a.baseline:
-            assert a.turns,'full runner compare requires the three real turn paths'
-            runner=Path(__file__).resolve().parents[3]/'conformance/hrc-parity/run.py'
-            compared=subprocess.run(['python3',str(runner),'compare','--suite','n3-handoff','--baseline',str(a.baseline),'--candidate',str(a.artifacts),'--out',str(a.artifacts/'compare')],capture_output=True,text=True)
-            (a.artifacts/'compare.stdout').write_text(compared.stdout);(a.artifacts/'compare.stderr').write_text(compared.stderr)
-            assert compared.returncode==0,(compared.stdout,compared.stderr)
         (a.artifacts/'result.json').write_text(json.dumps(result,indent=2)+'\n')
         print(json.dumps(result))
     finally:s.cleanup('agent:tabularasa:project:n3-t11839:task:')

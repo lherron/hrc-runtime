@@ -1,13 +1,18 @@
 #!/usr/bin/env python3
-"""N2 attached-run door on one owner (bun or native), recorded for `compare --suite n2-attached`.
+"""N2 attached-run door on rusthrc, driven by `hrc run` in a real pty.
 
-The unchanged Bun `hrc run` drives the door in a real pty: prepare-attached,
-tmux attach to the returned descriptor, resume-attached, then the operator
-detaches. A first promptless run births a seat parked on the attach gate; a
-second run with a prompt lands on the live seat. Failure modes: a birth that
-starts its invocation before the operator is attached, a prepared response
-without a resumable pending start, a warm seat answered `prepared`, and a
-resume that never releases the birth.
+`hrc run` calls prepare-attached, spawns the `hrc-pty attach` client on the
+returned descriptor, calls resume-attached, and waits; the operator detaches by
+ending the attach client (SIGTERM is hrc-pty's plain detach). A first
+promptless run births an hrcpty seat parked on the attach gate; a second run
+with a prompt lands on the same live seat and completes its turn. Malformed
+prepare/resume bodies are refused. On hrcpty the supervisor keeps the screen,
+and the attach descriptor exists only once the start is committed, so the gate
+fires after invocation.started (broker.rs; tmux was the reverse). Failure
+modes: a prepared response handed out before the committed start (a
+descriptor for a lease that does not exist yet), a prepared response without a
+resumable pending start, a warm seat answered `prepared` (a second runtime),
+and a resume that never releases the birth.
 """
 import argparse
 from datetime import datetime, timedelta
@@ -16,6 +21,7 @@ import json
 import os
 from pathlib import Path
 import pty
+import signal
 import struct
 import subprocess
 import termios
@@ -57,6 +63,14 @@ class Pty:
             return 'timeout'
 
 
+def attach_clients(s):
+    """Live `hrc-pty attach` clients on this scratch root's leases."""
+    out = subprocess.run(['/bin/ps', '-axo', 'pid=,command='], capture_output=True, text=True).stdout
+    root = str(s.root)
+    return [int(l.split(None, 1)[0]) for l in out.splitlines()
+            if len(l.split(None, 1)) == 2 and 'hrc-pty' in l and ' attach' in l and root in l]
+
+
 def requests(s, owner, tag):
     """The prepare/resume request log lines this owner served."""
     out = []
@@ -74,7 +88,6 @@ def requests(s, owner, tag):
 
 def main():
     p = argparse.ArgumentParser()
-    p.add_argument('--owner', choices=['bun', 'native'], required=True)
     p.add_argument('--binary', type=Path, required=True)
     p.add_argument('--installed-release', type=Path, required=True)
     p.add_argument('--aspd-socket', type=Path, required=True)
@@ -83,11 +96,11 @@ def main():
     args = p.parse_args()
     s = Scratch(args.scratch_root, args.installed_release, args.aspd_socket, args.binary, args.artifacts)
     prefix = 'agent:tabularasa:project:n2-t11823:task:'
-    scope = prefix + 'attached-' + args.owner
+    scope = prefix + 'attached'
     observations = []
     try:
         s.init_substrate()
-        s.up(args.owner, 'attached')
+        s.up('native', 'attached')
         door = '/v1/runs/prepare-attached'
         for name, path, body in [('prepare:not-object', door, 'x'), ('prepare:no-host', door, {}),
                                  ('prepare:no-intent', door, {'hostSessionId': 'hsid-x'}),
@@ -104,19 +117,17 @@ def main():
             before = s.rows('SELECT COALESCE(MAX(hrc_seq),0) AS m FROM hrc_events')[0]['m']
             child = Pty(s, [s.cli, 'run', scope, '--project-id', s.project_id, '--project-root', s.project,
                             '--no-register', *extra])
-            # The operator's client is on the lease's tui window once the run is up.
-            attached = s.wait(lambda: [r for r in s.rows("SELECT runtime_id, tmux_json FROM runtimes WHERE host_session_id IN (SELECT host_session_id FROM sessions WHERE scope_ref=?) AND status NOT IN ('terminated','dead','stale','crashed')", (scope,))
-                                       if r['tmux_json'] and subprocess.run(['tmux', '-S', json.loads(r['tmux_json'])['socketPath'], 'list-clients'],
-                                                                            capture_output=True, text=True).stdout.strip()], 300, name + ' attached')
+            # The operator's client is the hrc-pty attach child of `hrc run`.
+            attached = s.wait(lambda: attach_clients(s) and s.rows("SELECT runtime_id FROM runtimes WHERE host_session_id IN (SELECT host_session_id FROM sessions WHERE scope_ref=?) AND status NOT IN ('terminated','dead','stale','crashed')", (scope,)), 300, name + ' attached')
             runtime = attached[0]['runtime_id']
-            tmux = json.loads(attached[0]['tmux_json'])
             if extra:
                 s.wait(lambda: s.rows("SELECT 1 FROM runs WHERE runtime_id=? AND completed_at IS NOT NULL", (runtime,)),
                        300, name + ' turn completed')
             else:
                 s.wait(lambda: s.rows("SELECT 1 FROM runtimes WHERE runtime_id=? AND status='ready'", (runtime,)), 300, name + ' ready')
             time.sleep(2)
-            subprocess.run(['tmux', '-S', tmux['socketPath'], 'detach-client', '-s', tmux['sessionName']], capture_output=True)
+            for pid in attach_clients(s):
+                os.kill(pid, signal.SIGTERM)
             code = child.wait(60)
             kinds = [r['event_kind'] for r in s.rows('SELECT event_kind FROM hrc_events WHERE hrc_seq>? ORDER BY hrc_seq', (before,))]
             observations.append({'case': name, 'exit': code, 'eventKinds': kinds, 'runtimeId': runtime,
@@ -126,9 +137,9 @@ def main():
             return runtime
 
         first = run('run:cold-promptless', [])
-        # The gate: the parked birth starts its invocation only after resume began.
+        # The hrcpty gate: the committed start precedes resume.
         resumes = []
-        for line in (s.artifacts / f'{args.owner}-attached.log').read_text(errors='replace').splitlines():
+        for line in (s.artifacts / 'native-attached.log').read_text(errors='replace').splitlines():
             try:
                 e = json.loads(line)
             except ValueError:
@@ -139,16 +150,30 @@ def main():
                 resumes.append(end - timedelta(milliseconds=d.get('durationMs', 0)))
         started = s.rows("SELECT time FROM broker_invocation_events WHERE runtime_id=? AND type='invocation.started' ORDER BY seq LIMIT 1", (first,))
         start_at = datetime.fromisoformat(started[0]['time'].replace('Z', '+00:00')) if started else None
-        observations.append({'case': 'gate-order', 'value': bool(resumes and start_at and start_at > resumes[0])})
+        observations.append({'case': 'gate-order', 'value': bool(resumes and start_at and start_at <= resumes[0])})
         second = run('run:warm-prompt', ['-p', PROMPT])
         observations.append({'case': 'same-runtime', 'value': first == second})
-        observations.append({'case': 'requests', 'value': requests(s, args.owner, 'attached')})
-        (args.artifacts / f'{args.owner}.json').write_text(json.dumps(
+        observations.append({'case': 'requests', 'value': requests(s, 'native', 'attached')})
+        (args.artifacts / 'attached.json').write_text(json.dumps(
             {'observations': observations, 'scratchRoot': str(s.root), 'scope': scope}, indent=1, default=str) + '\n')
-        s.dump(args.owner + '-rows')
-        print(json.dumps({'owner': args.owner, 'cases': len(observations)}))
+        s.dump('rows')
+        by = {o['case']: o for o in observations}
+        refused = {k: v['status'] for k, v in by.items() if k.startswith(('prepare:', 'resume:'))}
+        assert all(v >= 400 for v in refused.values()), refused
+        assert refused['prepare:unknown-host'] == 404, by['prepare:unknown-host']
+        assert by['gate-order']['value'] is True, ('resume-attached began before the committed start', by['gate-order'])
+        assert by['same-runtime']['value'] is True, ('warm run did not land on the live seat', first, second)
+        for name in ('run:cold-promptless', 'run:warm-prompt'):
+            assert by[name]['exit'] == 0, (name, by[name]['exit'], by[name]['output'][-1500:])
+            assert by[name]['runtime']['transport'] == 'hrcpty', by[name]['runtime']
+        assert by['run:cold-promptless']['runs'] == [], ('promptless birth admitted a run', by['run:cold-promptless']['runs'])
+        assert [r['status'] for r in by['run:warm-prompt']['runs']] == ['completed'], by['run:warm-prompt']['runs']
+        served = [(r['route'], r['status']) for r in by['requests']['value'] if r['status'] == 200]
+        assert served.count(('/v1/runs/prepare-attached', 200)) == 2, served
+        assert served.count(('/v1/runs/resume-attached', 200)) == 1, ('only the parked birth resumes', served)
+        print(json.dumps({'pass': True, 'cases': len(observations)}))
     finally:
-        (args.artifacts / f'{args.owner}-steps.json').write_text(json.dumps(s.steps, indent=1) + '\n')
+        (args.artifacts / 'steps.json').write_text(json.dumps(s.steps, indent=1) + '\n')
         s.cleanup(prefix)
 
 

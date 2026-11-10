@@ -1,11 +1,11 @@
 #!/usr/bin/env python3
-"""Stop gate on real private wrkc obligations, with identical Bun/native drives.
+"""Stop gate on real private wrkc obligations, driven against rusthrc.
 
 Proves unseen pending mail does not block, presented unanswered mail does block,
 refusal caps/reset survive in HRC execution state, and wrkc replies clear the
 wrkq-owned obligation. This is not the injector delivery/restart gate.
 """
-import argparse,json,sqlite3,time
+import argparse,json
 from pathlib import Path
 from n3_scratch import Scratch
 
@@ -45,28 +45,19 @@ def main():
     for k in ('binary','installed-release','aspd-socket','scratch-root','artifacts'):p.add_argument('--'+k,type=Path,required=True)
     a=p.parse_args();s=Scratch(a.scratch_root,a.installed_release,a.aspd_socket,a.binary,a.artifacts,project_id='n3-t11839')
     try:
-        s.init_substrate();bun=s.up('bun','mail')
+        s.init_substrate();s.up('native','mail')
         scope='agent:tabularasa:project:n3-t11839:task:mail'
         start=s.command('birth',['hrc','start',scope,'--project-id',s.project_id,'--project-root',s.project,'--cwd',s.project,'--json','-p','Reply with exactly the word OK and nothing else. No tools.'])
         rt=start['runtime'];runtime=rt['runtimeId'];s.wait_completed(rt['runId']);host=rt['hostSessionId'];generation=rt['generation']
-        snapshot=s.root/'before-mail.sqlite'
-        with sqlite3.connect(s.db_path) as source,sqlite3.connect(snapshot) as target:source.backup(target)
-        expected=exercise(s,scope,runtime,host,generation)
-        s.down(bun)
-        with sqlite3.connect(snapshot) as source,sqlite3.connect(s.db_path) as target:source.backup(target)
-        s.up('native','mail');actual=exercise(s,scope,runtime,host,generation)
+        out=exercise(s,scope,runtime,host,generation)
         s.assert_no_duplicate_turn_messages()
-        cases={k:{'bun':v,'native':actual[k],'pass':v==actual[k]} for k,v in expected.items()}
-        (a.artifacts/'mail-compares.json').write_text(json.dumps(cases,indent=2)+'\n')
-        for side,observations in [('bun',expected),('native',actual)]:
-            directory=a.artifacts/side;directory.mkdir(exist_ok=True)
-            (directory/'mail.json').write_text(json.dumps(observations,indent=2)+'\n')
-        import subprocess
-        runner=Path(__file__).resolve().parents[3]/'conformance/hrc-parity/run.py'
-        compared=subprocess.run(['python3',str(runner),'compare','--suite','n3-mail','--baseline',str(a.artifacts/'bun'),'--candidate',str(a.artifacts/'native'),'--out',str(a.artifacts/'compare')],capture_output=True,text=True)
-        (a.artifacts/'compare.stdout').write_text(compared.stdout);(a.artifacts/'compare.stderr').write_text(compared.stderr)
-        assert compared.returncode==0,(compared.stdout,compared.stderr)
-        bad=[k for k,v in cases.items() if not v['pass']];assert not bad,bad
-        print(json.dumps({'pass':True,'compared':len(cases),'artifacts':str(a.artifacts)}))
+        (a.artifacts/'mail.json').write_text(json.dumps(out,indent=2)+'\n')
+        assert out['block-first']['unackedCount']==1 and out['block-second']['refusalCount']==2,(out['block-first'],out['block-second'])
+        assert out['answered']['decision']=='allow' and out['unseen']['decision']=='allow',(out['unseen'],out['answered'])
+        refused={k:out[k][0] for k in ('array','empty','not-string')}
+        assert refused=={'array':400,'empty':400,'not-string':400},refused
+        # An unknown runtime fails open: a Stop hook must never block on it.
+        assert tuple(out['missing-runtime'])==(200,{'decision':'allow','reason':'no_runtime'}),out['missing-runtime']
+        print(json.dumps({'pass':True,'cases':len(out),'artifacts':str(a.artifacts)}))
     finally:s.cleanup('agent:tabularasa:project:n3-t11839:task:')
 if __name__=='__main__':main()

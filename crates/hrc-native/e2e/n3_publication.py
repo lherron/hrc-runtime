@@ -1,10 +1,20 @@
 #!/usr/bin/env python3
-"""Replay real Bun lifecycle rows through both publication observers.
+"""Live rusthrc publication, then a from-zero replay with a lost wrkq reply.
 
-Failure modes: cursor starts at zero and backfills, imported/retained rows
-publish, task affiliation loses a fact, attribute order changes, a restart
-skips an unacknowledged post, or a lost reply creates duplicate project facts.
-Only private wrkqd databases are reset, with the authority stopped first.
+A native owner publishes three real turns to a private wrkqd. A scratch owner
+does not own its node's production timeline, so it consumes server.started
+without publishing it (publication.rs pump_server). Both observation cursors
+are then reset to zero on a snapshot, the authority is emptied, and a second
+owner republishes while the reply to its first turn.ended post is withheld.
+Checks: the live run published no server fact and exactly one session.born,
+three turn.started and three turn.ended on this seat, keys unique; the session
+cursor does not move past the lost reply; the retry reuses the key and wrkq answers
+created=false; every replayed turn fact equals the live one (type, summary,
+attributes and their order, principal, scope, time) and a replayed session.born
+keeps every live attribute; a restart duplicates
+nothing. Failure modes: a restart skips an unacknowledged post, a lost reply
+creates duplicate project facts, a replay that drops or reshapes a fact. Only
+private wrkqd databases are reset, with the authority stopped first.
 """
 import argparse,json,sqlite3,subprocess,time,signal,os
 from pathlib import Path
@@ -30,7 +40,7 @@ def main():
         s.init_substrate();s.command('server-project',[str(Path.home() / ".local/bin/wrkq"),'mkdir','/hrc-runtime','--kind','project','--json'])
         empty=s.root/'empty-wrkq.sqlite';backup(s.root/'wrkq.db',empty)
         authority=s.owners[0]
-        bun=s.up('bun','publication-baseline')
+        live=s.up('native','publication-live')
         initial={r['stream']:r['high_water'] for r in s.rows('SELECT * FROM wrkq_ledger_cursors')}
         scope='agent:tabularasa:project:n3-t11839:task:publication'
         start=s.command('birth',['hrc','start',scope,'--project-id',s.project_id,'--project-root',s.project,'--cwd',s.project,'--json','-p','Reply with exactly the word OK and nothing else. No tools.'])
@@ -39,11 +49,12 @@ def main():
             status,turn=s.http('POST','/v1/turns',{'hostSessionId':rt['hostSessionId'],'prompt':'Reply with exactly the word OK and nothing else. No tools.','origin':{'actor':'agent:cody'},'waitFor':'terminal'})
             assert status==200,(status,turn)
         head=s.rows('SELECT MAX(hrc_seq) AS n FROM hrc_events')[0]['n']
-        wait_for(s,lambda:any(r['type']=='server.started' for r in facts(s)) and len([r for r in facts(s) if r['type']=='turn.ended'])>=3,'Bun published real boot and three turns')
+        wait_for(s,lambda:len([r for r in facts(s) if r['type']=='turn.ended'])>=3,'native published three turns')
+        time.sleep(2);expected=facts(s)
+        (a.artifacts/'live-publication.json').write_text(json.dumps(expected,indent=2)+'\n')
         snapshot=s.root/'publication-hrc.sqlite';backup(s.db_path,snapshot)
-        s.down(bun)
-        # Replay both implementations at the same session-intent cut. Bun's
-        # publisher intentionally reads the current session at publish time.
+        s.down(live)
+        # Replay from zero at the same session-intent cut as the live run.
         with sqlite3.connect(snapshot) as db:
             db.execute("UPDATE wrkq_ledger_cursors SET high_water=0 WHERE stream IN ('server-project-events','session-project-events')")
         def reset_authority(tag):
@@ -52,18 +63,10 @@ def main():
             log=(a.artifacts/('wrkqd-'+tag+'.log')).open('w');s.logs.append(log)
             authority=subprocess.Popen(['wrkqd','-addr','127.0.0.1:'+str(s.authority['port']),'-db',str(s.root/'wrkq.db')],env={**s.env,'WRKQ_DB':str(s.root/'wrkq.db'),'WRKQD_TOKEN':(s.root/'wrkqd-token').read_text().strip(),'WRKF_HOOK_CATALOG':str(s.root/'hook-catalog.json')},cwd=s.project,stdout=log,stderr=log);s.owners.append(authority)
             time.sleep(.5);s.command('initialize-'+tag,[str(Path.home() / ".local/bin/wrkq"),'projects','--json'])
-        reset_authority('baseline-replay');backup(snapshot,s.db_path)
-        # Exact production classes from the copied Bun release; they own only
-        # observation cursors, with the execution owner down for this replay.
-        script='import {openHrcDatabase} from '+json.dumps(str(s.release/'packages/hrc-store-sqlite/src/database.ts'))+';'
-        script+='import {SessionProjectEventPublisher} from '+json.dumps(str(s.release/'packages/hrc-server/src/wrkq/session-project-events.ts'))+';'
-        script+='import {ServerProjectEventPublisher} from '+json.dumps(str(s.release/'packages/hrc-server/src/wrkq/server-project-events.ts'))+';'
-        script+='import {WrkqStdioLedgerClient} from '+json.dumps(str(s.release/'packages/hrc-server/src/wrkq/ledger-client.ts'))+';'
-        script+="const db=openHrcDatabase(process.argv[1]); const ledger=new WrkqStdioLedgerClient(); const post=p=>ledger.projectEventPost(p); const session=new SessionProjectEventPublisher({db,post,node:'n3-t11839',pollIntervalMs:0}); const server=new ServerProjectEventPublisher({db,post,nodeId:'n3-t11839',pollIntervalMs:0}); await session.drain();await server.drain();session.stop();server.stop();await ledger.close();db.close();"
-        s.command('bun-production-publication-replay',['bun','-e',script,s.db_path])
-        s.assert_no_duplicate_turn_messages()
-        expected=facts(s)
-        (a.artifacts/'bun-publication.json').write_text(json.dumps(expected,indent=2)+'\n')
+        types=[r['type'] for r in expected]
+        assert not [k for k in types if k.startswith('server.')],('scratch owner published its server timeline',types)
+        assert types.count('session.born')==1 and types.count('turn.started')==3 and types.count('turn.ended')==3,types
+        assert all(r['scope_ref']==scope+'/lane:main' for r in expected),expected
         reset_authority('native');backup(snapshot,s.db_path)
         # Fault only the reply from the real private wrkq RPC child, after
         # projectEvent.post has committed. The second daemon retries the key.
@@ -82,7 +85,7 @@ try:
   frame=json.loads(line);reply=json.loads(response)
   if frame.get('method')=='wrkq.projectEvent.post':
    with Path(JOURNAL).open('a') as out:out.write(json.dumps({'request':frame,'response':reply})+'\n')
-   if frame['params'].get('type')=='server.started' and not Path(MARKER).exists() and 'result' in reply:
+   if frame['params'].get('type')=='turn.ended' and not Path(MARKER).exists() and 'result' in reply:
     Path(MARKER).write_text(json.dumps({'request':frame,'response':reply}));continue
   sys.stdout.write(response);sys.stdout.flush()
 finally:
@@ -95,8 +98,11 @@ finally:
         dropped=json.loads(marker.read_text());assert dropped['response']['result']['created'] is True,dropped
         s.down(native,signal.SIGTERM if a.graceful_lost_ack else signal.SIGKILL)
         # Cursor cannot move before the lost reply, even though wrkqd committed.
-        server_seq=int(dropped['request']['params']['idempotencyKey'].rsplit(':',1)[1])
-        assert s.rows("SELECT high_water FROM wrkq_ledger_cursors WHERE stream='server-project-events'")[0]['high_water']<server_seq
+        # The key names the turn by its turn.started seq; the fact is the turn.completed after it.
+        _,lost_rt,started_seq,_=dropped['request']['params']['idempotencyKey'].split(':')
+        lost_seq=s.rows("SELECT MIN(hrc_seq) AS n FROM hrc_events WHERE runtime_id=? AND event_kind='turn.completed' AND hrc_seq>?",(lost_rt,int(started_seq)))[0]['n']
+        assert lost_seq,dropped
+        assert s.rows("SELECT high_water FROM wrkq_ledger_cursors WHERE stream='session-project-events'")[0]['high_water']<lost_seq
         # Native serve deliberately fails closed on stale owner files. This
         # gate replaces a crashed execution owner after proving its death;
         # server start/lock recovery is owned by N5, not publication.
@@ -113,21 +119,21 @@ finally:
         native=s.up('native','publication-after-lost-ack')
         keys={r['idempotency_key'] for r in expected}
         wait_for(s,lambda:keys.issubset({r['idempotency_key'] for r in facts(s)}),'native published all original facts')
-        wait_for(s,lambda:s.rows("SELECT high_water FROM wrkq_ledger_cursors WHERE stream='server-project-events'")[0]['high_water']>=server_seq,'retry ACK advances durable cursor')
+        wait_for(s,lambda:s.rows("SELECT high_water FROM wrkq_ledger_cursors WHERE stream='session-project-events'")[0]['high_water']>=lost_seq,'retry ACK advances durable cursor')
         retries=[json.loads(line) for line in journal.read_text().splitlines() if json.loads(line)['request']['params']['idempotencyKey']==dropped['request']['params']['idempotencyKey']]
         assert len(retries)>=2 and retries[1]['response']['result']['created'] is False,retries
         actual={r['idempotency_key']:r for r in facts(s) if r['idempotency_key'] in keys}
-        compares={r['idempotency_key']:{'bun':r,'native':actual.get(r['idempotency_key']),'pass':r==actual.get(r['idempotency_key'])} for r in expected}
+        def same(live,replay):
+            if replay is None:return False
+            if live['type']!='session.born':return live==replay
+            # session.born reads the current session at publish time (by design), so a
+            # replay may carry what the session gained after birth, never lose a field.
+            a,b=json.loads(live['attributes']),json.loads(replay['attributes'])
+            return {k:v for k,v in live.items() if k!='attributes'}=={k:v for k,v in replay.items() if k!='attributes'} and all(b.get(k)==v for k,v in a.items())
+        compares={r['idempotency_key']:{'live':r,'replay':actual.get(r['idempotency_key']),'pass':same(r,actual.get(r['idempotency_key']))} for r in expected}
         (a.artifacts/'publication-compares.json').write_text(json.dumps(compares,indent=2)+'\n')
-        for side,observations in [('bun',{r['idempotency_key']:r for r in expected}),('native',actual)]:
-            directory=a.artifacts/side;directory.mkdir(exist_ok=True)
-            (directory/'publication.json').write_text(json.dumps(observations,indent=2)+'\n')
-        runner=Path(__file__).resolve().parents[3]/'conformance/hrc-parity/run.py'
-        compared=subprocess.run(['python3',str(runner),'compare','--suite','n3-publication','--baseline',str(a.artifacts/'bun'),'--candidate',str(a.artifacts/'native'),'--out',str(a.artifacts/'compare')],capture_output=True,text=True)
-        (a.artifacts/'compare.stdout').write_text(compared.stdout);(a.artifacts/'compare.stderr').write_text(compared.stderr)
-        assert compared.returncode==0,(compared.stdout,compared.stderr)
         bad=[k for k,v in compares.items() if not v['pass']];assert not bad,bad
-        assert len(keys)==len(expected),'Bun baseline duplicate key'
+        assert len(keys)==len(expected),'live publication duplicate key'
         s.down(native);s.up('native','publication-restart');time.sleep(6)
         assert len([r for r in facts(s) if r['idempotency_key'] in keys])==len(expected),'restart duplicated a publish'
         (a.artifacts/'result.json').write_text(json.dumps({'pass':True,'facts':len(expected),'ledgerHead':head,'initialCursors':initial,'restartDuplicateCount':0,'lostAckRecovered':True,'gracefulWhileAckWithheld':a.graceful_lost_ack},indent=2)+'\n')

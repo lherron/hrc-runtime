@@ -1,11 +1,11 @@
 #!/usr/bin/env python3
-"""Real copied-Bun/native subscriber and broker evidence parity on a private DB.
+"""Real subscriber, receipt and broker evidence doors on rusthrc with a private DB.
 
 Failure modes: undeclared consumers, retained evidence leaking into delivery,
 inclusive commit retry skipping a row, token bypass, receipt advancing past the
 served head, duplicate/stale ACK mutation, and live admission leaked on close.
 """
-import argparse,json,time,sqlite3
+import argparse,json
 from pathlib import Path
 from n3_scratch import Scratch,UnixHTTP
 
@@ -13,11 +13,6 @@ def request(s,method,path,body=None,headers=None):
     c=UnixHTTP(s.socket);c.request(method,path,json.dumps(body) if body is not None else None,{'Content-Type':'application/json',**(headers or {})});r=c.getresponse();raw=r.read().decode();c.close()
     try:return r.status,json.loads(raw)
     except ValueError:return r.status,raw
-
-def normalize(v):
-    if isinstance(v,dict):return {k:normalize(x) for k,x in v.items() if k not in ('subscriberId','receiptToken','openedAt','lastStreamAcceptedAt','consumerReceiptBehindSince','lastConsumerAcknowledgedAt','keepaliveOnlySince','pendingSince')}
-    if isinstance(v,(list,tuple)):return [normalize(x) for x in v]
-    return v
 
 def exercise(s,runtime):
     out={}
@@ -47,28 +42,33 @@ def main():
     for k in ('binary','installed-release','aspd-socket','scratch-root','artifacts'):p.add_argument('--'+k,type=Path,required=True)
     a=p.parse_args();s=Scratch(a.scratch_root,a.installed_release,a.aspd_socket,a.binary,a.artifacts,project_id='n3-t11839')
     try:
-        s.init_substrate();bun=s.up('bun','subscribers')
+        s.init_substrate();s.up('native','subscribers')
         scope='agent:tabularasa:project:n3-t11839:task:subscribers'
         start=s.command('birth',['hrc','start',scope,'--project-id',s.project_id,'--project-root',s.project,'--cwd',s.project,'--json','-p','Reply with exactly the word OK and nothing else. No tools.'])
         runtime=start['runtime']['runtimeId'];s.wait_completed(start['runtime']['runId'])
-        expected=exercise(s,runtime)
-        snapshot=s.root/'history.sqlite'
-        with sqlite3.connect(s.db_path) as source,sqlite3.connect(snapshot) as target:source.backup(target)
-        s.down(bun)
-        with sqlite3.connect(snapshot) as source,sqlite3.connect(s.db_path) as target:source.backup(target)
-        s.up('native','subscribers');actual=exercise(s,runtime)
+        out=exercise(s,runtime)
         s.assert_no_duplicate_turn_messages()
-        cases={k:{'bun':v,'native':actual[k],'pass':normalize(v)==normalize(actual[k]),'keyOrderPass':json.dumps(normalize(v),separators=(',',':'))==json.dumps(normalize(actual[k]),separators=(',',':'))} for k,v in expected.items()}
-        (a.artifacts/'subscriber-compares.json').write_text(json.dumps(cases,indent=2)+'\n')
-        for side,observations in [('bun',expected),('native',actual)]:
-            directory=a.artifacts/side;directory.mkdir(exist_ok=True)
-            (directory/'subscribers.json').write_text(json.dumps(observations,indent=2)+'\n')
-        import subprocess
-        runner=Path(__file__).resolve().parents[3]/'conformance/hrc-parity/run.py'
-        compared=subprocess.run(['python3',str(runner),'compare','--suite','n3-subscribers','--baseline',str(a.artifacts/'bun'),'--candidate',str(a.artifacts/'native'),'--out',str(a.artifacts/'compare')],capture_output=True,text=True)
-        (a.artifacts/'compare.stdout').write_text(compared.stdout);(a.artifacts/'compare.stderr').write_text(compared.stderr)
-        assert compared.returncode==0,(compared.stdout,compared.stderr)
-        bad=[k for k,v in cases.items() if not v['pass'] or not v['keyOrderPass']];assert not bad,bad
-        print(json.dumps({'pass':True,'compared':len(cases),'artifacts':str(a.artifacts)}))
+        (a.artifacts/'subscribers.json').write_text(json.dumps(out,indent=2)+'\n')
+        status={k:v[0] for k,v in out.items()}
+        want={**{'bad-declare-'+str(i):400 for i in range(6)},'declare':200,
+              'page':200,'retained':400,'bad-retained':400,'missing-after':400,'bad-limit':400,'inclusive-retry':200,
+              'zero':400,'advanced':200,'duplicate':200,'snapshot':200,'hint':200,'clear-stop':200,
+              **{'invalid-query'+q:400 for q in ['','?op=invalid','?op=input-accepted']},'invalid-query?op=input-accepted&runtimeId=missing&inputId=x':404}
+        wrong={k:out[k] for k,v in want.items() if status[k]!=v}
+        # Undeclared consumers, a wrong token, an unknown subscriber and a
+        # receipt past the served head are refused, whatever the code.
+        for k in ('unnamed','unknown','unknown-ack','bad-token','ahead'):
+            if status[k]<400:wrong[k]=out[k]
+        # Duplicate and stale ACKs are answered but never move the receipt.
+        acks={k:(out[k][1].get('disposition'),out[k][1].get('lastConsumerAcknowledgedSeq')) for k in ('advanced','duplicate','stale')}
+        head=out['advanced'][1].get('seq')
+        if acks!={'advanced':('advanced',head),'duplicate':('duplicate',head),'stale':('stale',head)}:wrong['acks']=acks
+        # Redeclaring a name on its route returns the same admission and keeps its receipt mode.
+        if (out['redeclare'][1].get('subscriberId'),out['redeclare'][1].get('receiptMode'))!=(out['declare'][1]['subscriberId'],'consumer-ack-v1'):wrong['redeclare']=out['redeclare']
+        assert not wrong,wrong
+        # Retained evidence never reaches a named delivery consumer.
+        assert out['retained'][1]['error']['code']=='invalid_fence',out['retained']
+        assert out['page'][1]['events'],out['page']
+        print(json.dumps({'pass':True,'cases':len(out),'artifacts':str(a.artifacts)}))
     finally:s.cleanup('agent:tabularasa:project:n3-t11839:task:')
 if __name__=='__main__':main()

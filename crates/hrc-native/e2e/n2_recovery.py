@@ -1,9 +1,8 @@
 #!/usr/bin/env python3
-"""N2 cold-boot input recovery on one owner (bun or native), for `compare --suite n2-recovery`.
+"""N2 cold-boot input recovery on rusthrc.
 
 A real seat is born and goes idle; the owner stops; three accepted headless
-runs with the durable cold-boot input shape Bun writes are planted in the
-scratch store: one owed to the live seat, one whose runtime is gone, one with
+runs with the durable cold-boot input shape are planted in the scratch store: one owed to the live seat, one whose runtime is gone, one with
 no durable prompt. The owner restarts and its startup recovery must deliver
 the first and fail the other two with cold_input_continuation_lost. Failure
 modes: a lost run left accepted (it would age into a zombie), the owed prompt
@@ -39,7 +38,6 @@ def plant(db_path, runtime, session):
 
 def main():
     p = argparse.ArgumentParser()
-    p.add_argument('--owner', choices=['bun', 'native'], required=True)
     p.add_argument('--binary', type=Path, required=True)
     p.add_argument('--installed-release', type=Path, required=True)
     p.add_argument('--aspd-socket', type=Path, required=True)
@@ -48,11 +46,11 @@ def main():
     args = p.parse_args()
     s = Scratch(args.scratch_root, args.installed_release, args.aspd_socket, args.binary, args.artifacts)
     prefix = 'agent:tabularasa:project:n2-t11823:task:'
-    scope = prefix + 'recovery-' + args.owner
+    scope = prefix + 'recovery'
     out = {}
     try:
         s.init_substrate()
-        owner = s.up(args.owner, 'a')
+        owner = s.up('native', 'a')
         cold = s.command('cold-start', ['hrc', 'start', scope, '--project-id', s.project_id, '--project-root',
                                         s.project, '--cwd', s.project, '--json', '-p', PROMPT])
         runtime = cold['runtime']['runtimeId']
@@ -63,7 +61,7 @@ def main():
         out['downExit'] = s.down(owner)
         planted = plant(s.db_path, runtime, session)
         before = s.rows('SELECT COALESCE(MAX(hrc_seq),0) AS m FROM hrc_events')[0]['m']
-        owner = s.up(args.owner, 'b')
+        owner = s.up('native', 'b')
         s.wait(lambda: all(r['status'] != 'accepted' for r in s.rows(f"SELECT status FROM runs WHERE run_id IN ({','.join('?' * len(planted))})", planted)), 300, 'planted runs settled')
         s.wait(lambda: s.rows("SELECT 1 FROM runs WHERE run_id='run-n2-recover-live' AND completed_at IS NOT NULL"), 300, 'owed turn completed')
         time.sleep(2)
@@ -74,11 +72,23 @@ def main():
         out['failedPayloads'] = {r['run_id']: json.loads(r['payload_json']) for r in s.rows("SELECT run_id, payload_json FROM hrc_events WHERE hrc_seq>? AND event_kind='turn.failed'", (before,))}
         out['userPrompts'] = [json.loads(r['payload_json']) for r in s.rows("SELECT payload_json FROM hrc_events WHERE hrc_seq>? AND event_kind='turn.user_prompt'", (before,))]
         out['otherRunsTouched'] = s.rows("SELECT COUNT(*) AS n FROM runs WHERE run_id NOT IN ('run-n2-recover-live','run-n2-recover-missing','run-n2-recover-nondurable') AND updated_at > (SELECT ts FROM hrc_events WHERE hrc_seq=?)", (before,))[0]['n'] if before else 0
-        (args.artifacts / f'{args.owner}.json').write_text(json.dumps(out, indent=1, default=str) + '\n')
-        s.dump(args.owner + '-rows')
-        print(json.dumps({'owner': args.owner, 'runs': out['runs']}))
+        (args.artifacts / 'recovery.json').write_text(json.dumps(out, indent=1, default=str) + '\n')
+        s.dump('rows')
+        live, missing, nondurable = planted
+        runs = out['runs']
+        assert runs[live]['status'] == 'completed' and runs[live]['dispatched'], runs[live]
+        for lost in (missing, nondurable):
+            assert runs[lost]['status'] == 'failed' and runs[lost]['errorCode'] == 'cold_input_continuation_lost', (lost, runs[lost])
+            assert out['events'][lost].count('turn.failed') == 1, (lost, out['events'][lost])
+            assert 'turn.started' not in out['events'][lost], (lost, out['events'][lost])
+        assert out['events'][live].count('turn.completed') == 1, out['events'][live]
+        assert set(out['failedPayloads']) == {missing, nondurable}, out['failedPayloads']
+        delivered = [p for p in out['userPrompts'] if OWED in json.dumps(p)]
+        assert len(delivered) == 1, ('owed prompt deliveries', len(delivered))
+        assert out['otherRunsTouched'] == 0, out['otherRunsTouched']
+        print(json.dumps({'pass': True, 'runs': runs}))
     finally:
-        (args.artifacts / f'{args.owner}-steps.json').write_text(json.dumps(s.steps, indent=1) + '\n')
+        (args.artifacts / 'steps.json').write_text(json.dumps(s.steps, indent=1) + '\n')
         s.cleanup(prefix)
 
 

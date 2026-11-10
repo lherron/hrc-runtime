@@ -1,20 +1,25 @@
 #!/usr/bin/env python3
-"""N2 retained-evidence recovery on one owner (bun or native), for
-`compare --suite n2-retained`.
+"""N2 retained-evidence recovery on a real hrcpty seat, on rusthrc.
 
-A real claude-code-tmux seat is born and goes idle. The owner is killed
-(SIGKILL), and while it is down a human turn is typed into the TUI and the
-operator quits: the broker commits those envelopes to its ledger with nobody
-projecting them. The lease tmux server is then killed (a reboot), ending the
-broker. The
-owner restarts with a zero revivable hold, so its startup pass recovers the
-unprojected tail offline through the release's evidence-read mode. Both owners
-must record the same outcome and project the same rows under
-evidence_origin = 'retained'. Failure modes: the tail lost, a retained row
-written as live, the runtime's current state changed by history, and a
-recovery that spawns against a live worker.
+A real claude-hrcpty seat is born and goes idle. The owner is killed (SIGKILL),
+and while it is down the operator attaches (the argv GET /v1/attach served),
+types a turn and quits: the broker commits those envelopes to its ledger with
+nobody projecting them. The hrc-pty supervisor is then killed with its tree (a
+reboot), ending the broker. The owner restarts with a zero revivable hold, so
+its startup pass recovers the unprojected tail offline. It must record a
+recovered outcome, mirror the ledger tail envelope for envelope under
+evidence_origin = 'retained' with no live rows, write retained lifecycle rows,
+and leave the cursors and the retained fence equal. Failure modes: the tail
+lost, a retained row written as live, the runtime's current state changed by
+history, and a recovery that spawns against a live worker.
 """
 import argparse
+import fcntl
+import os
+import pty
+import struct
+import termios
+import threading
 import json
 import signal
 import subprocess
@@ -41,9 +46,54 @@ def parse(line):
     return value if isinstance(value, dict) and isinstance(value.get('type'), str) else None
 
 
+class Attached:
+    """The operator's hrc-pty attach client on a real terminal."""
+    def __init__(self, s, argv):
+        self.master, slave = pty.openpty()
+        fcntl.ioctl(slave, termios.TIOCSWINSZ, struct.pack('HHHH', 40, 120, 0, 0))
+        self.proc = subprocess.Popen(argv, env=s.env, cwd=s.project, stdin=slave, stdout=slave, stderr=slave,
+                                     start_new_session=True)
+        os.close(slave)
+        threading.Thread(target=self._drain, daemon=True).start()
+        time.sleep(3)
+
+    def _drain(self):
+        while True:
+            try:
+                if not os.read(self.master, 65536):
+                    return
+            except OSError:
+                return
+
+    def type(self, text):
+        for ch in text:
+            os.write(self.master, ch.encode())
+            time.sleep(.05)
+        time.sleep(1)
+        os.write(self.master, b'\r')
+
+
+def kill_tree(runtime):
+    out = subprocess.run(['/bin/ps', '-axo', 'pid=,ppid=,command='], capture_output=True, text=True).stdout
+    procs = [(int(a), int(b), c) for a, b, c in (l.split(None, 2) for l in out.splitlines() if len(l.split(None, 2)) == 3)]
+    doomed = {pid for pid, _, cmd in procs if 'hrc-pty serve' in cmd and runtime in cmd}
+    roots, grew = set(doomed), True
+    while grew:
+        grew = False
+        for pid, ppid, _ in procs:
+            if ppid in doomed and pid not in doomed:
+                doomed.add(pid)
+                grew = True
+    for pid in doomed:
+        try:
+            os.kill(pid, signal.SIGKILL)
+        except ProcessLookupError:
+            pass
+    return sorted(roots)
+
+
 def main():
     p = argparse.ArgumentParser()
-    p.add_argument('--owner', choices=['bun', 'native'], required=True)
     p.add_argument('--binary', type=Path, required=True)
     p.add_argument('--installed-release', type=Path, required=True)
     p.add_argument('--aspd-socket', type=Path, required=True)
@@ -52,41 +102,44 @@ def main():
     args = p.parse_args()
     s = Scratch(args.scratch_root, args.installed_release, args.aspd_socket, args.binary, args.artifacts)
     prefix = 'agent:tabularasa:project:n2-t11823:task:'
-    scope = prefix + 'retained-' + args.owner
+    scope = prefix + 'retained'
     out = {}
     try:
         s.init_substrate()
-        owner = s.up(args.owner, 'a')
+        owner = s.up('native', 'a')
         cold = s.command('cold-start', ['hrc', 'start', scope, '--project-id', s.project_id, '--project-root',
                                         s.project, '--cwd', s.project, '--json', '-p', PROMPT])
         runtime = cold['runtime']['runtimeId']
         s.wait_completed(cold['runtime']['runId'])
         s.wait(lambda: s.rows("SELECT 1 FROM runtimes WHERE runtime_id=? AND status='ready' AND active_run_id IS NULL", (runtime,)), 300, 'idle')
         time.sleep(2)
-        state = json.loads(s.rows('SELECT runtime_state_json FROM runtimes WHERE runtime_id=?', (runtime,))[0]['runtime_state_json'])
-        tmux, lease = state['tmux'], state['broker']['brokerWindow']['socketPath']
+        status, attach = s.http('GET', f'/v1/attach?runtimeId={runtime}')
+        assert status == 200 and attach.get('transport') == 'hrcpty', attach
         invocation = s.rows('SELECT active_invocation_id FROM runtimes WHERE runtime_id=?', (runtime,))[0]['active_invocation_id']
         projected_before = s.rows('SELECT last_projected_seq FROM broker_invocations WHERE invocation_id=?', (invocation,))[0]['last_projected_seq']
+        ledgers = [l for l in (s.root / 'run/bipc').glob('*/events.ndjson') if invocation in l.read_text()]
+        assert len(ledgers) == 1, ledgers
+        ledger = ledgers[0]
         out['ownerKilled'] = s.down(owner, signal.SIGKILL)
-        ledger = Path(state['broker']['brokerCommand'].split("'--event-ledger' '")[1].split("'")[0]) if "'--event-ledger' '" in state['broker']['brokerCommand'] \
-            else Path(state['broker']['brokerCommand'].split('--event-ledger ')[1].split()[0])
+        # Native serve fails closed on a crashed owner's files; the owner is dead.
+        for name in ('server.lock', 'server.pid', 'hrc.sock'):
+            (s.root / 'run' / name).unlink(missing_ok=True)
         size = ledger.stat().st_size
-        subprocess.run(['tmux', '-S', tmux['socketPath'], 'send-keys', '-t', tmux['paneId'], '-l', 'Reply with exactly the word UNSEEN and nothing else. No tools.'], check=True)
-        time.sleep(.5)
-        subprocess.run(['tmux', '-S', tmux['socketPath'], 'send-keys', '-t', tmux['paneId'], 'Enter'], check=True)
+        operator = Attached(s, attach['argv'])
+        operator.type('Reply with exactly the word UNSEEN and nothing else. No tools.')
         s.wait(lambda: 'turn.completed' in tail(ledger, size), 300, 'unprojected turn completed in the ledger')
         time.sleep(2)
-        subprocess.run(['tmux', '-S', tmux['socketPath'], 'send-keys', '-t', tmux['paneId'], '-l', '/quit'], check=True)
-        time.sleep(.5)
-        subprocess.run(['tmux', '-S', tmux['socketPath'], 'send-keys', '-t', tmux['paneId'], 'Enter'], check=True)
-        # With no owner to reap the lease, the broker stays up after the quit;
-        # the reboot below ends it.
+        operator.type('/quit')
+        # With no owner to reap the lease, the supervisor stays up after the
+        # quit; the reboot below ends it.
         s.wait(lambda: any(k in tail(ledger, size) for k in ('continuation.cleared', 'invocation.exited')), 120, 'quit recorded in the ledger')
         time.sleep(2)
-        subprocess.run(['tmux', '-S', lease, 'kill-server'], capture_output=True)
+        out['killedSupervisors'] = kill_tree(runtime)
+        assert out['killedSupervisors'], 'no hrc-pty supervisor to kill'
+        operator.proc.kill()
         out['ledgerTailTypes'] = sorted({e['type'] for e in map(parse, tail(ledger, size).splitlines()) if e and not e['type'].endswith('.delta')})
         s.env['HRC_BROKER_HOLD_MAX_AGE_MS'] = '0'
-        s.up(args.owner, 'b')
+        s.up('native', 'b')
         s.wait(lambda: s.rows('SELECT 1 FROM retained_evidence_outcomes WHERE runtime_id=?', (runtime,)), 120, 'retained outcome recorded')
         time.sleep(3)
         out['outcomes'] = s.rows('SELECT outcome, outcome_class, trigger, attempts FROM retained_evidence_outcomes WHERE runtime_id=? ORDER BY outcome_id', (runtime,))
@@ -109,11 +162,18 @@ def main():
         out['runtime'] = {'status': rt['status'], 'staleReason': st.get('staleReason'), 'hasFinalSummary': st.get('finalSummary') is not None}
         status, inspect = s.http('POST', '/v1/runtimes/broker/inspect', {'runtimeId': runtime})
         out['inspectRetained'] = [{k: e.get(k) for k in ('outcome', 'class', 'trigger', 'attempts')} for e in (inspect.get('retainedEvidence') or [])] if isinstance(inspect, dict) else status
-        (args.artifacts / f'{args.owner}.json').write_text(json.dumps(out, indent=1, default=str) + '\n')
-        s.dump(args.owner + '-rows')
-        print(json.dumps({'owner': args.owner, 'outcomes': out['outcomes'], 'retainedMirror': len(out['retainedMirror'])}))
+        (args.artifacts / 'retained.json').write_text(json.dumps(out, indent=1, default=str) + '\n')
+        s.dump('rows')
+        assert out['outcomes'] and out['outcomes'][-1]['outcome'] in ('recovered', 'recovered_torn_tail'), out['outcomes']
+        assert out['retainedMirror'] and out['liveMirrorAfter'] == 0, (len(out['retainedMirror']), out['liveMirrorAfter'])
+        assert out['ledgerTail'] == out['retainedMirror'], ('retained mirror is not the ledger tail', out['ledgerTail'], out['retainedMirror'])
+        assert 'turn.completed' in out['retainedLifecycle'], out['retainedLifecycle']
+        assert out['invocation']['cursorAdvanced'] and out['invocation']['fenceEqualsCursor'] and out['invocation']['lastEventIsCursor'], out['invocation']
+        assert out['runtime']['status'] in ('terminated', 'stale', 'dead', 'crashed'), out['runtime']
+        assert out['inspectRetained'] and out['inspectRetained'][-1]['outcome'] == out['outcomes'][-1]['outcome'], out['inspectRetained']
+        print(json.dumps({'pass': True, 'outcomes': out['outcomes'], 'retainedMirror': len(out['retainedMirror'])}))
     finally:
-        (args.artifacts / f'{args.owner}-steps.json').write_text(json.dumps(s.steps, indent=1) + '\n')
+        (args.artifacts / 'steps.json').write_text(json.dumps(s.steps, indent=1) + '\n')
         s.cleanup(prefix)
 
 
