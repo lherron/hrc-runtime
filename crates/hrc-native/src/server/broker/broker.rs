@@ -223,6 +223,11 @@ async fn prepare_dispatch(server: &Shared, birth: &Birth<'_>) -> Result<(Value, 
     );
     let prepared =
         compile::Compiled::prepare(request, intent["presentation"]["operator"].as_str()).await?;
+    // ASP's process spec is the final launch cwd. Refuse before even committing
+    // the preparation: launch, leases, start graph and watch all follow it.
+    let process = &prepared.response["plan"]["execution"]["dispatchRequest"]["startRequest"]["spec"]
+        ["process"];
+    compile::require_cwd(string(process, "cwd")?, &host, scope)?;
     let record = preparation(&prepared, &stored, &server.runtime, idempotency)?;
     {
         let mut db = server.store.lock().unwrap();

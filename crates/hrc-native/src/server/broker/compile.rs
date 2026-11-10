@@ -285,6 +285,24 @@ pub fn asp_home() -> String {
         .unwrap_or_else(|_| format!("{}/.asp", std::env::var("HOME").unwrap_or_default()))
 }
 
+/// A stale task placement is a terminal admission refusal, never a request to
+/// fall back to another checkout. Call before recording or realizing a start.
+pub fn require_cwd(cwd: &str, host: &str, scope: &str) -> Result<(), ApiError> {
+    match fs::metadata(cwd) {
+        Ok(metadata) if metadata.is_dir() => return Ok(()),
+        Err(error) if error.kind() != std::io::ErrorKind::NotFound => {
+            return Err(anyhow::Error::from(error).into());
+        }
+        _ => {}
+    }
+    Err(ApiError::domain(
+        StatusCode::UNPROCESSABLE_ENTITY,
+        "cwd_missing",
+        format!("cannot start session {host} ({scope}): working directory does not exist: {cwd}"),
+        Some(json!({"cwd":cwd,"hostSessionId":host,"scopeRef":scope,"retryable":false})),
+    ))
+}
+
 pub struct Compiled {
     pub response: Value,
     pub service: Value,

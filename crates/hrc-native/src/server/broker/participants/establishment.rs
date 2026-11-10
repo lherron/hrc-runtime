@@ -266,6 +266,24 @@ async fn connect(intent: &Value) -> Result<JsonRpc> {
     .map_err(|_| anyhow::anyhow!("Failed to connect to broker unix socket"))
 }
 async fn establish(server: &Shared, reg: &Value, attempt: &Value) -> Result<()> {
+    // Persisted initial attempts may be resumed after daemon downtime. Check
+    // before realize can allocate a presentation lease. Live reconnects only
+    // attach to the already established invocation and need no launch cwd.
+    if !["ACTIVE", "DETACHED", "ATTACH_CONFIRMED"]
+        .iter()
+        .any(|state| attempt["state"] == *state)
+    {
+        let descriptor = parsed(attempt, "prepared_profile_json")?;
+        compile::require_cwd(
+            string(
+                &descriptor["harnessInvocation"]["startRequest"]["spec"]["process"],
+                "cwd",
+            )?,
+            string(reg, "host_session_id")?,
+            string(reg, "scope_ref")?,
+        )
+        .map_err(|error| anyhow::anyhow!("{}: {}", error.code, error.message))?;
+    }
     // Reconnect the frozen participant through its own durable work cycle;
     // generic startup reconciliation intentionally skips external lifecycles.
     let mut initial = attempt.clone();

@@ -200,6 +200,9 @@ pub async fn launch(server: &Shared, raw: &[u8]) -> Result<Response, ApiError> {
         )
     })?;
     let session = session(server, &scope, &lane).await?;
+    if let Some(cwd) = command["cwd"].as_str() {
+        compile::require_cwd(cwd, session["hostSessionId"].as_str().unwrap(), &scope)?;
+    }
     let runtime = format!("rt-{}", Uuid::new_v4());
     let now = hrc_store::timestamp();
     let event = events::Ev {

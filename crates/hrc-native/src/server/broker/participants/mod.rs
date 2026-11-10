@@ -434,6 +434,20 @@ pub async fn attach(server: &super::Shared, body: Value) -> Result<Response, Api
             "a participant-served registration needs its broker endpoint at registration or on this attachment",
         ));
     }
+    // Reconnecting an established invocation does not launch a harness. A new
+    // descriptor does: refuse its final cwd before freezing or leasing it.
+    if !["ACTIVE", "DETACHED", "ATTACH_CONFIRMED"]
+        .iter()
+        .any(|state| attempt["state"] == *state)
+    {
+        super::compile::require_cwd(
+            d["harnessInvocation"]["startRequest"]["spec"]["process"]["cwd"]
+                .as_str()
+                .unwrap(),
+            reg["host_session_id"].as_str().unwrap(),
+            reg["scope_ref"].as_str().unwrap(),
+        )?;
+    }
     let prepared = server
         .store
         .lock()
