@@ -71,7 +71,7 @@ class Node:
                    HRC_WRKQ_DB=str(self.root / 'wrkq.db'), WRKQ_DB=str(self.root / 'wrkq.db'),
                    WRKQ_PRINCIPAL_REF='agent:clod', HRC_WRKQD_TOKEN_FILE='', WRKQD_TOKEN_FILE='', WRKQD_TOKEN='',
                    HRC_PEER_CONFIG_FILE=str(self.config), HRC_EVENT_INGEST_SOCKET=str(self.root / 'run/ingest.sock'),
-                   HRC_ACP_WEBHOOK_URL='', HRC_ASPD_SOCKET=str(Path(aspd).resolve()))
+                   HRC_ACP_WEBHOOK_URL='', HRC_ASPD_SOCKET=str(Path(aspd).resolve()), HRC_METRICS='0')
         self.env = env
         self.aspd = Path(aspd).resolve()
         self.socket = self.root / 'run/hrc.sock'

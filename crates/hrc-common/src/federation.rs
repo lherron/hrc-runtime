@@ -589,3 +589,52 @@ pub fn node_summary(state_root: &str) -> Value {
             Value::Object(node)
         })
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn malformed_registry_endpoints_refuse_startup_config() {
+        let cases = [
+            ("", "non-empty string"),
+            ("ftp://svc.test.ts.net:18400", "http: or https:"),
+            ("http://svc.test.ts.net", "explicit port"),
+            ("http://example.com:18400", "tailnet host"),
+            ("http://user:password@svc.test.ts.net:18400", "credentials"),
+            ("http://svc.test.ts.net:18400/path", "origin with no path"),
+            ("http://svc.test.ts.net:18400/a/..", "origin with no path"),
+            (
+                "http://svc.test.ts.net:18400?query=1",
+                "origin with no path",
+            ),
+            (
+                "http://svc.test.ts.net:18400#fragment",
+                "origin with no path",
+            ),
+        ];
+        let document = |endpoint: &str| {
+            json!({"nodeId": "caller", "peers": {"svc": {
+                "endpoint": "http://svc.test.ts.net:18401",
+                "registryEndpoint": endpoint, "token": "test-token"
+            }}})
+        };
+        // The same startup parser accepts an origin, including a trailing slash.
+        for endpoint in [
+            "http://svc.test.ts.net:18400",
+            "http://svc.test.ts.net:18400/",
+        ] {
+            assert!(parse_document(&document(endpoint), "test-config").is_ok());
+        }
+        for (endpoint, reason) in cases {
+            let error = parse_document(&document(endpoint), "test-config")
+                .err()
+                .unwrap_or_else(|| panic!("accepted malformed registryEndpoint {endpoint:?}"));
+            assert!(
+                error.contains("peers.svc.registryEndpoint"),
+                "{endpoint:?}: {error}"
+            );
+            assert!(error.contains(reason), "{endpoint:?}: {error}");
+        }
+    }
+}
