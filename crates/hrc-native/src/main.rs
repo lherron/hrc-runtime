@@ -67,6 +67,16 @@ fn store_verb(args: &[String]) -> i32 {
         eprintln!("usage: rusthrc store migrate <path>");
         return 2;
     }
+    // The verb has no options. `--help` used to be taken as the path and
+    // created a store named `--help`; a path that starts with `-` is `./-x`.
+    if path == "-h" || path == "--help" {
+        println!("usage: rusthrc store migrate <path>");
+        return 0;
+    }
+    if path.starts_with('-') {
+        eprintln!("usage: rusthrc store migrate <path>");
+        return 2;
+    }
     let db = std::path::Path::new(path);
     match migrate::own_and_migrate(db, migrate::FORWARD, &Actor::current(), |_| {}) {
         Ok((_owner, outcome)) => {

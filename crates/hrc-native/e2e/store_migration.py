@@ -129,6 +129,17 @@ def main():
             results.append({'case': 'fresh_state_dir_no_bun', 'pass': True, 'created': created[0],
                             'statusSchema': schema, 'pathHasBun': False})
 
+            # The verb takes no options: `--help` and an unknown flag are usage,
+            # never a path (it once created a store named `--help`).
+            flagdir = root / 'flags'
+            flagdir.mkdir()
+            for flag, code in (('--help', 0), ('-h', 0), ('--bogus', 2)):
+                out = subprocess.run([binary, 'store', 'migrate', flag], env=a_env, cwd=flagdir,
+                                     capture_output=True, text=True, timeout=30)
+                assert out.returncode == code and 'usage:' in out.stdout + out.stderr, (flag, out)
+            assert list(flagdir.iterdir()) == [], list(flagdir.iterdir())
+            results.append({'case': 'verb_flags_are_usage', 'pass': True})
+
             # A second daemon: its own runtime dir, the same state dir.
             b = subprocess.run([binary, 'server', 'serve'], env=b_env,
                                capture_output=True, text=True, timeout=30)
