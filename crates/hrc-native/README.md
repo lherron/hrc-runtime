@@ -332,10 +332,10 @@ unchanged, WAL gains no frames, and ownership files remain absent. SQLite may
 create or change its SHM index; one failed daemon CLI usage record is expected
 (EN-35424). No immutable connection or copied read path is used.
 
-`e2e/session_projection.py` compares historical session lists through
-`compare --suite n1-session-projection`: activity windows, live-runtime
-exceptions, generation selection, ordering, scoped history, query errors and
-configured projection days. Its fixtures are new scratch rows.
+`e2e/session_projection.py` judges historical session lists on one native
+owner over a native SQL seed: activity windows, live-runtime exceptions,
+generation selection, ordering, scoped history, query errors and configured
+projection days, each case a literal predicate (T-13125).
 
 Local session pages and facets query the trigger-maintained session index with
 Bun's filters, excluded facet dimensions and v5 keyset cursors. The index
@@ -352,14 +352,12 @@ model/context, control and hosting facts. Both successful and failed seat
 observations are retained. Reattach refreshes owner diagnostics while retaining
 only the previously recorded ACK position; it sends no event ACK.
 
-`e2e/runtime_reads.py` births and completes a real blank seat through the named
-Bun CLI, establishes a real acknowledged checkpoint, and compares sequential
-Bun/native readers of the same scratch snapshot. It includes historical terminal
-rows, pagination, filters and error cases. Bun finishes its legacy historical-row
-startup classification before the shared snapshot; the N2 startup job is not
-claimed by this N1 read case. `compare --suite n1-runtime-reads` verifies full
-responses and persisted probes, bounding dynamic timestamps and ages before
-normalization.
+`e2e/runtime_reads.py` births a deterministic hrcpty seat through the native
+owner (hrc-cli/e2e/native_seat.py) beside native historical terminal rows and
+judges each read as a literal: pagination, filters, inspect, seat probes,
+targets and error cases (T-13125). Reported-model qualification is separate.
+The previous Bun-baselined capture harness is `e2e/seat_capture.py`, still
+used by target_placement.py and runtime_surfaces.py.
 
 Runtime attachment returns the realized tmux descriptor and binding fence.
 Surface binding validates the host/generation fence and commits the binding,
