@@ -58,7 +58,7 @@ def main():
               'HRC_EVENT_FORWARD_URL', 'HRC_EVENT_INGEST_TCP_PORT', 'HRC_EVENT_FORWARD_SOURCE_REF',
               'WRKQ_DB_PATH', 'WRKQ_DB_PATH_FILE', 'WRKQD_NODE_TOKENS', 'WRKQD_NODE_TOKENS_FILE', 'WRKQD_UNIX'):
         env.pop(k, None)
-    env.update(HRC_RUNTIME_DIR=str(root / 'run'), HRC_STATE_DIR=str(root / 'state'),
+    env.update(ASP_HOME=str(root / 'asp-home'), HRC_RUNTIME_DIR=str(root / 'run'), HRC_STATE_DIR=str(root / 'state'),
                ASP_PROJECT_ROOT_OVERRIDE=str(project), HRC_PROJECT_SEARCH_ROOTS=str(project),
                HRC_WRKQ_DB=str(root / 'wrkq.db'), WRKQ_DB=str(root / 'wrkq.db'),
                WRKQ_PRINCIPAL_REF='agent:cody',

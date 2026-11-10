@@ -81,7 +81,7 @@ class Scratch:
         config.chmod(0o600)
         env = {k: v for k, v in os.environ.items() if not k.startswith(LEAK_PREFIXES)}
         env['PATH'] = str(bin_dir) + os.pathsep + os.environ.get('PATH', '')
-        env.update(HRC_RUNTIME_DIR=str(self.root / 'run'), HRC_STATE_DIR=str(self.root / 'state'),
+        env.update(ASP_HOME=str(self.root / 'asp-home'), HRC_RUNTIME_DIR=str(self.root / 'run'), HRC_STATE_DIR=str(self.root / 'state'),
                    ASP_PROJECT_ROOT_OVERRIDE=str(self.project), HRC_PROJECT_SEARCH_ROOTS=str(self.project),
                    HRC_WRKQ_DB=str(self.root / 'wrkq.db'), WRKQ_DB=str(self.root / 'wrkq.db'),
                    WRKQ_PRINCIPAL_REF='agent:clod', HRC_WRKQD_TOKEN_FILE='', WRKQD_TOKEN_FILE='', WRKQD_TOKEN='',

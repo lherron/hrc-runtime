@@ -80,7 +80,7 @@ def main():
               'WRKQ_DB_PATH', 'WRKQ_DB_PATH_FILE', 'WRKQD_NODE_TOKENS', 'WRKQD_NODE_TOKENS_FILE',
               'WRKQD_UNIX', 'HRC_BUN_PASSTHROUGH_SOCKET', 'HRC_METRICS'):
         env.pop(k, None)
-    env.update(HRC_RUNTIME_DIR=str(run_dir), HRC_STATE_DIR=str(state_dir),
+    env.update(ASP_HOME=str(root / 'asp-home'), HRC_RUNTIME_DIR=str(run_dir), HRC_STATE_DIR=str(state_dir),
                ASP_PROJECT_ROOT_OVERRIDE=str(project), HRC_PROJECT_SEARCH_ROOTS=str(project),
                HRC_WRKQ_DB=str(root / 'wrkq.db'), WRKQ_DB=str(root / 'wrkq.db'),
                WRKQ_PRINCIPAL_REF='agent:clod',

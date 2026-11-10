@@ -110,6 +110,9 @@ export async function createHrcTestFixture(prefix: string): Promise<HrcServerTes
   await mkdir(stateRoot, { recursive: true })
   await mkdir(spoolDir, { recursive: true })
 
+  const previousAspHome = process.env['ASP_HOME']
+  process.env['ASP_HOME'] = join(tmpDir, 'asp-home')
+
   // Opt tests into the integration-test harness shim so buildDispatchInvocation
   // can fall back when the real claude/codex binaries aren't on PATH. Production
   // contexts must leave this unset so failures surface instead of silently
@@ -303,7 +306,12 @@ export async function createHrcTestFixture(prefix: string): Promise<HrcServerTes
       }
     }
 
-    await scratch.cleanup()
+    try {
+      await scratch.cleanup()
+    } finally {
+      if (previousAspHome === undefined) Reflect.deleteProperty(process.env, 'ASP_HOME')
+      else process.env['ASP_HOME'] = previousAspHome
+    }
   }
 
   return {
