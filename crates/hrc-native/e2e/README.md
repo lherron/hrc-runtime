@@ -37,7 +37,10 @@ The triage was posted before deletion as T-11945 comment C-32046; the complete
 task-body/comment reference snapshot is in that task's artifacts. The gate
 signature history was checked through 178a9474; `evaluate` was unchanged.
 
-Reusable modules: `n2_scratch.py`, `n3_scratch.py`, `n2_aspd_proxy.py`.
+Reusable modules: `n2_scratch.py`, `n3_scratch.py`, `n2_aspd_proxy.py`, and
+`n4_federation.Node`. The scratch helpers are native by default and run no Bun;
+`--installed-release` is read only when a caller asks for a Bun owner, release or
+store fixture (T-13064).
 `peer_caller.py` checks original caller attribution across two private native
 nodes (locate, JSON read/write, stream, registry, concurrent/absent/invalid callers;
 T-12661). It takes the standard binary/release/socket/scratch/artifacts arguments;

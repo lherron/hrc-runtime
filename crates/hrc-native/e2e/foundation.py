@@ -20,16 +20,18 @@ import time
 import uuid
 
 
-def daemon_env(env, fixture_bins=()):
+def daemon_env(env, fixture_bins=(), bun=True):
     """Give only the daemon child its owner clients (T-12651 / S4).
 
     Explicit fixture bins stay first for tests that inject a ledger fault.
     The caller's mapping and the prae recipe/CLI PATH remain unchanged.
+    bun=False never adds ~/.bun/bin: a native-only caller's daemon PATH must
+    not depend on whether this machine has Bun (T-13064 F1).
     """
     bins = [*(str(path) for path in fixture_bins), str(Path.home() / '.local/bin')]
     # Preserve a Bun-absent caller for native qualification. Retained Bun
     # comparisons still receive their normal owner-client path.
-    if shutil.which('bun', path=env.get('PATH', os.defpath)):
+    if bun and shutil.which('bun', path=env.get('PATH', os.defpath)):
         bins.append(str(Path.home() / '.bun/bin'))
     return {**env, 'PATH': os.pathsep.join([*bins, env.get('PATH', os.defpath)])}
 

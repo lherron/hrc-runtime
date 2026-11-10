@@ -1,10 +1,17 @@
 #!/usr/bin/env python3
 """N4 federation reads on two scratch nodes, recorded for a per-case compare.
 
-Node B is a scratch Bun registry host with a peer listener. Node A runs one
-owner (bun, then native, on the same store) under four federation configs:
-none (no file), peerless, peered (B is the sole peer and registry host) and
-peer-down (B's ports point nowhere). Each config is a fresh daemon start.
+Node B is a scratch registry host with a peer listener. Node A runs each
+named owner (native by default; `--owners bun,native` and `--b-owner bun`
+reach the Bun copy as before) on the same store under five federation
+configs: none (no file), peerless, peered (B is the sole peer and registry
+host), peer-refused and peer-down (B's ports point nowhere). Each config is a
+fresh daemon start.
+
+Node is native unless its caller asks for Bun (`up('bun')`, `.release`,
+`bun_store`); the native seed writes the placement ledger and binding registry
+by SQL into schemas the native owner created, then reads each seeded scope back
+through the owner's own routes before any case runs.
 
 Failure modes this guards: a home decision that differs from Bun's for a
 ledger, registry or unconfigured scope; a refusal (session_home_unknown,
@@ -29,7 +36,9 @@ import time
 from http.client import HTTPException
 from urllib.parse import quote
 
-from n2_scratch import LEAK_PREFIXES, UnixHTTP, copy_release, preflight_unmanaged
+from n2_scratch import (LEAK_PREFIXES, UnixHTTP, check_native_status, copy_release, native_provenance,
+                        opened_files, preflight_unmanaged, reap_root)
+import sqlite3
 
 TAILNET = '100.73.60.81'
 PROJECT = 'n4-t11872'
@@ -66,7 +75,11 @@ class Node:
         self.root.mkdir(parents=True)
         self.name = name
         self.artifacts = artifacts
-        self.release = copy_release(installed, self.root / 'bun-release')
+        # Only Bun mode reads it; native callers may still pass one.
+        self.installed = installed
+        self.mode, self._release, self._bun_provenance = 'native', None, None
+        self.native_provenance = native_provenance(self.binary)
+        self.steps, self.procs, self.logs = [{'name': 'mode', 'mode': 'native', 'provenance': self.native_provenance}], [], []
         self.project = self.root / PROJECT
         self.project.mkdir()
         for d in ('run', 'state'):
@@ -74,7 +87,7 @@ class Node:
         self.config = self.root / 'federation.json'
         bin_dir = self.root / 'bin'
         bin_dir.mkdir()
-        (bin_dir / 'hrc').symlink_to(self.release / 'packages/hrc-cli/bin/hrc.js')
+        (bin_dir / 'hrc').symlink_to(self.binary)
         env = {k: v for k, v in os.environ.items() if not k.startswith(LEAK_PREFIXES)}
         env['PATH'] = str(bin_dir) + os.pathsep + os.environ.get('PATH', '')
         env.update(ASP_HOME=str(self.root / 'asp-home'), HRC_RUNTIME_DIR=str(self.root / 'run'), HRC_STATE_DIR=str(self.root / 'state'),
@@ -84,16 +97,42 @@ class Node:
                    HRC_PEER_CONFIG_FILE=str(self.config), HRC_EVENT_INGEST_SOCKET=str(self.root / 'run/ingest.sock'),
                    HRC_ACP_WEBHOOK_URL='', HRC_ASPD_SOCKET=str(Path(aspd).resolve()))
         self.env = env
-        self.provenance = preflight_unmanaged(self.release, env)
+        self.aspd = Path(aspd).resolve()
         self.socket = self.root / 'run/hrc.sock'
         self.db = self.root / 'state/state.sqlite'
-        self.steps, self.procs, self.logs = [], [], []
         self.run('git-init', ['git', 'init', '-q'])
-        self.run('wrkq-migrate', ['wrkqadm', 'migrate'])
+        self.run('wrkq-migrate', [Path.home() / '.local/bin/wrkqadm', 'migrate'])
         self.run('schema', [self.binary, 'store', 'migrate', self.db])
 
+    @property
+    def cli(self):
+        return self._release / 'packages/hrc-cli/bin/hrc.js' if self._release else self.binary
+
+    @property
+    def release(self):
+        return self.enter_bun('release')
+
+    @property
+    def provenance(self):
+        if self.mode == 'native':
+            return self.native_provenance
+        return self._bun_provenance
+
+    def enter_bun(self, why):
+        """Bun mode, on the caller's request only: copied release, preflight, Bun CLI as `hrc`."""
+        if self._release is None:
+            assert self.installed, 'Bun mode needs --installed-release'
+            self._release = copy_release(self.installed, self.root / 'bun-release')
+            link = self.root / 'bin/hrc'
+            link.unlink()
+            link.symlink_to(self.cli)
+            self._bun_provenance = preflight_unmanaged(self._release, self.env)
+            self.mode = 'bun'
+            self.steps.append({'name': 'mode', 'mode': 'bun', 'enteredBy': why})
+        return self._release
+
     def run(self, name, argv, stdin=None):
-        argv = [self.release / 'packages/hrc-cli/bin/hrc.js' if str(argv[0]) == 'hrc' else argv[0], *argv[1:]]
+        argv = [self.cli if str(argv[0]) == 'hrc' else argv[0], *argv[1:]]
         r = subprocess.run([str(a) for a in argv], env=self.env, cwd=self.project, input=stdin,
                            capture_output=True, text=True, timeout=300)
         self.steps.append({'name': name, 'argv': [str(a) for a in argv], 'exit': r.returncode,
@@ -102,7 +141,7 @@ class Node:
         return r.stdout
 
     def bun_store(self, name, body, *args):
-        """Fixture writes go through the copied release's own store code."""
+        """Fixture writes go through the copied release's own store code (Bun mode)."""
         store = self.release / 'packages/hrc-store-sqlite/src/index.ts'
         script = f'const s=await import({json.dumps(str(store))});const a=process.argv.slice(1);' \
                  f'const {{openHrcDatabase,createPlacementLedgerRepository,openBindingRegistry}}=s;{body}'
@@ -115,24 +154,40 @@ class Node:
         self.config.write_text(json.dumps(value))
         self.config.chmod(0o600)
 
+    def sql(self, path, statements):
+        """Native fixture writes: plain SQL into a schema the native owner created."""
+        assert Path(path).is_file(), ('seed target has no owner-created schema', path)
+        with sqlite3.connect(path, timeout=30) as db:
+            for sql, params in statements:
+                db.execute(sql, params)
+        self.steps.append({'name': 'sql:' + Path(path).name, 'statements': [[q, list(v)] for q, v in statements]})
+
     def up(self, owner, binary, tag):
+        if owner == 'bun':
+            self.enter_bun('up')
         log = (self.artifacts / f'{self.name}-{owner}-{tag}.log').open('w')
         self.logs.append(log)
         argv = [binary, 'server'] if owner == 'native' else [
             'bun', self.release / 'packages/hrc-cli/src/cli.ts', 'server', 'serve']
-        proc = subprocess.Popen([str(a) for a in argv], env=daemon_env(self.env), cwd=self.project, stdout=log, stderr=log)
+        proc = subprocess.Popen([str(a) for a in argv], env=daemon_env(self.env, bun=self.mode == 'bun'), cwd=self.project, stdout=log, stderr=log)
         self.procs.append(proc)
         for _ in range(300):
             assert proc.poll() is None, (owner, tag, 'owner exited', proc.returncode)
             try:
                 status, value, _ = self.http('GET', '/v1/status')
                 if status == 200:
+                    step = {'name': f'{owner}-{tag}-up', 'pid': proc.pid}
                     if owner == 'native':
                         assert Path(value['binaryPath']).resolve() == Path(binary).resolve()
+                        if Path(binary).resolve() == self.binary:
+                            check_native_status(value, self.native_provenance)
+                        opened = opened_files(proc.pid, self.root, (self.aspd,))
+                        (self.artifacts / f'opened-{self.name}-{owner}-{tag}.json').write_text(json.dumps(opened, indent=1) + '\n')
+                        step['stateStore'] = opened['stateStore']
                     else:
                         assert Path(value['packagePath']).resolve().is_relative_to(self.release)
                         assert value['release']['mode'] == 'unmanaged', value['release']
-                    self.steps.append({'name': f'{owner}-{tag}-up', 'pid': proc.pid})
+                    self.steps.append(step)
                     return proc
             except (OSError, HTTPException, ValueError):
                 pass
@@ -178,6 +233,7 @@ class Node:
                 p.wait(timeout=30)
         for log in self.logs:
             log.close()
+        reap_root(self.root, Path(self.artifacts) / f'reap-{self.name}')
 
 
 def registry_cases(endpoint, token):
@@ -240,16 +296,56 @@ def scope(task):
     return f'agent:{AGENT}:project:{PROJECT}:task:{task}'
 
 
+def seed_native(a, b, now):
+    """The Bun seed's rows, by SQL, into schemas the native owner created.
+
+    Each statement is the native writer's own (placement-ledger install and
+    retirement in federation/mod.rs and retirement.rs; registry establish and
+    designate-birth in registry_listener.rs), with the fixture's fixed clock.
+    B boots once natively so its owner creates the binding registry schema.
+    """
+    active = ("INSERT INTO placement_ledger (scope_ref, home_node_id, state, retired_at, retirement_reason, created_at, updated_at) "
+              "VALUES (?, ?, 'active', NULL, NULL, ?, ?)")
+    retire = ("UPDATE placement_ledger SET state='retired',retired_at=?,retirement_reason=?,updated_at=? "
+              "WHERE scope_ref=? AND home_node_id=? AND state='active'")
+    # A's placement ledger: local, retired and ledger-foreign scopes.
+    a.sql(a.db, [(active, (scope('local'), 'n4a', now, now)), (active, (scope('retired'), 'n4a', now, now)),
+                 (retire, (now, 'n4 fixture', now, scope('retired'), 'n4a')),
+                 (active, (scope('ledger-foreign'), 'n4b', now, now))])
+    b.down(b.up('native', b.binary, 'schema'))
+    registry = b.root / 'federation/binding-registry.sqlite'
+    establish = 'INSERT INTO binding_registry (scope_ref, home_node_id, created_at, updated_at) VALUES (?, ?, ?, ?)'
+    designate = ('INSERT INTO birth_designation (scope_ref, designation_epoch, home_node_id, provenance, birth_envelope_id, '
+                 "sender_scope_ref, designated_at, state, superseded_by, superseded_at) VALUES (?, 1, ?, ?, ?, ?, ?, 'live', NULL, NULL)")
+    # B's registry: foreign (B), registry-local (A), and an unborn designation for A.
+    b.sql(registry, [(establish, (scope('registry-foreign'), 'n4b', now, now)),
+                     (establish, (scope('registry-local'), 'n4a', now, now)),
+                     (establish, (scope('ledger-foreign'), 'n4b', now, now)),
+                     (designate, (scope('unborn'), 'n4a', 'default_home_node(sender)', 'EN-n4', scope('sender'), now))])
+    b.sql(b.db, [(active, (scope('registry-foreign'), 'n4b', now, now)), (active, (scope('ledger-foreign'), 'n4b', now, now))])
+
+
+def check_seed(registry, cases):
+    """The native seed reads back through the owners' own routes before it is trusted."""
+    bound = lambda name: (registry[name]['status'], (registry[name]['body'] or {}).get('binding', {}).get('homeNodeId'))
+    assert bound('consult-bound') == (200, 'n4b'), registry['consult-bound']
+    live = registry['designation-live']['body'] or {}
+    assert live.get('outcome') == 'designated' and live['designation']['state'] == 'live', live
+    for task, state, home in (('local', 'active', 'n4a'), ('retired', 'retired', 'n4a'), ('ledger-foreign', 'active', 'n4b')):
+        ledger = cases[f'none:locate:{task}']['body']['ledger']
+        assert (ledger['state'], ledger['record']['homeNodeId']) == (state, home), (task, ledger)
+
+
 def main():
     p = argparse.ArgumentParser()
     p.add_argument('--binary', type=Path, required=True)
-    p.add_argument('--installed-release', type=Path, required=True)
+    p.add_argument('--installed-release', type=Path, help='Bun release; read only when an owner is bun')
     p.add_argument('--aspd-socket', type=Path, required=True)
     p.add_argument('--scratch-root', type=Path, required=True)
     p.add_argument('--artifacts', type=Path, required=True)
-    p.add_argument('--owners', default='bun,native')
-    # B as native exercises the native registry listener from a Bun origin.
-    p.add_argument('--b-owner', choices=['bun', 'native'], default='bun')
+    p.add_argument('--owners', default='native', help='comma list; bun,native is the Bun comparison')
+    # B as bun exercises the Bun registry listener from a native origin.
+    p.add_argument('--b-owner', choices=['bun', 'native'], default='native')
     args = p.parse_args()
     if args.scratch_root.exists():
         raise SystemExit('scratch root must be fresh')
@@ -274,25 +370,30 @@ def main():
                ('peer-refused', peer(ports['b_peer'], ports['b_registry'], wrong)),
                ('peer-down', peer(ports['dead_peer'], ports['dead_registry'], token))]
     now = '2026-10-26T10:00:00.000Z'
-    # A's placement ledger: local, retired and ledger-foreign scopes.
-    a.bun_store('ledger', 'const db=openHrcDatabase(a[0]);const l=createPlacementLedgerRepository(db.sqlite);'
-                'l.installActive({scopeRef:a[1],homeNodeId:"n4a",updatedAt:a[4]});'
-                'l.installActive({scopeRef:a[2],homeNodeId:"n4a",updatedAt:a[4]});'
-                'l.retire({scopeRef:a[2],expectedHomeNodeId:"n4a",reason:"n4 fixture",retiredAt:a[4]});'
-                'l.installActive({scopeRef:a[3],homeNodeId:"n4b",updatedAt:a[4]});db.close()',
-                a.db, scope('local'), scope('retired'), scope('ledger-foreign'), now)
-    # B's registry: foreign (B), registry-local (A), and an unborn designation for A.
-    b.bun_store('registry', 'const r=openBindingRegistry(a[0]);'
-                'for(const [s,h] of [[a[1],"n4b"],[a[2],"n4a"],[a[3],"n4b"]])r.establish({scopeRef:s,homeNodeId:h,now:a[6]});'
-                'r.recordDesignation({scopeRef:a[4],homeNodeId:"n4a",provenance:"default_home_node(sender)",'
-                'birthEnvelopeId:"EN-n4",senderScopeRef:a[5],now:a[6]});r.close()',
-                b.root / 'federation/binding-registry.sqlite', scope('registry-foreign'), scope('registry-local'),
-                scope('ledger-foreign'), scope('unborn'), scope('sender'), now)
-    b.bun_store('ledger', 'const db=openHrcDatabase(a[0]);const l=createPlacementLedgerRepository(db.sqlite);'
-                'for(const s of [a[1],a[2]])l.installActive({scopeRef:s,homeNodeId:"n4b",updatedAt:a[3]});db.close()',
-                b.db, scope('registry-foreign'), scope('ledger-foreign'), now)
+    bun = 'bun' in args.owners.split(',') + [args.b_owner]
+    if bun:
+        # The Bun comparison seeds through the copied release's repositories, as before.
+        # A's placement ledger: local, retired and ledger-foreign scopes.
+        a.bun_store('ledger', 'const db=openHrcDatabase(a[0]);const l=createPlacementLedgerRepository(db.sqlite);'
+                    'l.installActive({scopeRef:a[1],homeNodeId:"n4a",updatedAt:a[4]});'
+                    'l.installActive({scopeRef:a[2],homeNodeId:"n4a",updatedAt:a[4]});'
+                    'l.retire({scopeRef:a[2],expectedHomeNodeId:"n4a",reason:"n4 fixture",retiredAt:a[4]});'
+                    'l.installActive({scopeRef:a[3],homeNodeId:"n4b",updatedAt:a[4]});db.close()',
+                    a.db, scope('local'), scope('retired'), scope('ledger-foreign'), now)
+        # B's registry: foreign (B), registry-local (A), and an unborn designation for A.
+        b.bun_store('registry', 'const r=openBindingRegistry(a[0]);'
+                    'for(const [s,h] of [[a[1],"n4b"],[a[2],"n4a"],[a[3],"n4b"]])r.establish({scopeRef:s,homeNodeId:h,now:a[6]});'
+                    'r.recordDesignation({scopeRef:a[4],homeNodeId:"n4a",provenance:"default_home_node(sender)",'
+                    'birthEnvelopeId:"EN-n4",senderScopeRef:a[5],now:a[6]});r.close()',
+                    b.root / 'federation/binding-registry.sqlite', scope('registry-foreign'), scope('registry-local'),
+                    scope('ledger-foreign'), scope('unborn'), scope('sender'), now)
+        b.bun_store('ledger', 'const db=openHrcDatabase(a[0]);const l=createPlacementLedgerRepository(db.sqlite);'
+                    'for(const s of [a[1],a[2]])l.installActive({scopeRef:s,homeNodeId:"n4b",updatedAt:a[3]});db.close()',
+                    b.db, scope('registry-foreign'), scope('ledger-foreign'), now)
     observations = {}
     try:
+        if not bun:
+            seed_native(a, b, now)
         b.up(args.b_owner, args.binary, 'home')
         registry = registry_cases(f'http://{TAILNET}:{ports["b_registry"]}', token)
         (args.artifacts / f'registry-{args.b_owner}.json').write_text(json.dumps(registry, indent=1) + '\n')
@@ -343,6 +444,8 @@ def main():
                 case('resolve:bad-ref', 'POST', '/v1/sessions/resolve', {'sessionRef': scope('registry-foreign')})
                 case('metadata-patch:not-object', 'PATCH', '/v1/sessions/metadata', [])
                 case('metadata-patch:retired', 'PATCH', '/v1/sessions/metadata', {'scopeRef': scope('retired'), 'laneRef': 'main', 'set': {'n4': 'x'}})
+                if not bun and tag == 'none':
+                    check_seed(registry, cases)
                 a.down(proc)
         print(json.dumps({owner: len(c) for owner, c in observations.items()}))
     finally:

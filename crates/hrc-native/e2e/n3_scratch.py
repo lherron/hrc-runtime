@@ -1,4 +1,4 @@
-"""N3 scratch guard on the shared copied-release helper.
+"""N3 scratch guard on the shared scratch helper (native by default, see n2_scratch).
 
 Broker hook addresses are daemon-process identity too. A headless broker must
 never inherit this task seat's live observer/callback socket from the shell.
@@ -42,7 +42,7 @@ class Scratch(BaseScratch):
             finally: probe.close()
         env={**self.env,'WRKQ_DB':str(self.root/'wrkq.db'),'WRKF_HOOK_CATALOG':str(catalog),'WRKQD_TOKEN':token}
         log=(self.artifacts/'wrkqd.log').open('w');self.logs.append(log)
-        proc=subprocess.Popen(['wrkqd','-addr',f'127.0.0.1:{port}','-db',str(self.root/'wrkq.db')],env=env,cwd=self.project,stdout=log,stderr=log)
+        proc=subprocess.Popen([str(Path.home()/'.local/bin/wrkqd'),'-addr',f'127.0.0.1:{port}','-db',str(self.root/'wrkq.db')],env=env,cwd=self.project,stdout=log,stderr=log)
         self.owners.append(proc)
         self.env.update(HRC_WRKQ_DB=f'rpc://127.0.0.1:{port}',WRKQ_DB=f'rpc://127.0.0.1:{port}',HRC_WRKQD_TOKEN_FILE=str(token_file),WRKQD_TOKEN_FILE=str(token_file),WRKQD_TOKEN='')
         for _ in range(100):

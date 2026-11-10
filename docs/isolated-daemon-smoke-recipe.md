@@ -8,9 +8,10 @@ needs its own daemon, started from your checkout.
 
 The manual recipe below and `just env-up` exercise the **retained Bun owner**,
 not the native daemon. For native owner probes, use the isolated substrate in
-`crates/hrc-native/e2e/n2_scratch.py`: it initializes a fresh schema through the
-installed release's Bun store, then starts the selected native binary. Native
-startup does not migrate an empty store. Keep scratch state separate from the
+`crates/hrc-native/e2e/n2_scratch.py`: it runs no Bun. It creates the schema
+with `rusthrc store migrate`, binds `hrc` to the binary under test, passes every
+root explicitly and reads back the store each daemon opened. Bun mode is entered
+only when a caller asks for a Bun owner or release (T-13064). Keep scratch state separate from the
 small evidence artifact directory; never substitute the shared daemon.
 
 For the Bun e2e suites, `just env-up` (`scripts/dev-env.sh`) already provisions a

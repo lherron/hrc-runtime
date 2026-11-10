@@ -1,16 +1,27 @@
 """Isolated scratch subject for N2 broker-turn workflows.
 
-One fresh /tmp root holds the copied Bun release, runtime/state dirs, wrkq
-ledger, project and federation config. Failure modes this guards: a scratch Bun
-daemon running from the atomic release tree (its startup prune deletes the
-production release), env leaking this seat's HRC/ASP identity into the scratch
-daemon or its brokers, production usage metrics, and a broker escaping the
-scratch runtime root.
+One fresh /tmp root holds the runtime/state dirs, wrkq ledger, project and
+federation config. Native is the default: the `hrc` CLI is the rusthrc binary
+under test, its provenance comes from `rusthrc --version`, and the store schema
+from `rusthrc store migrate`; no Bun runs.
+
+Bun mode is entered only when the caller asks for it (`up('bun')`, `.release`,
+`.release_provenance`); it then copies the named Bun release, runs the Bun
+unmanaged preflight and rebinds `hrc` to the copied Bun CLI, as before. It is
+never entered because a `bun` happens to be on PATH.
+
+Failure modes this guards: a scratch daemon reaching a live root (every root
+is passed explicitly and each native daemon's open files are read back), a
+scratch Bun daemon running from the atomic release tree (its startup prune
+deletes the production release), env leaking this seat's HRC/ASP identity into
+the scratch daemon or its brokers, production usage metrics, and a broker
+escaping the scratch runtime root.
 """
 from foundation import daemon_env
 from http.client import HTTPConnection, HTTPException
 import json
 import os
+import re
 from pathlib import Path
 import shutil
 import signal
@@ -57,6 +68,92 @@ def preflight_unmanaged(release, env):
     return value
 
 
+def native_provenance(binary):
+    """The binary's own identity: `rusthrc --version` names releaseId and sourceCommit.
+
+    No Bun preflight: rusthrc has no startup release prune, so the atomic-mode
+    refusal that protected production releases from a scratch Bun daemon has
+    nothing to protect here (T-13064 F4).
+    """
+    binary = Path(binary).resolve()
+    out = subprocess.run([str(binary), '--version'], capture_output=True, text=True, check=True,
+                         env={'PATH': '/usr/bin:/bin', 'HOME': os.environ.get('HOME', '')}, timeout=30).stdout.strip()
+    match = re.fullmatch(r'(\S+) (\S+) \(releaseId (\S+), sourceCommit (\S+)\)', out)
+    assert match, ('unrecognized --version', out)
+    return {'binary': str(binary), 'name': match[1], 'version': match[2],
+            'releaseId': match[3], 'sourceCommit': match[4],
+            'expectedMode': 'unmanaged' if match[3] == 'development' else 'atomic'}
+
+
+def check_native_status(value, provenance):
+    """The daemon that answered is the named binary, in the mode its version names."""
+    assert Path(value['binaryPath']).resolve() == Path(provenance['binary']), (value['binaryPath'], provenance)
+    mode = (value.get('release') or {}).get('mode')
+    assert mode == provenance['expectedMode'], ('release mode disagrees with --version', value.get('release'), provenance)
+
+
+def opened_files(pid, root, allowed=()):
+    """Read a daemon's open files back; every store and listener must be the scratch root's.
+
+    Returns the readback. Fails on a sqlite file outside `root`, a missing
+    `<root>/state/state.sqlite`, or any path under ~/praesidium/var other than
+    the explicitly passed `allowed` paths (the named aspd socket).
+    """
+    root = Path(root).resolve()
+    run = subprocess.run(['/usr/sbin/lsof', '-n', '-P', '-a', '-p', str(pid), '-Fn'],
+                         capture_output=True, text=True, timeout=30)
+    names = sorted({line[1:] for line in run.stdout.splitlines() if line.startswith('n') and line[1:].startswith('/')})
+    assert names, ('lsof read nothing for owner', pid, run.returncode, run.stderr)
+    live = (Path.home() / 'praesidium/var').resolve()
+    allowed = {str(Path(a).resolve()) for a in allowed}
+    stores = [n for n in names if re.search(r'\.sqlite(-wal|-shm)?$|\.db(-wal|-shm)?$', n)]
+    foreign = [n for n in stores if not Path(n).resolve().is_relative_to(root)]
+    reach = [n for n in names if Path(n).resolve().is_relative_to(live) and str(Path(n).resolve()) not in allowed]
+    state = str((root / 'state/state.sqlite').resolve())
+    value = {'pid': pid, 'root': str(root), 'stores': stores, 'foreignStores': foreign,
+             'liveReach': reach, 'stateStore': state in {str(Path(n).resolve()) for n in stores}, 'names': names}
+    assert not foreign and not reach and value['stateStore'], ('scratch daemon reached outside its root', value)
+    return value
+
+
+def reap_root(root, artifacts=None):
+    """Stop every process whose argv names this fresh scratch root (T-13064 F5).
+
+    Owner shutdown leaves hrcpty seats (hrc-pty, harness-broker, the harness)
+    running; only scratch processes can name a fresh root. Returns what was
+    reaped and writes it to `reaped.json` beside the artifacts.
+    """
+    names = {str(Path(root).absolute()), str(Path(root).resolve())}
+    def find():
+        out = subprocess.run(['/bin/ps', '-axo', 'pid=,ppid=,command='], capture_output=True, text=True).stdout
+        rows = [l.split(None, 2) for l in out.splitlines()]
+        rows = {int(r[0]): (int(r[1]), r[2] if len(r) > 2 else '') for r in rows if len(r) >= 2 and r[0].isdigit()}
+        mine, pid = set(), os.getpid()
+        while pid in rows and pid not in mine:  # never this driver or what launched it
+            mine.add(pid)
+            pid = rows[pid][0]
+        return {pid: cmd for pid, (_, cmd) in rows.items()
+                if pid not in mine and any(n + '/' in cmd for n in names)}
+    found = find()
+    for sig in (signal.SIGTERM, signal.SIGKILL):
+        for pid in find():
+            try:
+                os.kill(pid, sig)
+            except ProcessLookupError:
+                pass
+        for _ in range(50):
+            if not find():
+                break
+            time.sleep(.1)
+    left = find()
+    value = {'reaped': [{'pid': k, 'command': v[:300]} for k, v in sorted(found.items())], 'remaining': sorted(left)}
+    if artifacts:
+        Path(artifacts).mkdir(parents=True, exist_ok=True)
+        (Path(artifacts) / 'reaped.json').write_text(json.dumps(value, indent=1) + '\n')
+    assert not left, ('scratch processes survived SIGKILL', left)
+    return value
+
+
 class Scratch:
     def __init__(self, root, installed_release, aspd_socket, binary, artifacts, project_id='n2-t11823'):
         self.root = Path(root).absolute()
@@ -67,11 +164,15 @@ class Scratch:
         self.artifacts.mkdir(parents=True, exist_ok=True)
         self.binary = Path(binary).resolve()
         self.project_id = project_id
-        self.release = copy_release(installed_release, self.root / 'bun-release')
-        self.cli = self.release / 'packages/hrc-cli/bin/hrc.js'
+        # Only Bun mode reads it; native callers may still pass one.
+        self.installed_release = installed_release
+        self.mode, self._release, self._bun_provenance = 'native', None, None
+        self.steps, self.owners, self.logs = [], [], []
+        self.native_provenance = native_provenance(self.binary)
+        self.steps.append({'name': 'mode', 'mode': 'native', 'provenance': self.native_provenance})
         bin_dir = self.root / 'bin'
         bin_dir.mkdir()
-        (bin_dir / 'hrc').symlink_to(self.cli)
+        (bin_dir / 'hrc').symlink_to(self.binary)
         self.project = self.root / project_id
         self.project.mkdir()
         for d in ('run', 'state'):
@@ -90,16 +191,43 @@ class Scratch:
                    HRC_BROKER_DURABLE_IPC_ENABLED='1', HRC_HEADLESS_CODEX_BROKER_ENABLED='1',
                    HRC_CLAUDE_CODE_TMUX_BROKER_ENABLED='1')
         self.env = env
+        self.aspd_socket = Path(aspd_socket).resolve()
         assert Path(shutil.which('hrc', path=env['PATH'])).resolve() == self.cli.resolve()
-        self.release_provenance = preflight_unmanaged(self.release, env)
         self.db_path = self.root / 'state/state.sqlite'
         self.socket = self.root / 'run/hrc.sock'
-        self.steps, self.owners, self.logs = [], [], []
+
+    # -- mode -------------------------------------------------------------
+    @property
+    def cli(self):
+        return self._release / 'packages/hrc-cli/bin/hrc.js' if self._release else self.binary
+
+    @property
+    def release(self):
+        return self.enter_bun('release')
+
+    @property
+    def release_provenance(self):
+        self.enter_bun('release_provenance')
+        return self._bun_provenance
+
+    def enter_bun(self, why):
+        """Bun mode, on the caller's request only: copied release, preflight, Bun CLI as `hrc`."""
+        if self._release is None:
+            assert self.installed_release, 'Bun mode needs --installed-release'
+            self._release = copy_release(self.installed_release, self.root / 'bun-release')
+            link = self.root / 'bin/hrc'
+            link.unlink()
+            link.symlink_to(self.cli)
+            assert Path(shutil.which('hrc', path=self.env['PATH'])).resolve() == self.cli.resolve()
+            self._bun_provenance = preflight_unmanaged(self._release, self.env)
+            self.mode = 'bun'
+            self.steps.append({'name': 'mode', 'mode': 'bun', 'enteredBy': why})
+        return self._release
 
     # -- subprocesses -----------------------------------------------------
     def command(self, name, argv, timeout=300, check=True, stdin=None):
         owners = {'hrc': self.cli, **{tool: Path.home() / '.local/bin' / tool
-                                     for tool in ('wrkq', 'wrkc', 'wrkf')}}
+                                     for tool in ('wrkq', 'wrkc', 'wrkf', 'wrkqadm', 'wrkqd')}}
         argv = [owners.get(str(argv[0]), argv[0]), *argv[1:]]
         run = subprocess.run([str(v) for v in argv], env=self.env, cwd=self.project, input=stdin,
                              capture_output=True, text=True, timeout=timeout)
@@ -121,23 +249,30 @@ class Scratch:
         self.command('schema-create', [self.binary, 'store', 'migrate', self.db_path])
 
     def up(self, kind, tag):
+        if kind == 'bun':
+            self.enter_bun('up')
         log = (self.artifacts / f'{kind}-{tag}.log').open('w')
         self.logs.append(log)
         argv = [self.binary, 'server'] if kind == 'native' else [
             'bun', self.release / 'packages/hrc-cli/src/cli.ts', 'server', 'serve']
-        proc = subprocess.Popen([str(a) for a in argv], env=daemon_env(self.env, (self.root / 'bin',)), cwd=self.project, stdout=log, stderr=log)
+        env = daemon_env(self.env, (self.root / 'bin',), bun=self.mode == 'bun')
+        proc = subprocess.Popen([str(a) for a in argv], env=env, cwd=self.project, stdout=log, stderr=log)
         self.owners.append(proc)
         for _ in range(300):
             assert proc.poll() is None, (kind, 'owner exited', proc.returncode)
             try:
                 status, value = self.http('GET', '/v1/status')
                 if status == 200:
+                    step = {'name': f'{kind}-up', 'pid': proc.pid}
                     if kind == 'native':
-                        assert Path(value['binaryPath']).resolve() == self.binary
+                        check_native_status(value, self.native_provenance)
+                        opened = opened_files(proc.pid, self.root, (self.aspd_socket,))
+                        (self.artifacts / f'opened-{kind}-{tag}.json').write_text(json.dumps(opened, indent=1) + '\n')
+                        step['stateStore'] = opened['stateStore']
                     else:
                         assert Path(value['packagePath']).resolve().is_relative_to(self.release)
                         assert value['release']['mode'] == 'unmanaged', value['release']
-                    self.steps.append({'name': f'{kind}-up', 'pid': proc.pid})
+                    self.steps.append(step)
                     return proc
             except (OSError, HTTPException, ValueError):
                 pass
@@ -212,6 +347,7 @@ class Scratch:
                         owner.wait(timeout=10)
             for log in self.logs:
                 log.close()
+            reap_root(self.root, self.artifacts)
 
     def dump(self, name, extra=None):
         """Every durable row the workflow wrote, for per-case compares."""
