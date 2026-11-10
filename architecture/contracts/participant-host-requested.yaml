@@ -77,8 +77,29 @@ predicate: >
   already-parked reservations gain no backfill event on upgrade, but their
   stored state appears in the reads. Kernel and board projection behavior
   remains outside this contract.
-authority: Daedalus approval of T-13086 specification r2 submitted in wrkc:EN-49738, 2026-11-10; r2.1 sentinel attribution correction authorized by Mable in EN-49789 and reported in EN-49790 after the first acceptance run exposed the NOT NULL constraint; supersedes rejected r1 proposal in EN-49735 without changing its underlying participant lifecycle law; Daedalus approval of the T-13153 session parked disposition addendum submitted in EN-49949 against task etag 3, 2026-11-10
+  T-13189 adds local POST /v1/participants/unpark, a clear-only operation
+  addressed by scopeRef and laneRef, with laneRef defaulting to main. In one
+  transaction it finds the exact reservation and calls the same store helper
+  with null disposition. A 200 response contains reservationId, scopeRef,
+  laneRef, null disposition, null dispositionAt and changed, which is false
+  when the reservation was not parked. A value change appends the same
+  participant.disposition_changed event atomically; an unchanged call appends
+  nothing. Missing reservations use the existing not-found refusal naming
+  scope and lane; missing or non-string scopeRef uses the existing bad-request
+  shape. Routing and accounting follow participant registration.
+  Unpark does not require the evicted runtime's row and does not replay
+  eviction. It cannot set any disposition, release a reservation, change a
+  binding or attempt, or change continuation, eviction, admission, knock
+  eligibility or its rate limit. Existing reads and refusal text observe the
+  cleared columns. No migration or new event kind is introduced. Caller trust
+  remains the local daemon socket trust of terminate and register; proof that
+  the caller parked the address is unsupported. Concurrent park and unpark
+  are last-write-wins, with request ordering owned by the host. Automatic
+  expiry and backfill remain unsupported.
+authority: Daedalus approval of T-13086 specification r2 submitted in wrkc:EN-49738, 2026-11-10; r2.1 sentinel attribution correction authorized by Mable in EN-49789 and reported in EN-49790 after the first acceptance run exposed the NOT NULL constraint; supersedes rejected r1 proposal in EN-49735 without changing its underlying participant lifecycle law; Daedalus approval of the T-13153 session parked disposition addendum submitted in EN-49949 against task etag 3, 2026-11-10; Daedalus approval of the T-13189 participant-unpark addendum submitted in EN-50196, task specification read at etag 2, 2026-11-10
 source:
+  - wrkq:T-13189
+  - wrkc:EN-50196
   - wrkq:T-13153
   - wrkc:EN-49949
   - wrkc:EN-49964
@@ -107,6 +128,7 @@ source:
   - crates/hrc-native/src/server/placement/federation/routing.rs
   - crates/hrc-native/src/server/placement/federation/peer_listener.rs
   - crates/hrc-native/src/server.rs
+  - crates/hrc-native/src/server/front/accounting_routes.rs
 validation_scope: >
   The requester's r2 gates cover actual external retirement with its retained
   BOUND binding, each refusal door independently, suppression controls and
@@ -125,6 +147,13 @@ validation_scope: >
   a generated seed or copy at max3 scale, without querying the live store,
   and the requester's just verify with its cargo leg. No acceptance driver
   is added to the recurring verify gate by this addendum.
+  T-13189 adds requester-run participant_disposition.py acceptance for park
+  then unpark with null session-read members and exactly one null event,
+  unchanged replay without an event, preserved held reservation and subsequent
+  registration admission, and unknown-address refusal without writes. Mable's
+  installed acceptance clears the stale max3 acceptance address through the
+  route and observes its removal from the parked list in prae seat list.
+  This is design approval only; these acceptance results remain pending.
 last_verified: 2026-11-10 r2 design review plus r2.1 factual correction verified against baseline.sql NOT NULL columns and activity trigger and migrate/mod.rs sentinel attribution; acceptance remains pending, no builds or tests run by the reviewer
 design_review: >
   2026-11-10 T-13153 APPROVE in EN-49964 replying to EN-49949. Verified the existing three
@@ -135,4 +164,12 @@ design_review: >
   approval of the submitted design, not implementation acceptance; prior
   last_verified evidence is unchanged. No builds, tests, installs or live
   store queries were run by the reviewer.
+  2026-11-10 T-13189 APPROVE replying to EN-50196, specification at task etag 2.
+  Verified exact unique reservation addressing, the existing helper's null
+  write and changed-only event, registration and succession clearing,
+  eviction replay fencing, disposition-independent knock and birth-refusal
+  predicates, session reads, registration routing/accounting and mutation
+  ledger wake against source. The clear changes display state only and
+  preserves hrc-runtime.participant-session-lifecycle. No builds, tests,
+  installs or live store queries were run; implementation acceptance pending.
 reopen_when: Knock eligibility or refusal coverage, event payload or attribution, rate limit, refusal preservation, host-start authority, parked disposition ownership or clearing, session-read field presence or meaning, change-event atomicity or coverage, bounded page query shape, peer field preservation, or the existing stream contract changes.
