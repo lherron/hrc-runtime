@@ -253,6 +253,20 @@ async fn prepare_dispatch(server: &Shared, birth: &Birth<'_>) -> Result<(Value, 
     {
         let mut db = server.store.lock().unwrap();
         db.prepare_broker(&record)?;
+        // Both the initial compile and the unpinned retry carry profile
+        // metadata here. Replace only the launch layer; the store retains
+        // valid leaves, records rejections and leaves API overrides intact.
+        if let Some(metadata) = prepared.response.get("sessionMetadata") {
+            db.write_metadata(hrc_store::MetadataWrite {
+                scope,
+                lane: hrc_store::storage_lane(session["laneRef"].as_str().unwrap_or("main")),
+                source: "launch",
+                set: metadata,
+                clear: &[],
+                replace: true,
+                updated_by: string(&identity, "runtimeId")?,
+            })?;
+        }
     }
     // Read committed bytes at P, not the in-memory producer graph.
     let record = server
