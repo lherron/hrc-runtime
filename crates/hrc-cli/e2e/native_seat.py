@@ -24,8 +24,10 @@ from metrics_isolation import isolated_suite
 
 
 class SeatAspd(DeclaringAspd):
+    agents = ('tabularasa',)
+
     def handle(self, method, params):
-        if method == 'aspc.resolveRuntimeDeclaration' and params['context']['agentId'] != 'tabularasa':
+        if method == 'aspc.resolveRuntimeDeclaration' and params['context']['agentId'] not in self.agents:
             return {'schemaVersion': 'aspc-resolve-runtime-declaration-response/v1', 'ok': False,
                     'source': {'agentProfile': {'state': 'missing'}},
                     'diagnostics': [{'severity': 'error', 'code': 'agent_not_found', 'message': 'unknown fixture agent'}]}
@@ -36,6 +38,8 @@ class SeatAspd(DeclaringAspd):
 
 
 class Fixture:
+    agents = ('tabularasa',)
+
     def __init__(self, args):
         self.args = args
         args.artifacts.mkdir(parents=True, exist_ok=True)
@@ -69,13 +73,16 @@ class Fixture:
                                   'hostedDrivers': ['codex-app-server']}}
             (release_root / 'release.json').write_text(json.dumps({**{k: release[k] for k in ('releaseId', 'sourceCommit', 'builtAt')},
                 'protocol': 'harness-broker/0.2', 'hostedDrivers': release['worker']['hostedDrivers']}))
-            agent = s.root / 'agents/tabularasa'
-            agent.mkdir(parents=True)
-            (agent / 'agent-profile.toml').write_text('version = 4\n[identity]\ndisplay = "CLI fixture"\n[provisioning]\nharness = "codex-hrcpty"\n[spaces]\nbase = []\n')
+            for name in self.agents:
+                agent = s.root / 'agents' / name
+                agent.mkdir(parents=True)
+                (agent / 'agent-profile.toml').write_text('version = 4\n[identity]\ndisplay = "CLI fixture"\n[provisioning]\nharness = "codex-hrcpty"\n[spaces]\nbase = []\n')
             if getattr(self.args, 'harness_config', None):
                 shutil.copy(self.args.harness_config, s.project / 'asp-targets.toml')
             else:
                 self.asp = SeatAspd(s.aspd_socket, release, s.artifacts / 'aspd.ndjson', s.project)
+                self.asp.agents = self.agents
+            agent = s.root / 'agents/tabularasa'
             s.env.update(NO_COLOR='1', FORCE_COLOR='0', ASP_AGENTS_ROOT=str(s.root / 'agents'))
             s.up('native', 'cli')
             status = self.call('/v1/status')
@@ -135,7 +142,9 @@ class Fixture:
                 self.s.dump('rows', {'steps': self.s.steps})
         finally:
             try:
-                prefixes = (self.prefix, 'agent:summarizer:project:n5-t11819:task:stacked:') if getattr(self.args, 'harness_config', None) else self.prefix
+                prefixes = tuple('agent:' + name + ':project:n5-t11819:task:' for name in self.agents)
+                if getattr(self.args, 'harness_config', None):
+                    prefixes += ('agent:summarizer:project:n5-t11819:task:stacked:',)
                 self.s.cleanup(prefixes)
             finally:
                 if self.asp:

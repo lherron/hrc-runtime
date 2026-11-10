@@ -17,9 +17,10 @@ invariants and clean their scratch roots. `lifecycle_credentials.py` uses the
 shared deterministic real-hrcpty seat fixture. None of these needs a model.
 The retired front proxy and full comparison orchestrator are deleted.
 
-T-13074 follow-on List (retained, not native-qualified): lifecycle_actions,
-lifecycle_peer, runtime_reads, maintenance, session_index, session_projection,
-runtimes_start, turn_no_intent, steer_no_intent. `error_wire.py` retains its
+T-13074 follow-on List (retained, not native-qualified): runtime_reads,
+maintenance, session_index, session_projection. T-13117 qualified lifecycle_actions,
+lifecycle_peer, runtimes_start, turn_no_intent and steer_no_intent with private
+native actors and deterministic broker turns. `error_wire.py` retains its
 422 capability assertion and is product-blocked on native cold schema admission;
 see the task's `error-wire-judgment.md`. Lists do not count as passing suites.
 
@@ -31,7 +32,8 @@ The triage was posted before deletion as T-11945 comment C-32046; the complete
 task-body/comment reference snapshot is in that task's artifacts. The gate
 signature history was checked through 178a9474; `evaluate` was unchanged.
 
-Reusable modules: `n2_scratch.py`, `n3_scratch.py`, `n2_aspd_proxy.py`, and
+Reusable modules: `lifecycle_fixture.py`, `no_intent_fixture.py`,
+`hrc-cli/e2e/native_seat.py`, `n2_scratch.py`, `n3_scratch.py`, `n2_aspd_proxy.py`, and
 `n4_federation.Node`. The scratch helpers are native by default and run no Bun;
 `--installed-release` is read only when a caller asks for a Bun owner, release or
 store fixture (T-13064).
@@ -79,9 +81,9 @@ Deleted entries stay listed to explain their removal; their source remains in gi
 | `error_wire.py` | T-13074 List: follow-on conversion; not native-qualified. 422 assertion retained; product-blocked capability admission. | list |
 | `ensure_archived_successor.py` | Native archived succession: generation, inherited intent/continuation, repeat identity and continuity. | keep-manual |
 | `front_door_report.py` | none — task-time acceptance measurement for completed T-11822; the front proxy is now retired (T-13074) | delete |
-| `lifecycle_actions.py` | T-13074 List: follow-on conversion; not native-qualified.  | list |
+| `lifecycle_actions.py` | Six granted restart/stop variants, valid non-primary credential refusals, reason/unknown-node refusals, drain admission, successor PID and durable grant facts. | keep-manual |
 | `lifecycle_credentials.py` | Native real-runtime credential rotation, file protection, authorization refusals and revocation. | keep-manual |
-| `lifecycle_peer.py` | T-13074 List: follow-on conversion; not native-qualified.  | list |
+| `lifecycle_peer.py` | Two private native owners: forwarded primary restart/stop grant, remote boot proof, non-primary refusals and origin unchanged. | keep-manual |
 | `lifecycle_rows.py` | Native boot/stop facts, predecessor classification, lastRestart provenance and immutable history. | keep-manual |
 | `lifecycle_shutdown.py` | Native clean/held-request shutdown and bounded drain, with listener variants. | keep-manual |
 | `retention_auto_vacuum.py` | A non-incremental scratch store keeps expired bundle directories and artifact/watch pointers when retention refuses; `--reproduce` demonstrates the pre-fix gap (T-13046). | keep-manual |
@@ -130,16 +132,16 @@ Deleted entries stay listed to explain their removal; their source remains in gi
 | `runtime_key_order.py` | none — completed T-11880 capture analysis; promoted maintenance and existing conformance key-order comparisons retain wire checks | delete |
 | `runtime_reads.py` | T-13074 List: follow-on conversion; not native-qualified.  | list |
 | `runtime_surfaces.py` | Real ready-seat attachment and durable surface fences on isolated state. (requires explicit scratch/capture inputs; retained qualification) | keep-manual |
-| `runtimes_start.py` | T-13074 List: follow-on conversion; not native-qualified.  | list |
+| `runtimes_start.py` | Exact/suffix claims, independent canonical SHA-256 hashes, replay/conflict/refusal/reuse and pinned initial-message delivery. | keep-manual |
 | `schema_refusal.py` | Gate3: schema refusal preserves canonical DB and control files. | promote |
 | `server_owner.py` | Native owner recovery and malformed/live/dead/replaced lock controls. | keep-manual |
 | `session_index.py` | T-13074 List: follow-on conversion; not native-qualified.  | list |
 | `session_projection.py` | T-13074 List: follow-on conversion; not native-qualified.  | list |
-| `steer_no_intent.py` | T-13074 List: follow-on conversion; not native-qualified.  | list |
+| `steer_no_intent.py` | No-intent 422 with zero runtimes; direct and CLI stored-intent revival, completed messages and distinct runtime instances on the same host. Real harness qualification requires explicit config. | keep-manual |
 | `steer_returns_on_admission.py` | T-12243: a steer to a codex-hrcpty stub seat answers at admission, both when it starts a long turn on an idle seat and when it lands in that open turn (the pre-fix binary held the response until the run ended). Self-contained (stub broker, fake aspd); `--artifacts` required. | keep-manual |
 | `steer_timeout.py` | T-12228: a steer past the 20 s RPC bound into a live codex-hrcpty stub seat fails that submission only (binding kept, runtime not stale, next delivery on the same runtime); the orphan sweep preserves a stale row whose broker answers and delivery then fails closed instead of minting; terminating a never-launched runtime keeps the continuation. Self-contained (stub broker, fake aspd); `--artifacts` required. | keep-manual |
 | `target_placement.py` | Real target-session intent and placement reads, on an existing ready scratch seat. (requires explicit scratch/capture inputs; retained qualification) | keep-manual |
-| `turn_no_intent.py` | T-13074 List: follow-on conversion; not native-qualified.  | list |
+| `turn_no_intent.py` | No-intent steer refusal control; native CLI missing-intent fallback births the same host session, completes and persists placement. | keep-manual |
 
 ## Embedded kernel history (T-12141)
 

@@ -1,95 +1,107 @@
 #!/usr/bin/env python3
-"""POST /v1/runtimes/start on Bun and native, compared case by case (T-11911).
+"""Native exact/suffix claim, replay, refusal and ensure/reuse contracts.
 
-Each owner runs on its own fresh scratch root: a `cp -R` of the installed Bun
-release, a private wrkqd, and a peerless federation.json with the gate in
-enforce mode (the exact and implicit-suffix branches refuse without one). The
-cases are the request shapes live callers send:
-
-  exact   kernel seat.summon, iOS new-session, force-primary create
-          ({sessionRef, conflictPolicy:"reject", summonIntent:"implicit"})
-  suffix  kernel fresh summon and iOS roster (implicit), `hrc start
-          --on-conflict suffix` (explicit_local)
-  ensure  workflow interact runs, force-primary launch successor, `hrc start`
-          without a prompt, `hrc resume --no-attach` ({hostSessionId, intent})
-
-Failure modes this guards: the route not served (404 route.not_served, the
-negative control: point --native-binary at a build without the route and the
-driver must fail); a claim that reports another slot, scope or replay flag; an
-occupied exact scope that is reused or mutated instead of refused 409
-session_scope_occupied; a reused key with another body that is not refused
-idempotency_key_conflict; a durable roster_claims hash that differs from Bun's
-own hash function for the same request (a claim made by one owner must replay
-on the other across the flip); a second ensure start that births a second
-runtime instead of reusing the live one; and refusals with another status, code
-or detail. Each side's normalized observations are written next to a diff.
+Expected hashes independently implement broker/start.rs Claim::parse: sorted
+JSON keys, no timestamp elision, null absent restartStyle, implicit summonIntent
+included for exact and implicit suffix only. No producer executable is an oracle.
 """
-import argparse
+import copy
 import hashlib
 import json
 from pathlib import Path
-import re
-import subprocess
 import sys
-import time
 
-from n3_scratch import Scratch
-from n4_federation import TAILNET, free_port
+ROOT = Path(__file__).resolve().parents[3]
+sys.path.insert(0, str(ROOT / 'crates/hrc-cli/e2e'))
+from native_seat import Fixture, arguments
+from metrics_isolation import isolated_suite
+from n4_federation import local_tailnet_address, free_port
 
-PROJECT = 'rs-t11911'
+PROJECT = 'n5-t11819'
 AGENT = 'tabularasa'
-NODE = 'max3'
-ARTIFACTS = Path.home() / 'praesidium/var/wrkq-artifacts/T-11911'
-ID = re.compile(r'\b(hsid|rt|run|inv|op|req|trace|input|lease|compile|plan-op|attached)-[0-9a-f-]{8,}\b')
-VOLATILE = {'createdAt', 'updatedAt', 'created_at', 'updated_at', 'ts', 'startedAt', 'lastActivityAt',
-            'observedAt', 'elapsedMs', 'ms', 'pid', 'durationMs'}
 
 
 def scope(task):
     return f'agent:{AGENT}:project:{PROJECT}:task:{task}'
 
 
-def normalize(value, ids, root):
-    """Replace ids by first-appearance placeholders, drop volatile keys, root → <root>."""
-    if isinstance(value, dict):
-        return {k: normalize(v, ids, root) for k, v in value.items() if k not in VOLATILE}
-    if isinstance(value, list):
-        return [normalize(v, ids, root) for v in value]
-    if isinstance(value, str):
-        value = value.replace(str(root.resolve()), '<root>').replace(str(root), '<root>')
-        return ID.sub(lambda m: ids.setdefault(m.group(0), f'<{m.group(1)}#{len(ids)}>'), value)
-    return value
+def claim_hash(body):
+    policy = body['conflictPolicy']
+    field = 'sessionRef' if policy == 'reject' else 'baseSessionRef'
+    hashed = {field: body[field], 'conflictPolicy': policy,
+              'runtimeIntent': body['runtimeIntent'], 'restartStyle': body.get('restartStyle')}
+    if policy == 'reject' or body.get('summonIntent') == 'implicit':
+        hashed['summonIntent'] = 'implicit'
+    return hashlib.sha256(json.dumps(hashed, sort_keys=True, separators=(',', ':'), ensure_ascii=False).encode()).hexdigest()
 
 
-def bun_hash(release, body):
-    """Bun's own claim hash for this request: the cross-owner replay oracle."""
-    src = release / 'packages/hrc-server/src'
-    script = ('const [p,e,s]=await Promise.all([import(process.argv[1]),import(process.argv[2]),import(process.argv[3])]);'
-              'const r=p.parseStartRuntimeRequest(JSON.parse(process.argv[4]));'
-              'console.log(r.conflictPolicy==="reject"?e.exactStartRequestHash(r):s.suffixStartRequestHash(r))')
-    out = subprocess.run(['bun', '-e', script, str(src / 'parsers/runtime.ts'), str(src / 'exact-claim.ts'),
-                          str(src / 'roster-claim.ts'), json.dumps(body)],
-                         cwd=release, capture_output=True, text=True, check=True)
-    return out.stdout.strip()
+def expectations(side):
+    """Independent native statuses, identities, replay and claim hash contract."""
+    c, failures = side['cases'], []
+
+    def want(name, status, code=None):
+        got = c.get(name)
+        if got is None:
+            return failures.append(f'{name}: case not run')
+        body = got['body'] if isinstance(got['body'], dict) else {}
+        err = body.get('error', {}) if isinstance(body.get('error'), dict) else {}
+        if err.get('code') == 'route.not_served' or 'not_served' in json.dumps(body):
+            failures.append(f'{name}: route not served ({got["status"]} {body})')
+        elif got['status'] != status or (code and err.get('code') != code):
+            failures.append(f'{name}: want {status} {code or ""}, got {got["status"]} {err.get("code")}')
+
+    want('exact.claim', 200)
+    want('exact.replay', 200)
+    want('exact.occupied', 409, 'session_scope_occupied')
+    want('exact.key-conflict', 409, 'idempotency_key_conflict')
+    want('suffix.base', 200)
+    want('suffix.next', 200)
+    want('suffix.replay', 200)
+    want('suffix.explicit-local', 200)
+    want('ensure.start', 200)
+    want('ensure.reuse', 200)
+    for name in ('ensure.allow-stale', 'ensure.default-style', 'ensure.claimed-seat'):
+        want(name, 200)
+    want('ensure.unknown-host', 404, 'unknown_host_session')
+    want('ensure.no-intent', 422, 'missing_runtime_intent')
+    want('exact.explicit-local-refused', 400, 'malformed_request')
+    for name in ('bad.policy', 'bad.suffix-host', 'bad.suffix-no-key'):
+        want(name, 400, 'malformed_request')
+    want('bad.exact-no-intent', 422, 'missing_runtime_intent')
+    if failures:
+        return failures
+    claim = lambda n: c[n]['body'].get('claim', {})
+    if claim('exact.claim').get('replayed') is not False or claim('exact.replay').get('replayed') is not True:
+        failures.append('exact replay flag')
+    if c['exact.claim']['body']['hostSessionId'] != c['exact.replay']['body']['hostSessionId']:
+        failures.append('exact replay changed hostSessionId')
+    for name, result in c.items():
+        if result['status'] >= 400 and result['mutated']:
+            failures.append(name + ': refusal mutated rows')
+    if [claim(n).get('slot') for n in ('suffix.base', 'suffix.next', 'suffix.replay')] != ['sx1', 'sx1-nova', 'sx1']:
+        failures.append('suffix slots: ' + str([claim(n).get('slot') for n in ('suffix.base', 'suffix.next', 'suffix.replay')]))
+    if any(c['ensure.start']['body'].get('runtimeId') != c[name]['body'].get('runtimeId')
+           for name in ('ensure.reuse', 'ensure.allow-stale', 'ensure.default-style')):
+        failures.append('ensure reuse birthed a second runtime')
+    for k, ok in side['hashMatchesSpec'].items():
+        if not ok:
+            failures.append(f'roster_claims.request_hash for {k} differs from the canonical claim hash')
+    return failures
 
 
-def run_owner(owner, binary, args, out_dir):
-    root = args.scratch_root / owner
-    s = Scratch(root, args.installed_release, args.aspd_socket, binary, out_dir, project_id=PROJECT)
-    # Enforced gate on a peerless node that hosts its own binding registry (on
-    # a private tailnet port), so this node is home for every scope it births.
-    config = s.root / 'federation.json'
-    # The node is named max3 because the agent profile's provisioning directive
-    # names max3; the config is private and has no peers, so nothing real is reached.
-    config.write_text(json.dumps({'nodeId': NODE, 'peers': {},
-                                  'registry': {'bind': f'http://{TAILNET}:{free_port()}'},
-                                  'gate': {'mode': 'enforce', 'registryHost': NODE}}))
-    config.chmod(0o600)
-    ids, cases, hashes = {}, {}, {}
-    try:
-        s.init_substrate()
-        s.up(owner, 'runtimes-start')
-
+@isolated_suite
+def main():
+    args = arguments().parse_args()
+    with Fixture(args) as f:
+        s = f.s
+        s.down(s.owners[-1])
+        config = s.root / 'federation.json'
+        config.write_text(json.dumps({'nodeId': 'max3', 'peers': {},
+            'registry': {'bind': f'http://{local_tailnet_address()}:{free_port()}'},
+            'gate': {'mode': 'enforce', 'registryHost': 'max3'}}))
+        config.chmod(0o600)
+        s.up('native', 'claims')
+        cases, hashes = {}, {}
         def snapshot(scopes):
             marks = ','.join('?' * len(scopes))
             rows = {
@@ -130,96 +142,35 @@ def run_owner(owner, binary, args, out_dir):
             return status, value
 
         def intent_for(task, kernel=True):
-            status, value = s.http('POST', '/v1/declarations/resolve', {
-                'scopeRef': scope(task), 'runMode': 'task', 'interactive': True, 'preferredMode': 'headless'})
-            assert status == 200, ('declarations/resolve', status, value)
-            intent = value['intent']
+            intent = copy.deepcopy(f.intent)
             if kernel:
-                # seat.summon's correlation; the ensure-shape callers send the declared intent as-is.
                 intent['placement'].setdefault('correlation', {})['sessionRef'] = scope(task) + '/lane:main'
             return intent
-
-        if args.deferred_message_only:
-            checks = []
-
-            def check(name, ok, **evidence):
-                checks.append({'name': name, 'ok': bool(ok), **evidence})
-
-            for policy in ('reject', 'suffix'):
-                task = 'deferred-' + policy
-                target = scope(task)
-                marker = 'DEFERRED_MESSAGE_' + policy.upper()
-                launch = intent_for(task)
-                # Explicit test selection: never dispatch the historical
-                # tabularasa Claude profile for this recovery qualification.
-                launch['selection'] = {'harness': 'codex-hrcpty', 'modelProvider': 'openai-codex',
-                                       'model': 'gpt-6.1-sol', 'reasoningEffort': 'medium', 'presentation': True}
-                bound = {**launch, 'initialPrompt': 'Reply only ' + marker}
-                key = 't12316-' + policy
-                request = {'runtimeIntent': bound, 'conflictPolicy': policy, 'idempotencyKey': key,
-                           'restartStyle': 'reuse_pty', 'summonIntent': 'implicit',
-                           'sessionRef' if policy == 'reject' else 'baseSessionRef': target + '/lane:main'}
-                status, claim = case(policy + '.deferred-claim', request, [target])
-                check(policy + '.deferred-claim', status == 200, status=status, response=claim)
-                if status != 200:
-                    continue
-                host = claim['hostSessionId']
-                # The owner must bind the message without delivering it at
-                # claim/start. Only the following pinned turn carries it.
-                check(policy + '.not-delivered-by-claim',
-                      marker not in json.dumps(s.rows('SELECT * FROM inputs')))
-                turn = {'hostSessionId': host, 'idempotencyKey': key, 'prompt': bound['initialPrompt'],
-                        'runtimeIntent': launch, 'waitFor': 'accepted', 'waitForCompletion': False}
-                status, dispatched = case(policy + '.pinned-turn', turn, [target], '/v1/turns')
-                check(policy + '.pinned-turn', status in (200, 202) and bool(dispatched.get('runId')),
-                      status=status, response=dispatched)
-                if status not in (200, 202) or not dispatched.get('runId'):
-                    continue
-                s.wait_completed(dispatched['runId'], timeout=120)
-                status, repeated = case(policy + '.claim-replay', request, [target])
-                check(policy + '.claim-replay', status == 200 and repeated.get('hostSessionId') == host
-                      and repeated.get('claim', {}).get('replayed') is True)
-                status, replay = case(policy + '.turn-replay', turn, [target], '/v1/turns')
-                runs = s.rows('SELECT run_id FROM runs WHERE host_session_id=? AND dispatch_idempotency_key=?',
-                              (host, key))
-                check(policy + '.one-initial-turn', status in (200, 202)
-                      and replay.get('runId') == dispatched['runId'] and len(runs) == 1, runs=runs)
-                changed = {**request, 'runtimeIntent': {**bound, 'initialPrompt': 'changed message'}}
-                status, refused = case(policy + '.changed-message', changed, [target])
-                check(policy + '.changed-message-refused', status == 409
-                      and refused.get('error', {}).get('code') == 'idempotency_key_conflict'
-                      and not cases[policy + '.changed-message']['mutated'])
-                status, refused = case(policy + '.ensure-prompt', {'hostSessionId': host, 'intent': bound}, [target])
-                check(policy + '.ensure-still-refuses-prompt', status == 503
-                      and refused.get('error', {}).get('detail', {}).get('reason') == 'start-prompt-not-ported')
-            value = {'checks': checks, 'cases': cases, 'ok': bool(checks) and all(c['ok'] for c in checks)}
-            (out_dir / 'native-deferred.json').write_text(json.dumps(value, indent=2) + '\n')
-            return value
 
         # A: exact claim (kernel summon / iOS reject / force-primary create).
         ex = scope('ex1')
         exact = {'sessionRef': ex + '/lane:main', 'runtimeIntent': intent_for('ex1'), 'conflictPolicy': 'reject',
-                 'summonIntent': 'implicit', 'idempotencyKey': f'rs-{owner}-exact-1', 'restartStyle': 'reuse_pty'}
-        hashes['exact'] = bun_hash(s.release, exact)
+                 'summonIntent': 'implicit', 'idempotencyKey': f'rs-native-exact-1', 'restartStyle': 'reuse_pty'}
+        hashes['exact'] = claim_hash(exact)
         case('exact.claim', exact, [ex])
         case('exact.replay', exact, [ex])
-        case('exact.occupied', {**exact, 'idempotencyKey': f'rs-{owner}-exact-2'}, [ex])
+        case('exact.occupied', {**exact, 'idempotencyKey': f'rs-native-exact-2'}, [ex])
         case('exact.key-conflict', {**exact, 'restartStyle': 'fresh_pty'}, [ex])
         case('exact.explicit-local-refused', {**exact, 'summonIntent': 'explicit_local',
-                                              'idempotencyKey': f'rs-{owner}-exact-3'}, [ex])
+                                              'idempotencyKey': f'rs-native-exact-3'}, [ex])
 
         # B: suffix roster, implicit (kernel --fresh / iOS roster) then explicit_local (hrc start --on-conflict suffix).
         sx = [scope('sx1'), scope('sx1-nova'), scope('sx1-comet')]
         suffix = {'baseSessionRef': sx[0] + '/lane:main', 'runtimeIntent': intent_for('sx1'), 'conflictPolicy': 'suffix',
-                  'summonIntent': 'implicit', 'idempotencyKey': f'rs-{owner}-suffix-1', 'restartStyle': 'reuse_pty'}
-        hashes['suffix'] = bun_hash(s.release, suffix)
+                  'summonIntent': 'implicit', 'idempotencyKey': f'rs-native-suffix-1', 'restartStyle': 'reuse_pty'}
+        hashes['suffix'] = claim_hash(suffix)
         case('suffix.base', suffix, sx)
-        case('suffix.next', {**suffix, 'idempotencyKey': f'rs-{owner}-suffix-2'}, sx)
+        case('suffix.next', {**suffix, 'idempotencyKey': f'rs-native-suffix-2'}, sx)
         case('suffix.replay', suffix, sx)
         sy = [scope('sy1'), scope('sy1-nova')]
         local = {'baseSessionRef': sy[0] + '/lane:main', 'runtimeIntent': intent_for('sy1'), 'conflictPolicy': 'suffix',
-                 'summonIntent': 'explicit_local', 'idempotencyKey': f'rs-{owner}-local-1', 'restartStyle': 'reuse_pty'}
-        hashes['suffixLocal'] = bun_hash(s.release, local)
+                 'summonIntent': 'explicit_local', 'idempotencyKey': f'rs-native-local-1', 'restartStyle': 'reuse_pty'}
+        hashes['suffixLocal'] = claim_hash(local)
         case('suffix.explicit-local', local, sy)
 
         # C: ensure shape on an existing session (workflow interact, launch successor, hrc start/resume no prompt).
@@ -249,128 +200,47 @@ def run_owner(owner, binary, args, out_dir):
         case('bad.suffix-no-key', {k: v for k, v in suffix.items() if k != 'idempotencyKey'}, sx)
         case('bad.exact-no-intent', {k: v for k, v in exact.items() if k != 'runtimeIntent'}, [ex])
 
+        # Claim-bound initial messages are delivered only by the pinned turn.
+        # This retains the former deferred-message qualification deterministically.
+        for policy in ('reject', 'suffix'):
+            task = 'deferred-' + policy
+            target = scope(task)
+            launch = intent_for(task)
+            bound = {**launch, 'initialPrompt': 'fixture deferred CONT ' + policy}
+            key = 'deferred-' + policy
+            request = {'runtimeIntent': bound, 'conflictPolicy': policy, 'idempotencyKey': key,
+                       'restartStyle': 'reuse_pty', 'summonIntent': 'implicit',
+                       'sessionRef' if policy == 'reject' else 'baseSessionRef': target + '/lane:main'}
+            code, claimed = case(policy + '.deferred-claim', request, [target])
+            assert code == 200, (code, claimed)
+            host = claimed['hostSessionId']
+            assert not s.rows('SELECT * FROM inputs WHERE host_session_id=?', (host,)), 'claim delivered initial message'
+            turn = {'hostSessionId': host, 'idempotencyKey': key, 'prompt': bound['initialPrompt'],
+                    'runtimeIntent': launch, 'waitFor': 'accepted', 'waitForCompletion': False}
+            code, dispatched = case(policy + '.pinned-turn', turn, [target], '/v1/turns')
+            assert code in (200, 202) and dispatched.get('runId'), (code, dispatched)
+            s.wait_completed(dispatched['runId'], 30)
+            code, repeated = case(policy + '.claim-replay', request, [target])
+            assert code == 200 and repeated['hostSessionId'] == host and repeated['claim']['replayed'] is True
+            code, replay = case(policy + '.turn-replay', turn, [target], '/v1/turns')
+            runs = s.rows('SELECT run_id FROM runs WHERE host_session_id=? AND dispatch_idempotency_key=?', (host, key))
+            assert code in (200, 202) and replay['runId'] == dispatched['runId'] and len(runs) == 1, (code, replay, runs)
+            code, changed = case(policy + '.changed-message', {**request, 'runtimeIntent': {**bound, 'initialPrompt': 'changed'}}, [target])
+            assert code == 409 and changed['error']['code'] == 'idempotency_key_conflict'
+            code, refused = case(policy + '.ensure-prompt', {'hostSessionId': host, 'intent': bound}, [target])
+            assert code == 503 and refused['error']['detail']['reason'] == 'start-prompt-not-ported', (code, refused)
+
         stored = {r['idempotency_key']: r['request_hash'] for r in s.rows('SELECT * FROM roster_claims')}
-        hash_check = {
-            'exact': stored.get(exact['idempotencyKey']) == hashes['exact'],
-            'suffix': stored.get(suffix['idempotencyKey']) == hashes['suffix'],
-            'suffixLocal': stored.get(local['idempotencyKey']) == hashes['suffixLocal'],
-        }
-        normalized = normalize({'cases': cases, 'hashMatchesBun': hash_check}, ids, s.root)
-        # Keys carry the owner name so each side can mint its own; compare them owner-free.
-        normalized = json.loads(json.dumps(normalized).replace(f'rs-{owner}-', 'rs-<owner>-'))
-        (out_dir / f'{owner}.json').write_text(json.dumps(normalized, indent=1) + '\n')
-        return normalized
-    finally:
-        (out_dir / f'{owner}-steps.json').write_text(json.dumps(s.steps, indent=1, default=str) + '\n')
-        s.cleanup(f'agent:{AGENT}')
-
-
-def expectations(side):
-    """Bun's contract, asserted per side so a Bun-only run is itself a check."""
-    c, failures = side['cases'], []
-
-    def want(name, status, code=None):
-        got = c.get(name)
-        if got is None:
-            return failures.append(f'{name}: case not run')
-        body = got['body'] if isinstance(got['body'], dict) else {}
-        err = body.get('error', {}) if isinstance(body.get('error'), dict) else {}
-        if got['status'] == 404 or err.get('code') == 'route.not_served' or 'not_served' in json.dumps(body):
-            failures.append(f'{name}: route not served ({got["status"]} {body})')
-        elif got['status'] != status or (code and err.get('code') != code):
-            failures.append(f'{name}: want {status} {code or ""}, got {got["status"]} {err.get("code")}')
-
-    want('exact.claim', 200)
-    want('exact.replay', 200)
-    want('exact.occupied', 409, 'session_scope_occupied')
-    want('exact.key-conflict', 409, 'idempotency_key_conflict')
-    want('suffix.base', 200)
-    want('suffix.next', 200)
-    want('suffix.replay', 200)
-    want('suffix.explicit-local', 200)
-    want('ensure.start', 200)
-    want('ensure.reuse', 200)
-    if failures:
-        return failures
-    claim = lambda n: c[n]['body'].get('claim', {})
-    if claim('exact.claim').get('replayed') is not False or claim('exact.replay').get('replayed') is not True:
-        failures.append('exact replay flag')
-    if c['exact.claim']['body']['hostSessionId'] != c['exact.replay']['body']['hostSessionId']:
-        failures.append('exact replay changed hostSessionId')
-    if c['exact.occupied']['mutated']:
-        failures.append('occupied exact refusal mutated rows')
-    if [claim(n).get('slot') for n in ('suffix.base', 'suffix.next', 'suffix.replay')] != ['sx1', 'sx1-nova', 'sx1']:
-        failures.append('suffix slots: ' + str([claim(n).get('slot') for n in ('suffix.base', 'suffix.next', 'suffix.replay')]))
-    if c['ensure.start']['body'].get('runtimeId') != c['ensure.reuse']['body'].get('runtimeId'):
-        failures.append('ensure reuse birthed a second runtime')
-    for k, ok in side['hashMatchesBun'].items():
-        if not ok:
-            failures.append(f'roster_claims.request_hash for {k} differs from Bun\'s hash function')
-    return failures
-
-
-def diff(a, b, path=''):
-    if type(a) is not type(b):
-        return [f'{path}: bun={json.dumps(a)[:300]} native={json.dumps(b)[:300]}']
-    if isinstance(a, dict):
-        out = []
-        for k in list(a) + [k for k in b if k not in a]:
-            if k not in b:
-                out.append(f'{path}.{k}: only bun ({json.dumps(a[k])[:200]})')
-            elif k not in a:
-                out.append(f'{path}.{k}: only native ({json.dumps(b[k])[:200]})')
-            else:
-                out += diff(a[k], b[k], f'{path}.{k}')
-        return out
-    if isinstance(a, list):
-        if len(a) != len(b):
-            return [f'{path}: length bun={len(a)} native={len(b)}: bun={json.dumps(a)[:400]} native={json.dumps(b)[:400]}']
-        return [d for i, (x, y) in enumerate(zip(a, b)) for d in diff(x, y, f'{path}[{i}]')]
-    return [] if a == b else [f'{path}: bun={json.dumps(a)[:300]} native={json.dumps(b)[:300]}']
-
-
-def main():
-    global AGENT
-    p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    p.add_argument('--native-binary', type=Path, help='rusthrc to test; a build without the route must FAIL')
-    p.add_argument('--installed-release', type=Path, default=Path.home() / '.bun/install/hrc-runtime-current')
-    p.add_argument('--aspd-socket', type=Path, default=Path.home() / 'praesidium/var/aspd/run/aspd.sock')
-    p.add_argument('--scratch-root', type=Path, required=True, help='fresh directory; one sub-root per owner')
-    p.add_argument('--artifacts', type=Path, default=None)
-    p.add_argument('--bun-only', action='store_true')
-    p.add_argument('--native-only', action='store_true', help='reuse an existing bun.json in --artifacts')
-    p.add_argument('--deferred-message-only', action='store_true',
-                   help='native T-12316 claim binding + pinned-turn qualification on Codex')
-    args = p.parse_args()
-    args.installed_release = args.installed_release.resolve()
-    out_dir = args.artifacts or ARTIFACTS / ('runtimes-start-' + time.strftime('%Y%m%dT%H%M%SZ', time.gmtime()))
-    out_dir.mkdir(parents=True, exist_ok=True)
-    result = {'artifacts': str(out_dir), 'installedRelease': str(args.installed_release)}
-    sides = {}
-    if args.deferred_message_only:
-        assert args.native_binary, '--native-binary is required'
-        AGENT = 'cody'
-        result = run_owner('native', args.native_binary, args, out_dir)
-        (out_dir / 'result.json').write_text(json.dumps(result, indent=2) + '\n')
-        print(json.dumps({'ok': result['ok'], 'checks': result['checks'], 'artifacts': str(out_dir)}, indent=2))
-        sys.exit(0 if result['ok'] else 1)
-    if not args.native_only:
-        # The Bun owner never execs --binary; Scratch only resolves it.
-        sides['bun'] = run_owner('bun', args.installed_release / 'bin/rusthrc', args, out_dir)
-    else:
-        sides['bun'] = json.loads((out_dir / 'bun.json').read_text())
-    result['bunFailures'] = expectations(sides['bun'])
-    if not args.bun_only:
-        assert args.native_binary, '--native-binary is required unless --bun-only'
-        result['nativeBinary'] = str(args.native_binary.resolve())
-        sides['native'] = run_owner('native', args.native_binary, args, out_dir)
-        result['nativeFailures'] = expectations(sides['native'])
-        result['diff'] = diff(sides['bun'], sides['native'])
-    result['ok'] = not result['bunFailures'] and not result.get('nativeFailures') and not result.get('diff')
-    (out_dir / 'result.json').write_text(json.dumps(result, indent=1) + '\n')
-    print(json.dumps(result, indent=1))
-    sys.exit(0 if result['ok'] else 1)
+        hash_check = {name: stored.get(request['idempotencyKey']) == hashes[name]
+                      for name, request in [('exact', exact), ('suffix', suffix), ('suffixLocal', local)]}
+        side = {'cases': cases, 'hashMatchesSpec': hash_check}
+        failures = expectations(side)
+        value = dict(cases=side['cases'], hashMatchesSpec=hash_check, failures=failures, **{'pass': not failures})
+        (args.artifacts / 'results.json').write_text(json.dumps(value, indent=2) + '\n')
+        assert not failures, failures
+        print(json.dumps({'pass': True, 'cases': len(cases)}))
+    return 0
 
 
 if __name__ == '__main__':
-    main()
+    raise SystemExit(main())
