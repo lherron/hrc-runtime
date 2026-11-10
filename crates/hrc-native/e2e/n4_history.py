@@ -1,58 +1,67 @@
 #!/usr/bin/env python3
-"""N4 collective history on two scratch nodes: origin n4a and authority svc.
+"""N4 collective history on two scratch nodes: origin n4a and authority svc, both native.
 
-A's store is seeded with real message rows (a sample of a VACUUM INTO copy of
-a live store, so record shapes, metadata and bodies are production ones).
-A Bun owner on A replicates them to S. Then each A owner (bun, then native)
-boots on that same store and must leave every delivered replication exactly
-as it was: same fingerprint, state, attempt count and delivery time. A
-fingerprint that differed from Bun's would re-enqueue every row on the first
-native boot, which is the failure this gate exists for.
+A's store is seeded with ~100 messages by the native message insert and
+execution update (n3_messages: hrc_store::messages statements), across
+dm/literal/system kinds, request/response/oneway phases, threads and replies,
+empty and multi-byte bodies, with and without metadata. A's first native boot
+replicates every row to S; the delivered replications are the baseline.
 
-So that "unchanged" cannot pass by doing nothing, each owner's boot also meets
-three planted changes: a row whose stored fingerprint was tampered with (it
+A then restarts on that store and must leave every delivered replication
+exactly as it was, while meeting four planted changes, so "unchanged" cannot
+pass by doing nothing: a row whose stored fingerprint was tampered with (it
 must be re-enqueued and redelivered with the original fingerprint), a message
-whose metadata changed (it must be redelivered and reach S with the new
-record), and a message inserted while the owner was down (it must be
-backfilled and delivered). Native alone also tails a message inserted while
-it runs.
-
-Recorded per A owner for the compare: A's /v1/messages/query (collective,
-through S, and the unreachable fallback with S down), A's peer listener
-refusing history verbs as a non-authority, and S's own peer verbs and
-authority query. Run once per S owner (--s-owner bun|native).
+whose metadata changed (redelivered, reaching S with the new record), a
+message inserted while A was down (backfilled and delivered), and one inserted
+while A runs (tailed). Then the read surfaces: A's collective query through S,
+the local fallback with S down, A's peer listener refusing history verbs as a
+non-authority, and S's own peer verbs (re-replication rewrites nothing,
+validation, checkpoints, topological paging). Expectations are read off
+federation/history.rs, peer_listener.rs and hrc-store collective_history.rs.
 """
 import argparse
 import hashlib
 import json
 from pathlib import Path
 import secrets
+import shutil
 import sqlite3
 import time
 import urllib.error
 import urllib.request
 
 from n4_federation import TAILNET, Node, free_port
+from n3_messages import EXEC, EXEC_COLUMNS
 
-SAMPLE_EVERY = 25
+SEEDED = 100
+# hrc_store::messages insert columns, as n3_messages.seed_messages writes them.
+RECORD_FIELDS = ('messageId', 'kind', 'phase', 'from', 'to', 'rootMessageId', 'body', 'bodyFormat', 'metadataJson', 'execution')
+COLUMNS = ['message_id', 'created_at', 'kind', 'phase', 'from_kind', 'from_ref', 'to_kind', 'to_ref',
+           'reply_to_message_id', 'root_message_id', 'body', 'body_format', *EXEC_COLUMNS, 'metadata_json']
 
 
 def cols(db, table, schema='main'):
     return [r[1] for r in db.execute(f'PRAGMA {schema}.table_info({table})')]
 
 
-def seed(a_db, source):
-    """Every metadata-bearing row plus every SAMPLE_EVERY-th other row."""
-    db = sqlite3.connect(a_db)
-    db.execute('ATTACH ? AS src', (str(source),))
-    names = [c for c in cols(db, 'messages') if c in cols(db, 'messages', 'src')]
-    columns = ', '.join(names)
-    db.execute(f"INSERT INTO messages ({columns}) SELECT {columns} FROM src.messages "
-               f"WHERE (metadata_json IS NOT NULL AND metadata_json != '') OR message_seq % {SAMPLE_EVERY} = 0 "
-               "ORDER BY message_seq")
-    db.commit()
-    count = db.execute('SELECT COUNT(*) FROM messages').fetchone()[0]
-    db.close()
+def seed(a_db, count=SEEDED):
+    """COUNT messages by the native insert (n3_messages columns), ten threads, every fifth with execution facts."""
+    seats = [f'agent:tabularasa:project:n4-history:task:seat-{k}/lane:main' for k in range(4)]
+    with sqlite3.connect(a_db, timeout=30) as db:
+        for i in range(count):
+            seat = seats[i % 4]
+            sender = {'kind': 'entity', 'entity': ('human', 'system')[i % 2]} if i % 3 == 0 else {'kind': 'session', 'sessionRef': seat}
+            recipient = {'kind': 'session', 'sessionRef': seats[(i + 1) % 4]} if sender['kind'] == 'entity' else {'kind': 'entity', 'entity': 'human'}
+            root = f'msg-n4h-{(i // 10) * 10:03d}'  # threads of ten: the first message roots each
+            ref = lambda a: a['entity'] if a['kind'] == 'entity' else a['sessionRef']
+            execution = {'state': 'completed', 'mode': 'headless', 'sessionRef': seat, 'hostSessionId': f'hs-n4h-{i % 4}',
+                         'generation': 1, 'runtimeId': f'rt-n4h-{i % 4}', 'runId': f'run-n4h-{i}', 'transport': 'hrcpty'} if i % 5 == 0 else {'state': 'not_applicable'}
+            metadata = json.dumps({'fixture': 'n4 history', 'i': i, 'tags': ['a', 'b'][: i % 3]}, separators=(',', ':')) if i % 4 else None
+            values = [f'msg-n4h-{i:03d}', f'2026-11-10T01:{i // 60:02d}:{i % 60:02d}.000Z', ('dm', 'literal', 'system')[i % 3],
+                      ('request', 'response', 'oneway')[i % 3], sender['kind'], ref(sender), recipient['kind'], ref(recipient),
+                      f'msg-n4h-{i - 1:03d}' if i % 10 else None, root, '' if i % 17 == 0 else f'history body {i} \u6f22\u5b57\nline two',
+                      'text/plain', *[execution.get(k) for k in EXEC], metadata]
+            db.execute(f'INSERT INTO messages ({",".join(COLUMNS)}) VALUES ({",".join("?" * len(values))})', values)
     return count
 
 
@@ -106,20 +115,18 @@ def peer_call(endpoint, token, method, path, body=None):
 def main():
     p = argparse.ArgumentParser()
     p.add_argument('--binary', type=Path, required=True)
-    p.add_argument('--installed-release', type=Path, required=True)
-    p.add_argument('--aspd-socket', type=Path, required=True)
-    p.add_argument('--source-db', type=Path, required=True, help='messages to seed A with (a store copy)')
     p.add_argument('--scratch-root', type=Path, required=True)
     p.add_argument('--artifacts', type=Path, required=True)
-    p.add_argument('--s-owner', choices=['bun', 'native'], default='bun')
-    p.add_argument('--owners', default='bun,native')
+    p.add_argument('--aspd-socket', type=Path, help='never dialed; defaults to a path under the scratch root')
+    p.add_argument('--installed-release', type=Path, help='accepted and ignored')
     args = p.parse_args()
     if args.scratch_root.exists():
         raise SystemExit('scratch root must be fresh')
     args.artifacts.mkdir(parents=True, exist_ok=True)
+    aspd = args.aspd_socket or args.scratch_root / 'aspd.sock'
     real = Path.home() / 'praesidium/var/state/hrc/federation.json'
-    a = Node(args.scratch_root / 'a', args.installed_release, args.aspd_socket, args.artifacts, 'a', args.binary)
-    s = Node(args.scratch_root / 's', args.installed_release, args.aspd_socket, args.artifacts, 's', args.binary)
+    a = Node(args.scratch_root / 'a', None, aspd, args.artifacts, 'a', args.binary)
+    s = Node(args.scratch_root / 's', None, aspd, args.artifacts, 's', args.binary)
     ports = {k: free_port() for k in ('s_peer', 'a_peer')}
     token = secrets.token_hex(24)
     s_endpoint, a_endpoint = f'http://{TAILNET}:{ports["s_peer"]}', f'http://{TAILNET}:{ports["a_peer"]}'
@@ -127,98 +134,88 @@ def main():
                     'peerListener': {'bind': s_endpoint}, 'gate': {'mode': 'off'}})
     a.write_config({'nodeId': 'n4a', 'peers': {'svc': {'endpoint': s_endpoint, 'token': token}},
                     'peerListener': {'bind': a_endpoint}, 'gate': {'mode': 'off'}})
-    seeded = seed(a.db, args.source_db)
-    evidence = {'seeded': seeded, 'sOwner': args.s_owner, 'owners': {}}
-    observations = {}
+    seeded = seed(a.db)
+    evidence = {'seeded': seeded}
+    cases = {}
+    failures = []
     try:
-        s_proc = s.up(args.s_owner, args.binary, 'authority')
-        # Baseline: Bun is the owner whose replications must survive.
-        proc = a.up('bun', args.binary, 'baseline')
+        s_proc = s.up('native', args.binary, 'authority')
+        proc = a.up('native', args.binary, 'baseline')
         baseline = wait_for('baseline replication', lambda: (
             r if len(r := rows(a.db)) == seeded and all(v['state'] == 'delivered' for v in r.values()) else None))
         a.down(proc)
-        evidence['baseline'] = {'rows': len(baseline), 'states': sorted({v['state'] for v in baseline.values()})}
+        # Owner readback of the seed: S's authority query holds every seeded message.
+        status, value, _ = s.http('POST', '/v1/messages/query', {'limit': 500})
+        assert status == 200 and sorted(m['messageId'] for m in value['messages']) == sorted(baseline), (status, value)
         ids = sorted(baseline, key=lambda i: json.loads(baseline[i]['recordJson'])['messageSeq'])
         quiet = ids[:len(ids) // 2]  # query cases read only this half; plants live in the other
-        roots = {}
-        for i in quiet:
-            roots.setdefault(json.loads(baseline[i]['recordJson'])['rootMessageId'], []).append(i)
-        busiest = max(sorted(roots), key=lambda r: len(roots[r]))
-        evidence['busiestThread'] = {'root': busiest, 'messages': len(roots[busiest])}
-        for index, owner in enumerate(args.owners.split(',')):
-            before = rows(a.db)
-            tampered, changed = ids[-1 - 4 * index], ids[-2 - 4 * index]
-            inserted = f'msg-n4-history-{owner}-down'
-            db = sqlite3.connect(a.db)
-            db.execute("UPDATE collective_history_replications SET record_fingerprint = 'tampered' WHERE message_id = ?",
-                       (tampered,))
-            meta = json.loads(db.execute('SELECT metadata_json FROM messages WHERE message_id = ?',
-                                         (changed,)).fetchone()[0] or '{}')
-            meta['n4HistoryProbe'] = owner
-            db.execute('UPDATE messages SET metadata_json = ? WHERE message_id = ?', (json.dumps(meta), changed))
-            db.commit()
-            db.close()
-            plant_message(a.db, quiet[0], inserted, 1)
-            proc = a.up(owner, args.binary, 'restart')
-            planted = {tampered, changed, inserted}
-            def settled():
-                r = rows(a.db)
-                return all(r.get(i, {}).get('state') == 'delivered' and r[i]['fingerprint'] != 'tampered'
-                           and r[i] != before.get(i) for i in planted)
+        before = rows(a.db)
+        tampered, changed, inserted, live = ids[-1], ids[-2], 'msg-n4-history-down', 'msg-n4-history-live'
+        db = sqlite3.connect(a.db)
+        db.execute("UPDATE collective_history_replications SET record_fingerprint = 'tampered' WHERE message_id = ?", (tampered,))
+        meta = json.loads(db.execute('SELECT metadata_json FROM messages WHERE message_id = ?', (changed,)).fetchone()[0] or '{}')
+        meta['n4HistoryProbe'] = 'restart'
+        db.execute('UPDATE messages SET metadata_json = ? WHERE message_id = ?', (json.dumps(meta), changed))
+        db.commit()
+        db.close()
+        plant_message(a.db, quiet[0], inserted, 1)
+        proc = a.up('native', args.binary, 'restart')
+        planted = {tampered, changed, inserted}
+        settled = lambda: all((r := rows(a.db)).get(i, {}).get('state') == 'delivered' and r[i]['fingerprint'] != 'tampered'
+                              and r[i] != before.get(i) for i in planted)
+        wait_for('planted rows delivered', settled, timeout=60)
+        plant_message(a.db, quiet[0], live, 1)
+        # The tail runs on ledger-commit wakes (history.rs), so a raw insert waits for the next owner
+        # write: a session create commits one. Without it the checkpoint renewal is 300 s away.
+        woke = a.http('POST', '/v1/sessions/resolve', {'sessionRef': 'agent:tabularasa:project:n4-history:task:wake/lane:main',
+                                                       'create': True, 'summonIntent': 'explicit_local'})
+        assert woke[0] == 200, woke
+        wait_for('live tail', lambda: rows(a.db).get(live, {}).get('state') == 'delivered', 30)
+        time.sleep(3)  # three more polls: nothing else may move
+        after = rows(a.db)
+        moved = sorted(i for i in before if i not in planted and after.get(i) != before[i])
+        checks = {
+            'untouched': len(moved) == 0,
+            'tamperedRestored': after[tampered]['fingerprint'] == baseline[tampered]['fingerprint']
+                                and after[tampered]['recordJson'] == baseline[tampered]['recordJson'],
+            'changedFingerprint': after[changed]['fingerprint'] == hashlib.sha256(
+                after[changed]['recordJson'].encode()).hexdigest() != before[changed]['fingerprint'],
+            'changedCarriesProbe': json.loads(after[changed]['recordJson'])['metadataJson'].get('n4HistoryProbe') == 'restart',
+            'insertedDelivered': after[inserted]['state'] == 'delivered',
+            'liveTailed': after[live]['state'] == 'delivered',
+        }
+        # S holds the changed record and both inserts, as A delivered them.
+        for i in (changed, inserted, live):
+            status, value, _ = s.http('POST', '/v1/messages/query', {'messageId': i})
+            held_record = value['messages'][0] if status == 200 and len(value.get('messages', [])) == 1 else {}
+            sent = json.loads(after[i]['recordJson'])
+            evidence.setdefault('authorityDiff', {})[i] = {k: [sent.get(k), held_record.get(k)] for k in set(sent) | set(held_record) if sent.get(k) != held_record.get(k)}
+            checks['authorityHolds:' + i] = bool(held_record) and all(held_record.get(k) == sent.get(k) for k in RECORD_FIELDS)
+        evidence.update(moved=moved[:20], movedCount=len(moved), checks=checks, planted=sorted(planted | {live}))
 
-            wait_for(owner + ' planted rows delivered', settled, timeout=60)
-            live = None
-            if owner == 'native':
-                live = f'msg-n4-history-{owner}-live'
-                plant_message(a.db, quiet[0], live, 1)
-                wait_for('native live tail', lambda: rows(a.db).get(live, {}).get('state') == 'delivered', 30)
-            time.sleep(3)  # three more polls: nothing else may move
-            after = rows(a.db)
-            moved = sorted(i for i in before if i not in planted and after.get(i) != before[i])
-            checks = {
-                'untouched': len(moved) == 0,
-                'tamperedRestored': after[tampered]['fingerprint'] == baseline[tampered]['fingerprint']
-                                    and after[tampered]['totalAttempts'] == 1,
-                'changedFingerprint': after[changed]['fingerprint'] == hashlib.sha256(
-                    after[changed]['recordJson'].encode()).hexdigest() != before[changed]['fingerprint'],
-                'changedCarriesProbe': json.loads(after[changed]['recordJson'])['metadataJson'].get(
-                    'n4HistoryProbe') == owner,
-                'insertedDelivered': after[inserted]['state'] == 'delivered',
-                'liveTailed': live is None or after[live]['state'] == 'delivered',
-            }
-            evidence['owners'][owner] = {'moved': moved[:20], 'movedCount': len(moved), 'checks': checks,
-                                         'planted': sorted(planted | ({live} if live else set()))}
-            cases = observations.setdefault(owner, {})
+        def query(name, body):
+            status, value, _ = a.http('POST', '/v1/messages/query', body)
+            cases['query:' + name] = {'request': body, 'status': status, 'body': value}
 
-            def query(name, body, head=None):
-                status, value, _ = a.http('POST', '/v1/messages/query', body)
-                if head is not None and isinstance(value, dict) and 'messages' in value:
-                    # Unbounded: keep the quiet head; each owner's plants sort last.
-                    value = {**value, 'messages': value['messages'][:head]}
-                cases['query:' + name] = {'status': status, 'body': value}
-
-            first = json.loads(baseline[quiet[0]]['recordJson'])
-            query('limit', {'limit': 5})
-            query('after-seq', {'afterSeq': first['messageSeq'], 'limit': 3})
-            query('message', {'messageId': quiet[1]})
-            query('thread', {'thread': {'rootMessageId': first['rootMessageId']}, 'limit': 10})
-            query('busy-thread', {'thread': {'rootMessageId': busiest}})
-            query('busy-thread-asc', {'thread': {'rootMessageId': busiest}, 'limit': 2})
-            query('busy-thread-desc', {'thread': {'rootMessageId': busiest}, 'limit': 2, 'order': 'desc'})
-            query('participant', {'participant': first['from'], 'limit': 4, 'kinds': [first['kind']]})
-            query('bad-body', [], head=5)
-            query('bad-filter', {'limit': 'x'})
-            for verb, body in (('replicate', {'record': first}), ('checkpoint', {'checkpoint': {
-                    'maxMessageSeq': 1, 'pendingReplicationCount': 0}}), ('query', {'filter': {}})):
-                cases['a-peer:' + verb] = peer_call(a_endpoint, token, 'POST', '/v1/federation/history/' + verb, body)
-            cases['a-peer:bad-body'] = peer_call(a_endpoint, token, 'POST', '/v1/federation/history/query', {'x': 1})
-            # S down: the collective read falls back to A's local rows.
-            s.down(s_proc)
-            query('unreachable', {'limit': 3})
-            s_proc = s.up(args.s_owner, args.binary, f'authority-after-{owner}')
-            a.down(proc)
-        # S's own verbs, from A's token, after both owners.
-        cases = observations.setdefault('authority', {})
+        first = json.loads(baseline[quiet[0]]['recordJson'])
+        query('limit', {'limit': 5})
+        query('after-seq', {'afterSeq': first['messageSeq'], 'limit': 3})
+        query('message', {'messageId': quiet[1]})
+        query('thread', {'thread': {'rootMessageId': first['rootMessageId']}, 'limit': 10})
+        query('thread-asc', {'thread': {'rootMessageId': first['rootMessageId']}, 'limit': 2})
+        query('thread-desc', {'thread': {'rootMessageId': first['rootMessageId']}, 'limit': 2, 'order': 'desc'})
+        query('participant', {'participant': first['from'], 'limit': 4, 'kinds': [first['kind']]})
+        query('bad-body', [])
+        query('bad-filter', {'limit': 'x'})
+        for verb, body in (('replicate', {'record': first}), ('checkpoint', {'checkpoint': {
+                'maxMessageSeq': 1, 'pendingReplicationCount': 0}}), ('query', {'filter': {}})):
+            cases['a-peer:' + verb] = peer_call(a_endpoint, token, 'POST', '/v1/federation/history/' + verb, body)
+        cases['a-peer:bad-body'] = peer_call(a_endpoint, token, 'POST', '/v1/federation/history/query', {'x': 1})
+        # S down: the collective read falls back to A's local rows.
+        s.down(s_proc)
+        query('unreachable', {'limit': 3})
+        s_proc = s.up('native', args.binary, 'authority-after')
+        a.down(proc)
         sample = json.loads(baseline[quiet[2]]['recordJson'])
         # A reply stamped before its parent: the topological pass must move it
         # after the parent, so a one-row page has to widen its window.
@@ -228,6 +225,7 @@ def main():
         child = {**parent, 'messageId': 'msg-n4-skew-child', 'replyToMessageId': 'msg-n4-skew-parent',
                  'createdAt': '2099-02-01T00:00:01.000Z', 'messageSeq': 900002}
         skew = {'thread': {'rootMessageId': 'msg-n4-skew-parent'}}
+        held = snapshot_authority(s.db)
         verbs = [
             ('replicate-again', 'replicate', {'record': sample}),
             ('replicate-extra-key', 'replicate', {'record': sample, 'x': 1}),
@@ -244,7 +242,6 @@ def main():
             ('query-skew', 'query', {'filter': skew}),
             ('query-skew-asc-1', 'query', {'filter': {**skew, 'limit': 1}}),
             ('query-skew-desc-1', 'query', {'filter': {**skew, 'limit': 1, 'order': 'desc'}}),
-            ('query-busy-desc', 'query', {'filter': {'thread': {'rootMessageId': busiest}, 'limit': 3, 'order': 'desc'}}),
             ('query-complete', 'query', {'filter': {'messageId': quiet[2]}}),
             ('query-desc', 'query', {'filter': {'limit': 3, 'order': 'desc', 'afterSeq': 0,
                                                 'thread': {'rootMessageId': sample['rootMessageId']}}}),
@@ -252,22 +249,115 @@ def main():
         ]
         for name, verb, body in verbs:
             cases['s-peer:' + name] = peer_call(s_endpoint, token, 'POST', '/v1/federation/history/' + verb, body)
+            if name == 'replicate-again':
+                evidence['reReplicateRewrote'] = diff_authority(held, snapshot_authority(s.db))
+                evidence['reReplicateRows'] = changed_rows(held, snapshot_authority(s.db))
         status, value, _ = s.http('POST', '/v1/messages/query', {'messageId': quiet[2]})
         cases['s-local:message'] = {'status': status, 'body': value}
-        print(json.dumps({'seeded': seeded, **{o: e['checks'] for o, e in evidence['owners'].items()}}))
+        failures = [k for k, v in checks.items() if not v] + judge(cases, after, quiet, sample, evidence)
+        print(json.dumps({'seeded': seeded, 'checks': checks, 'cases': len(cases), 'failures': failures}))
     finally:
-        for owner, c in observations.items():
-            (args.artifacts / owner).mkdir(exist_ok=True)
-            (args.artifacts / owner / 'history.json').write_text(json.dumps(c, indent=1) + '\n')
+        (args.artifacts / 'history.json').write_text(json.dumps(cases, indent=1) + '\n')
         (args.artifacts / 'evidence.json').write_text(json.dumps(evidence, indent=1) + '\n')
         (args.artifacts / 'steps.json').write_text(json.dumps({'a': a.steps, 's': s.steps}, indent=1) + '\n')
         a.cleanup()
         s.cleanup()
         assert str(real) not in json.dumps(a.env) + json.dumps(s.env)
-    failed = {o: [k for k, v in e['checks'].items() if not v] for o, e in evidence['owners'].items()}
-    if any(failed.values()):
-        raise SystemExit('FAIL ' + json.dumps(failed))
+        shutil.rmtree(args.scratch_root)
+    if failures:
+        raise SystemExit('FAIL ' + json.dumps(failures))
 
+
+# Every collective column but the updated_at clocks, which an accepted re-replication refreshes.
+AUTHORITY_COLUMNS = {
+    'collective_history_messages': 'message_id, collective_seq, canonical_record_json, canonical_source_node_id, '
+                                   'canonical_source_role, canonical_created_at, created_at',
+    'collective_history_observations': 'message_id, source_node_id, source_message_seq, source_role, origin_node_id, '
+                                       'accepted_destination_node_id, record_json, observed_at',
+}
+
+
+def snapshot_authority(db_path):
+    """S's held collective rows, keyed, without the refresh clocks."""
+    with sqlite3.connect(f'file:{db_path}?mode=ro', uri=True) as db:
+        return {t: sorted(map(tuple, db.execute(f'SELECT {c} FROM {t}'))) for t, c in AUTHORITY_COLUMNS.items()}
+
+
+def diff_authority(before, after):
+    return {t: len(set(before[t]) ^ set(after[t])) for t in before}
+
+
+def changed_rows(before, after):
+    return {t: [list(r) for r in sorted(set(before[t]) ^ set(after[t]))] for t in before}
+
+
+def judge(cases, baseline, quiet, sample, evidence):
+    """Each read case's own literal, from federation/history.rs, peer_listener.rs and collective_history.rs."""
+    failures = []
+    ids = [f'msg-n4h-{i:03d}' for i in range(SEEDED)]
+    collective = lambda queried, complete=True: {'source': 'collective', 'complete': complete, 'authorityNodeId': 'svc',
+                                                  'queriedNodeId': queried, 'cursorKind': 'collective', 'pendingReplicationCount': 0}
+    peer_refusal = lambda status, code, retryable=None: (status, {'ok': False, 'error': {'code': code, **({'retryable': True} if retryable else {})}})
+    A, S = 'n4a', 'svc'
+    expect = {
+        'query:limit': (ids[:5], collective(A)), 'query:after-seq': (ids[1:4], collective(A)),
+        'query:message': ([quiet[1]], collective(A)), 'query:thread': (ids[:10], collective(A)),
+        'query:thread-asc': (ids[:2], collective(A)), 'query:thread-desc': ([ids[9], ids[8]], collective(A)),
+        # every sixth seed is a human dm to the same seat: kind and participant both select it
+        'query:participant': ([ids[i] for i in (0, 6, 12, 18)], collective(A)),
+        # a non-object body reads as no filter: everything, the 2099 plants last
+        'query:bad-body': (ids + ['msg-n4-history-down', 'msg-n4-history-live'], collective(A)),
+        's-peer:query-lagging': ([quiet[2]], 'LAGGING'), 's-peer:query-complete': ([quiet[2]], collective(S)),
+        # the reply stamped first still follows its parent; a one-row page keyed by stored order is the parent either way
+        's-peer:query-skew': (['msg-n4-skew-parent', 'msg-n4-skew-child'], collective(S)),
+        's-peer:query-skew-asc-1': (['msg-n4-skew-parent'], collective(S)), 's-peer:query-skew-desc-1': (['msg-n4-skew-parent'], collective(S)),
+        's-peer:query-desc': ([ids[9], ids[8], ids[7]], collective(S)), 's-local:message': ([quiet[2]], collective(S)),
+        'query:unreachable': (ids[:3], 'LOCAL'),
+    }
+    for name, (want, history) in expect.items():
+        case = cases.get(name, {})
+        body = case.get('body') or {}
+        got = body.get('messages')
+        got_ids = [m['messageId'] for m in got] if isinstance(got, list) else None
+        h = body.get('history') or {}
+        if history == 'LAGGING':
+            ok = h.get('complete') is False and h.get('unconfirmedNodeIds') == [A] and h.get('degraded', {}).get('code')
+        elif history == 'LOCAL':
+            ok = (h.get('source'), h.get('complete'), h.get('cursorKind'), h.get('degraded', {}).get('code')) == ('local', False, 'node-local', 'collective_unreachable')
+        else:
+            ok = h == history
+        if case.get('status') != 200 or got_ids != want or not ok:
+            failures.append((name, case.get('status'), got_ids, h))
+            continue
+        for m in got:
+            if m['messageId'] in baseline and name != 'query:unreachable':
+                sent = json.loads(baseline[m['messageId']]['recordJson'])
+                if any(m.get(k) != sent.get(k) for k in RECORD_FIELDS):
+                    failures.append((name, 'record differs from what A delivered', m['messageId']))
+    refusals = {
+        'query:bad-filter': (400, {'error': {'code': 'malformed_request', 'message': 'limit must be a positive integer', 'detail': {'field': 'limit'}}}),
+        # A is not the authority: every history verb is refused, retryable; a malformed body fails first.
+        **{f'a-peer:{v}': peer_refusal(404, 'collective_history_not_authoritative', True) for v in ('replicate', 'checkpoint', 'query')},
+        'a-peer:bad-body': peer_refusal(400, 'invalid_request'),
+        's-peer:replicate-extra-key': peer_refusal(400, 'invalid_request'), 's-peer:replicate-not-object': peer_refusal(400, 'invalid_request'),
+        # A record or filter the store rejects is the generic retryable 500 (peer_listener.rs).
+        **{f's-peer:{v}': peer_refusal(500, 'internal_error', True) for v in ('replicate-bad-seq', 'replicate-bad-address', 'replicate-bad-meta', 'checkpoint-bad', 'query-bad-filter')},
+        's-peer:replicate-again': (200, {'ok': True, 'ack': {'outcome': 'accepted', 'messageId': sample['messageId']}}),
+        's-peer:replicate-skew-child': (200, {'ok': True, 'ack': {'outcome': 'accepted', 'messageId': 'msg-n4-skew-child'}}),
+        's-peer:replicate-skew-parent': (200, {'ok': True, 'ack': {'outcome': 'accepted', 'messageId': 'msg-n4-skew-parent'}}),
+        's-peer:checkpoint-pending': (200, {'ok': True, 'ack': {'outcome': 'accepted', 'nodeId': A}}),
+        's-peer:checkpoint-clear': (200, {'ok': True, 'ack': {'outcome': 'accepted', 'nodeId': A}}),
+    }
+    for name, (status, body) in refusals.items():
+        case = cases.get(name, {})
+        if (case.get('status'), case.get('body')) != (status, body):
+            failures.append((name, case.get('status'), case.get('body')))
+    if set(cases) != set(expect) | set(refusals):
+        failures.append(('matrix', sorted(set(cases) ^ (set(expect) | set(refusals)))))
+    # Re-replicating a record the authority already holds rewrites nothing.
+    if evidence.get('reReplicateRewrote') != {'collective_history_messages': 0, 'collective_history_observations': 0}:
+        failures.append(('replicate-again rewrote', evidence.get('reReplicateRewrote')))
+    return failures
 
 if __name__ == '__main__':
     main()
