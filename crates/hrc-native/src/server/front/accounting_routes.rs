@@ -2,6 +2,7 @@
 const EXACT: &[(&str, &str)] = &[
     ("POST", "/v1/participants/attach"),
     ("POST", "/v1/participants/register"),
+    ("POST", "/v1/participants/unpark"),
     ("POST", "/v1/sessions/resolve"),
     ("GET", "/v1/sessions/get"),
     ("GET", "/v1/sessions/metadata"),

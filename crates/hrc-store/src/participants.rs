@@ -233,6 +233,31 @@ impl Store {
 }
 
 impl Store {
+    /// Host-requested clear of the parked marker at an exact address (T-13189).
+    /// Returns the reservation id and whether the stored value changed; the
+    /// reservation, its bindings and attempts are untouched.
+    pub fn unpark_participant(
+        &mut self,
+        scope: &str,
+        lane: &str,
+    ) -> Result<Option<(String, bool)>> {
+        let tx = self
+            .sqlite
+            .transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)?;
+        let Some((id, parked)) = tx
+            .query_row(
+                "SELECT reservation_id,disposition IS NOT NULL FROM participant_address_reservations WHERE scope_ref=? AND lane_ref=?",
+                [scope, crate::storage_lane(lane)],
+                |r| Ok((r.get::<_, String>(0)?, r.get::<_, bool>(1)?)),
+            )
+            .optional()?
+        else {
+            return Ok(None);
+        };
+        Self::set_participant_disposition(&tx, &id, None, &timestamp())?;
+        tx.commit()?;
+        Ok(Some((id, parked)))
+    }
     /// The body has crossed the direct-registration grammar before this call.
     /// A transaction serializes local allocation and refuses occupied addresses.
     pub fn register_direct_participant(

@@ -199,6 +199,47 @@ pub async fn register(server: &super::Shared, body: Value) -> Result<Response, A
     }
 }
 
+/// T-13189: a host clears its parked disposition by address. Clear-only;
+/// parking stays on /v1/terminate and the reservation stays held.
+pub async fn unpark(server: &super::Shared, body: Value) -> Result<Response, ApiError> {
+    shape(&body, &["scopeRef", "laneRef"], "unpark")?;
+    let scope = required(&body, "scopeRef")?;
+    hrc_common::scope::validate_scope(&scope).map_err(|e| {
+        malformed(
+            format!("scopeRef must be a valid ScopeRef: {e}"),
+            Some("scopeRef"),
+        )
+    })?;
+    let lane = optional(&body, "laneRef")?.unwrap_or("main".into());
+    let lane = hrc_store::storage_lane(&lane).to_owned();
+    let authority = super::federation::session_home::home(server, &scope).await;
+    if authority["state"] == "foreign" {
+        return Err(ApiError::domain(
+            StatusCode::CONFLICT,
+            "foreign_scope",
+            "scope is homed on another node",
+            Some(json!({"homeNodeId":authority["nodeId"]})),
+        ));
+    }
+    let cleared = server
+        .store
+        .lock()
+        .unwrap()
+        .unpark_participant(&scope, &lane)?;
+    let Some((id, changed)) = cleared else {
+        return Err(ApiError::domain(
+            StatusCode::NOT_FOUND,
+            "unknown_session",
+            format!("no participant reservation for \"{scope}/lane:{lane}\""),
+            Some(json!({"scopeRef":scope,"laneRef":lane})),
+        ));
+    };
+    if changed {
+        server.ledger_committed();
+    }
+    Ok(Json(json!({"reservationId":id,"scopeRef":scope,"laneRef":lane,"disposition":null,"dispositionAt":null,"changed":changed})).into_response())
+}
+
 async fn join(
     server: &super::Shared,
     body: &Value,

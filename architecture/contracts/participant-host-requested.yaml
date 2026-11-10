@@ -154,7 +154,7 @@ validation_scope: >
   installed acceptance clears the stale max3 acceptance address through the
   route and observes its removal from the parked list in prae seat list.
   This is design approval only; these acceptance results remain pending.
-last_verified: 2026-11-10 r2 design review plus r2.1 factual correction verified against baseline.sql NOT NULL columns and activity trigger and migrate/mod.rs sentinel attribution; acceptance remains pending, no builds or tests run by the reviewer
+last_verified: 2026-11-10 T-13189 requester acceptance claims 1-4 passed (participant_disposition.py --clear unpark, and --clear registration for the T-13153 path) against an isolated scratch daemon; installed claim 5 pending with Mable; earlier: 2026-11-10 r2 design review plus r2.1 factual correction verified against baseline.sql NOT NULL columns and activity trigger and migrate/mod.rs sentinel attribution; acceptance remains pending, no builds or tests run by the reviewer
 design_review: >
   2026-11-10 T-13153 APPROVE in EN-49964 replying to EN-49949. Verified the existing three
   disposition writes and their enclosing transactions, eviction replay fence,

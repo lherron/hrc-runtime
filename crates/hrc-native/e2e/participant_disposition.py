@@ -1,10 +1,17 @@
 #!/usr/bin/env python3
-"""T-13153 native scratch acceptance; standalone, outside the verify gate.
+"""T-13153/T-13189 native scratch acceptance; standalone, outside the verify gate.
 
 Discriminates missing keys from nulls, wrong lane joins, duplicate parks/clears,
 non-atomic disposition events, and filtered live/restart observation gaps.
 Uses a real ASP-compiled participant host; only rollback fault injection and
 placement authority are written to the private scratch database.
+
+T-13189 (--clear unpark, the default): the park is cleared by
+POST /v1/participants/unpark before the successor registers, so the null event
+comes from the route; a repeat is unchanged; the reservation, bindings and
+attempts survive and the successor is still admitted; an unknown address, a
+sibling lane and malformed bodies refuse without writing. --clear registration
+reruns the T-13153 path where the successor admission clears the park.
 """
 import argparse
 import json
@@ -19,6 +26,7 @@ from events_kind_filter import Follow
 p = argparse.ArgumentParser(description=__doc__)
 for key in ('binary', 'scratch-root', 'artifacts', 'aspd-socket'):
     p.add_argument('--'+key, type=Path, required=True)
+p.add_argument('--clear', choices=('unpark','registration'), default='unpark')
 a = p.parse_args(); a.owner = 'native'
 s = Scratch(a.scratch_root, None, a.aspd_socket, a.binary, a.artifacts, project_id='n2-t13153')
 prefix = 'agent:tabularasa:project:n2-t13153:task:'
@@ -58,6 +66,56 @@ def check_events(values):
         assert row['category']=='participant', row
         assert json.loads(row['payload_json']) == {'disposition':value,'dispositionAt':stamp,'reservationId':reservation()['reservation_id']}, row
     return rows
+
+def ledger_state():
+    return {'head':s.rows('SELECT MAX(hrc_seq) AS seq FROM hrc_events')[0]['seq'],
+            'reservations':s.rows('SELECT * FROM participant_address_reservations ORDER BY reservation_id'),
+            'bindings':s.rows('SELECT * FROM participant_host_bindings ORDER BY binding_id'),
+            'attempts':s.rows('SELECT * FROM participant_registration_attempts ORDER BY attempt_id')}
+
+def unpark(rid):
+    """T-13189 claims 1, 2 and 4; claim 3 is the successor admission that follows."""
+    case = report['unpark'] = {}
+    route = '/v1/participants/unpark'
+    before = ledger_state()
+    # Claim 4: refusals write nothing, including the exact-lane miss.
+    refusals = {
+        'unknownAddress': ({'scopeRef':prefix+'nobody'}, 404, 'unknown_session'),
+        'siblingLane': ({'scopeRef':scope,'laneRef':'review'}, 404, 'unknown_session'),
+        'missingScope': ({'laneRef':'main'}, 400, 'malformed_request'),
+        'nonStringScope': ({'scopeRef':7}, 400, 'malformed_request'),
+        'setDisposition': ({'scopeRef':scope,'disposition':'parked'}, 400, 'malformed_request'),
+    }
+    for name, (body, status, code) in refusals.items():
+        reply = case[name] = s.http('POST', route, body)
+        assert reply[0]==status and reply[1]['error']['code']==code, (name, reply)
+        assert ledger_state()==before, (name, 'refusal wrote')
+    assert case['unknownAddress'][1]['error']['detail']=={'scopeRef':prefix+'nobody','laneRef':'main'}, case['unknownAddress']
+    assert reservation()['disposition']=='parked'
+    # Claim 1: park then unpark gives null reads and exactly one null event.
+    first = case['first'] = s.http('POST', route, {'scopeRef':scope,'laneRef':'main'})
+    res_id = reservation()['reservation_id']
+    assert first == (200, {'reservationId':res_id,'scopeRef':scope,'laneRef':'main','disposition':None,'dispositionAt':None,'changed':True}), first
+    reads(scope,None,None,'unparked'); check_events([('parked',stamp),(None,None)])
+    target = s.http('GET','/v1/targets/by-session-ref?'+urlencode({'sessionRef':scope+'/lane:main'}))
+    assert target[0]==200 and (target[1]['disposition'],target[1]['dispositionAt'])==(None,None), target
+    case['target'] = target
+    # Claim 2: a repeat (lane defaulted) is unchanged and appends nothing.
+    after = ledger_state()
+    second = case['second'] = s.http('POST', route, {'scopeRef':scope})
+    assert second == (200, dict(first[1], changed=False)), second
+    assert ledger_state()==after, 'unchanged unpark wrote'
+    # Claim 3 (first half): only the two disposition columns moved.
+    assert after['head']==before['head']+1, (before['head'], after['head'])
+    assert after['bindings']==before['bindings'] and after['attempts']==before['attempts']
+    held = [r for r in after['reservations'] if r['reservation_id']==res_id][0]
+    assert held['state']=='held' and held['released_at'] is None, held
+    was = [r for r in before['reservations'] if r['reservation_id']==res_id][0]
+    assert {k:v for k,v in held.items() if k not in ('disposition','disposition_at')}=={k:v for k,v in was.items() if k not in ('disposition','disposition_at')}, (was, held)
+    case['reservation'] = held
+    # The stale eviction replay still cannot re-park an unparked address.
+    assert s.http('POST','/v1/terminate',{'runtimeId':rid,'dropContinuation':False,'disposition':'parked'})[0]==200
+    assert ledger_state()==after, 'eviction replay re-parked'
 
 try:
     s.init_substrate(); (s.root/'run/btmux').mkdir()
@@ -102,6 +160,8 @@ try:
     assert s.http('POST','/v1/terminate',retire)[0]==200 and reservation()==parked
     reads(scope,'parked',stamp,'replayedPark'); check_events([('parked',stamp)])
     reads(ordinary,None,None,'ordinaryWhileOtherParked')
+    if a.clear == 'unpark':
+        unpark(rid)
     broker.terminate(); broker.wait(timeout=20)
     successor = {'registrationMode':'direct','requestedSessionRef':scope,'hostIncarnationId':'successor-host','continuation':'fresh','expectedPredecessor':{'hostIncarnationId':case['hostIncarnationId'],'runtimeId':rid,'generation':joined['generation']}}
     report['successor'] = s.http('POST','/v1/participants/register',successor)

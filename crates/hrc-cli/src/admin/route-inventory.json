@@ -14,6 +14,11 @@
     {
       "listener": "main",
       "method": "POST",
+      "route": "/v1/participants/unpark"
+    },
+    {
+      "listener": "main",
+      "method": "POST",
       "route": "/v1/sessions/resolve"
     },
     {
@@ -685,6 +690,18 @@
         "reservationId"
       ],
       "emission": "same transaction, only on value change; hrc-participant generation 0"
+    },
+    "clear": {
+      "route": "POST /v1/participants/unpark",
+      "body": [
+        "scopeRef",
+        "laneRef (default main)"
+      ],
+      "effect": "clear-only by exact address; reservation stays held; changed=false appends nothing",
+      "refusals": {
+        "404": "unknown_session naming scopeRef and laneRef",
+        "400": "malformed_request"
+      }
     }
   }
 }

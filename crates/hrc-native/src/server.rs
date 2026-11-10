@@ -588,6 +588,14 @@ async fn dispatch_inner(server: &Shared, request: Request, local_only: bool) -> 
                 Err(error)
             }
         }
+    } else if method == Method::POST && uri.path() == "/v1/participants/unpark" {
+        match parse_body(&body) {
+            Ok(value) => participants::unpark(server, value).await,
+            Err(mut error) => {
+                error.detail = Some(json!({}));
+                Err(error)
+            }
+        }
     } else if method == Method::POST && uri.path() == "/v1/targets/ensure" {
         match parse_body(&body) {
             Ok(value) => targets::ensure(server, value).await,
@@ -859,6 +867,7 @@ fn implemented(method: &Method, path: &str) -> bool {
                 "/v1/targets/ensure",
                 "/v1/participants/register",
                 "/v1/participants/attach",
+                "/v1/participants/unpark",
                 "/v1/placements/resolve",
                 "/v1/declarations/resolve",
                 "/v1/transcript-search",
