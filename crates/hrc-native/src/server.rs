@@ -44,6 +44,8 @@ mod first_turn;
 mod hrcpty;
 #[path = "server/broker/lease.rs"]
 mod lease;
+#[path = "server/broker/ledger_prune.rs"]
+mod ledger_prune;
 #[path = "server/broker/maintenance.rs"]
 mod maintenance;
 #[path = "server/broker/participants/mod.rs"]

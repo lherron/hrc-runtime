@@ -82,6 +82,8 @@ Deleted entries stay listed to explain their removal; their source remains in gi
 | `lifecycle_peer.py` | Bun/native origins forward a verified primary's grant to the owned Bun peer. (requires explicit scratch/capture inputs; retained qualification) | keep-manual |
 | `lifecycle_rows.py` | Compare real boot/stop ledger rows over clean, malformed and foreign history. (requires explicit scratch/capture inputs; retained qualification) | keep-manual |
 | `lifecycle_shutdown.py` | Real HTTP request drain: a partial body must not hold the owner indefinitely. (requires explicit scratch/capture inputs; retained qualification) | keep-manual |
+| `ledger_prune.py` | Mark-gated runtime prune on copies of a real ledger: every refusal deletes nothing, only runtimes behind the mark go, the scheduled task (TZ-shifted to 04:00) reports `no_window` or deletes, and the deadline stops it (T-12855). Takes `--source <state.sqlite backup>`. | keep-manual |
+| `ledger_prune_resume.py` | A seat whose every runtime was pruned through the mark-gated task is started again with its stored continuation, handoff and session intact (T-12855, contract gate 5). Live model turns. | keep-manual |
 | `maintenance.py` | Real live-seat safety and Bun-authored orphan maintenance in both modes. | promote |
 | `n2_attached.py` | N2 attached-run door on one owner (bun or native), recorded for `compare --suite n2-attached`. (requires explicit scratch/capture inputs; retained qualification) | keep-manual |
 | `n2_continuation.py` | A seat re-born on a scope with a stored continuation compiles with it and continues. (protected by T-11899) | keep-manual |

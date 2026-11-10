@@ -3,13 +3,27 @@
 This document is the canonical retention policy for HRC's live `state.sqlite`
 database. The observation-table policy was revised on 2026-07-28 after sustained
 broker traffic grew the database to 33 GB and synchronous SQLite scans starved
-the HRC server main thread.
+the HRC server main thread, and again on 2026-11-09 when the lake took over
+history older than 14 days.
 
 ## Retention policy
 
-Non-delta observation events are **keep-forever**. Rows in `events`,
-`hrc_events`, and `broker_invocation_events` have no TTL and are not aged out by
-the scheduled job (Lance ruling, 2026-07-28). Completed-run rows in
+HRC keeps a bounded operational window; the lake (hrc-analytics) holds
+everything older, and HRC deletes a row only once the lake has taken it (Lance
+rulings, 2026-11-09). The event ledgers `hrc_events` and
+`broker_invocation_events` are pruned to a **14-day hot window**: a terminal
+runtime untouched for 14 days is deleted with its whole cascade, ledger rows
+included, but only behind the lake's verified prune mark. This revises the
+2026-07-28 keep-forever ruling for those two tables. History older than the
+window is read from the lake through its query server on svc; HRC has no
+transcript router to it, and lake-only reads beyond the window are accepted
+(Lance, 2026-11-09). The mechanism is the
+[mark-gated runtime prune](#mark-gated-runtime-prune-14-day-window) below.
+
+What stays keep-forever: `events`, `hrc_events` rows with no runtime (session,
+input, context, server and store history), and every session-level and
+collaboration table named below. The scheduled Bun job never ages out ledger
+rows (Lance ruling, 2026-07-28). Completed-run rows in
 `runtime_buffers` expire, on a default 1-day retention period. The launchd job
 runs `scripts/prune-hrc-event-deltas.ts` nightly; the filename and job label are
 retained for installation compatibility even though the script now enforces
@@ -43,10 +57,11 @@ The retention periods that remain are configuration, not constants:
 - `--event-retention-days` / `HRC_EVENT_RETENTION_DAYS` applies only when event
   tables are explicitly selected.
 
-Because observation history is now unbounded, `hrc monitor transcript`, broker
-forensics, capture verification, `/v1/events` replay, and monitor history are no
-longer bounded by a retention window. Database growth is instead governed by what
-gets written; that is tracked separately from this job.
+Once a node has a prune window, `hrc monitor transcript`, broker forensics,
+capture verification, `/v1/events` replay, transcript search, prior-session
+recap, seat stats and run export reach back only as far as the window for
+runtime-owned history. None of them says that anything older is missing; that
+history is in the lake.
 
 The prune has SQL-level safety invariants independent of cutoff arithmetic:
 
@@ -62,8 +77,84 @@ The prune has SQL-level safety invariants independent of cutoff arithmetic:
   unacknowledged deliveries are not observation tables and are never touched by
   this job.
 
-There is no archive migration. Observation history is retained in the live state
-database; aged `runtime_buffers` and expired disposition metadata are deleted.
+There is no archive migration. The Bun job deletes aged `runtime_buffers` and
+expired disposition metadata; runtime-owned ledger history leaves HRC only
+through the mark-gated prune.
+
+## Mark-gated runtime prune (14-day window)
+
+The HRC daemon prunes runtimes itself, as a scheduled maintenance task inside
+the owning process (T-12855; contract: hrc-analytics `docs/prune-contract.md`,
+approved 2026-11-09). There is no second writer and no separate job.
+
+**Window.** `HRC_RUNTIME_PRUNE_WINDOW` in the daemon's environment, a duration
+such as `14d`. This is the node's retention setting. Unset, the task deletes
+nothing and reports `stopReason: "no_window"`; a node gets its window only after
+its first prune has been run by hand and the lake's next reconcile has been
+read.
+
+**The mark.** After each verified nightly reconcile the lake writes
+`prune-mark.json` beside `state.sqlite` (by temporary file and rename). It names
+HRC's ledger incarnation, the reconcile's start time (`reconciled_at`) and two
+anchors: one `hrc_events` row and one `broker_invocation_events` row, each a
+primary key and its creation timestamp as stored. HRC trusts nothing else about
+the lake and never checks the mark's age; an old mark only deletes less.
+
+**What is deleted.** A runtime, with the full cascade of
+`prune_runtime_manifest` (fifteen tables, `runtimes` last), when all hold:
+
+1. the mark's incarnation equals `hrc_event_ledger_metadata`'s, and both anchor
+   rows exist at their keys with exactly the mark's creation timestamps
+   (compared as strings);
+2. its status is `terminated`, `dead`, `stale`, `crashed` or `detached`;
+3. `runtimes.updated_at` is older than the window and earlier than
+   `reconciled_at`;
+4. its highest `hrc_seq` and highest broker event id are strictly below the
+   anchor keys, so the runtime owning an anchor row never qualifies;
+5. none of the native prune's guards refuses it: an external lifecycle owner,
+   held offline evidence, a live lease, tmux session or broker pid, an active
+   run, an unsettled absorbed submission.
+
+With no file, an unreadable one, an unknown `version`, a missing anchor, a
+different incarnation or a mismatched anchor row, nothing is deleted.
+
+**Schedule and write discipline.** 04:00 node-local, hard stop by 04:25 (the
+lake's reconcile starts at 04:30), resuming the next night. Candidates are read
+in pages by runtime id; eligible runtimes are deleted in batches of one
+transaction each (all fifteen tables or none). The first batch is one runtime;
+each later one is sized from the last batch's cost per runtime to hold the
+store about 250 ms, at most 16 runtimes, with a pause between batches. One
+runtime is the floor, so a runtime with a very large ledger holds longer;
+`maxWriteHoldMs` reports the longest hold.
+
+**Report.** Every run, scheduled or by hand, logs one `prune.report` line
+(component `maintenance`): `trigger`, `dryRun`, `window`, the `mark` it read
+(`reconciledAt`, `incarnation`, anchor keys) or `detail` saying why none,
+`eligible`, `deleted`, `remaining`, `skipped` by reason, `rowsDeleted` per table
+(`wouldDelete` on a dry run), `batches`, `maxWriteHoldMs`, `elapsedMs` and
+`stopReason`: `complete`, `deadline`, `no_window`, `window_invalid`, `no_mark`,
+`mark_unreadable`, `mark_version_unknown`, `incarnation_mismatch`,
+`anchor_mismatch`, `shutdown` or `error`.
+
+**By hand.** `hrc runtime prune-window [--window 14d] [--max-minutes 25]
+[--dry-run | --yes] [--json]` runs the same selection on demand. Without
+`--yes` it is a dry run. `--json` adds the deleted runtime ids and each skipped
+runtime with its reason. A node's first prune runs this way; it frees far more
+than a nightly run and is followed once by a full `VACUUM` in a planned
+restart.
+
+**What the prune relies on.** A ledger row's `ts` (`hrc_events`) or `time`
+(`broker_invocation_events`) is never rewritten after insert, both ledgers stay
+`AUTOINCREMENT` with `sqlite_sequence` never lowered, and the ledger
+incarnation is minted once per database. A change to any of these breaks the
+anchor check.
+
+**Restoring `state.sqlite`.** Whoever restores `state.sqlite`, from any backup,
+deletes `prune-mark.json` beside it in the same step. A mark left over from
+before the restore can authorize one prune before the lake has seen the
+restored store (Lance ruling, 2026-11-09: that window stays unsupported, and
+removing the mark is part of a restore). The lake writes a fresh mark after its
+next reconcile.
 
 ## Pre-activate store backups
 
@@ -90,7 +181,9 @@ with one of these reasons:
 command to record one. Activation refuses to run without pending migrations, so
 a successful one always leaves the store strictly ahead of its backup. Restoring
 the backup puts the two level, as does a migration that failed after the backup,
-and the file then stays until the next activation replaces it.
+and the file then stays until the next activation replaces it. Restoring a
+backup over `state.sqlite` includes deleting `prune-mark.json` beside it in the
+same step (see the mark-gated prune above).
 
 ## Staged owner releases
 
@@ -295,7 +388,10 @@ know what it left behind.
 Before any bulk prune, take a full backup of `state.sqlite`. If the disk cannot
 fit a full backup, defer the prune and surface that deferral; never perform the
 bulk prune without its backup. Rolling nightly increments are exempt from this
-precondition under C-10736.
+precondition under C-10736. The mark-gated runtime prune is exempt too, by
+hand or nightly: the lake's verified mark replaces the pre-prune snapshot
+(Lance ruling, 2026-11-09), because a row is deleted only once the lake holds
+it.
 
 The command split from T-06500 is intentional:
 
@@ -306,29 +402,33 @@ The command split from T-06500 is intentional:
 - Manual `runtime sweep` uses the same liveness gate and resolved default age
   boundary; its filters remain available for operator-directed aging.
 - `runtime prune` reaps rows, defaults to `stale`, and is gated per T-05441.
+- `runtime prune-window` (and its nightly task) deletes terminal runtimes past
+  the window with their ledgers, only behind the lake's prune mark (above).
 - The T-07598 one-off mneme burst cleanup is an explicit exception: `hrc admin
   runtime prune --runtime-ids-file <file> --include-ledgers --yes` deletes the
   selected runtimes' keep-forever ledgers only after an all-or-nothing orphan
   gate and exact three-scope allow-list check. It is not a standing retention
   policy or timer.
 
-`runtime prune` is the only stale-row-reaping surface.
+`runtime prune` is the only stale-row-reaping surface outside the mark-gated
+prune.
 
-## Registry-row retention — keep forever
+## Registry-row retention
 
-Terminated `runtimes` rows are keep-forever history: no TTL and no pruning under
-the standing policy. Lance's 2026-07-18 ruling is recorded in T-06531 comment
-C-10793; the fenced T-07598 manifest cleanup above is the sole named exception.
+Terminated `runtimes` rows were keep-forever history under Lance's 2026-07-18
+ruling (T-06531 comment C-10793). Since 2026-11-09 the mark-gated prune deletes
+them with their cascade once they are past the window and the lake holds them;
+the fenced T-07598 manifest cleanup is the other named exception.
 
 Federation node-local retirement fences are also keep-forever authority. They
 have no TTL: the ordered retirement operation deletes the shared active binding
 only after the old-home fence is durable, and expiring that fence could restore
 authority on the old home.
 
-The controlling reason is resume-path integrity. Terminated rows anchor the
-`scope_ref` → `host_session_id` → `continuation_json` chain used by
-`--resume`; deleting them could orphan resumable state. The table is tiny, so
-there is no scale pressure that outweighs that risk.
+The original reason was resume-path integrity. The resume chain
+`scope_ref` → `host_session_id` → `continuation_json` is read from the
+`sessions` row, which no prune touches, so a seat whose every runtime has been
+pruned is still summoned and resumes (prune contract gate 5).
 
 ## Session retention — keep forever, project narrowly
 
@@ -441,8 +541,7 @@ Each pass logs `runtime.hrcpty_aging_complete`.
 ## Index adequacy
 
 The C-10743 audit measured 8571 `runtimes` rows on 2026-07-18 (about 8.5k):
-terminated 7079 / stale 1381 / dead 72 / ready 37 / busy 2. This is a tiny table,
-and registry history remains subject to the keep-forever policy. Its foreign read
+terminated 7079 / stale 1381 / dead 72 / ready 37 / busy 2. This is a tiny table. Its foreign read
 paths are primary-key lookups, indexed joins, or tiny scans, so no missing index
 matters at this row count:
 

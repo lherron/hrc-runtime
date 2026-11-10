@@ -23,6 +23,7 @@ pub(crate) fn dispatch(path: &str, args: &Parsed<'_>) -> Option<Result<()>> {
         "runtime diagnostics" => diagnostics::command(args),
         "runtime sweep" => sweep::sweep(args),
         "runtime prune" => sweep::prune(args),
+        "runtime prune-window" => sweep::prune_window(args),
         "doctor" => doctor::command(args),
         "info" => info::command(args),
         _ => return None,

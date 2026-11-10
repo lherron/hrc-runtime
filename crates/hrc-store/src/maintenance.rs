@@ -302,6 +302,24 @@ fn table_exists(db: &Connection, table: &str) -> Result<bool> {
         |r| r.get(0),
     )?)
 }
+/// The runtime cascade, children first (prune contract section 2).
+const CASCADE: &[&str] = &[
+    "transcript_turns",
+    "transcript_index_invocations",
+    "broker_invocation_events",
+    "hrc_events",
+    "runtime_artifacts",
+    "broker_projection_dispositions",
+    "broker_invocations",
+    "runtime_first_turn_watch",
+    "tool_result_blob_parts",
+    "tool_result_blobs",
+    "runtime_operations",
+    "runtime_buffers",
+    "surface_bindings",
+    "runs",
+    "runtimes",
+];
 const COUNTS: &[&str] = &[
     "broker_projection_dispositions",
     "broker_invocation_events",
@@ -332,6 +350,14 @@ impl Store {
         Ok(counts)
     }
     pub fn prune_runtime_manifest(&mut self, ids: &[String]) -> Result<usize> {
+        Ok(self.prune_runtime_batch(ids)?.0)
+    }
+    /// One transaction: every cascade table's rows for `ids`, or none. Returns
+    /// the runtimes removed and the rows deleted per table.
+    pub fn prune_runtime_batch(
+        &mut self,
+        ids: &[String],
+    ) -> Result<(usize, Vec<(&'static str, usize)>)> {
         let selected = serde_json::to_string(ids)?;
         let tx = self.sqlite.transaction()?;
         let count: i64=tx.query_row("SELECT COUNT(*) FROM runtimes WHERE runtime_id IN (SELECT CAST(value AS TEXT) FROM json_each(?))",[&selected],|r|r.get(0))?;
@@ -344,32 +370,81 @@ impl Store {
         for id in ids {
             settle_absorbed(&tx, id, true, &now)?;
         }
-        for table in [
-            "transcript_turns",
-            "transcript_index_invocations",
-            "broker_invocation_events",
-            "hrc_events",
-            "runtime_artifacts",
-            "broker_projection_dispositions",
-            "broker_invocations",
-            "runtime_first_turn_watch",
-            "tool_result_blob_parts",
-            "tool_result_blobs",
-            "runtime_operations",
-            "runtime_buffers",
-            "surface_bindings",
-            "runs",
-            "runtimes",
-        ] {
-            if matches!(table, "tool_result_blob_parts" | "tool_result_blobs")
+        let mut rows = Vec::new();
+        for table in CASCADE {
+            if matches!(*table, "tool_result_blob_parts" | "tool_result_blobs")
                 && !table_exists(&tx, table)?
             {
                 continue;
             }
-            tx.execute(&format!("WITH selected AS MATERIALIZED (SELECT CAST(value AS TEXT) AS runtime_id FROM json_each(?)) DELETE FROM {table} WHERE {}",ledger_predicate(table)),[&selected])?;
+            let n = tx.execute(&format!("WITH selected AS MATERIALIZED (SELECT CAST(value AS TEXT) AS runtime_id FROM json_each(?)) DELETE FROM {table} WHERE {}",ledger_predicate(table)),[&selected])?;
+            rows.push((*table, n));
         }
         tx.commit()?;
-        Ok(count as usize)
+        Ok((count as usize, rows))
+    }
+    /// Rows the cascade would delete for `ids`, per table (read only).
+    pub fn runtime_cascade_counts(&self, ids: &[String]) -> Result<Vec<(&'static str, usize)>> {
+        let selected = serde_json::to_string(ids)?;
+        let mut rows = Vec::new();
+        for table in CASCADE {
+            if !table_exists(&self.sqlite, table)? {
+                continue;
+            }
+            let n: i64 = self.sqlite.query_row(&format!("WITH selected AS MATERIALIZED (SELECT CAST(value AS TEXT) AS runtime_id FROM json_each(?)) SELECT COUNT(*) FROM {table} WHERE {}",ledger_predicate(table)),[&selected],|r|r.get(0))?;
+            rows.push((*table, n as usize));
+        }
+        Ok(rows)
+    }
+    /// A prune mark anchor row's stored creation timestamp, read by primary
+    /// key: `ts` on hrc_events, `time` on broker_invocation_events.
+    pub fn ledger_anchor_created(&self, ledger: &str, key: i64) -> Result<Option<String>> {
+        let sql = match ledger {
+            "hrc_events" => "SELECT ts FROM hrc_events WHERE hrc_seq=?",
+            "broker_invocation_events" => "SELECT time FROM broker_invocation_events WHERE id=?",
+            _ => anyhow::bail!("not an event ledger: {ledger}"),
+        };
+        Ok(self.sqlite.query_row(sql, [key], |r| r.get(0)).optional()?)
+    }
+    /// The runtime's highest `hrc_seq` and highest broker event id, through
+    /// the two per-runtime indexes (never a primary-key walk).
+    pub fn runtime_ledger_heads(&self, id: &str) -> Result<(Option<i64>, Option<i64>)> {
+        let hrc = self.sqlite.query_row(
+            "SELECT MAX(hrc_seq) FROM hrc_events INDEXED BY idx_hrc_events_runtime_seq WHERE runtime_id=?",
+            [id],
+            |r| r.get(0),
+        )?;
+        let broker = self.sqlite.query_row(
+            "SELECT MAX(id) FROM broker_invocation_events INDEXED BY idx_broker_invocation_events_runtime_time_invocation_seq WHERE runtime_id=?",
+            [id],
+            |r| r.get(0),
+        )?;
+        Ok((hrc, broker))
+    }
+    /// How many candidates sort after `after` (the deadline's backlog).
+    pub fn ledger_prune_backlog(&self, after: &str, cutoff: &str) -> Result<usize> {
+        let statuses = serde_json::to_string(&crate::status::UNAVAILABLE)?;
+        let n: i64 = self.sqlite.query_row(
+            "SELECT COUNT(*) FROM runtimes WHERE runtime_id > ? AND status IN (SELECT value FROM json_each(?)) AND updated_at < ?",
+            params![after, statuses, cutoff],
+            |r| r.get(0),
+        )?;
+        Ok(n as usize)
+    }
+    /// One page of terminal runtimes whose `updated_at` sorts before `cutoff`,
+    /// keyed by runtime id (immutable) after `after`.
+    pub fn ledger_prune_candidates(
+        &self,
+        after: &str,
+        cutoff: &str,
+        limit: usize,
+    ) -> Result<Vec<Value>> {
+        let statuses = serde_json::to_string(&crate::status::UNAVAILABLE)?;
+        Ok(self
+            .sqlite
+            .prepare("SELECT * FROM runtimes WHERE runtime_id > ? AND status IN (SELECT value FROM json_each(?)) AND updated_at < ? ORDER BY runtime_id LIMIT ?")?
+            .query_map(params![after, statuses, cutoff, limit as i64], crate::runtime_row)?
+            .collect::<rusqlite::Result<_>>()?)
     }
     pub fn dispose_retained_runtime(&mut self, id: &str, by: &str, reason: &str) -> Result<bool> {
         let tx = self.sqlite.transaction()?;

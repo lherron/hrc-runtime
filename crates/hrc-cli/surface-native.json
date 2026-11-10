@@ -1020,6 +1020,77 @@
         ],
         "nativeOnly": true
       }
+    },
+    {
+      "parent": [
+        "runtime"
+      ],
+      "commandLine": [
+        "prune-window [options]",
+        "mark-gated prune of runtimes past the window"
+      ],
+      "node": {
+        "path": [
+          "runtime",
+          "prune-window"
+        ],
+        "name": "prune-window",
+        "aliases": [],
+        "usage": "[options]",
+        "allowExcessArguments": false,
+        "help": "Usage: hrc runtime prune-window [options]\n\ndelete terminal runtimes past the retention window, with their ledgers, behind\nthe lake's prune mark (state dir prune-mark.json); previews unless --yes\n\nOptions:\n  --window <duration>  retention window, e.g. 14d (default: the daemon's\n                       HRC_RUNTIME_PRUNE_WINDOW; unset deletes nothing)\n  --max-minutes <n>    stop after n minutes (default: 25)\n  --dry-run            report what would be deleted without deleting\n  --yes                confirm deletion\n  --json               output the full report as JSON\n  -h, --help           display help for command\n",
+        "humanHelp": "Usage: hrc runtime prune-window [options]\n\ndelete terminal runtimes past the retention window, with their ledgers, behind\nthe lake's prune mark (state dir prune-mark.json); previews unless --yes\n\nOptions:\n  --window <duration>  retention window, e.g. 14d (default: the daemon's\n                       HRC_RUNTIME_PRUNE_WINDOW; unset deletes nothing)\n  --max-minutes <n>    stop after n minutes (default: 25)\n  --dry-run            report what would be deleted without deleting\n  --yes                confirm deletion\n  --json               output the full report as JSON\n  -h, --help           display help for command\n",
+        "arguments": [],
+        "options": [
+          {
+            "flags": "--window <duration>",
+            "long": "--window",
+            "short": null,
+            "required": true,
+            "optional": false,
+            "mandatory": false,
+            "negate": false
+          },
+          {
+            "flags": "--max-minutes <n>",
+            "long": "--max-minutes",
+            "short": null,
+            "required": true,
+            "optional": false,
+            "mandatory": false,
+            "negate": false
+          },
+          {
+            "flags": "--dry-run",
+            "long": "--dry-run",
+            "short": null,
+            "required": false,
+            "optional": false,
+            "mandatory": false,
+            "negate": false
+          },
+          {
+            "flags": "--yes",
+            "long": "--yes",
+            "short": null,
+            "required": false,
+            "optional": false,
+            "mandatory": false,
+            "negate": false
+          },
+          {
+            "flags": "--json",
+            "long": "--json",
+            "short": null,
+            "required": false,
+            "optional": false,
+            "mandatory": false,
+            "negate": false
+          }
+        ],
+        "children": [],
+        "nativeOnly": true
+      }
     }
   ]
 }

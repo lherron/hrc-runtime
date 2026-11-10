@@ -246,10 +246,14 @@ The native zombie sweeper defaults to 1800 seconds of event silence
 not protect a headless run. Account for this during long tool calls.
 
 [state-retention.md](https://github.com/lherron/hrc-runtime/blob/main/docs/state-retention.md) owns the retention policy and
-exemptions. Observation history defaults to three days and completed runtime
-buffers to one day. Terminated runtime rows and retirement fences are permanent
-history, not TTL candidates. Before a bulk prune require a full backup; if it
-cannot fit, defer the prune. Rolling nightly increments are exempt (C-10736).
+exemptions. Runtime-owned ledger history is kept for a 14-day window and then
+deleted, with its terminal runtime, only behind the lake's verified
+`prune-mark.json` (`hrc runtime prune-window`; Lance rulings 2026-11-09).
+Completed runtime buffers expire after one day. Sessions and retirement fences
+are permanent history. Before any other bulk prune require a full backup; if it
+cannot fit, defer the prune. Rolling nightly increments (C-10736) and the
+mark-gated prune are exempt. Restoring `state.sqlite` from any backup includes
+deleting `prune-mark.json` beside it in the same step.
 Never take a torn filesystem copy of a live WAL database. Full VACUUM remains
 an offline coordinated operation.
 

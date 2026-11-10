@@ -541,6 +541,11 @@
       "command": "handoff list",
       "disposition": "IMPLEMENT",
       "implementation": "native"
+    },
+    {
+      "command": "runtime prune-window",
+      "disposition": "IMPLEMENT",
+      "implementation": "native"
     }
   ]
 }

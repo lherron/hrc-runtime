@@ -323,3 +323,76 @@ pub(super) fn prune(args: &Parsed<'_>) -> Result<()> {
     crate::cli_print!("{out}");
     Ok(())
 }
+
+/// `runtime prune-window` (T-12855): the daemon's mark-gated prune on demand.
+/// It previews unless `--yes` is given without `--dry-run`.
+pub(super) fn prune_window(args: &Parsed<'_>) -> Result<()> {
+    let mut request = Map::new();
+    request.insert("markGated".into(), true.into());
+    let dry_run = args.flag("dry-run") || !args.flag("yes");
+    request.insert("dryRun".into(), dry_run.into());
+    if args.flag("yes") {
+        request.insert("yes".into(), true.into());
+    }
+    if let Some(window) = args.value("window") {
+        request.insert("window".into(), window.into());
+    }
+    if let Some(raw) = args.value("max-minutes") {
+        let minutes = raw
+            .parse::<f64>()
+            .ok()
+            .filter(|n| n.is_finite() && *n > 0.)
+            .ok_or_else(|| Error::usage("--max-minutes must be a positive number"))?;
+        request.insert("maxMinutes".into(), minutes.into());
+    }
+    let result = Daemon::connect()?.post("/v1/runtimes/prune", Value::Object(request))?;
+    if args.flag("json") {
+        crate::cli_print!("{}\n", js_json(&result));
+        return Ok(());
+    }
+    let mut out = format!(
+        "runtime prune-window{}: {}\n",
+        if dry_run { " (dry-run)" } else { "" },
+        member(&result, "stopReason")
+    );
+    let mark = &result["mark"];
+    if mark.is_object() {
+        out.push_str(&format!(
+            "  mark reconciledAt={} incarnation={} anchors hrc_events={} broker_invocation_events={}\n",
+            member(mark, "reconciledAt"),
+            member(mark, "incarnation"),
+            member(&mark["anchors"], "hrc_events"),
+            member(&mark["anchors"], "broker_invocation_events"),
+        ));
+    }
+    if let Some(detail) = result.get("detail") {
+        out.push_str(&format!("  detail {}\n", js_json(detail)));
+    }
+    out.push_str(&format!(
+        "  eligible={} deleted={} remaining={} batches={} maxWriteHoldMs={} elapsedMs={}\n",
+        member(&result, "eligible"),
+        member(&result, "deleted"),
+        member(&result, "remaining"),
+        member(&result, "batches"),
+        member(&result, "maxWriteHoldMs"),
+        member(&result, "elapsedMs"),
+    ));
+    for (label, key) in [
+        ("skipped", "skipped"),
+        ("deleted rows", "rowsDeleted"),
+        ("would delete rows", "wouldDelete"),
+    ] {
+        if let Some(map) = result[key].as_object().filter(|m| !m.is_empty()) {
+            out.push_str(&format!("  {label}\n"));
+            for k in js_keys(map) {
+                out.push_str(&format!(
+                    "    {} {}\n",
+                    pad_end(k, 32),
+                    crate::js::display(&map[k])
+                ));
+            }
+        }
+    }
+    crate::cli_print!("{out}");
+    Ok(())
+}

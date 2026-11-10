@@ -148,7 +148,7 @@ fn parse(v: &Value, prune: bool) -> std::result::Result<Request, ApiError> {
         ids,
     })
 }
-fn duration(raw: &str) -> std::result::Result<f64, ApiError> {
+pub(super) fn duration(raw: &str) -> std::result::Result<f64, ApiError> {
     let (n, m) = [
         ("ms", 1.),
         ("s", 1000.),
@@ -282,7 +282,7 @@ fn held(r: &Value, facts: &Value) -> bool {
         })
     })
 }
-fn process_live(v: &Value) -> Result<bool> {
+pub(super) fn process_live(v: &Value) -> Result<bool> {
     if !v.is_number() {
         return Ok(false);
     }
@@ -426,7 +426,11 @@ async fn liveness(server: &Server, r: &Value, facts: &Value) -> Result<Option<St
     }
     Ok(None)
 }
-async fn prune_guard(server: &Server, r: &Value, facts: &Value) -> Result<Option<String>> {
+pub(super) async fn prune_guard(
+    server: &Server,
+    r: &Value,
+    facts: &Value,
+) -> Result<Option<String>> {
     if r["runtimeStateJson"]["lifecycleOwner"] == "external" {
         return Ok(Some("external_lifecycle_owner".into()));
     }
@@ -711,6 +715,9 @@ pub async fn handle(
 ) -> std::result::Result<Response, ApiError> {
     if prune && body["disposeRetainedEvidence"] == true {
         return dispose(server, &body).await;
+    }
+    if prune && body["markGated"] == true {
+        return super::ledger_prune::handle(server, &body).await;
     }
     let q = parse(&body, prune)?;
     if q.ids.is_some() {
