@@ -15,7 +15,10 @@ line (the daemon appending mid-read) fails the report.
 
 Declared deltas from Bun (T-13047): every writer's day files are read, so
 `filesScanned` counts them all; `--idle` names the routes only rusthrc serves
-(admin/route-inventory.json).
+(admin/route-inventory.json); CLI and launch records of bin `rusthrc` (the
+native CLI) are reported under their own bin, where Bun dropped them. `--record`
+compares Bun on the fixture without those records and freezes native's output
+on the full fixture.
 
 Times: the fixture is anchored at a whole UTC minute, and every timestamp in
 the output is rewritten as its offset from that anchor, so the golden holds at
@@ -82,6 +85,9 @@ def metrics_fixture(root, now):
         cli('monitor Events', 7.5, 33),
         cli('a-b', 1, 1), cli('a_b', 2, 2), cli('ab', 3, 3), cli('a.b', 4, 4), cli('A b', 5, 5),
         cli('send', 65.739667, 1355, bin='hrcchat'),
+        # The native CLI's own bin: its own rows, never folded into `hrc` (T-13047).
+        cli('monitor events', 12.5, 900, [rpc('r4', 2.25)], bin='rusthrc'),
+        cli('runtime list', 3.75, 50, bin='rusthrc'),
         cli('server status', 0.1 + 0.2, 7),
         dict(v=1.0, kind='cli', ts=ts(hours=3), bin='hrc', cmd='float version', durMs=2, stdoutBytes=2, rpc=[]),
         cli('bad rpc', 1, 1, [dict(id='x', path='/p', method='GET', ms=-1, status=200, bytes=1)]),
@@ -93,6 +99,7 @@ def metrics_fixture(root, now):
         dict(v=1, kind='launch', ts=ts(hours=1), bin='hrc', cmd='start', startupMs=901,
              phases=[dict(phase='resolve', ms=12), dict(phase='attach', ms=650)]),
         dict(v=1, kind='launch', ts=ts(hours=1), bin='hrcchat', cmd='run', startupMs=44, phases=[dict(phase='resolve', ms=10)]),
+        dict(v=1, kind='launch', ts=ts(hours=1), bin='rusthrc', cmd='start', startupMs=650, phases=[dict(phase='resolve', ms=9)]),
         dict(v=1, kind='launch', ts=ts(hours=1), bin='hrc', cmd='bad phases', startupMs=1, phases=[dict(phase=3, ms=1)]),
     ]
     files[f'cli-{day(2)}.ndjson'] = [cli(f'monitor stats', i * 1.25, i * 100, at=ts(days=2, hours=1)) for i in range(1, 22)]
@@ -110,6 +117,7 @@ def metrics_fixture(root, now):
         srv('/v1/sessions/by-host/:hostSessionId', 1.0, bytes=5, sampleWeight=31),
         srv('/v1/sessions/by-host/:hostSessionId', 4.0, status=404, bytes=5),
         srv('/v1/status', 8.877666000000033, sampleWeight=3, bytes=2003, reqId='r3'),
+        srv('/v1/runtimes', 1.75, bytes=640, reqId='r4', client='rusthrc/1'),
         srv('/v1/ingest', 2.5, method='POST', listener='ingest', bytes=12, client='hrc-server/0.5'),
         srv('/v1/runs', 1.2, listener='peer', bytes=77, client='peer-x'),
         srv('/v1/runs', 3.3, bytes=78),
@@ -175,6 +183,17 @@ def writers_variant(root):
         '{"v":1,"kind":"script","ts":"%s","script":"reap","cmd":"-y","exitCode":0,"durMs":256}\n' % iso(datetime.now(timezone.utc)))
 
 
+def bunera_variant(root):
+    """`full` without the native CLI's records: what Bun-era files held, and
+    the only population `--record` can compare against Bun (Bun drops them)."""
+    full, out = root / 'full' / 'metrics', root / 'bunera' / 'metrics'
+    shutil.copytree(full, out, symlinks=True)
+    for path in out.iterdir():
+        if path.is_file() and path.name.startswith('cli-'):
+            lines = path.read_bytes().split(b'\n')
+            path.write_bytes(b'\n'.join(l for l in lines if b'"bin":"rusthrc"' not in l))
+
+
 def normalize(text, anchor):
     for pattern, replacement in CUTOFF:
         text = re.sub(pattern, replacement, text)
@@ -208,6 +227,7 @@ def main():
     fix = Path(tempfile.mkdtemp(prefix='hrc-metrics-report-', dir='/tmp')).resolve()
     metrics_fixture(fix / 'metrics', anchor)
     writers_variant(fix / 'metrics')
+    bunera_variant(fix / 'metrics')
     state = fix / 'state'
     env = {k: v for k, v in os.environ.items() if not k.startswith(('ASP_', 'HRC_', 'WRKQ', 'AGENT_ID'))}
     env.update(HRC_RUNTIME_DIR=str(fix / 'run'), HRC_STATE_DIR=str(state), HRC_METRICS='0', NO_COLOR='1', FORCE_COLOR='0')
@@ -232,7 +252,11 @@ def main():
         key = f'[{variant}] ' + ' '.join(argv)
         subject = observe([str(args.binary.resolve())], variant, argv)
         if args.record:
-            oracle = observe(['bun', str(args.oracle.resolve())], variant, argv)
+            # Bun never read `rusthrc` CLI records: compare it on the Bun-era
+            # population, and freeze native's output on the full one.
+            compared = 'bunera' if variant == 'full' else variant
+            oracle = observe(['bun', str(args.oracle.resolve())], compared, argv)
+            native_compared = subject if compared == variant else observe([str(args.binary.resolve())], compared, argv)
             # The declared deltas: files of every writer, and native-only idle routes.
             def bun_view(item):
                 item = dict(item, stdout=FILES.sub(r'\g<1>0', item['stdout']))
@@ -246,7 +270,7 @@ def main():
                     item['stdout'] = re.sub(r'Idle routes \(no request in window\): \d+', 'Idle routes', '\n'.join(kept))
                 return item
             # `report` read every file Bun read here (cli-*, server-*): exact.
-            same = bun_view(oracle) == bun_view(subject) if 'routes' in argv else oracle == subject
+            same = bun_view(oracle) == bun_view(native_compared) if 'routes' in argv else oracle == native_compared
             results.append(dict(case=key, **{'pass': same}, oracle=oracle, subject=subject))
             golden[key] = subject
         else:

@@ -139,8 +139,10 @@ fn non_negative(value: &Value, key: &str) -> Option<f64> {
         .and_then(Value::as_f64)
         .filter(|n| n.is_finite() && *n >= 0.)
 }
+/// The writing CLI: `rusthrc` is the native CLI, `hrc` the Bun passthrough
+/// (and older Bun lines), each kept as its own command prefix.
 fn bin(value: &Value) -> Option<&str> {
-    text(value, "bin").filter(|b| ["hrc", "hrcchat"].contains(b))
+    text(value, "bin").filter(|b| ["hrc", "hrcchat", "rusthrc"].contains(b))
 }
 
 fn stats(p50: f64, p95: f64, max: f64) -> Value {
