@@ -36,14 +36,11 @@ daemon `crates/hrc-native/src/main.rs` (`server serve` dispatch), `server.rs` (`
 - `~/.bun/bin/hrc server tmux status [--json]`: `available`, `version`, `running`, `sessions`, `leases`, probed client-side
   with no daemon call, plus `leaseDiagnostics {total, probed, skipped}` (source-only, 2026-11-02:
   `crates/hrc-cli/src/local/server.rs:129-164`). Scratch human status: `tmux: available (not running)`.
-- `rusthrc server serve` has no harness guard: with `CLAUDECODE=1` it went straight to store admission and
-  refused `server.exit` "schema: cannot open existing Bun store", rc 1, on an empty state root (2026-11-02,
-  T-12291). The guard text ("refusing to boot in the foreground … (detected: …)", rc 2) lives only in `~/.bun/bin/hrc server
-  start` foreground, unreachable on max3 because `start` first kickstarts any loaded launchd job (source-only,
-  2026-11-02: `crates/hrc-cli/src/server_start.rs:268-272,290-299`). `serve --listen-socket rel` refuses with one
-  stderr JSON line `server.exit` "--listen-socket rel is unsupported: rusthrc always listens on <rt>/hrc.sock; a
-  private listener is Bun's role", rc 1. Bun only (`--engine bun`): the rc 2 guard on `serve`, rc 2
-  "--listen-socket must be an absolute path", and the 104-byte boot refusal (feature 2 Gotchas).
+- `rusthrc server serve` has no harness guard. Use `hv` to scrub inherited harness and owner context.
+  Native boot creates a missing store and applies forward migrations before binding, under its store lock
+  (T-13056); a foreign or ahead migration set still refuses. Do not use `server start` for a scratch:
+  it can kickstart a loaded launchd job. `serve --listen-socket rel` refuses: native listens only on
+  the configured runtime root's `hrc.sock`.
 - `~/.bun/bin/hrc server restart|stop --reason`: operator only (Mable primary). Named here, never driven.
 - The daemon log: live `~/praesidium/var/logs/hrc-runtime/rusthrc-owner.log`, JSON lines `{ts, server:"rusthrc",
   level, component, event, data}`; a scratch logs to stdout, kept by `hv` as `/tmp/hv/<name>/serve.log`.
@@ -81,11 +78,7 @@ hv run <task> -- ~/.bun/bin/hrc doctor                           # four + rows: 
 grep -m1 '"server.listening"' /tmp/hv/<task>/serve.log   # owner rusthrc, role native
 hv run <task> -- ~/.bun/bin/hrc server tmux status --json
 ~/.bun/bin/hrc server subscribers --json | jq -c '{active: (.active|length), recentlyClosed: (.recentlyClosed|length)}'
-C=/tmp/hv/<task>/release/bin/rusthrc                  # the scratch's copy, never the installed tree (Gotchas)
-mkdir -p /tmp/hvg/run /tmp/hvg/state                  # EMPTY state root: no state.sqlite, so serve stops at admission
-timeout 10 env -i HOME=$HOME PATH=/usr/bin:/bin CLAUDECODE=1 CLAUDE_CODE_ENTRYPOINT=cli HRC_LAUNCHD_LABEL=hv.none HRC_RUNTIME_DIR=/tmp/hvg/run HRC_STATE_DIR=/tmp/hvg/state $C server serve 2>&1 | tail -3; echo rc=${PIPESTATUS[0]}   # no guard: "cannot open existing Bun store", rc 1
-timeout 10 env -i HOME=$HOME PATH=/usr/bin:/bin HRC_LAUNCHD_LABEL=hv.none HRC_RUNTIME_DIR=/tmp/hvg/run HRC_STATE_DIR=/tmp/hvg/state $C server serve --listen-socket rel 2>&1 | tail -2; echo rc=${PIPESTATUS[0]}   # rc 1
-rm -rf /tmp/hvg                                       # the probe leaves state/metrics behind
+grep -m1 '"store.created"' /tmp/hv/<task>/serve.log     # native boot created its private store before listening
 HRC_RUNTIME_DIR=/tmp/hv-none HRC_STATE_DIR=/tmp/hv-none-s ~/.bun/bin/hrc doctor; echo rc=$?   # no rows, "socket not found", rc 1
 HRC_RUNTIME_DIR=/tmp/hv-none HRC_STATE_DIR=/tmp/hv-none-s ~/.bun/bin/hrc server status --json | jq -c '{status, running, hasApi: has("api")}'
 ~/.bun/bin/hrc info | head -40
@@ -101,9 +94,8 @@ curl -s --unix-socket ~/praesidium/var/run/hrc/hrc.sock http://hrc/v1/status | j
   (`crates/hrc-native/src/server.rs:1061`), equal on live and scratch alike (2026-11-02). Prove which daemon
   answered by the log's `server.listening` / `servedBy:"native"` lines, not by that comparison or
   `front-door-status`.
-- **Nothing guards `rusthrc server serve` in an agent shell.** On a migrated store it boots, and its births
-  inherit your `CLAUDECODE` and friends (source-only, 2026-11-02: `crates/hrc-native/src/main.rs:34-47`). Probe it
-  only with the scratch's copy on an EMPTY state root (Driving it); start real daemons only through `hv scratch up`
+- **Nothing guards `rusthrc server serve` in an agent shell.** It creates a missing store and boots, and its births
+  inherit your `CLAUDECODE` and friends (source-only, 2026-11-02: `crates/hrc-native/src/main.rs:34-47`). An empty store is no isolation guard. Start real daemons only through `hv scratch up`
   (scrubbed env, own ghostmux tab). Never run `~/.bun/bin/hrc server start` with scratch env vars: it kickstarts the loaded
   production job `com.praesidium.hrc-server` (source-only, 2026-11-02: `crates/hrc-cli/src/server_start.rs:268-272`).
   Native prunes no release dirs, unlike Bun (source-only, 2026-11-02: no prune in `crates/*/src`), but from a

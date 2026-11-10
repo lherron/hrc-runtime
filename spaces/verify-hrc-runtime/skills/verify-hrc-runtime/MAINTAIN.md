@@ -58,8 +58,7 @@ see.
 
 Run `~/.bun/bin/hrc doctor` and `~/.bun/bin/hrc server status` first, and again after any surprise. Note the installed
 `sourceCommit`: the pass grades that build, which may lag HEAD. Drive the native scratch (`hv scratch up`'s
-default engine, the production owner); a feature driven only on `--engine bun` counts as driven for Bun, not for
-production, and the report says so. Record both release trees (`~/.bun/install/hrc-runtime-releases/` and
+only engine, the production owner). Record both release trees (`~/.bun/install/hrc-runtime-releases/` and
 `~/praesidium/var/hrc-owner/hrc-runtime-releases/`) before the first scratch and after the last `down`; they must
 match. Drive each feature's "Driving it" **and
 every drift or new behavior step 2 flagged**, recording with `hv rec`. Check each result against "Proven

@@ -53,8 +53,7 @@ restart, capture, send) and `server/broker/{broker,start,hrcpty}.rs` (births, hr
   runtime_busy` ("seat is turn-active; not restarted" on 2026-11-02), rc 1, nothing changed; a seat it cannot probe is refused
   `seat_unobservable` (source-only, 2026-11-02: `crates/hrc-native/src/server/turns/restart.rs:98-119`);
   `--force` skips the check. Native replays no `initialPrompt` and answers at launch (source-only, 2026-11-02:
-  `server/broker/broker.rs:199-211`, `restart.rs:231-240`); the replay is Bun only (`--engine bun`,
-  `packages/hrc-server/src/session-restart.ts`). Not `restartme` and not `server restart`.
+  `server/broker/broker.rs:199-211`, `restart.rs:231-240`); the historical Bun replay is outside the native scratch surface. Not `restartme` and not `server restart`.
 - `POST /v1/terminate` with an `x-hrc-lifecycle-*` header checks operator authority: from a caller that is not
   the runtime's seat it answers 403 `server_lifecycle_refused` "only mable@<project>:primary or the runtime's own
   seat may terminate a runtime …" (`refusal: credential_missing`), nothing terminated (2026-11-09, T-12756). The
@@ -117,7 +116,7 @@ hv run <task> -- ~/.bun/bin/hrc restart $T --json; echo "rc=$?"                 
 
 - **A long root fails each birth on native, not the boot.** The broker's sockets must fit 104 bytes; native checks
   at birth ("broker socket path too long", an internal error; `<runtime>/btmux/<12>-<32>.sock` is root+57 bytes)
-  (source-only, 2026-11-02: `crates/hrc-native/src/server/broker/broker.rs:735-744`). Bun only (`--engine bun`):
+  (source-only, 2026-11-02: `crates/hrc-native/src/server/broker/broker.rs:735-744`). Historical Bun behavior (outside the native scratch surface):
   the boot refusal "runtime root socket path too long" since 955416e9 (T-10330), which `hv scratch up` reports
   as `daemon_exited` (2026-10-19, `T-11363`). That is why `hv` roots live under `/tmp/hv`.
 - **`~/.bun/bin/hrc start --json` is not turn evidence.** It answers `stage: accepted`; read `turn.completed` and the final

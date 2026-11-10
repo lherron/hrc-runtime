@@ -277,8 +277,12 @@ e2e-annotations:
 
 # Run the hrc-pty e2e (E1-E5) against real Ghostty windows
 e2e-hrc-pty:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    scratch="$(mktemp -d /tmp/hrc-pty-e2e.XXXXXX)"
+    trap 'rm -rf "$scratch"' EXIT
     {{rbuild}} --mac --pull {{mac_debug}}/hrc-pty cargo build --manifest-path crates/Cargo.toml --locked -p hrc-pty
-    python3 crates/hrc-pty/e2e/hrc_pty_e2e.py --binary {{mac_debug}}/hrc-pty --artifacts "${HRC_PTY_E2E_ARTIFACTS:-/tmp/hrc-pty-e2e-$(date +%s)-$$}"
+    python3 crates/hrc-pty/e2e/hrc_pty_e2e.py --binary {{mac_debug}}/hrc-pty --scratch "$scratch" --artifacts "${HRC_PTY_E2E_ARTIFACTS:-/tmp/hrc-pty-e2e-$(date +%s)-$$}"
 
 # Re-record Ghostty's answers to Claude's startup queries into responder-answers.json
 hrc-pty-record-answers:
@@ -676,22 +680,10 @@ launchd-install injector-version:
     mkdir -p "$HOME/Library/LaunchAgents" "$HOME/praesidium/var/logs/hrc-runtime"
     esc() { printf '%s' "$1" | sed 's/[\/&|]/\\&/g'; }
     env_keys() { plutil -extract EnvironmentVariables json -o - "$1" 2>/dev/null | jq -r 'keys[]' | sort || true; }
-    # It renders com.praesidium.hrc-server.plist as a Bun job, which would undo a
-    # rusthrc owner switch at the next start (T-11893).
-    server_plist="$HOME/Library/LaunchAgents/com.praesidium.hrc-server.plist"
-    if [[ -f "$server_plist" && "$(bash "$repo/scripts/hrc-owner.sh" kind "$server_plist")" == rusthrc ]]; then
-      echo "[launchd] REFUSED: ${server_plist} runs a rusthrc owner; launchd-install would render it back to Bun. Nothing was changed" >&2
-      exit 1
-    fi
-    # Protect a node that somebody still fronted by hand; its private listener
-    # must not be rendered as a second public socket owner.
-    if [[ -f "$HOME/Library/LaunchAgents/com.praesidium.rusthrc-server.plist" ]]; then
-      echo '[launchd] REFUSED: a retired front-door plist is installed; remove that topology before launchd-install' >&2
-      exit 1
-    fi
-    # Installed plists can carry node-local env the repo template lacks (max3's
-    # hrc-server holds its aspd socket, node id, ingest port and kicker flag
-    # there). A render would silently drop them and break the node, so refuse
+    # The native owner plist is node-maintained by hrc-owner.sh, never rendered
+    # from a checkout. Only the remaining auxiliary jobs are shipped here.
+    # Installed auxiliary plists can carry node-local env the template lacks.
+    # A render would silently drop those keys, so refuse
     # before writing anything and name the keys (T-10854).
     refused=0
     for src in "$repo"/launchd/*.plist; do
@@ -722,10 +714,6 @@ launchd-install injector-version:
       install -m 0644 "$dst.next" "$dst"
       rm "$dst.next"
       if command -v praesidium-adopt >/dev/null; then praesidium-adopt "$dst"; fi
-      if [[ "$label" == com.praesidium.hrc-server ]] && launchctl print "$domain/$label" >/dev/null 2>&1; then
-        echo "[launchd] ${label} remains loaded; a restart keeps the loaded definition, so activate the new plist with hrc server stop --reason ... then launchctl bootstrap ${domain} ${dst}"
-        continue
-      fi
       launchctl bootout "$domain/$label" 2>/dev/null || true
       for attempt in 1 2 3 4 5; do
         launchctl bootstrap "$domain" "$dst" && break

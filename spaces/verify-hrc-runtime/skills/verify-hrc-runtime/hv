@@ -2,7 +2,7 @@
 # hv — scratch HRC daemons for verify-hrc-runtime.
 #
 # An isolated `hrc server serve` on its own runtime and state roots, launched in a
-# clean ghostmux pane (hrc-server refuses to boot under a coding-agent harness).
+# clean ghostmux pane with inherited harness and owner context scrubbed.
 # Every verb prints one JSON object; a refusal prints {error,message,next} and exits 1.
 set -uo pipefail
 
@@ -28,30 +28,26 @@ pid_alive() { [ -n "${1:-}" ] && kill -0 "$1" 2>/dev/null; }
 # the scratch socket; everything else (wrkq, ASP_HOME) is the caller's.
 with_env() {
   local d; d="$(name_dir "$1")"; shift
-  HRC_RUNTIME_DIR="$d/run" HRC_STATE_DIR="$d/state" "$@"
+  HRC_METRICS=0 HRC_RUNTIME_DIR="$d/run" HRC_STATE_DIR="$d/state" "$@"
 }
 
 cmd_up() {
-  local name="hv" engine="native"
+  local name="hv"
   while [ $# -gt 0 ]; do
     case "$1" in
       --name) name="$2"; shift 2 ;;
-      --engine) engine="$2"; shift 2 ;;
-      *) die usage "unknown flag $1" "hv scratch up [--name N] [--engine native|bun]" ;;
+      *) die usage "unknown flag $1" "hv scratch up [--name N]" ;;
     esac
   done
-  case "$engine" in native|bun) ;; *) die usage "--engine is native or bun, not $engine" "hv scratch up --name N --engine native" ;; esac
   local d; d="$(name_dir "$name")"
   if [ -f "$d/pid" ] && pid_alive "$(cat "$d/pid")"; then
     die already_up "scratch $name is up (pid $(cat "$d/pid"))" "hv scratch down $name"
   fi
   command -v ghostmux >/dev/null || die no_ghostmux "ghostmux is not on PATH" "install ghostmux"
   command -v wrkqadm >/dev/null || die no_wrkqadm "wrkqadm is not on PATH" "install wrkq"
-  local bun_bin installed
-  bun_bin="$(command -v bun)" || die no_bun "bun is not on PATH" "install bun"
+  local installed
   installed="$(cd "$INSTALLED_LINK" 2>/dev/null && pwd -P)" || die no_release "$INSTALLED_LINK does not resolve" "ls ~/.bun/install"
-  [ -f "$installed/packages/hrc-cli/src/cli.ts" ] || die no_release "$installed has no packages/hrc-cli/src/cli.ts" "ls $installed"
-  [ "$engine" = bun ] || [ -x "$installed/bin/rusthrc" ] || die no_release "$installed has no bin/rusthrc" "hv scratch up --name $name --engine bun"
+  [ -x "$installed/bin/rusthrc" ] || die no_release "$installed has no bin/rusthrc" "ls $installed/bin"
   # rusthrc reports atomic (pinned to a production release) when its exe sits in a directory named
   # hrc-runtime-releases or beside an hrc-runtime-current link (crates/hrc-common/src/release.rs).
   case "$d" in *hrc-runtime-releases*|*hrc-owner*) die atomic_release "scratch root $d names a production release tree" "HV_HOME=/tmp/hv hv scratch up --name $name" ;; esac
@@ -64,7 +60,7 @@ cmd_up() {
   rm -rf "$d/release"
   cp -R "$installed" "$d/release" || die copy_failed "cp -R $installed $d/release failed" "df -h $HV_HOME"
   [ ! -e "$d/release/hrc-runtime-current" ] || die atomic_release "the copy carries an hrc-runtime-current link; rusthrc would pin it to production" "ls -l $d/release"
-  printf '%s\n' "$engine" > "$d/engine"
+  printf '%s\n' native > "$d/engine"
   # Its own wrkq store, so nothing the scratch or its seats do reaches the live ledger.
   rm -f "$d/wrkq/wrkq.db"
   wrkqadm migrate --db "$d/wrkq/wrkq.db" >/dev/null 2>&1 || die wrkq_failed "wrkqadm migrate --db $d/wrkq/wrkq.db failed" "wrkqadm migrate --help"
@@ -81,7 +77,8 @@ for v in \$(env | cut -d= -f1 | grep -E '^(HARNESS|TMUX|HRC_|AGENT|ASP_|CLAUDE|C
 # let a scratch name the production job.
 unset XPC_SERVICE_NAME XPC_FLAGS 2>/dev/null
 # S4: only this daemon launcher receives the owner clients; the hv caller stays filtered.
-export PATH="$HOME/.local/bin:$HOME/.bun/bin:$PATH"
+export PATH="$PATH:$HOME/.local/bin"
+export HRC_METRICS=0
 export HRC_LAUNCHD_LABEL="hv.scratch.$name"
 export HRC_RUNTIME_DIR="$d/run" HRC_STATE_DIR="$d/state"
 export ASP_HOME="$HOME/praesidium/var/spaces-repo"
@@ -91,16 +88,8 @@ export HRC_HEADLESS_CODEX_BROKER_ENABLED=1 HRC_CLAUDE_CODE_TMUX_BROKER_ENABLED=1
 export HRC_CODEX_CLI_TMUX_BROKER_ENABLED=0 HRC_MAIL_KICKER_ENABLED=0
 echo \$\$ > "$d/pid"
 SH
-  if [ "$engine" = bun ]; then
-    printf 'exec "%s" "%s" server serve >> "%s" 2>&1\n' "$bun_bin" "$d/release/packages/hrc-cli/src/cli.ts" "$d/serve.log" >> "$d/launch.sh"
-  else
-    # Only Bun migrates (crates/hrc-store/src/lib.rs: native refuses a missing or foreign migration
-    # set), so the copy's Bun store creates the private state.sqlite, then the copy's rusthrc serves it.
-    cat >> "$d/launch.sh" <<SH
-(cd "$d/release" && "$bun_bin" -e "import {openHrcDatabase} from './packages/hrc-store-sqlite/src/database.ts'; openHrcDatabase(process.argv[1]).close()" "$d/state/state.sqlite") >> "$d/serve.log" 2>&1 || { echo "hv: Bun store migration failed" >> "$d/serve.log"; exit 1; }
-exec "$d/release/bin/rusthrc" server serve >> "$d/serve.log" 2>&1
-SH
-  fi
+  # Native boot creates and migrates the private state.sqlite under its store lock.
+  printf 'exec "%s" server serve >> "%s" 2>&1\n' "$d/release/bin/rusthrc" "$d/serve.log" >> "$d/launch.sh"
   chmod +x "$d/launch.sh"
   local surface
   surface="$(ghostmux new --tab --title "hv: $name" --cwd "$d" --command "$d/launch.sh" --keep-open --json 2>&1)" \
@@ -128,7 +117,7 @@ SH
   printf '%s' "$status" | jq -c --arg n "$name" --arg root "$d" \
     --arg surface "$(cat "$d/surface")" --arg pid "$(cat "$d/pid" 2>/dev/null)" \
     --argjson manifest "$(jq -c '{releaseId, sourceCommit: .hrcBuild.sourceCommit}' "$d/release/praesidium-release.json")" \
-    --arg engine "$engine" \
+    --arg engine native \
     '{name:$n, engine:$engine, root:$root, pid:($pid|tonumber? // null), surface:$surface, socket:.api.socketPath, stateRoot:.api.stateRoot, binaryPath:(.binaryPath // null), releaseMode:.release.mode, copyOf:$manifest.releaseId, sourceCommit:$manifest.sourceCommit}'
 }
 

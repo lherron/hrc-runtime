@@ -215,8 +215,9 @@ configured so that macOS TCC grants survive releases (T-12224;
 - **Readback** (`_node-readback`) also requires
   this boot's `broker.warmup.complete` with `attached == total` in the log the
   plist names.
-- `launchd-install`, `front-door-enable` and `front-door-disable` refuse on a
-  rusthrc owner: each would render the plist back to Bun.
+- `front-door-enable` and `front-door-disable` refuse on a rusthrc owner.
+  `launchd-install` manages only auxiliary jobs; the native owner plist is node-maintained
+  by `hrc-owner.sh`, with no checkout template.
 
 ## hrcdev — the Tart VM (max3)
 

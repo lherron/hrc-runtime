@@ -17,12 +17,12 @@ clod, cody and the foundry resident when they run in project hrc-runtime.
 Scratch or live:
 
 - **Scratch (the default for anything that writes).** `hv scratch up --name <task>` copies the installed
-  release to `/tmp/hv/<name>/release`, has the copy's Bun store create a private `state.sqlite` (only Bun
-  migrates; `rusthrc` refuses a missing store or a foreign migration set), and starts the copy's
-  `bin/rusthrc server serve` (the production owner) on its own runtime and state roots (`/tmp/hv/<name>/run`,
-  `/tmp/hv/<name>/state`) and its own wrkq store (`/tmp/hv/<name>/wrkq`), in a fresh ghostmux tab, and waits
-  until it answers `server status`. `--engine bun` starts the retained Bun daemon from the same copy instead
-  (dev-env, migrations); grade it only for a Bun-only claim. Run every `hrc` verb against it with
+  release to `/tmp/hv/<name>/release` and starts the copy's `bin/rusthrc server serve` in a fresh
+  ghostmux tab. Native boot creates and migrates a private `state.sqlite` under the store lock before
+  binding, on its own runtime and state roots (`/tmp/hv/<name>/run`, `/tmp/hv/<name>/state`) and its own
+  wrkq store (`/tmp/hv/<name>/wrkq`), then waits until it answers `server status`.
+  Native is the only engine; no Bun executable or deleted TypeScript owner packages are needed.
+  Run every `hrc` verb against it with
   `hv run <name> -- ~/.bun/bin/hrc …`. It is a real daemon with a fresh store: it births real harness runtimes (through
   the live aspd, which only prepares), and it never touches the live `state.sqlite`, ledger, ACP webhook or
   federation. Use it for starts, turns, sends, terminates, resumes, sweeps, captures and the HTTP API.
@@ -37,7 +37,7 @@ Scratch or live:
     `ls ~/praesidium/var/hrc-owner/hrc-runtime-releases/`); neither may change.
   - The launcher drops every inherited `HARNESS*`, `TMUX*`, `HRC_*`, `AGENT*`, `ASP_*`, `CLAUDE*`, `CODEX*`,
     `WRKQ*` and `XPC_SERVICE_NAME` variable and sets `HRC_LAUNCHD_LABEL=hv.scratch.<name>` before it sets its
-    own. Its daemon PATH prepends `~/.local/bin` and `~/.bun/bin` for internal owner clients; the
+    own. Its daemon PATH appends `~/.local/bin` for internal owner clients; the
     calling shell keeps its filtered PATH. No child reaches the caller's broker, tmux server, the live ledger or the production launchd job (a
     native daemon whose `XPC_SERVICE_NAME` equals its label answers a granted stop with `launchctl bootout` of
     that job). Since T-12677, native and Bun lifecycle project publication requires a validated atomic
@@ -77,7 +77,7 @@ Scratch or live:
   `crates/hrc-cli/surface.json` owns the grammar. The CLI has no Bun fallback.
   `admin events drain` refuses incompatible ledgers without migrating: unsupported
   baseline/ahead sets name the runner's refusal, and pending forward migrations
-  require `rusthrc store migrate <path>` before draining again. Say which engine you graded: a drive on `--engine bun` proves nothing about production. To tell
+  require `rusthrc store migrate <path>` before draining again. To tell
   which daemon answered a socket read, read the serve log's `server.listening` line (`owner: "rusthrc"`) or the
   per-request `http.request … servedBy: "native"`; `.api.listenSocketPath == .api.socketPath` is hard-coded
   on native and proves nothing (feature 1).
@@ -173,7 +173,7 @@ refusal prints `{error, message, next}` and exits 1. Put it on your path or call
 
 | Verb | Invocation | Does |
 | --- | --- | --- |
-| `scratch up` | `hv scratch up [--name N] [--engine native\|bun]` | Copies the installed release to `/tmp/hv/N/release`, migrates a private wrkq store in `/tmp/hv/N/wrkq`, and in a new ghostmux tab with a scrubbed environment either (native, the default) creates `/tmp/hv/N/state/state.sqlite` with the copy's Bun `openHrcDatabase` and execs `<copy>/bin/rusthrc server serve`, or (bun) execs `bun <copy>/packages/hrc-cli/src/cli.ts server serve`, on `/tmp/hv/N/{run,state}`; waits up to 30 s for `server status`, prints name, engine, root, pid, surface, socket, stateRoot, binaryPath, releaseMode, copyOf and sourceCommit. A daemon that exits at boot refuses `daemon_exited` with serve.log's last line; one that reports `atomic` is stopped and refused `atomic_release`. N defaults to `hv` and is lowercased |
+| `scratch up` | `hv scratch up [--name N]` | Copies the installed native release to `/tmp/hv/N/release`, migrates a private wrkq store in `/tmp/hv/N/wrkq`, and in a new ghostmux tab with a scrubbed environment execs `<copy>/bin/rusthrc server serve`. Native boot creates/migrates `/tmp/hv/N/state/state.sqlite`. Waits up to 30 s for `server status`, prints name, engine (`native`), root, pid, surface, socket, stateRoot, binaryPath, releaseMode, copyOf and sourceCommit. Boot exit refuses `daemon_exited` with serve.log's last line; atomic mode is stopped and refused `atomic_release`. N defaults to `hv` and is lowercased |
 | `scratch down` | `hv scratch down N [--dry-run]` | Terminates N's live runtimes, stops its daemon, closes its tab, removes `run/`, `state/`, `release/` and `wrkq/` |
 | `scratch list` | `hv scratch list` | Every scratch under `/tmp/hv` with pid and liveness |
 | `run` | `hv run N -- CMD…` | Runs CMD with only `HRC_RUNTIME_DIR` and `HRC_STATE_DIR` pointed at N, so `hrc` and `curl` address the scratch. Refuses `not_up` without a socket |
@@ -181,5 +181,5 @@ refusal prints `{error, message, next}` and exits 1. Put it on your path or call
 | `rec` | `hv rec FILE 'CMD'` | Runs CMD under `bash -c`, appends `## <UTC>`, `$ CMD`, output and `exit N` to FILE, echoes the output and returns CMD's exit code |
 | `evidence` | `hv evidence N DIR` | Copies `serve.log`, the launcher generated by `hv scratch up` at `/tmp/hv/N/launch.sh` (to `DIR/launch.sh`), and the hrcpty supervisor logs (`run/logs/hrcpty/*.log`, into `hrcpty/`) and writes status, runtimes, sessions and an `hrc_events` dump into DIR |
 
-`HV_HOME` overrides `/tmp/hv`; keep it short (feature 2: a long root fails each birth with "broker socket path too long" on native, "File name too long" at boot on Bun). `HV_ASPD_SOCKET` overrides
+`HV_HOME` overrides `/tmp/hv`; keep it short (feature 2: a long root fails each birth with "broker socket path too long" on native). `HV_ASPD_SOCKET` overrides
 the aspd socket the scratch prepares through.

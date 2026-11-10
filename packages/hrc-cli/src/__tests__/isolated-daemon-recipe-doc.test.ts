@@ -16,8 +16,8 @@ test('documents the isolated-daemon smoke recipe and links it from the docs inde
   for (const token of [
     'HRC_RUNTIME_DIR',
     'HRC_STATE_DIR',
-    'HRC_HEADLESS_CODEX_BROKER_ENABLED',
-    'server serve',
+    'HRC_ASPD_SOCKET',
+    'rusthrc server serve',
     '--daemon',
   ]) {
     expect(recipe).toContain(token)

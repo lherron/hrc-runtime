@@ -60,10 +60,12 @@ release into `~/praesidium/var/hrc-owner/hrc-runtime-releases/` and repoints
   no older backup (T-13056); the daemon then migrates at boot. Backups written by the retired Bun `activate` left `-shm`/`-wal` siblings behind (one 25 GB backup plus both siblings in
   `var/state/hrc/backups/` on 2026-11-09). The daemon ages backups nightly and reports `.data.backupsRemoved` in
   `retention.report` (feature 7, T-13046).
-- The front door (T-11822) is obsolete on owner nodes: `front-door-enable|disable` and `launchd-install`
+- The front door (T-11822) is obsolete on owner nodes: `front-door-enable|disable`
   refuse a rusthrc owner (source-only, 2026-11-09: justfile:756, :842, :878). `just
   front-door-status` probes `hrc-bun.sock` ("no answer", 2026-11-02, T-12291) and prints `mode: direct` because
   it only tests for a rusthrc-server plist (source-only, 2026-11-09: justfile:908): read it as "not fronted".
+- `launchd-install|uninstall` manage auxiliary jobs only. The native owner plist is node-maintained
+  by `hrc-owner.sh`; the former tracked Bun owner template is deleted (T-13126).
 - **Needs operator, never driven by this skill:** `just install`, `hrc-owner.sh stage|boot-check|refresh-plist`,
   `just refresh-owner-exe`, `just publish`, `just deploy-*` (stages only when `DEPLOY_RESTART_NEEDED=1` and
   `schema-state` is `current` or `pending`, then restarts and runs `boot-check`, which fails on

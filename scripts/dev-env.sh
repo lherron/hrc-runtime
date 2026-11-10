@@ -81,7 +81,29 @@ FIXTURE_AGENTS=(
 log() { printf '[dev-env] %s\n' "$*"; }
 die() { printf '[dev-env] ERROR: %s\n' "$*" >&2; exit 1; }
 
-hrc_cli() { bun "${REPO_ROOT}/packages/hrc-cli/bin/hrc.js" "$@"; }
+NATIVE_BIN="${REPO_ROOT}/crates/target/aarch64-apple-darwin/debug/rusthrc"
+
+# Daemon and CLI inherit no runtime identity, owner endpoint, webhook or harness
+# context. Build/test tools keep the caller PATH; native processes exclude Bun.
+native_env() {
+  local key part native_path=""
+  while IFS= read -r key; do
+    case "$key" in HARNESS*|TMUX*|HRC_*|AGENT*|ASP_*|CLAUDE*|CODEX*|WRKQ*|XPC_*) unset "$key" ;; esac
+  done < <(env | cut -d= -f1)
+  local IFS=:
+  for part in $PATH; do
+    [[ -n "$part" && ! -x "$part/bun" ]] || continue
+    native_path="${native_path:+${native_path}:}${part}"
+  done
+  export PATH="${native_path}" HRC_METRICS=0
+  export HRC_RUNTIME_DIR="${RUN_DIR}" HRC_STATE_DIR="${STATE_DIR}"
+  export HRC_LAUNCHD_LABEL="hrc.dev-env" ASP_HOME="${ROOT}/asp"
+  export ASP_AGENTS_ROOT="${AGENTS_DIR}" HRC_PROJECT_SEARCH_ROOTS="${PROJECT_SEARCH_ROOT}"
+  export HRC_ASPD_SOCKET="${RUN_DIR}/aspd.sock"
+  export HRC_WRKQ_DB="${WRKQ_DB_FILE}" WRKQ_DB="${WRKQ_DB_FILE}" HRC_WRKQD_TOKEN_FILE=''
+  exec "$@"
+}
+hrc_cli() ( native_env "${NATIVE_BIN}" "$@" )
 
 # Liveness is the socket ANSWERING, not the socket existing: a crashed daemon
 # leaves the inode behind, and treating that as "up" is how env-up stops being
@@ -100,7 +122,10 @@ export HRC_RUNTIME_DIR='${RUN_DIR}'
 export HRC_STATE_DIR='${STATE_DIR}'
 export ASP_AGENTS_ROOT='${AGENTS_DIR}'
 export HRC_PROJECT_SEARCH_ROOTS='${PROJECT_SEARCH_ROOT}'
-export WRKQ_DB='${WRKQ_DB_FILE}'
+export WRKQ_DB='${WRKQ_DB_FILE}' HRC_WRKQ_DB='${WRKQ_DB_FILE}'
+export ASP_HOME='${ROOT}/asp' HRC_METRICS=0
+unset HRC_ASPD_SOCKET HRC_PEER_CONFIG_FILE
+export HRC_ACP_WEBHOOK_URL='' HRC_EVENT_INGEST_TCP_PORT='' HRC_WRKQD_TOKEN_FILE=''
 unset WRKQ_DB_PATH WRKQ_DB_PATH_FILE
 EOF
 }
@@ -149,8 +174,17 @@ EOF
 provision_build() {
   log "installing dependencies (bun install --frozen-lockfile)"
   (cd "${REPO_ROOT}" && bun install --frozen-lockfile)
-  log "building workspace (bun run build)"
+  log "building TypeScript workspace for the Bun test corpus and sibling dist declarations"
+  # The retained SDK, renderers and turn-attention subscriber need dist output.
+  # While the historical TS suites remain, build:ordered also builds their
+  # packages; none is used to launch or migrate this environment.
   (cd "${REPO_ROOT}" && bun run build)
+  log "building native owner and CLI through rbuild"
+  local builder
+  builder="$(command -v rbuild || printf '%s' "${REPO_ROOT}/scripts/rbuild-local.sh")"
+  (cd "${REPO_ROOT}" && "$builder" --mac \
+    --pull crates/target/aarch64-apple-darwin/debug/rusthrc \
+    cargo build --manifest-path crates/Cargo.toml --locked -p hrc-native)
 }
 
 # The suites shell out to `wrkq` (task state, the project registry, envelope
@@ -167,7 +201,7 @@ provision_build() {
 # fast, which the suites tolerate.
 provision_wrkq() {
   if command -v wrkqadm >/dev/null 2>&1; then
-    WRKQ_DB="${WRKQ_DB_FILE}" wrkqadm migrate >/dev/null \
+    env -u WRKQ_DB_PATH -u WRKQ_DB_PATH_FILE WRKQ_DB="${WRKQ_DB_FILE}" wrkqadm migrate >/dev/null \
       || die "could not migrate the ephemeral wrkq ledger at ${WRKQ_DB_FILE}"
   else
     log "wrkqadm not found; ${WRKQ_DB_FILE} stays unmigrated and wrkq will refuse"
@@ -202,7 +236,7 @@ provision_projects() {
 # match: its ledger and its project search root. (The post-push runner tears the
 # environment down before each verify, so it never serves an earlier push's code.)
 daemon_fingerprint() {
-  printf '%s\n%s\n' "${WRKQ_DB_FILE}" "${PROJECT_SEARCH_ROOT}"
+  printf '%s\n%s\n%s\n' "${WRKQ_DB_FILE}" "${PROJECT_SEARCH_ROOT}" "$(cksum "${NATIVE_BIN}")"
 }
 
 # -- Ownership (T-10329) -------------------------------------------------------
@@ -271,8 +305,9 @@ add_owner() {
 
 # Only ever signal a pid that is still an `hrc ... server serve` process: pid
 # files outlive their processes, and the number may since belong to anything.
+# Keep recognizing pre-cut dev owners so reaping cannot orphan them on upgrade.
 is_serve_pid() {
-  [[ -n "$1" ]] && ps -o command= -p "$1" 2>/dev/null | grep -q 'hrc.js server serve'
+  [[ -n "$1" ]] && ps -o command= -p "$1" 2>/dev/null | grep -qE '/(rusthrc|hrc\.js) server serve([[:space:]]|$)'
 }
 
 # stop_root <root>: stop_daemon for an arbitrary root.
@@ -402,13 +437,7 @@ start_daemon() {
   log "starting ephemeral daemon (hrc server serve) → ${LOG_FILE}"
   (
     cd "${REPO_ROOT}"
-    # S4: owner clients belong to the daemon child, never the recipe shell.
-    PATH="$HOME/.local/bin:$HOME/.bun/bin:$PATH" \
-      HRC_RUNTIME_DIR="${RUN_DIR}" HRC_STATE_DIR="${STATE_DIR}" ASP_AGENTS_ROOT="${AGENTS_DIR}" \
-      HRC_PROJECT_SEARCH_ROOTS="${PROJECT_SEARCH_ROOT}" \
-      HRC_WRKQ_DB="${WRKQ_DB_FILE}" HRC_WRKQD_TOKEN_FILE='' WRKQ_DB="${WRKQ_DB_FILE}" \
-      nohup env -u WRKQ_DB_PATH -u WRKQ_DB_PATH_FILE bun "${REPO_ROOT}/packages/hrc-cli/bin/hrc.js" server serve \
-      >"${LOG_FILE}" 2>&1 &
+    native_env nohup "${NATIVE_BIN}" server serve >"${LOG_FILE}" 2>&1 &
     printf '%s\n' "$!" > "${PID_FILE}"
     daemon_fingerprint > "${DAEMON_WRKQ_FILE}"
   )
