@@ -193,6 +193,7 @@ async fn input_turn(
             Some(json!({"runtimeId":rt.runtime_id,"runId":o.run_id,"route":route})),
         ));
     };
+    crate::server::response_format::assert_runtime(server, rt, o.response_format, route)?;
     let door = plan.effective_door.as_str();
     {
         let db = server.store.lock().unwrap();

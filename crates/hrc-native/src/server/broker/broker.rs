@@ -287,6 +287,7 @@ pub async fn birth(server: &Shared, birth: Birth<'_>) -> Result<Value, ApiError>
         origin,
         first_turn_timeout_ms,
         attach,
+        response_format,
         ..
     } = birth;
     let mut attach = attach;
@@ -296,6 +297,7 @@ pub async fn birth(server: &Shared, birth: Birth<'_>) -> Result<Value, ApiError>
     let launched = async {
         let (client, events, hello, allocation) = launch(server, &record).await?;
         attempt.client = Some(client.clone());
+        super::response_format::preflight(&record, &hello, response_format)?;
         {
             server.store.lock().unwrap().start_broker_graph(
                 &record,

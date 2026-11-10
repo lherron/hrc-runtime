@@ -54,6 +54,8 @@ mod participants;
 mod reconcile;
 #[path = "server/broker/recovery.rs"]
 mod recovery;
+#[path = "server/broker/response_format.rs"]
+mod response_format;
 #[path = "server/broker/retained/mod.rs"]
 mod retained;
 #[path = "server/broker/rpc.rs"]
