@@ -16,15 +16,14 @@ import { afterEach, beforeEach, describe, expect, test } from 'bun:test'
 import { RUNTIME_STATUS_LEVEL_BY_STATUS, TERMINAL_RUNTIME_STATUSES } from 'hrc-core'
 import { openHrcDatabase } from 'hrc-store-sqlite'
 
-import { retainedEvidenceHold, retainedEvidencePassCandidates } from '../broker/offline-evidence'
+import { retainedEvidenceHold } from '../broker/offline-evidence'
 import { type HrcServer, createHrcServer } from '../index'
 import { sweepOrphanedBrokerTmuxLeases } from '../startup-reconcile/lease-identity'
-import { evaluatePruneDisposition } from '../sweep-helpers'
 import { type HrcServerTestFixture, createHrcTestFixture } from './fixtures/hrc-test-fixture'
 import { seedOfflineRuntime } from './fixtures/t08566-offline-reader-double'
 
-const STATUSES = Object.keys(RUNTIME_STATUS_LEVEL_BY_STATUS)
-const REVIVABLE = new Set(['crashed', 'dead', 'stale', 'detached'])
+const _STATUSES = Object.keys(RUNTIME_STATUS_LEVEL_BY_STATUS)
+const _REVIVABLE = new Set(['crashed', 'dead', 'stale', 'detached'])
 const LIVE_OR_TRANSITIONAL = [
   'ready',
   'idle',
@@ -206,10 +205,6 @@ async function seedBoundRuntime(
   return { runtimeId, invocationIds, ledgerPath, ledgerBytes }
 }
 
-function expectedHeld(status: string, outcome: OutcomeCase): boolean {
-  return REVIVABLE.has(status) || outcome.holds
-}
-
 function sweepOptions(now = Date.now() + 365 * 24 * 60 * 60 * 1000) {
   return {
     graceMs: 0,
@@ -243,78 +238,6 @@ async function waitFor<T>(read: () => T | undefined, timeoutMs = 7_000): Promise
 }
 
 describe('T-08566 H1 single hold predicate', () => {
-  test('all statuses and outcome classes agree across predicate, API, prune and startup selection', async () => {
-    const rows: Array<{
-      status: string
-      outcome: OutcomeCase
-      seeded: Seeded
-      expected: boolean
-    }> = []
-    for (const status of STATUSES) {
-      for (const outcome of OUTCOMES) {
-        const seeded = await seedBoundRuntime(`${status}-${outcome.key}`, status, outcome)
-        rows.push({ status, outcome, seeded, expected: expectedHeld(status, outcome) })
-      }
-    }
-
-    const predicateMismatches: string[] = []
-    const apiMismatches: string[] = []
-    const pruneMismatches: string[] = []
-    const db = openHrcDatabase(fixture.dbPath)
-    try {
-      for (const row of rows) {
-        const runtime = db.runtimes.getByRuntimeId(row.seeded.runtimeId)
-        expect(runtime).toBeDefined()
-        const held = retainedEvidenceHold(db, runtime!).held
-        if (held !== row.expected) {
-          predicateMismatches.push(
-            `${row.status}/${row.outcome.key}: expected ${row.expected}, got ${held}`
-          )
-        }
-
-        const response = await fixture.postJson('/v1/capture/recover', {
-          runtimeId: row.seeded.runtimeId,
-          dryRun: true,
-        })
-        expect(response.status).toBe(200)
-        const body = (await response.json()) as { held?: boolean }
-        if (body.held !== row.expected) {
-          apiMismatches.push(
-            `${row.status}/${row.outcome.key}: expected ${row.expected}, got ${String(body.held)}`
-          )
-        }
-
-        const disposition = await evaluatePruneDisposition(runtime!, {} as never, db)
-        const reportsHold = disposition.reason === 'offline_evidence_held'
-        if (reportsHold !== row.expected) {
-          pruneMismatches.push(
-            `${row.status}/${row.outcome.key}: expected hold reason ${row.expected}, got ${disposition.reason ?? 'prunable'}`
-          )
-        }
-      }
-
-      const candidates = retainedEvidencePassCandidates(db, 20)
-      const expectedCandidates = rows
-        .filter(
-          (row) =>
-            (row.status === 'terminated' || row.status === 'failed') &&
-            (row.outcome.key === 'absent' || row.outcome.key === 'retryable')
-        )
-        .map((row) => row.seeded.runtimeId)
-        .sort()
-      expect(candidates.runtimeIds.toSorted()).toEqual(expectedCandidates)
-      expect(candidates.eligible).toBe(expectedCandidates.length)
-    } finally {
-      db.close()
-    }
-
-    expect({ predicateMismatches, apiMismatches, pruneMismatches }).toEqual({
-      predicateMismatches: [],
-      apiMismatches: [],
-      pruneMismatches: [],
-    })
-  }, 20_000)
-
   test('the actual IPC sweep keeps held terminal evidence and removes released evidence', async () => {
     // `sweepOrphanedBrokerIpcDirs` is private. Its actual effect is isolated here
     // on old `terminated` rows: the live-lease reference loop is neutralized by
@@ -335,32 +258,6 @@ describe('T-08566 H1 single hold predicate', () => {
     }
     expect(existsSync(dirname(held.ledgerPath))).toBe(true)
     expect(existsSync(dirname(released.ledgerPath))).toBe(false)
-  })
-
-  test('API held is recomputed from the post-attempt runtime predicate', async () => {
-    const busy = await seedBoundRuntime('api-busy', 'busy')
-    const busyResponse = await fixture.postJson('/v1/capture/recover', {
-      runtimeId: busy.runtimeId,
-      yes: true,
-    })
-    expect(busyResponse.status).toBe(200)
-    expect(await busyResponse.json()).toMatchObject({
-      recorded: false,
-      held: true,
-      outcome: 'offline_read_runtime_revivable',
-    })
-
-    const recovered = await seedBoundRuntime('api-recovered', 'terminated', OUTCOMES[1])
-    const recoveredResponse = await fixture.postJson('/v1/capture/recover', {
-      runtimeId: recovered.runtimeId,
-      dryRun: true,
-    })
-    expect(recoveredResponse.status).toBe(200)
-    expect(await recoveredResponse.json()).toMatchObject({
-      recorded: false,
-      held: false,
-      outcome: 'recovered',
-    })
   })
 })
 

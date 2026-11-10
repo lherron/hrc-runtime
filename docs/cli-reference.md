@@ -233,20 +233,7 @@ ghostmux metadata set -t <surfaceId> '{"hrc_role":"headless-sessions-window","hr
 
 A clean interactive `/quit` ends the run normally (the broker reaps the tmux lease); after the tmux client exits, `hrc run` prints the broker-pushed session-summary block if one was recorded at graceful `/quit`; this is not an attach failure.
 
-Maintenance subcommands: `hrc admin runs sweep-zombies [--older-than <d>] [--dry-run|--yes] [--json]`, `hrc admin runs reconcile-active [...]`, `hrc admin runs recover-unstarted <runId> [--dry-run|--yes] [--json]`, `hrc admin worktrees audit [--project <id>] [--root <path>] [--json]`, and `hrc admin worktrees prune [--project <id>] [--root <path>] [--dry-run|--yes] [--json]` (dry-run is the default). Worktree pruning refuses non-completed, dirty, unmerged, or live-runtime-occupied checkouts; it never deletes branch refs.
-
-The ledger-inclusive runtime prune is a fenced, manifest-only administrative
-surface for the T-07598 mneme burst cleanup:
-
-```bash
-hrc admin runtime prune --runtime-ids-file <file> --include-ledgers --dry-run --yes
-hrc admin runtime prune --runtime-ids-file <file> --include-ledgers --yes
-```
-
-The daemon refuses the entire manifest unless every runtime is orphan-safe and
-its exact scope is one of the three approved signal-pipeline scopes. Dry-run
-prints aggregate per-table delete counts; it does not weaken the required
-`--yes` acknowledgement.
+Maintenance subcommands: `hrc admin runs sweep-zombies [--older-than <d>] [--dry-run|--yes] [--json]`, `hrc admin runs reconcile-active [...]`, `hrc admin worktrees audit [--project <id>] [--root <path>] [--json]`, and `hrc admin worktrees prune [--project <id>] [--root <path>] [--dry-run|--yes] [--json]` (dry-run is the default). Worktree pruning refuses non-completed, dirty, unmerged, or live-runtime-occupied checkouts; it never deletes branch refs.
 
 ### `monitor show | watch | wait | events | transcript | stats | search`
 
@@ -317,9 +304,9 @@ Authorization (T-09861): `stop` and `restart` are requests to the daemon, which 
 
 In-flight gating (daemon-side, after authorization): `stop` and `restart` refuse by default when runs are still in flight. Use `--wait` to drain (poll up to `--wait-timeout-ms`, default 300000) or `--force` to proceed anyway. For `restart`, tmux-transport runs are excluded from the gate (they survive a daemon restart); only headless/sdk runs block it. After the grant, `restart` waits up to `--proof-timeout-ms` (default 30000) for a healthy daemon whose `processStartedAt` differs from the pre-restart process (for `--node`, the peer's federation health); an unproved restart exits nonzero with `[restart_unproven]`. `restart --drain` closes daemon turn admission, drains (up to `--drain-timeout-ms`, default 300000), rechecks, then restarts; it is mutually exclusive with `--wait`. `stop` waits up to `--proof-timeout-ms` (default 30000) to observe the daemon gone.
 
-Related backend control: `hrc server tmux status [--json]`, `hrc server tmux kill --yes` (destructive — kills the HRC tmux server and broker-tmux leases, claimed orphans included). Note: `hrc server restart` does **not** reload launchd plist `EnvironmentVariables`.
+Related backend control: `hrc server tmux status [--json]`. Note: `hrc server restart` does **not** reload launchd plist `EnvironmentVariables`.
 
-### `runtime list | inspect | status | diagnostics | capture | send | interrupt | terminate | sweep | prune`
+### `runtime list | inspect | status | diagnostics | capture | interrupt | terminate | sweep | prune`
 
 ```bash
 hrc runtime list
@@ -345,9 +332,6 @@ authority views: `hrc` (the HRC runtime store) and `broker` (whose `source` stay
 `broker` or `hrc-derived`). The CLI never flattens the two authorities into one
 apparent field set.
 
-`runtime send <runtimeId> --run-id <id> --input <text>` sends input to an active
-run. Low-level provisioning and manifest prune live at `hrc admin runtime
-ensure|prune`.
 
 ### Session continuity
 

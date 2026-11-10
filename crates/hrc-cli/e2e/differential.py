@@ -19,7 +19,7 @@ ROOT = Path(__file__).resolve().parents[3]
 # Declared normalization: created IDs and timestamps can change between calls.
 NORMALIZATION = {'timestamps': r'\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d\.\d{3}Z'}
 
-OUTSIDE_NATIVE = 'Outside the approved native command set: standalone maintenance scripts, full capture verification, or run export/annotate remain Bun-owned under T-11820.'
+OUTSIDE_NATIVE = 'Outside the approved native command set: standalone maintenance scripts and the capture verification library remain Bun-owned under T-11820.'
 
 
 def nodes(node):
@@ -92,6 +92,21 @@ def main():
                         and child.stderr.endswith(expected['stderrContains']))
             results.append({'case': name, 'argv': argv, 'pass': good, 'nativeOnly': expected, 'subject': subject})
             continue
+        # T-13010: unknown commands and surviving native-only groups no longer
+        # process-replace with Commander. Grade their native usage contract.
+        if argv in (['wat'], ['runtime', 'nonsense'], ['--output', 'json', 'wat'], ['runtime']):
+            child = subprocess.run([str(args.binary.resolve())] + argv, cwd=ROOT, env=env, text=True, capture_output=True, timeout=20)
+            if argv == ['runtime']:
+                node = next(n for n in nodes(surface) if n['path'] == ['runtime'])
+                good = child.returncode == 0 and child.stdout == '' and child.stderr == node['help']
+            elif '--output' in argv:
+                error = json.loads(child.stderr)
+                good = child.returncode == 2 and child.stdout == '' and 'unknown command:' in error['error']['message']
+            else:
+                good = child.returncode == 2 and child.stdout == '' and child.stderr.startswith('hrc: unknown command:')
+            results.append({'case': name, 'argv': argv, 'pass': good, 'nativeUsage': True,
+                            'subject': {'exit': child.returncode, 'stdout': child.stdout, 'stderr': child.stderr}})
+            continue
         observed = []
         for command in (['bun', str(args.oracle)], [str(args.binary.resolve())]):
             child = subprocess.run(command + argv, cwd=ROOT, env=env, text=True, capture_output=True, timeout=20)
@@ -114,7 +129,7 @@ def main():
         coverage = json.loads((inventory_dir / 'coverage-report.json').read_text())
     scope = json.loads((ROOT / 'crates/hrc-cli/command-scope.json').read_text())
     # This bounded run proves grammar; execution belongs to the named suites.
-    # Report the approved 55/39 split instead of obsolete implementation gaps.
+    # Report the current declared native/Bun split.
     families = {
         'runtime.py': 'runtime list|runtime inspect|runtime status|show|ls|session list|session get|session meta get|admin status',
         'continuity.py': 'session resolve',
@@ -128,7 +143,8 @@ def main():
         'annotations.py': 'session annotation|session annotation list|session annotation put|session annotation delete|session annotation act',
         'controls.py': 'runtime capture|runtime interrupt|runtime terminate|capture status|session drop-continuation|session rotate|admin surface bind',
         'server_lifecycle.py': 'server stop|server restart',
-        'server_start.py': 'server start', 'daemon_entrypoints.py': 'server serve',
+        'server_start.py': 'server start', 'daemon_entrypoints.py': 'server|server serve',
+        'differential.py': 'admin broker-verify|admin events|admin runs|admin surface|capture|runtime|server tmux|target',
         'status.py': 'server status', 'turn_protocol.py': 'turn',
         'n5b_monitor_reads.py': 'monitor events|monitor transcript|monitor stats|monitor show|monitor session-report',
         'n5b_monitor_wait.py': 'monitor wait', 'n5b_monitor_watch.py': 'monitor watch',

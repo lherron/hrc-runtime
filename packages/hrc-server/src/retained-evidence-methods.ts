@@ -1,9 +1,4 @@
-import {
-  type CaptureRecoverResponse,
-  HrcBadRequestError,
-  HrcErrorCode,
-  HrcNotFoundError,
-} from 'hrc-core'
+import type { CaptureRecoverResponse } from 'hrc-core'
 import {
   RETAINED_EVIDENCE_PASS_LIMIT,
   RETAINED_EVIDENCE_TERMINAL_DELAY_MS,
@@ -13,9 +8,8 @@ import {
 } from './broker/offline-evidence'
 import type { HrcServerInstance } from './index.js'
 import { writeServerLog } from './server-log.js'
-import { isRecord, parseJsonBody } from './server-parsers.js'
 import type { HrcServerOptions } from './server-types.js'
-import { json, timestamp } from './server-util.js'
+import { timestamp } from './server-util.js'
 import { probeBrokerHealth } from './startup-reconcile/broker-probe.js'
 
 export const retainedEvidenceMethods = {
@@ -109,39 +103,6 @@ export const retainedEvidenceMethods = {
     } finally {
       if (this.retainedEvidencePassInFlight === pass) this.retainedEvidencePassInFlight = undefined
     }
-  },
-
-  /** `POST /v1/capture/recover` — explicit, mutating operator recovery (SPEC §4.2). */
-  async handleCaptureRecover(this: HrcServerInstance, request: Request): Promise<Response> {
-    const body = await parseJsonBody(request)
-    if (!isRecord(body) || typeof body['runtimeId'] !== 'string') {
-      throw new HrcBadRequestError(HrcErrorCode.MALFORMED_REQUEST, 'runtimeId is required')
-    }
-    const dryRun = body['dryRun'] === true
-    if (!dryRun && body['yes'] !== true) {
-      return json(
-        {
-          error: {
-            code: 'confirmation_required',
-            message: 'capture recover is mutating; pass yes (or dryRun)',
-            detail: { runtimeId: body['runtimeId'] },
-          },
-        },
-        400
-      )
-    }
-    const response = await this.recoverRetainedEvidence({
-      runtimeId: body['runtimeId'],
-      trigger: 'operator',
-      dryRun,
-    })
-    if (response === undefined) {
-      throw new HrcNotFoundError(
-        HrcErrorCode.UNKNOWN_RUNTIME,
-        `unknown runtime: ${body['runtimeId']}`
-      )
-    }
-    return json(response)
   },
 }
 

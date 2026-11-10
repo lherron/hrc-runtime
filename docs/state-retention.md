@@ -59,7 +59,7 @@ The retention periods that remain are configuration, not constants:
 
 Once a node has a prune window, `hrc monitor transcript`, broker forensics,
 capture verification, `/v1/events` replay, transcript search, prior-session
-recap, seat stats and run export reach back only as far as the window for
+recap and seat stats reach back only as far as the window for
 runtime-owned history. None of them says that anything older is missing; that
 history is in the lake.
 

@@ -49,8 +49,6 @@ import type {
   AttachRuntimeRequest,
   AttachRuntimeResponse,
   BindSurfaceRequest,
-  BrokerCaptureReleaseRequest,
-  BrokerCaptureReleaseResponse,
   BrokerCaptureStatusResponse,
   BrokerForensicsOptions,
   BrokerForensicsResponse,
@@ -64,15 +62,12 @@ import type {
   DropContinuationRequest,
   DropContinuationResponse,
   EnqueueSubmissionRequest,
-  EnsureRuntimeRequest,
-  EnsureRuntimeResponse,
   HrcActiveRunContributionRequest,
   HrcActiveRunContributionResponse,
   HrcSubmissionResponse,
   InspectRuntimeRequest,
   InspectRuntimeResponse,
   InvokeSubmissionRequest,
-  KillBrokerTmuxLeasesResponse,
   LaunchCommandScopedRunRequest,
   LaunchCommandScopedRunResponse,
   OpenBrokerSessionRequest,
@@ -85,8 +80,6 @@ import type {
   PruneRuntimesResponse,
   ReconcileActiveRunsRequest,
   ReconcileActiveRunsResponse,
-  RecoverUnstartedRunRequest,
-  RecoverUnstartedRunResponse,
   ResolveSessionRequest,
   ResolveSessionResponse,
   RestartSessionRequest,
@@ -107,18 +100,14 @@ import type {
   StartRuntimeRequest,
   StartRuntimeResponse,
   SteerSubmissionRequest,
-  SurfaceListFilter,
   SweepRuntimesRequest,
   SweepRuntimesResponse,
   SweepZombieRunsRequest,
   SweepZombieRunsResponse,
   TerminateRuntimeRequest,
   TerminateRuntimeResponse,
-  TranscriptIndexRebuildResponse,
-  TranscriptIndexStats,
   TranscriptSearchRequest,
   TranscriptSearchResponse,
-  UnbindSurfaceRequest,
 } from './types.js'
 
 export class HrcClientRuntimeMethods extends HrcClientTransport {
@@ -365,10 +354,6 @@ export class HrcClientRuntimeMethods extends HrcClientTransport {
   }
 
   // -- Semantic runtime core ---------------------------------------------------
-
-  async ensureRuntime(request: EnsureRuntimeRequest): Promise<EnsureRuntimeResponse> {
-    return this.postJson<EnsureRuntimeResponse>('/v1/runtimes/ensure', request)
-  }
 
   async startRuntime(request: StartRuntimeRequest): Promise<StartRuntimeResponse> {
     return this.postJson<StartRuntimeResponse>('/v1/runtimes/start', request)
@@ -680,24 +665,10 @@ export class HrcClientRuntimeMethods extends HrcClientTransport {
     return this.postJson<TranscriptSearchResponse>('/v1/transcript-search', request)
   }
 
-  async transcriptIndexStatus(): Promise<TranscriptIndexStats> {
-    return this.getJson<TranscriptIndexStats>('/v1/transcript-index/status')
-  }
-
-  async rebuildTranscriptIndex(): Promise<TranscriptIndexRebuildResponse> {
-    return this.postJson<TranscriptIndexRebuildResponse>('/v1/transcript-index/rebuild', {})
-  }
-
   async brokerCaptureStatus(runtimeId: string): Promise<BrokerCaptureStatusResponse> {
     return this.postJson<BrokerCaptureStatusResponse>('/v1/runtimes/capture/status', {
       runtimeId,
     })
-  }
-
-  async brokerCaptureRelease(
-    request: BrokerCaptureReleaseRequest
-  ): Promise<BrokerCaptureReleaseResponse> {
-    return this.postJson<BrokerCaptureReleaseResponse>('/v1/runtimes/capture/release', request)
   }
 
   async sweepRuntimes(request: SweepRuntimesRequest = {}): Promise<SweepRuntimesResponse> {
@@ -706,10 +677,6 @@ export class HrcClientRuntimeMethods extends HrcClientTransport {
 
   async pruneRuntimes(request: PruneRuntimesRequest = {}): Promise<PruneRuntimesResponse> {
     return this.postJson<PruneRuntimesResponse>('/v1/runtimes/prune', request)
-  }
-
-  async killBrokerTmuxLeases(): Promise<KillBrokerTmuxLeasesResponse> {
-    return this.postJson<KillBrokerTmuxLeasesResponse>('/v1/server/tmux/kill-broker-leases', {})
   }
 
   async sweepZombieRuns(request: SweepZombieRunsRequest = {}): Promise<SweepZombieRunsResponse> {
@@ -722,28 +689,12 @@ export class HrcClientRuntimeMethods extends HrcClientTransport {
     return this.postJson<ReconcileActiveRunsResponse>('/v1/runs/reconcile-active', request)
   }
 
-  async recoverUnstartedRun(
-    request: RecoverUnstartedRunRequest
-  ): Promise<RecoverUnstartedRunResponse> {
-    return this.postJson<RecoverUnstartedRunResponse>('/v1/runs/recover-unstarted', request)
-  }
-
   async dropContinuation(request: DropContinuationRequest): Promise<DropContinuationResponse> {
     return this.postJson<DropContinuationResponse>('/v1/sessions/drop-continuation', request)
   }
 
   async bindSurface(request: BindSurfaceRequest): Promise<SurfaceBindingRecord> {
     return this.postJson<SurfaceBindingRecord>('/v1/surfaces/bind', request)
-  }
-
-  async unbindSurface(request: UnbindSurfaceRequest): Promise<SurfaceBindingRecord> {
-    return this.postJson<SurfaceBindingRecord>('/v1/surfaces/unbind', request)
-  }
-
-  async listSurfaces(filter: SurfaceListFilter): Promise<SurfaceBindingRecord[]> {
-    return this.getJson<SurfaceBindingRecord[]>(
-      `/v1/surfaces?runtimeId=${encodeURIComponent(filter.runtimeId)}`
-    )
   }
 
   async getSessionByContinuity(target: SessionMetadataTarget): Promise<SessionGetResponse> {

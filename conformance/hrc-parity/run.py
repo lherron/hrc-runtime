@@ -440,7 +440,7 @@ def validate_case_observations(id, observations, checks, status=None, installed_
         require('missing-field', any(o.get('status') == 400 and o.get('request') == {} for o in http('POST', '/v1/sessions/resolve')))
         require('wrong-method', any(o.get('status') == 404 for o in http('DELETE', '/v1/health')))
     elif id == 'direct-cli-sdk':
-        for words in (['--help'], ['monitor', 'show'], ['monitor', 'watch'], ['run', 'export'], ['run', 'annotate']):
+        for words in (['--help'], ['monitor', 'show'], ['monitor', 'watch']):
             require('CLI-' + '-'.join(words), bool(cli(words)))
         require('monitor-show-watch-wait', all(cli(['monitor', verb]) for verb in ('show', 'watch', 'wait'))
             and any(o.get('body', {}).get('event') == 'monitor.completed'
@@ -454,12 +454,6 @@ def validate_case_observations(id, observations, checks, status=None, installed_
             except ValueError:
                 return False
         require('json-ndjson-exits', any(ndjson(o) for o in cli(['monitor', 'watch', 'ndjson'])))
-        annotations = cli(['run', 'annotate'])
-        exports = cli(['run', 'export'])
-        require('run-bearing-export-annotation', bool(annotations) and any(
-            o.get('body', {}).get('correlation', {}).get('attemptRef') == 'p0:compatibility'
-            and any(set(a['argv']) & set(o['argv']) & {v for v in o['argv'] if v.startswith('run-')} for a in annotations)
-            for o in exports))
         require('SDK-read', any(o.get('sdk') is True and 'health' in o.get('argv', []) and o.get('exit') == 0 and o.get('body', {}).get('ok') is True
             for o in observations if isinstance(o, dict)))
     elif id == 'wrkq':
@@ -1413,7 +1407,7 @@ UNSUPPORTED_REASONS = {
     'Plan "Explicitly unsupported": no Rust schema migrator for production stores. Bun retains migration ownership; the native schema guard accepts existing legacy tables unchanged; no native migration introduced.',
     # N5 (T-11819): Lance's scope ruling relayed in EN-35340/35341 (T-11820
     # audit) keeps these Bun-owned; mable EN-36516 admits them as UNSUPPORTED.
-    'Outside the approved native command set: standalone maintenance scripts, full capture verification, or run export/annotate remain Bun-owned under T-11820.',
+    'Outside the approved native command set: standalone maintenance scripts and the capture verification library remain Bun-owned under T-11820.',
 }
 
 

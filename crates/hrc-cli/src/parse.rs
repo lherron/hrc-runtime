@@ -160,6 +160,18 @@ pub(crate) fn parse<'a>(surface: &'a Value, args: &[String]) -> Result<Parsed<'a
             parsed.positionals.push(token.clone());
         }
     }
+    // These former subcommands must not become scope launches when removed.
+    if parsed.path() == "run"
+        && parsed
+            .positionals
+            .first()
+            .is_some_and(|p| ["export", "annotate"].contains(&p.as_str()))
+    {
+        return Err(Error::usage(format!(
+            "unknown command: {}",
+            parsed.positionals[0]
+        )));
+    }
     if !parsed.node["children"].as_array().unwrap().is_empty()
         && parsed.node["arguments"].as_array().unwrap().is_empty()
         && !parsed.positionals.is_empty()

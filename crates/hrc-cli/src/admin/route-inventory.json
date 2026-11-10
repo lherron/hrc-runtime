@@ -159,16 +159,6 @@
     {
       "listener": "main",
       "method": "GET",
-      "route": "/v1/transcript-index/status"
-    },
-    {
-      "listener": "main",
-      "method": "POST",
-      "route": "/v1/transcript-index/rebuild"
-    },
-    {
-      "listener": "main",
-      "method": "GET",
       "route": "/v1/events/latest-by-session"
     },
     {
@@ -185,11 +175,6 @@
       "listener": "main",
       "method": "POST",
       "route": "/v1/server/lifecycle"
-    },
-    {
-      "listener": "main",
-      "method": "POST",
-      "route": "/v1/runtimes/ensure"
     },
     {
       "listener": "main",
@@ -234,16 +219,6 @@
     {
       "listener": "main",
       "method": "POST",
-      "route": "/v1/runtimes/capture/release"
-    },
-    {
-      "listener": "main",
-      "method": "POST",
-      "route": "/v1/capture/recover"
-    },
-    {
-      "listener": "main",
-      "method": "POST",
       "route": "/v1/runtimes/sweep"
     },
     {
@@ -254,22 +229,12 @@
     {
       "listener": "main",
       "method": "POST",
-      "route": "/v1/server/tmux/kill-broker-leases"
-    },
-    {
-      "listener": "main",
-      "method": "POST",
       "route": "/v1/runs/sweep-zombies"
     },
     {
       "listener": "main",
       "method": "POST",
       "route": "/v1/runs/reconcile-active"
-    },
-    {
-      "listener": "main",
-      "method": "POST",
-      "route": "/v1/runs/recover-unstarted"
     },
     {
       "listener": "main",
@@ -340,16 +305,6 @@
       "listener": "main",
       "method": "POST",
       "route": "/v1/surfaces/bind"
-    },
-    {
-      "listener": "main",
-      "method": "POST",
-      "route": "/v1/surfaces/unbind"
-    },
-    {
-      "listener": "main",
-      "method": "GET",
-      "route": "/v1/surfaces"
     },
     {
       "listener": "main",

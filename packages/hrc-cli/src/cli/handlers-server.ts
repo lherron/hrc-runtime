@@ -9,7 +9,6 @@ import type {
   HrcServerLifecycleGrant,
   HrcServerLifecycleInFlightItem,
   HrcServerLifecycleRequest,
-  KillBrokerTmuxLeasesResponse,
 } from 'hrc-core'
 import type { ServerShutdownAttribution } from 'hrc-server'
 
@@ -19,7 +18,6 @@ import {
   daemonizeAndWait,
   detectLaunchdOwner,
   detectStrandedLaunchAgent,
-  execProcess,
   formatServerRuntimeStatus,
   formatStrandedLaunchAgentRefusal,
   formatTmuxStatus,
@@ -769,58 +767,4 @@ export async function cmdTmuxStatus(args: string[]): Promise<void> {
     return
   }
   process.stdout.write(formatTmuxStatus(status))
-}
-
-export async function cmdTmuxKill(args: string[]): Promise<void> {
-  if (!hasFlag(args, '--yes')) {
-    fatal(
-      'tmux kill is destructive; rerun with --yes to kill the HRC tmux server and broker-tmux lease servers'
-    )
-  }
-
-  let brokerLeaseResult: KillBrokerTmuxLeasesResponse
-  try {
-    const client = createClient()
-    brokerLeaseResult = await client.killBrokerTmuxLeases()
-  } catch (error) {
-    const detail = error instanceof Error ? error.message : String(error)
-    fatal(`daemon unavailable; broker-tmux lease servers were not reaped: ${detail}`)
-  }
-
-  const status = await collectTmuxStatus()
-  if (!status.available) {
-    fatal(status.error ?? 'tmux unavailable')
-  }
-
-  process.stderr.write(
-    `hrc: broker-tmux lease server(s) reaped: ${brokerLeaseResult.killedLiveLeaseServers} killed, ${brokerLeaseResult.removedDeadSocketFiles} dead socket file(s) removed`
-  )
-  if (brokerLeaseResult.preservedClaimed > 0) {
-    process.stderr.write(`, ${brokerLeaseResult.preservedClaimed} claimed preserved`)
-  }
-  if (brokerLeaseResult.reapedClaimedOrphans > 0) {
-    process.stderr.write(`, ${brokerLeaseResult.reapedClaimedOrphans} claimed orphan(s) reaped`)
-  }
-  if (brokerLeaseResult.staledClaimedRuntimes > 0) {
-    process.stderr.write(`, ${brokerLeaseResult.staledClaimedRuntimes} runtime(s) staled`)
-  }
-  if (brokerLeaseResult.removedBrokerIpcDirs > 0) {
-    process.stderr.write(`, ${brokerLeaseResult.removedBrokerIpcDirs} broker IPC dir(s) removed`)
-  }
-  if (brokerLeaseResult.errors > 0) {
-    process.stderr.write(`, ${brokerLeaseResult.errors} error(s)`)
-  }
-  process.stderr.write('\n')
-
-  if (!status.running) {
-    process.stderr.write('hrc: tmux server is not running\n')
-    return
-  }
-
-  const result = await execProcess(['tmux', '-S', status.socketPath, 'kill-server'])
-  if (result.exitCode !== 0) {
-    fatal(`${result.stderr}\n${result.stdout}`.trim() || 'tmux kill-server failed')
-  }
-
-  process.stderr.write(`hrc: tmux server killed (${status.sessionCount} session(s))\n`)
 }

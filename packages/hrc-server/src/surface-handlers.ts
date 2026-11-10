@@ -1,4 +1,4 @@
-import { HrcConflictError, HrcErrorCode, HrcInternalError, HrcNotFoundError } from 'hrc-core'
+import { HrcConflictError, HrcErrorCode } from 'hrc-core'
 import type { HrcLifecycleEvent } from 'hrc-core'
 import { appendHrcEvent } from './hrc-event-helper.js'
 import {
@@ -8,14 +8,12 @@ import {
   requireTmuxPane,
 } from './require-helpers.js'
 import type { HrcServerInstanceForHandlers } from './server-instance-context.js'
-import { parseRuntimeIdQuery } from './server-misc.js'
 import {
   parseAttachRuntimeRequest,
   parseBindSurfaceRequest,
   parseJsonBody,
-  parseUnbindSurfaceRequest,
 } from './server-parsers.js'
-import { isRuntimeUnavailableStatus, json, timestamp } from './server-util.js'
+import { json, timestamp } from './server-util.js'
 
 export async function handleAttachRuntime(
   this: HrcServerInstanceForHandlers,
@@ -147,72 +145,9 @@ export async function handleBindSurface(
   return json(mutation.binding)
 }
 
-export async function handleUnbindSurface(
-  this: HrcServerInstanceForHandlers,
-  request: Request
-): Promise<Response> {
-  const body = parseUnbindSurfaceRequest(await parseJsonBody(request))
-  const existing = this.db.surfaceBindings.findBySurface(body.surfaceKind, body.surfaceId)
-  if (!existing) {
-    throw new HrcNotFoundError(
-      HrcErrorCode.UNKNOWN_SURFACE,
-      `unknown surface binding "${body.surfaceKind}:${body.surfaceId}"`,
-      {
-        surfaceKind: body.surfaceKind,
-        surfaceId: body.surfaceId,
-      }
-    )
-  }
-
-  if (existing.unboundAt !== undefined) {
-    return json(existing)
-  }
-
-  const session = requireSession(this.db, existing.hostSessionId)
-  const now = timestamp()
-  const binding = this.db.surfaceBindings.unbind(body.surfaceKind, body.surfaceId, now, body.reason)
-  if (!binding) {
-    throw new HrcInternalError('surface binding disappeared during unbind', {
-      surfaceKind: body.surfaceKind,
-      surfaceId: body.surfaceId,
-    })
-  }
-
-  const event = appendHrcEvent(this.db, 'surface.unbound', {
-    ts: now,
-    hostSessionId: session.hostSessionId,
-    scopeRef: session.scopeRef,
-    laneRef: session.laneRef,
-    generation: session.generation,
-    runtimeId: binding.runtimeId,
-    payload: {
-      surfaceKind: binding.surfaceKind,
-      surfaceId: binding.surfaceId,
-      runtimeId: binding.runtimeId,
-      unboundAt: binding.unboundAt,
-      ...(binding.clientTty ? { clientTty: binding.clientTty } : {}),
-      ...(binding.reason ? { reason: binding.reason } : {}),
-    },
-  })
-  this.notifyEvent(event)
-
-  return json(binding)
-}
-
-export function handleListSurfaces(this: HrcServerInstanceForHandlers, url: URL): Response {
-  const runtimeId = parseRuntimeIdQuery(url)
-  const runtime = this.db.runtimes.getByRuntimeId(runtimeId)
-  if (!runtime || isRuntimeUnavailableStatus(runtime.status)) {
-    return json([])
-  }
-  return json(this.db.surfaceBindings.findByRuntime(runtimeId))
-}
-
 export const surfaceHandlersMethods = {
   handleAttachRuntime,
   handleBindSurface,
-  handleUnbindSurface,
-  handleListSurfaces,
 }
 
 export type SurfaceHandlersMethods = typeof surfaceHandlersMethods

@@ -22,25 +22,10 @@
  * Reference: T-00946 (parent), T-00957 (CLI implementation task)
  */
 import { afterEach, beforeEach, describe, expect, it } from 'bun:test'
-import { mkdir, readFile } from 'node:fs/promises'
+import { readFile } from 'node:fs/promises'
 import { join } from 'node:path'
-// RED GATE: cli.ts must exist as the bin entry point
-// This import will fail until Curly implements the CLI module
-import { createHrcServer } from 'hrc-server'
 
-import {
-  cliEnv,
-  createRawTmuxSession,
-  rawTmuxSessionAlive,
-  runCli,
-  runtimeRoot,
-  seedBrokerClaimingRuntime,
-  serverOpts,
-  setServer,
-  setupCliFixture,
-  teardownCliFixture,
-  tmuxSocketPath,
-} from './fixtures/cli.fixture'
+import { runCli, setupCliFixture, teardownCliFixture } from './fixtures/cli.fixture'
 
 beforeEach(setupCliFixture)
 afterEach(teardownCliFixture)
@@ -183,32 +168,6 @@ describe('nested group commander help', () => {
   })
 })
 
-describe('server tmux kill broker leases', () => {
-  it('reaps unclaimed broker-tmux lease servers through the daemon and reports both counts', async () => {
-    setServer(await createHrcServer(serverOpts()))
-
-    await createRawTmuxSession(tmuxSocketPath, 'hrc-default-kill-test')
-    const btmuxDir = join(runtimeRoot, 'btmux')
-    await mkdir(btmuxDir, { recursive: true })
-    const unclaimedSocket = join(btmuxDir, 'cc-a.sock')
-    const claimedSocket = join(btmuxDir, 'cx-b.sock')
-    await createRawTmuxSession(unclaimedSocket, 'hrc-cc-a', true)
-    await createRawTmuxSession(claimedSocket, 'hrc-cx-b', true)
-    seedBrokerClaimingRuntime('cx', 'b', claimedSocket)
-
-    const killResult = await runCli(['server', 'tmux', 'kill', '--yes'], cliEnv())
-    expect(killResult.exitCode).toBe(0)
-    expect(killResult.stderr).toMatch(
-      /broker-tmux lease server\(s\) reaped: 1 killed, 0 dead socket file\(s\) removed/i
-    )
-    expect(killResult.stderr).toMatch(/tmux server killed \(1 session\(s\)\)/i)
-
-    expect(await rawTmuxSessionAlive(unclaimedSocket, 'hrc-cc-a')).toBe(false)
-    expect(await rawTmuxSessionAlive(claimedSocket, 'hrc-cx-b')).toBe(true)
-    expect(await rawTmuxSessionAlive(tmuxSocketPath, 'hrc-default-kill-test')).toBe(false)
-  })
-})
-
 describe('legacy monitor command removal', () => {
   it('human help lists the seven noun groups while omitting moved top-level groups', async () => {
     const result = await runCli(['--human', '--help'])
@@ -218,30 +177,6 @@ describe('legacy monitor command removal', () => {
     expect(output).toMatch(/\n\s+admin\s/)
     expect(output).not.toMatch(/\n\s+events\s/)
     expect(output).not.toMatch(/\n\s+status\s/)
-  })
-
-  it('removed legacy hrc commands exit as unknown commands', async () => {
-    // T-07011 Phase 4 deleted the migration pointer shims after a quiet fleet week.
-    for (const args of [
-      ['status'],
-      ['server', 'health'],
-      ['broker', 'transcript'],
-      ['launch', 'list'],
-      ['inflight', 'send'],
-      ['surface', 'list'],
-      ['bridge', 'list'],
-      ['events'],
-      ['metrics', 'report'],
-      ['session-report'],
-      ['session', 'clear-context'],
-      ['runtime', 'ensure'],
-      ['runtime', 'adopt'],
-    ]) {
-      const result = await runCli(args, cliEnv())
-      expect(result.exitCode).toBe(2)
-      expect(result.stdout).toBe('')
-      expect(result.stderr).toMatch(/unknown command/i)
-    }
   })
 
   it('admin events exposes only the dead-ledger drain recovery command', async () => {
@@ -297,7 +232,6 @@ describe('nested group commander help (Phase 6 T2)', () => {
     expect(output).toContain('capture')
     expect(output).toContain('interrupt')
     expect(output).toContain('terminate')
-    expect(output).toContain('send')
     expect(output).not.toContain('ensure')
     expect(output).not.toContain('adopt')
   })
@@ -342,14 +276,6 @@ describe('nested group commander help (Phase 6 T2)', () => {
     expect(result.stderr).not.toMatch(/spawn|ENOENT|hrcchat/i)
   })
 
-  // -- runtime send --
-  it('hrc runtime send --help exposes active-run input flags', async () => {
-    const result = await runCli(['runtime', 'send', '--help'])
-    expect(result.exitCode).toBe(0)
-    expect(result.stdout).toContain('--run-id')
-    expect(result.stdout).toContain('--input')
-  })
-
   // -- admin surface group --
   it('hrc admin surface --help exits 0 with Usage and lists subcommands', async () => {
     const result = await runCli(['admin', 'surface', '--help'])
@@ -357,8 +283,6 @@ describe('nested group commander help (Phase 6 T2)', () => {
     const output = result.stdout
     expect(output).toMatch(/Usage:/)
     expect(output).toContain('bind')
-    expect(output).toContain('unbind')
-    expect(output).toContain('list')
   })
 
   it('hrc admin surface bind --help exits 0 with Usage', async () => {

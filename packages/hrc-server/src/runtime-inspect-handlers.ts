@@ -4,11 +4,7 @@ import type {
   FinalSummaryRecoveryResult,
   InspectRuntimeResponse,
 } from 'hrc-core'
-import type {
-  CaptureStateView,
-  EvidenceAuthorityMatrix,
-  InvocationCaptureReleaseRequest,
-} from 'spaces-harness-broker-protocol'
+import type { CaptureStateView, EvidenceAuthorityMatrix } from 'spaces-harness-broker-protocol'
 
 import { projectActuatorSplitInspectAuthority } from './actuator-split.js'
 import {
@@ -194,70 +190,6 @@ function parseCaptureRuntimeRequest(value: unknown): { runtimeId: string } {
   return { runtimeId: requireNonEmptyString(value['runtimeId'], 'runtimeId') }
 }
 
-function parseCaptureReleaseRequest(value: unknown): {
-  runtimeId: string
-  operatorPrincipal: string
-  release: Omit<InvocationCaptureReleaseRequest, 'invocationId'>
-} {
-  if (!isRecord(value)) {
-    throw new HrcBadRequestError(HrcErrorCode.MALFORMED_REQUEST, 'request body must be an object')
-  }
-  const runtimeId = requireNonEmptyString(value['runtimeId'], 'runtimeId')
-  const operatorPrincipal = requireNonEmptyString(value['operatorPrincipal'], 'operatorPrincipal')
-  if (operatorPrincipal !== 'human' && !operatorPrincipal.startsWith('human:')) {
-    throw new HrcBadRequestError(
-      HrcErrorCode.MALFORMED_REQUEST,
-      'capture release requires an operator principal',
-      { operatorPrincipal }
-    )
-  }
-  const rawRecordId = requireNonEmptyString(value['rawRecordId'], 'rawRecordId')
-  const disposition = value['disposition']
-  if (disposition !== 'ignored-known' && disposition !== 'normalized-as') {
-    throw new HrcBadRequestError(
-      HrcErrorCode.MALFORMED_REQUEST,
-      'disposition must be ignored-known or normalized-as'
-    )
-  }
-  const note = value['note']
-  if (note !== undefined && typeof note !== 'string') {
-    throw new HrcBadRequestError(HrcErrorCode.MALFORMED_REQUEST, 'note must be a string')
-  }
-
-  let normalizedAs: InvocationCaptureReleaseRequest['normalizedAs']
-  if (disposition === 'normalized-as') {
-    const candidate = value['normalizedAs']
-    if (!isRecord(candidate) || !Object.hasOwn(candidate, 'payload')) {
-      throw new HrcBadRequestError(
-        HrcErrorCode.MALFORMED_REQUEST,
-        'normalizedAs with type and payload is required for normalized-as'
-      )
-    }
-    normalizedAs = {
-      type: requireNonEmptyString(candidate['type'], 'normalizedAs.type') as never,
-      payload: candidate['payload'],
-      ...(typeof candidate['turnId'] === 'string' ? { turnId: candidate['turnId'] as never } : {}),
-      ...(typeof candidate['itemId'] === 'string' ? { itemId: candidate['itemId'] } : {}),
-    }
-  } else if (value['normalizedAs'] !== undefined) {
-    throw new HrcBadRequestError(
-      HrcErrorCode.MALFORMED_REQUEST,
-      'normalizedAs is only valid with disposition normalized-as'
-    )
-  }
-
-  return {
-    runtimeId,
-    operatorPrincipal,
-    release: {
-      rawRecordId,
-      disposition,
-      ...(normalizedAs !== undefined ? { normalizedAs } : {}),
-      ...(note !== undefined ? { note } : {}),
-    },
-  }
-}
-
 function throwCaptureControlError(error: {
   code: string
   message: string
@@ -297,47 +229,6 @@ export async function handleBrokerCaptureStatus(
   return json({ runtimeId, capture: result.response })
 }
 
-export async function handleBrokerCaptureRelease(
-  this: HrcServerInstanceForHandlers,
-  request: Request
-): Promise<Response> {
-  const body = parseCaptureReleaseRequest(await parseJsonBody(request))
-  const runtime = this.db.runtimes.getByRuntimeId(body.runtimeId)
-  if (!runtime) {
-    throw new HrcNotFoundError(
-      HrcErrorCode.UNKNOWN_RUNTIME,
-      `unknown runtime "${body.runtimeId}"`,
-      { runtimeId: body.runtimeId }
-    )
-  }
-  const controller = this.harnessBrokerController
-  if (!controller) {
-    throw new HrcDomainError(
-      HrcErrorCode.RUNTIME_UNAVAILABLE,
-      `broker controller unavailable for runtime ${body.runtimeId}`,
-      { runtimeId: body.runtimeId }
-    )
-  }
-  const result = await controller.captureRelease(
-    body.runtimeId,
-    body.release,
-    body.operatorPrincipal
-  )
-  if (!result.ok) throwCaptureControlError(result.error)
-  return json(result.response)
-}
-
-/**
- * T-01856 P3 — operator broker-inspect surface (T-01844 #4/#5).
- *
- * Read-only. MUST NOT mutate DB state. For broker-backed runtimes this calls
- * the P2 controller read model (controller.listInvocations) and returns the
- * broker's InvocationInspectionSummary[] passed through verbatim (no recompute,
- * cody C-03259 render guards live broker-side / pass-through here). For
- * non-broker runtimes it synthesizes an HRC-runtime-derived lifecycle view and
- * LABELS it `source:'hrc-derived'` so operators never read a synthesized TTL as
- * broker-enforced (item #5 must-not-mislead).
- */
 export async function handleBrokerInspect(
   this: HrcServerInstanceForHandlers,
   request: Request
@@ -472,7 +363,6 @@ export const runtimeInspectHandlersMethods = {
   handleInspectRuntime,
   handleBrokerInspect,
   handleBrokerCaptureStatus,
-  handleBrokerCaptureRelease,
 }
 
 export type RuntimeInspectHandlersMethods = typeof runtimeInspectHandlersMethods

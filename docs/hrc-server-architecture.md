@@ -149,7 +149,7 @@ barrel that keeps the historical import path.
   `evidence-read` mode (`harness-broker.offline-evidence/v1`), validates each
   page and projects through the mapper with `evidence_origin = 'retained'`.
   Outcomes go to `retained_evidence_outcomes`. Entry points are
-  `POST /v1/capture/recover` (`hrc capture recover`) and the server's own
+  the server's own
   passes. Operator disposal is
   `hrc runtime prune --dispose-retained-evidence --reason`.
 - `runtime-exclusive-owner.ts` gives each runtime one owner shared by every live

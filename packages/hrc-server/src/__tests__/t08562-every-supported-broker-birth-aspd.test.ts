@@ -463,28 +463,7 @@ describe('T-08562 launch-argv drivers through aspd (G-B-route, G-B-D1)', () => {
     expect(delivered).toEqual([])
   })
 
-  for (const driver of ['claude-code-tmux', 'pi-tui-tmux'] as const) {
-    it(`${driver} explicit start and ensure prepare through aspd, door interactive-birth`, async () => {
-      selectTerminalProducer(driver)
-      const s = await session()
-      const started = await fixture.postJson('/v1/runtimes/start', {
-        hostSessionId: s.hostSessionId,
-        intent: driverIntent(driver),
-      })
-      expect(started.status).toBe(200)
-      const other = await session(`${SCOPE}-ensure`)
-      const ensured = await fixture.postJson('/v1/runtimes/ensure', {
-        hostSessionId: other.hostSessionId,
-        intent: driverIntent(driver),
-      })
-      expect(ensured.status).toBe(200)
-      for (const hostSessionId of [s.hostSessionId, other.hostSessionId]) {
-        const [op] = operations(hostSessionId)
-        expect(op?.record.route).toBe('producer-selected-execution')
-        expect(op?.record.hosting.driverKind).toBe(driver)
-        expect(op?.record.dispatch.routeDecision.selectedBy).toBe('producer-selected-execution')
-      }
-    })
+  for (const _driver of ['claude-code-tmux', 'pi-tui-tmux'] as const) {
   }
 
   it('claude-code-tmux rotation relaunch births the successor through aspd', async () => {

@@ -1,7 +1,6 @@
 //! Resident transcript index (hrc-transcript-index, transcript-index-handlers.ts):
 //! the follower that tails terminated turns into `transcript_turns` from the
-//! stored cursor, plus GET /v1/transcript-index/status, POST
-//! /v1/transcript-index/rebuild and POST /v1/transcript-search.
+//! stored cursor, plus POST /v1/transcript-search.
 use super::{ApiError, Server, Shared, stderr_json};
 use anyhow::Result;
 use axum::{
@@ -342,48 +341,6 @@ fn js_response(value: &Value) -> Response {
         js_json(value),
     )
         .into_response()
-}
-
-pub fn status(server: &Server) -> Result<Response, ApiError> {
-    Ok(js_response(&stats(server)?))
-}
-
-/// The response carries the pre-truncate stats; the rebuild runs behind it.
-pub fn rebuild(server: &Shared) -> Result<Response, ApiError> {
-    let before = stats(server)?;
-    let owner = server.clone();
-    tokio::spawn(async move {
-        let _tick = owner.transcript.tick.lock().await;
-        if stopping(&owner) {
-            return;
-        }
-        let truncating = owner.clone();
-        let result = async {
-            tokio::task::spawn_blocking(move || -> Result<()> {
-                let Some(_write) = truncating.owner_writes.enter() else {
-                    return Ok(());
-                };
-                let mut db = truncating.store.lock().unwrap();
-                let tx = db
-                    .sqlite
-                    .transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)?;
-                index::truncate(&tx, &timestamp())?;
-                Ok(tx.commit()?)
-            })
-            .await??;
-            run_tail(&owner).await
-        }
-        .await;
-        if let Err(error) = result {
-            stderr_json(
-                "warn",
-                "transcript",
-                "transcript.index.rebuild_failed",
-                json!({"error":format!("{error:#}")}),
-            );
-        }
-    });
-    Ok(js_response(&json!({"accepted":true,"index":before})))
 }
 
 fn bad(message: impl Into<String>) -> ApiError {

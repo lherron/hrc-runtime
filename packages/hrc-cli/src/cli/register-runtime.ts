@@ -1,23 +1,13 @@
 import type { Command } from 'commander'
 
 import { cmdBrokerEvents, cmdBrokerStats, cmdBrokerTranscript } from '../broker-forensics.js'
-import { cmdBrokerVerifyCandidates, cmdBrokerVerifyRun } from '../broker-verify/commands.js'
+import { cmdBrokerVerifyCandidates } from '../broker-verify/commands.js'
 import { cmdEventsDrain } from '../events-drain.js'
-import {
-  cmdTranscriptIndexRebuild,
-  cmdTranscriptIndexStatus,
-  cmdTranscriptSearch,
-} from '../transcript-search.js'
+import { cmdTranscriptSearch } from '../transcript-search.js'
 import { rawArgvForVerb, toLegacyArgv } from './argv.js'
 import { type CommandMetadataInput, annotateCommand } from './command-metadata.js'
-import { cmdCaptureRecover, cmdCaptureRelease, cmdCaptureStatus } from './handlers-capture.js'
-import {
-  cmdCapture,
-  cmdInflightSend,
-  cmdInterrupt,
-  cmdRuntimeEnsure,
-  cmdTerminate,
-} from './handlers-control.js'
+import { cmdCaptureStatus } from './handlers-capture.js'
+import { cmdCapture, cmdInterrupt, cmdTerminate } from './handlers-control.js'
 import {
   cmdRuntimeDiagnostics,
   cmdRuntimeInspect,
@@ -150,44 +140,6 @@ function registerBrokerReads(monitor: Command): void {
     })
 }
 
-function registerAdminRuntimeCommands(admin: Command): void {
-  const adminRuntime = admin
-    .command('runtime')
-    .description('low-level runtime provisioning and adoption')
-
-  adminRuntime
-    .command('ensure')
-    .description('ensure a runtime exists for a host session')
-    .argument('<hostSessionId>', 'host session ID')
-    .option('--provider <provider>', 'provider (anthropic|openai)')
-    .option('--restart-style <style>', 'restart style (reuse_pty|fresh_pty)')
-    .action(async (hostSessionId, _opts, cmd: Command) => {
-      await cmdRuntimeEnsure(
-        toLegacyArgv([hostSessionId], cmd.opts(), {
-          strings: ['provider', 'restart-style'],
-          booleans: [],
-        })
-      )
-    })
-
-  adminRuntime
-    .command('prune')
-    .description('prune an exact allowlisted runtime manifest, including durable ledgers')
-    .requiredOption('--runtime-ids-file <file>', 'newline-delimited exact runtime IDs')
-    .requiredOption('--include-ledgers', 'delete keep-forever ledgers and broker projections')
-    .option('--dry-run', 'preview per-table delete counts without deleting')
-    .requiredOption('--yes', 'confirm the destructive manifest operation')
-    .option('--json', 'output as JSON')
-    .action(async (_opts, cmd: Command) => {
-      await cmdRuntimePrune(
-        toLegacyArgv([], cmd.opts(), {
-          strings: ['runtime-ids-file'],
-          booleans: ['include-ledgers', 'dry-run', 'yes', 'json'],
-        })
-      )
-    })
-}
-
 function registerAdminBrokerVerify(admin: Command): void {
   const verify = admin.command('broker-verify').description('verify broker capture and projection')
 
@@ -199,24 +151,6 @@ function registerAdminBrokerVerify(admin: Command): void {
     .action(async (scopeRef, _opts, cmd: Command) => {
       await cmdBrokerVerifyCandidates(
         toLegacyArgv([scopeRef], cmd.opts(), { strings: [], booleans: ['json'] })
-      )
-    })
-
-  verify
-    .command('run')
-    .description(
-      'verify one broker invocation against its ledger, lifecycle projections, and optional provider JSONL'
-    )
-    .requiredOption('--invocation <id>', 'broker invocation id')
-    .option('--jsonl <path>', 'provider transcript JSONL path')
-    .option('--strict-text', 'fail assistant text mismatches instead of warning')
-    .option('--json', 'output as JSON')
-    .action(async (_opts, cmd: Command) => {
-      await cmdBrokerVerifyRun(
-        toLegacyArgv([], cmd.opts(), {
-          strings: ['invocation', 'jsonl'],
-          booleans: ['strict-text', 'json'],
-        })
       )
     })
 }
@@ -244,34 +178,10 @@ export function registerRuntimeCommands(program: Command): void {
   const admin = requireGroup(program, 'admin')
   const monitor = requireGroup(program, 'monitor')
   registerBrokerReads(monitor)
-  registerAdminRuntimeCommands(admin)
   registerAdminBrokerVerify(admin)
   registerAdminEvents(admin)
 
-  const index = program
-    .command('index')
-    .description('inspect or rebuild the transcript search index')
-  index
-    .command('status')
-    .description('show transcript index coverage and ledger lag')
-    .option('--json', 'output index statistics as JSON')
-    .action(async (_opts, cmd: Command) => {
-      await cmdTranscriptIndexStatus(
-        toLegacyArgv([], cmd.opts(), { strings: [], booleans: ['json'] })
-      )
-    })
-  index
-    .command('rebuild')
-    .description('truncate the rebuildable projection and start a background backfill')
-    .requiredOption('--yes', 'confirm projection truncation')
-    .option('--json', 'output the accepted rebuild and current statistics as JSON')
-    .action(async (_opts, cmd: Command) => {
-      await cmdTranscriptIndexRebuild(
-        toLegacyArgv([], cmd.opts(), { strings: [], booleans: ['yes', 'json'] })
-      )
-    })
-
-  const capture = program.command('capture').description('inspect or release broker capture state')
+  const capture = program.command('capture').description('inspect broker capture state')
 
   capture
     .command('status')
@@ -281,41 +191,6 @@ export function registerRuntimeCommands(program: Command): void {
     .action(async (target, _opts, cmd: Command) => {
       await cmdCaptureStatus(
         toLegacyArgv([target], cmd.opts(), { strings: [], booleans: ['json'] })
-      )
-    })
-
-  capture
-    .command('release')
-    .description('release the raw record currently blocking broker capture (operator-only)')
-    .argument('<target>', 'runtime ID, scope ref, or target handle')
-    .requiredOption('--raw-record <id>', 'blocked raw record ID')
-    .requiredOption('--disposition <value>', 'ignored-known or normalized-as')
-    .option('--event-type <type>', 'operator-authored normalized event type')
-    .option('--event-payload <json>', 'operator-authored normalized event payload JSON')
-    .option('--turn-id <id>', 'turn ID for the operator-authored normalized event')
-    .option('--note <text>', 'operator note recorded with the disposition')
-    .action(async (target, _opts, cmd: Command) => {
-      await cmdCaptureRelease(
-        toLegacyArgv([target], cmd.opts(), {
-          strings: ['raw-record', 'disposition', 'event-type', 'event-payload', 'turn-id', 'note'],
-          booleans: [],
-        })
-      )
-    })
-
-  capture
-    .command('recover')
-    .description('recover retained broker evidence of a terminal runtime (mutating; T-08566)')
-    .argument('<runtimeId>', 'runtime ID')
-    .option('--yes', 'confirm one recovery attempt')
-    .option('--dry-run', 'report eligibility, capability and current outcome without reading')
-    .option('--json', 'output as JSON')
-    .action(async (runtimeId, _opts, cmd: Command) => {
-      await cmdCaptureRecover(
-        toLegacyArgv([runtimeId], cmd.opts(), {
-          strings: [],
-          booleans: ['yes', 'dry-run', 'json'],
-        })
       )
     })
 
@@ -416,22 +291,6 @@ export function registerRuntimeCommands(program: Command): void {
     })
 
   runtime
-    .command('send')
-    .description('send input to an active run')
-    .argument('<runtimeId>', 'runtime ID')
-    .requiredOption('--run-id <id>', 'active run ID')
-    .requiredOption('--input <input>', 'input text')
-    .option('--input-type <type>', 'input type')
-    .action(async (runtimeId, _opts, cmd: Command) => {
-      await cmdInflightSend(
-        toLegacyArgv([runtimeId], cmd.opts(), {
-          strings: ['run-id', 'input', 'input-type'],
-          booleans: [],
-        })
-      )
-    })
-
-  runtime
     .command('interrupt')
     .description('interrupt a runtime')
     .argument('<runtimeId>', 'runtime ID')
@@ -512,14 +371,6 @@ export function registerRuntimeCommands(program: Command): void {
     })
 
   annotateCommand(runtime, { audience: 'human' })
-  annotateCommand(index, {
-    audience: 'agent',
-    agentUsage: {
-      example: 'hrc index --help',
-      exitCodes: '0 help; 2 usage',
-      output: 'status and rebuild subcommand help for the transcript search index',
-    },
-  })
   annotateCommand(capture, { audience: 'human' })
   annotateChild(runtime, 'list', {
     audience: 'agent',

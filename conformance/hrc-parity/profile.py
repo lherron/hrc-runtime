@@ -117,9 +117,6 @@ def make_profile(root, release, cli, asp_evidence, node, source=False):
         command(['monitor','show','host:${host}','--json'],[eq('monitor-show-watch-wait','exit',0)]),
         command(['monitor','watch','host:${host}','--last','5','--format','ndjson'],[eq('json-ndjson-exits','exit',0)]),
         command(['monitor','wait','host:${host}','--until','turn-finished','--since','1','--timeout','2s','--json']),
-        command(['run','annotate','$supportedRunId','--correlation',json.dumps({'attemptRef':'p0:compatibility'})],
-             [eq('run-bearing-export-annotation','exit',0)]),
-        command(['run','export','$supportedRunId','--json'],[eq('export-readback','body.correlation.attemptRef','p0:compatibility')]),
         command(['health'],[eq('sdk-real-read','body.ok',True)],kind='sdk')]
     cases['wrkq']=[{'kind':'publication','before':'$cursorBefore','assertions':[{'id':'isolated-real-publication','op':'nonempty','path':'facts'},
         exists('two-cursor-owners','nodeId')]}, {'kind':'authority-unavailable','assertions':[eq('unavailability-cli','exit',1)]},

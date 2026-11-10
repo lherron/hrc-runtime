@@ -64,15 +64,4 @@ describe('Commander graph metadata projections', () => {
     expect(info).toContain('continuation-only recovery')
     expect(info).not.toContain('exact alias of run')
   })
-
-  test('advertises the agent transcript-index entry point and its status/rebuild routes', () => {
-    expect(renderRootHelp(program, 'agent')).toMatch(
-      /\n\s+index\s+inspect or rebuild the transcript search index/
-    )
-    const index = program.commands.find((command) => command.name() === 'index')!
-    expect(commandMetadata(index).audience).toBe('agent')
-    const help = index.helpInformation()
-    expect(help).toMatch(/\n\s+status \[options\]/)
-    expect(help).toMatch(/\n\s+rebuild \[options\]/)
-  })
 })

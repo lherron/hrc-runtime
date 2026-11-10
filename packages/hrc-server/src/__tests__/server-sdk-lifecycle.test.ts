@@ -479,20 +479,6 @@ beforeEach(async () => {
       INTEGRATION_TIMEOUT_MS
     )
 
-    it('POST /v1/runtimes/attach does not attach directly to legacy codex tmux', async () => {
-      const hsid = await resolveSession('lifecycle-attach-live-no-continuation')
-      const ensureRes = await postJson('/v1/runtimes/ensure', {
-        hostSessionId: hsid,
-        intent: interactiveCliIntent('openai'),
-      })
-      expect(ensureRes.status).toBe(503)
-      const body = (await ensureRes.json()) as { error?: { code?: string; message?: string } }
-      expect(body.error?.code).toBe('runtime_unavailable')
-      expect(body.error?.message).toContain(
-        'ensureRuntime supports only broker-admissible runtimes'
-      )
-    })
-
     it('POST /v1/runtimes/start does not launch legacy interactive harness before attach', async () => {
       const interactiveBanner = 'INTERACTIVE_START_LAUNCHED'
       const fakeCodex = await installFakeCodex(tmpDir, 'fake-codex-interactive-start', {

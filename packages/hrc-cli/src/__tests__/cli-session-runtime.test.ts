@@ -206,7 +206,7 @@ describe('session retitle', () => {
 })
 
 // ===========================================================================
-// 4. hrc admin runtime ensure / runtime capture / attach / runtime interrupt / runtime terminate
+// 4. runtime capture / attach / runtime interrupt / runtime terminate
 // ===========================================================================
 describe('runtime lifecycle commands', () => {
   beforeEach(async () => {
@@ -234,16 +234,6 @@ describe('runtime lifecycle commands', () => {
     await Promise.all(seeded.splice(0).map((entry) => entry.cleanup()))
   })
 
-  it('admin runtime ensure refuses with aspd_unconfigured on a node without an aspd endpoint (T-08596)', async () => {
-    // T-08596: birthing through ensure is gone without an aspd endpoint. The
-    // ensure plumbing itself is pinned by the seeded action tests below.
-    const hostSessionId = await resolveHostSessionId(testProjectScope('runtimecli'))
-    const result = await runCli(['admin', 'runtime', 'ensure', hostSessionId], cliEnv())
-
-    expect(result.exitCode).not.toBe(0)
-    expect(`${result.stdout}${result.stderr}`).toContain('aspd_unconfigured')
-  })
-
   it('runtime capture prints pane text for a runtimeId', async () => {
     const runtimeId = await seedRuntime(testProjectScope('runtime-capturecli'))
     const result = await runCli(['runtime', 'capture', runtimeId], cliEnv())
@@ -260,23 +250,6 @@ describe('runtime lifecycle commands', () => {
     const body = JSON.parse(result.stdout.trim())
     expect(body.transport).toBe('tmux')
     expect(body.argv).toContain('attach-session')
-  })
-
-  it('attach descriptor lookup does not bind Ghostty when GHOSTTY_SURFACE_UUID is present', async () => {
-    const runtimeId = await seedRuntime(testProjectScope('attach-ghostty-cli'))
-    const result = await runCli(
-      ['attach', runtimeId],
-      cliEnv({ GHOSTTY_SURFACE_UUID: 'ghostty-cli-attach-1' })
-    )
-
-    expect(result.exitCode).toBe(0)
-
-    const listResult = await runCli(['admin', 'surface', 'list', runtimeId], cliEnv())
-    expect(listResult.exitCode).toBe(0)
-    const listed = JSON.parse(listResult.stdout.trim())
-    expect(
-      listed.some((surface: { surfaceId?: string }) => surface.surfaceId === 'ghostty-cli-attach-1')
-    ).toBe(false)
   })
 
   it('runtime interrupt prints JSON for a runtimeId', async () => {
@@ -302,50 +275,6 @@ describe('runtime lifecycle commands', () => {
     },
     BROKER_LIFECYCLE_TEST_TIMEOUT_MS
   )
-
-  it('surface bind/list/unbind commands manage runtime bindings', async () => {
-    const runtimeId = await seedRuntime(testProjectScope('surfacecli'))
-
-    const bindResult = await runCli(
-      ['admin', 'surface', 'bind', runtimeId, '--kind', 'ghostty', '--id', 'ghostty-cli-2'],
-      cliEnv()
-    )
-    expect(bindResult.exitCode).toBe(0)
-    const bound = JSON.parse(bindResult.stdout.trim())
-    expect(bound.surfaceId).toBe('ghostty-cli-2')
-
-    const listResult = await runCli(['admin', 'surface', 'list', runtimeId], cliEnv())
-    expect(listResult.exitCode).toBe(0)
-    const listed = JSON.parse(listResult.stdout.trim())
-    expect(
-      listed.some((surface: { surfaceId?: string }) => surface.surfaceId === 'ghostty-cli-2')
-    ).toBe(true)
-
-    const unbindResult = await runCli(
-      [
-        'admin',
-        'surface',
-        'unbind',
-        '--kind',
-        'ghostty',
-        '--id',
-        'ghostty-cli-2',
-        '--reason',
-        'done',
-      ],
-      cliEnv()
-    )
-    expect(unbindResult.exitCode).toBe(0)
-    const unbound = JSON.parse(unbindResult.stdout.trim())
-    expect(unbound.reason).toBe('done')
-
-    const emptyListResult = await runCli(['admin', 'surface', 'list', runtimeId], cliEnv())
-    expect(emptyListResult.exitCode).toBe(0)
-    const afterUnbind = JSON.parse(emptyListResult.stdout.trim())
-    expect(
-      afterUnbind.some((surface: { surfaceId?: string }) => surface.surfaceId === 'ghostty-cli-2')
-    ).toBe(false)
-  })
 })
 
 // ===========================================================================

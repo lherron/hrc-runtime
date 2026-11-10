@@ -73,13 +73,10 @@ def compare_passthrough(args, checks):
                    'reason':'a live backend in the retired environment variable must be inert without --bun-socket','failureCode':1})
     baseline = json.loads((Path(args.baseline) / 'observations.json').read_text())
     candidate = json.loads((Path(args.candidate) / 'observations.json').read_text())
-    checks.append({'id': 'proxy:nonempty-identical-cases', 'pass': len(baseline) >= 11 and len(baseline) == len(candidate),
+    checks.append({'id': 'proxy:nonempty-identical-cases', 'pass': len(baseline) >= 6 and len(baseline) == len(candidate),
                    'reason': 'every forwarding request must have both observations', 'failureCode': 1})
-    required = {('POST', '/v1/surfaces/unbind'), ('POST', '/v1/capture/recover'),
-                ('POST', '/v1/in-flight-input'), ('POST', '/v1/runtimes/ensure'),
-                ('POST', '/v1/transcript-search'), ('GET', '/v1/targets'),
-                ('GET', '/v1/surfaces'), ('GET', '/v1/transcript-index/status'),
-                ('GET', '/v1/events/bounded-stream')}
+    required = {('POST', '/v1/in-flight-input'), ('POST', '/v1/transcript-search'),
+                ('GET', '/v1/targets'), ('GET', '/v1/events/bounded-stream')}
     for kind, rows in [('bun', baseline), ('native', candidate)]:
         observed = {(r['method'], r['path'].split('?')[0]) for r in rows}
         positive = any(r['method'] == 'GET' and r['path'].startswith('/v1/targets?') and r['status'] == 200 and bool(json.loads(r['body'])) for r in rows)

@@ -87,21 +87,6 @@ describe('T-07206 applied intent authority', () => {
     )
   })
 
-  it('keeps prior authority through the public interactive ensure API', async () => {
-    const { db, session } = await seededSession()
-
-    const response = await fixture.postJson('/v1/runtimes/ensure', {
-      hostSessionId: session.hostSessionId,
-      intent: candidateIntent(true),
-      restartStyle: 'reuse_pty',
-    })
-
-    expect(response.status).toBe(503)
-    expect(db.sessions.getByHostSessionId(session.hostSessionId)?.lastAppliedIntentJson).toEqual(
-      PRIOR_INTENT
-    )
-  })
-
   it('keeps the prior applied intent when headless compile admission rejects', async () => {
     const { db, session } = await seededSession()
 

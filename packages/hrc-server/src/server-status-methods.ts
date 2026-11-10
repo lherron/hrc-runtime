@@ -335,7 +335,7 @@ export const serverStatusMethods = {
       capabilities: {
         semanticCore: {
           sessions: true,
-          ensureRuntime: true,
+          ensureRuntime: false,
           dispatchTurn: true,
           inFlightInput: true,
           capture: true,

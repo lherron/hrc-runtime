@@ -15,7 +15,6 @@ import type { HrcServerInstanceClassBodyMethods } from './index.js'
 import type { BrokerReattachOutcome } from './startup-reconcile.js'
 import type { SubscriberAdmissionRegistry } from './subscriber-admission-accounting.js'
 
-import type { AcceptedRunRecoveryHandlersMethods } from './accepted-run-recovery-handlers.js'
 import type { AcpEventBridge } from './acp-event-bridge.js'
 import type { BrokerHeadlessHandlersMethods } from './broker-headless-handlers.js'
 import type { BrokerInteractiveHandlersMethods } from './broker-interactive-handlers.js'
@@ -82,7 +81,6 @@ export const COMMAND_RUNTIME_COMPAT_PROVIDER: HrcProvider = 'openai'
  * type-checked.
  */
 type DecomposedHandlerMethods = AdmissionRouteMethods &
-  AcceptedRunRecoveryHandlersMethods &
   SurfaceHandlersMethods &
   BrokerHeadlessHandlersMethods &
   BrokerInteractiveHandlersMethods &

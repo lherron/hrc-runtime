@@ -125,7 +125,7 @@ export type RetainedEvidenceOutcomeClass =
 
 export type RetainedEvidenceTrigger = 'terminal' | 'startup' | 'report' | 'gap' | 'operator'
 
-/** `POST /v1/capture/recover` — one explicit operator recovery attempt, or a dry run. */
+/** Retained-evidence recovery options shared by automatic recovery. */
 export type CaptureRecoverRequest = {
   runtimeId: string
   /** Required unless `dryRun`; recovery is a mutating operation. */

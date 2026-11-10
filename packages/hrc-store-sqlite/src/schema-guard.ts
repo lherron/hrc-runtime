@@ -22,8 +22,6 @@ export const DIRECT_STORE_OPEN_COMMANDS = [
   'hrc monitor show',
   'hrc monitor watch',
   'hrc monitor wait',
-  'hrc run export',
-  'hrc run annotate',
 ] as const
 
 /**

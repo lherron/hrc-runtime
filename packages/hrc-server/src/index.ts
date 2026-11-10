@@ -15,10 +15,6 @@ import {
   openHrcDatabase,
 } from 'hrc-store-sqlite'
 import type { TranscriptIndexer } from 'hrc-transcript-index'
-import {
-  type AcceptedRunRecoveryHandlersMethods,
-  acceptedRunRecoveryHandlersMethods,
-} from './accepted-run-recovery-handlers.js'
 import { AcpEventBridge } from './acp-event-bridge.js'
 import {
   type BrokerHeadlessHandlersMethods,
@@ -286,7 +282,6 @@ function recordSqliteSlowStatement(
 
 export interface HrcServerInstance
   extends AdmissionRouteMethods,
-    AcceptedRunRecoveryHandlersMethods,
     EventHandlersMethods,
     TurnDispatchHandlersMethods,
     BrokerInteractiveHandlersMethods,
@@ -723,7 +718,6 @@ export type HrcServerInstanceClassBodyMethods = {
 
 Object.assign(
   HrcServerInstance.prototype,
-  acceptedRunRecoveryHandlersMethods,
   eventHandlersMethods,
   turnDispatchHandlersMethods,
   admissionRouteMethods,

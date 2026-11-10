@@ -1,6 +1,5 @@
 import { parseDuration } from 'cli-kit'
 import type {
-  TranscriptIndexStats,
   TranscriptSearchHit,
   TranscriptSearchRequest,
   TranscriptSearchResponse,
@@ -117,16 +116,6 @@ export function renderTranscriptSearch(result: TranscriptSearchResponse): string
   return `${lines.join('\n')}\n`
 }
 
-export function renderTranscriptIndexStats(stats: TranscriptIndexStats): string {
-  return `${[
-    `turnsIndexed: ${stats.turnsIndexed}`,
-    `lastEventId: ${stats.lastEventId}`,
-    `ledgerMaxEventId: ${stats.ledgerMaxEventId}`,
-    `lagEvents: ${stats.lagEvents}`,
-    `invocationsReindexed: ${stats.invocationsReindexed}`,
-  ].join('\n')}\n`
-}
-
 export async function cmdTranscriptSearch(args: string[]): Promise<void> {
   const query = args[0]
   if (!query || query.startsWith('--')) fatal('hrc monitor search requires <query>')
@@ -146,24 +135,5 @@ export async function cmdTranscriptSearch(args: string[]): Promise<void> {
     hasFlag(args, '--json')
       ? `${JSON.stringify(result, null, 2)}\n`
       : renderTranscriptSearch(result)
-  )
-}
-
-export async function cmdTranscriptIndexStatus(args: string[]): Promise<void> {
-  const stats = await createClient().transcriptIndexStatus()
-  process.stdout.write(
-    hasFlag(args, '--json')
-      ? `${JSON.stringify(stats, null, 2)}\n`
-      : renderTranscriptIndexStats(stats)
-  )
-}
-
-export async function cmdTranscriptIndexRebuild(args: string[]): Promise<void> {
-  if (!hasFlag(args, '--yes')) fatal('hrc index rebuild requires --yes')
-  const result = await createClient().rebuildTranscriptIndex()
-  process.stdout.write(
-    hasFlag(args, '--json')
-      ? `${JSON.stringify(result, null, 2)}\n`
-      : `transcript index rebuild accepted; backfill continues in the background\n${renderTranscriptIndexStats(result.index)}`
   )
 }

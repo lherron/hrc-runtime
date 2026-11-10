@@ -81,8 +81,6 @@ mod ledger;
 mod messages;
 #[path = "server/projection/projection/mod.rs"]
 mod projection;
-#[path = "server/broker/recover_unstarted.rs"]
-mod recover_unstarted;
 #[path = "server/projection/runs.rs"]
 mod runs;
 #[path = "server/projection/seat_work.rs"]
@@ -511,10 +509,6 @@ async fn dispatch_inner(server: &Shared, request: Request, local_only: bool) -> 
         forensics::stats(server, &query)
     } else if method == Method::GET && uri.path() == "/v1/broker-forensics" {
         forensics::handle(server, &query)
-    } else if method == Method::GET && uri.path() == "/v1/transcript-index/status" {
-        transcript::status(server)
-    } else if method == Method::POST && uri.path() == "/v1/transcript-index/rebuild" {
-        transcript::rebuild(server)
     } else if method == Method::POST && uri.path() == "/v1/transcript-search" {
         transcript::search(server, &body)
     } else if method == Method::GET
@@ -538,10 +532,6 @@ async fn dispatch_inner(server: &Shared, request: Request, local_only: bool) -> 
             .map(|value| Json(value).into_response())
     } else if method == Method::GET && uri.path() == "/v1/targets" {
         runtime_views::list_targets(server, &query).await
-    } else if method == Method::GET && uri.path() == "/v1/surfaces" {
-        surfaces::list(server, &query)
-    } else if method == Method::POST && uri.path() == "/v1/capture/recover" {
-        retained::handle_recover(server, &body).await
     } else if method == Method::GET && uri.path() == "/v1/targets/by-session-ref" {
         runtime_views::target(server, &query).await
     } else if method == Method::GET && uri.path() == "/v1/attach" {
@@ -696,39 +686,6 @@ async fn dispatch_inner(server: &Shared, request: Request, local_only: bool) -> 
             }
             error
         })
-    } else if method == Method::POST && uri.path() == "/v1/runtimes/ensure" {
-        let result = match parse_body(&body) {
-            Ok(value) => start::operator_ensure(server, value).await,
-            Err(e) => Err(e),
-        };
-        result.map_err(|mut error| {
-            if error.detail.is_none() {
-                error.detail = Some(json!({}));
-            }
-            error
-        })
-    } else if method == Method::POST && uri.path() == "/v1/runs/recover-unstarted" {
-        let result = match parse_body(&body) {
-            Ok(value) => recover_unstarted::handle(server, value).await,
-            Err(e) => Err(e),
-        };
-        result.map_err(|mut error| {
-            if error.detail.is_none() {
-                error.detail = Some(json!({}));
-            }
-            error
-        })
-    } else if method == Method::POST && uri.path() == "/v1/surfaces/unbind" {
-        let result = match parse_body(&body) {
-            Ok(value) => surfaces::unbind(server, value),
-            Err(e) => Err(e),
-        };
-        result.map_err(|mut error| {
-            if error.detail.is_none() {
-                error.detail = Some(json!({}));
-            }
-            error
-        })
     } else if method == Method::POST && uri.path() == "/v1/runtimes/capture/status" {
         match parse_body(&body) {
             Ok(value) => io::capture_status(server, value).await,
@@ -844,7 +801,6 @@ fn implemented(method: &Method, path: &str) -> bool {
                 "/v1/capture",
                 "/v1/targets/by-session-ref",
                 "/v1/targets",
-                "/v1/surfaces",
                 "/v1/runtimes/live-refs",
                 "/v1/placement/bindings",
                 "/v1/federation/locate",
@@ -853,7 +809,6 @@ fn implemented(method: &Method, path: &str) -> bool {
                 "/v1/federation/runtimes",
                 "/v1/runtime-diagnostics",
                 "/v1/broker-forensics",
-                "/v1/transcript-index/status",
             ]
             .contains(&path)
                 || path.starts_with("/v1/sessions/by-host/")
@@ -869,9 +824,6 @@ fn implemented(method: &Method, path: &str) -> bool {
                 "/v1/terminate",
                 "/v1/runtimes/capture/status",
                 "/v1/federation/retire",
-                "/v1/runtimes/ensure",
-                "/v1/runs/recover-unstarted",
-                "/v1/surfaces/unbind",
                 "/v1/runtimes/broker/inspect",
                 "/v1/capture/by-selector",
                 "/v1/literal-input/by-selector",
@@ -889,7 +841,6 @@ fn implemented(method: &Method, path: &str) -> bool {
                 "/v1/submissions/preempt",
                 "/v1/submissions/withdraw",
                 "/v1/messages/query",
-                "/v1/capture/recover",
                 "/v1/messages/turn-handoff",
                 "/v1/runtimes/restart-self",
                 "/v1/seat-handoffs",
@@ -907,7 +858,6 @@ fn implemented(method: &Method, path: &str) -> bool {
                 "/v1/placements/resolve",
                 "/v1/declarations/resolve",
                 "/v1/transcript-search",
-                "/v1/transcript-index/rebuild",
             ]
             .contains(&path))
         || (path == "/v1/sessions/work" && (*method == Method::GET || *method == Method::PUT))
@@ -1051,7 +1001,7 @@ async fn status(
     let db = server.store.lock().unwrap();
     let binary = env::current_exe().map_err(anyhow::Error::from)?;
     let mut value = json!({"ok":true,"uptime":server.started.elapsed().as_secs(),"startedAt":server.started_at,"runtimeRoot":server.runtime,"stateRoot":server.state,"socketPath":server.runtime.join("hrc.sock"),"listenSocketPath":server.runtime.join("hrc.sock"),"dbPath":server.state.join("state.sqlite"),"cwd":env::current_dir().map_err(anyhow::Error::from)?,"binaryPath":binary,"packagePath":binary.parent(),"release":server.release.status(),"aspToolchain":{"toolchainRootActive":false,"binaries":[]},"aspd":aspd,"sessionCount":db.count("sessions")?,"runtimeCount":db.count("runtimes")?,"apiVersion":env!("HRC_API_VERSION"),"eventLoop":server.event_loop.lock().unwrap().snapshot(),"lastRestart":lifecycle::rows::last_restart(&db.sqlite)?,"node":server.federation.config.summary(),"mailKicker":"absent"});
-    value["capabilities"] = json!({"semanticCore":{"sessions":true,"ensureRuntime":true,"dispatchTurn":true,"inFlightInput":true,"capture":true,"attach":true,"clearContext":true},"platform":{"appOwnedSessions":false,"appHarnessSessions":false,"commandSessions":true,"literalInput":true,"surfaceBindings":true,"legacyLocalBridges":[]},"bridgeDelivery":{"actualPtyInjection":false,"enter":false,"oobSuffix":false,"freshnessFence":false},"backend":{"tmux":tmux},"serverLifecycle":!server.front,"selfRestart":true,"sessionRestart":true,"federatedSessionRead":true,"runtimeListOmitState":true});
+    value["capabilities"] = json!({"semanticCore":{"sessions":true,"ensureRuntime":false,"dispatchTurn":true,"inFlightInput":true,"capture":true,"attach":true,"clearContext":true},"platform":{"appOwnedSessions":false,"appHarnessSessions":false,"commandSessions":true,"literalInput":true,"surfaceBindings":true,"legacyLocalBridges":[]},"bridgeDelivery":{"actualPtyInjection":false,"enter":false,"oobSuffix":false,"freshnessFence":false},"backend":{"tmux":tmux},"serverLifecycle":!server.front,"selfRestart":true,"sessionRestart":true,"federatedSessionRead":true,"runtimeListOmitState":true});
     if let Some(peer_health) = peer_health {
         value["peerHealth"] = peer_health.into();
     }

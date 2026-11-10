@@ -44,7 +44,6 @@ import { omitPersistedSelectionForReuse } from './selector-message-handlers/sele
 import type { HrcServerInstanceForHandlers } from './server-instance-context.js'
 import {
   parseDispatchTurnRequest,
-  parseEnsureRuntimeRequest,
   parseJsonBody,
   parseOpenBrokerSessionRequest,
   parseStartRuntimeRequest,
@@ -54,7 +53,7 @@ import {
   type DurableBrokerDispatchReattachResult,
   reattachDurableBrokerForDispatch,
 } from './startup-reconcile.js'
-import { toEnsureRuntimeResponse, toStartRuntimeResponse } from './status-views.js'
+import { toStartRuntimeResponse } from './status-views.js'
 import { admitRuntimeStartPrompt } from './turn-admission/start-prompt.js'
 import { submissionResponse, submitThroughAdmission } from './turn-admission/submit.js'
 import { normalizeJsonRepairCorrelation } from './turn-dispatch-attached-run-handlers.js'
@@ -70,24 +69,6 @@ import {
   idempotentDispatches,
   resolvePublicWaitStage,
 } from './turn-dispatch-submission-support.js'
-
-export async function handleEnsureRuntime(
-  this: HrcServerInstanceForHandlers,
-  request: Request
-): Promise<Response> {
-  const body = parseEnsureRuntimeRequest(await parseJsonBody(request))
-  const requested = requireSession(this.db, body.hostSessionId)
-  const { session } = await this.maybeAutoRotateStaleSession(requested, {
-    allowStaleGeneration: body.allowStaleGeneration,
-    trigger: 'runtime-ensure',
-  })
-  const runtime = await this.ensureRuntimeForSession(
-    session,
-    body.intent,
-    body.restartStyle ?? 'reuse_pty'
-  )
-  return json(toEnsureRuntimeResponse(runtime))
-}
 
 export async function handleStartRuntime(
   this: HrcServerInstanceForHandlers,

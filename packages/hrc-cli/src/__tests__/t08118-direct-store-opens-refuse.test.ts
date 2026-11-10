@@ -27,7 +27,6 @@ import { cmdEventsDrain } from '../events-drain'
 import { cmdMonitorShow } from '../monitor-show'
 import { cmdMonitorWait } from '../monitor/wait-command'
 import { cmdMonitorWatch } from '../monitor/watch-command'
-import { cmdRunAnnotate, cmdRunExport } from '../run-invocation'
 import { pruneCompletedTaskWorktrees } from '../worktree-prune'
 import { startOldEngineDaemon } from './old-engine-daemon.js'
 
@@ -49,7 +48,7 @@ afterAll(() => schemaDaemon.stop())
 /**
  * T-08118 acceptance in miniature: between `just install` and
  * `hrc server restart` the CLI carries migrations the live store has not
- * applied. Each of the six commands that open the store directly must refuse
+ * applied. Each of the commands that open the store directly must refuse
  * rather than migrate it under the daemon still running the previous release.
  *
  * The store is put "behind" by deleting the ledger row for
@@ -144,22 +143,7 @@ function storeMigrationIds(dbPath: string): string[] {
   }
 }
 
-describe('T-08118 the six direct-open commands refuse a behind store', () => {
-  it('hrc run invocation (export)', async () => {
-    const { dbPath } = behindStateRoot()
-    const before = storeMigrationIds(dbPath)
-    await expectSchemaRefusal(() => cmdRunExport(['run-does-not-exist']))
-    expect(storeMigrationIds(dbPath)).toEqual(before)
-  })
-
-  it('hrc run invocation (annotate)', async () => {
-    const { dbPath } = behindStateRoot()
-    await expectSchemaRefusal(() =>
-      cmdRunAnnotate(['run-does-not-exist', '--correlation', '{"taskId":"T-08118"}'])
-    )
-    expect(storeMigrationIds(dbPath)).not.toContain(REPLAYABLE_MIGRATION)
-  })
-
+describe('T-08118 the remaining direct-open commands refuse a behind store', () => {
   it('hrc monitor show', async () => {
     const { dbPath } = behindStateRoot()
     stubStatus(dbPath)
@@ -256,7 +240,7 @@ describe('T-08118 conformance: no hrc-cli source opens the store migrating', () 
     expect(offenders).toEqual([])
     // A guard that passes because it inspected nothing is not a guard: the
     // call sites it is meant to police must actually be present.
-    expect(seen.length).toBeGreaterThanOrEqual(7)
+    expect(seen.length).toBeGreaterThanOrEqual(6)
   })
 })
 
@@ -367,6 +351,6 @@ describe('T-08118 the refusing-commands list names real commands', () => {
     // real command path is worse than no list: it sends them to
     // "hrc: unknown command".
     expect(unresolved).toEqual([])
-    expect(DIRECT_STORE_OPEN_COMMANDS.length).toBeGreaterThanOrEqual(6)
+    expect(DIRECT_STORE_OPEN_COMMANDS.length).toBe(4)
   })
 })

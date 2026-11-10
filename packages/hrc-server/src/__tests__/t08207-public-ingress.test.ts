@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test'
 
-import { HrcErrorCode, type HrcRuntimeIntent } from 'hrc-core'
+import type { HrcRuntimeIntent } from 'hrc-core'
 import { openHrcDatabase } from 'hrc-store-sqlite'
 
 import { createHrcServer } from '../index.js'
@@ -625,24 +625,5 @@ describe('T-08207 format1 sealed HTTP doors', () => {
   afterEach(async () => {
     await server?.stop()
     await fixture.cleanup()
-  })
-
-  test.each([
-    '/v1/runtimes/ensure',
-    '/v1/runtimes/start',
-    '/v1/runs/prepare-attached',
-    '/v1/runs/resume-attached',
-    '/v1/participants/attach',
-    '/v1/participants/register',
-  ])('rejects executionFormat before any format1-only route can act: %s', async (path) => {
-    const response = await fixture.postJson(path, { executionFormat: FORMAT2 })
-
-    expect(response.status).toBe(422)
-    expect(await response.json()).toMatchObject({
-      error: {
-        code: HrcErrorCode.EXECUTION_FORMAT_UNSUPPORTED_DOOR,
-        detail: { field: 'executionFormat', path },
-      },
-    })
   })
 })

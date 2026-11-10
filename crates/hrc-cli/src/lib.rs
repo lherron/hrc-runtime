@@ -212,7 +212,10 @@ pub fn run(args: Vec<String>) -> i32 {
     });
     // Parse only to select an already implemented native command. Postponed
     // commands (including their help/grammar failures) receive the original argv.
-    let native = passthrough::native_intent(&surface, &args)
+    let native = parsed
+        .as_ref()
+        .is_err_and(|e| e.message.starts_with("unknown command:"))
+        || passthrough::native_intent(&surface, &args)
         || parsed.as_ref().is_ok_and(|p| {
             passthrough::native_command(&p.path())
                 || p.help

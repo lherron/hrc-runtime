@@ -126,10 +126,9 @@ Options: `--attach`, `--as`, `--fresh-context` / `--new`, `--dry-run`, `--format
 `--timeout`, `--quiet`, `--reply-to`, `--cross-scope-reply`, `--queue`, `--steer`,
 `--preempt`, `--ttl`, `--file`, and `--response-format-json-schema`.
 
-Maintenance subcommands include `hrc admin runs sweep-zombies|reconcile-active|recover-unstarted`
+Maintenance subcommands include `hrc admin runs sweep-zombies|reconcile-active`
 and `hrc admin worktrees audit|prune`. The admin cellar also owns low-level
-surface commands, runtime ensure and manifest prune
-(`admin runtime ensure|prune`), `admin broker-verify candidates|run`,
+surface binding, `admin broker-verify candidates`,
 `admin events drain`, `admin metrics report`, `admin metrics routes` (weighted
 request counts per route and caller across every daemon listener, `--by
 route,client`, `--idle` for registered routes nobody called), and the ASP
@@ -201,12 +200,10 @@ Authorization (T-09861): `stop` and `restart` are requests to the daemon, which 
 
 In-flight gating (daemon-side, after authorization): `stop` and `restart` refuse by default when runs are still in flight. Use `--wait` to drain (poll up to `--wait-timeout-ms`, default 300000) or `--force` to proceed anyway. For `restart`, tmux-transport runs are excluded from the gate (they survive a daemon restart); only headless/sdk runs block it. After the grant, `restart` waits up to `--proof-timeout-ms` (default 30000) for a healthy daemon whose `processStartedAt` differs from the pre-restart process (for `--node`, the peer's federation health); an unproved restart exits nonzero with `[restart_unproven]`. `restart --drain` closes daemon turn admission, drains, rechecks, then restarts (`--drain-timeout-ms`, default 300000). `stop --proof-timeout-ms` (default 30000) bounds observing the daemon gone.
 
-Related backend control: `hrc server tmux status [--json]`,
-`hrc server tmux kill --yes` (destructive — kills the HRC tmux server and
-broker-tmux leases, claimed orphans included). `hrc server restart` does **not** reload
+Related backend control: `hrc server tmux status [--json]`. `hrc server restart` does **not** reload
 launchd plist `EnvironmentVariables`.
 
-## `runtime list | inspect | capture | send | interrupt | terminate | sweep | prune`
+## `runtime list | inspect | capture | interrupt | terminate | sweep | prune`
 
 ```bash
 hrc runtime list
@@ -231,9 +228,7 @@ At the HTTP layer, `GET /v1/runtimes` defaults to 100 rows, accepts
 
 `runtime inspect <runtimeId> [--probe] [--json]` preserves nested `hrc` and
 `broker` authority views; the broker view retains its `broker` or `hrc-derived`
-source label. Low-level runtime ensure and allowlisted-manifest prune live
-under `hrc admin runtime`.
-`runtime send` sends input to an active run.
+source label.
 
 ## Session continuity
 

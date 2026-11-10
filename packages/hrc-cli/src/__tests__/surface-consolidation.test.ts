@@ -27,7 +27,6 @@ describe('consolidated hrc command graph', () => {
       'session',
       'monitor',
       'admin',
-      'index',
       'capture',
       'runtime',
       'federation',
@@ -49,7 +48,6 @@ describe('consolidated hrc command graph', () => {
       // top-level noun.
       'diagnostics',
       'capture',
-      'send',
       'interrupt',
       'terminate',
       'sweep',
@@ -74,7 +72,7 @@ describe('consolidated hrc command graph', () => {
       'transcript',
       'stats',
     ])
-    expect(visibleChildren(child(program, 'capture'))).toEqual(['status', 'release', 'recover'])
+    expect(visibleChildren(child(program, 'capture'))).toEqual(['status'])
   })
 
   test('admin --help owns the complete maintenance cellar', () => {
@@ -83,7 +81,6 @@ describe('consolidated hrc command graph', () => {
       'runs',
       'worktrees',
       'surface',
-      'runtime',
       'broker-verify',
       'events',
       'metrics',

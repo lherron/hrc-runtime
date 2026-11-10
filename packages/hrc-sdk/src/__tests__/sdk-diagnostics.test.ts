@@ -116,7 +116,7 @@ describe('Phase 6 diagnostics round-trip', () => {
     expect(result.apiVersion).toBe(HRC_API_VERSION)
     expect(result.capabilities.semanticCore).toEqual({
       sessions: true,
-      ensureRuntime: true,
+      ensureRuntime: false,
       dispatchTurn: true,
       inFlightInput: true,
       capture: true,

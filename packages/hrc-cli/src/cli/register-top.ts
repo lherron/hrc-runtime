@@ -1,6 +1,6 @@
+import { CliUsageError } from 'cli-kit'
 import { type Command, Option } from 'commander'
 
-import { cmdRunAnnotate, cmdRunExport } from '../run-invocation.js'
 import { cmdPeek, cmdSend, cmdSummon } from '../target/live-commands.js'
 import { cmdTurn } from '../turn/commands/turn.js'
 import { cmdAdminWorktreesPrune } from '../worktree-prune.js'
@@ -11,16 +11,10 @@ import {
   toLegacyArgvForScopeCommand,
 } from './argv.js'
 import { type CommandMetadataInput, annotateCommand } from './command-metadata.js'
-import { cmdSurfaceBind, cmdSurfaceList, cmdSurfaceUnbind } from './handlers-control.js'
+import { cmdSurfaceBind } from './handlers-control.js'
 import { cmdRestart } from './handlers-restart.js'
 import { cmdRestartMe } from './handlers-restartme.js'
-import {
-  cmdLs,
-  cmdRunReconcileActive,
-  cmdRunRecoverUnstarted,
-  cmdRunSweepZombies,
-  cmdShow,
-} from './handlers-runtime.js'
+import { cmdLs, cmdRunReconcileActive, cmdRunSweepZombies, cmdShow } from './handlers-runtime.js'
 import { cmdAttach, cmdResumeContinuation, cmdRun, cmdStart } from './handlers-scope-cmd.js'
 import { cmdAdminStatus } from './handlers-server.js'
 import {
@@ -72,7 +66,7 @@ export function registerTopLevelCommands(program: Command): void {
     await cmdStart(args)
   })
 
-  const run = withOptions(
+  withOptions(
     program
       .command('run')
       .description('launch or reattach and attach')
@@ -82,15 +76,8 @@ export function registerTopLevelCommands(program: Command): void {
     runOptions()
   ).action(async (_scope, _opts, cmd: Command) => {
     const positionals: string[] = cmd.args
-    if (positionals[0] === 'export') {
-      await cmdRunExport(rawArgvForVerb(cmd, 'run', { offset: 2, fallback: process.argv.slice(2) }))
-      return
-    }
-    if (positionals[0] === 'annotate') {
-      await cmdRunAnnotate(
-        rawArgvForVerb(cmd, 'run', { offset: 2, fallback: process.argv.slice(2) })
-      )
-      return
+    if (positionals[0] === 'export' || positionals[0] === 'annotate') {
+      throw new CliUsageError(`unknown command: ${positionals[0]}`)
     }
     const opts = cmd.opts()
     const rawArgv = rawArgvForVerb(cmd, 'run', { offset: 1 })
@@ -103,41 +90,6 @@ export function registerTopLevelCommands(program: Command): void {
     )
     await cmdRun(args)
   })
-
-  // -- run invocation exposure (H-00104 Node C, C-0004) -----------------------
-  run
-    .command('export')
-    .description('export a run as the stable HrcInvocationExposure DTO (invocation DAG surface)')
-    .argument('<runId-or-selector>', 'run id, or a runtime:/scope:/session:/host: selector')
-    .option('--format <mode>', 'projection format (invocation-exposure)', 'invocation-exposure')
-    .option('--json', 'output as JSON (the DTO is always JSON)')
-    .action(async (target, _opts, cmd: Command) => {
-      const args = toLegacyArgv([target], cmd.opts(), {
-        strings: ['format'],
-        booleans: ['json'],
-      })
-      await cmdRunExport(args)
-    })
-
-  run
-    .command('annotate')
-    .description(
-      'stamp opaque correlation metadata on a run (operator convenience; not graph truth)'
-    )
-    .argument('<runId>', 'run id, or a selector resolving to one run')
-    .option(
-      '--correlation <json>',
-      'JSON: {invocationNodeId?,attemptRef?,taskId?,workflowInstanceId?}'
-    )
-    .option('--replace', 'overwrite an existing, conflicting correlation')
-    .option('--json', 'output as JSON')
-    .action(async (target, _opts, cmd: Command) => {
-      const args = toLegacyArgv([target], cmd.opts(), {
-        strings: ['correlation'],
-        booleans: ['replace', 'json'],
-      })
-      await cmdRunAnnotate(args)
-    })
 
   // -- resume (T-04836 Part A) -------------------------------------------------
   // `resume` is its OWN verb — force-resume the latest stored continuation for a
@@ -248,20 +200,6 @@ Semantics:
       const cmd = actionArgs[actionArgs.length - 1] as Command
       const rawArgv = rawArgvForVerb(cmd, 'reconcile-active', { offset: 1, fallback: [] })
       await cmdRunReconcileActive(rawArgv)
-    })
-
-  adminRuns
-    .command('recover-unstarted')
-    .description(
-      'recover one accepted run that never started by withdrawing its exact broker submission'
-    )
-    .argument('<runId>', 'accepted run id')
-    .option('--dry-run', 'preview without mutating (default unless --yes)')
-    .option('--yes', 'confirm the exact withdrawal and bounded recovery')
-    .option('--json', 'output the structured recovery result')
-    .action(async (_runId, _opts, cmd: Command) => {
-      const rawArgv = rawArgvForVerb(cmd, 'recover-unstarted', { offset: 1, fallback: [] })
-      await cmdRunRecoverUnstarted(rawArgv)
     })
 
   // -- show / ls (T-04219 P2: context-aware viewer + noun lister) --------------
@@ -502,33 +440,6 @@ The output always names the resolved kind and the concrete ID(s).
         booleans: [],
       })
       await cmdSurfaceBind(args)
-    })
-
-  surface
-    .command('unbind')
-    .description('unbind a surface')
-    .option('--kind <kind>', 'surface kind')
-    .option('--id <id>', 'surface ID')
-    .option('--reason <reason>', 'reason for unbinding')
-    .action(async (_opts, cmd: Command) => {
-      const args = toLegacyArgv([], cmd.opts(), {
-        strings: ['kind', 'id', 'reason'],
-        booleans: [],
-      })
-      await cmdSurfaceUnbind(args)
-    })
-
-  surface
-    .command('list')
-    .description('list surface bindings')
-    .argument('<runtimeId>', 'runtime ID')
-    .option('--json', 'output as JSON')
-    .action(async (runtimeId, _opts, cmd: Command) => {
-      const args = toLegacyArgv([runtimeId], cmd.opts(), {
-        strings: [],
-        booleans: ['json'],
-      })
-      await cmdSurfaceList(args)
     })
 
   annotateCommand(admin, { audience: 'human' })

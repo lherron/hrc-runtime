@@ -5,7 +5,6 @@ import {
 } from './turn-dispatch-attached-run-handlers.js'
 import {
   handleDispatchTurn,
-  handleEnsureRuntime,
   handleOpenBrokerSession,
   handleStartRuntime,
   openHeadlessBrokerSessionForSession,
@@ -31,7 +30,6 @@ export {
 } from './turn-dispatch-submission-handlers.js'
 export {
   handleDispatchTurn,
-  handleEnsureRuntime,
   handleOpenBrokerSession,
   handleStartRuntime,
   openHeadlessBrokerSessionForSession,
@@ -45,7 +43,6 @@ export {
 export { markRuntimeStaleForBrokerReprovision } from './turn-admission/routes/turn-dispatch-admitted-turn.js'
 
 export const turnDispatchHandlersMethods = {
-  handleEnsureRuntime,
   handleStartRuntime,
   handleOpenBrokerSession,
   handleDispatchTurn,

@@ -55,7 +55,6 @@
         "cli-help-alias",
         "json-ndjson-exits",
         "monitor-show-watch-wait",
-        "run-bearing-export-annotation",
         "sdk-real-read"
       ],
       "requiredInP0": true
@@ -425,12 +424,56 @@
       ],
       "requiredInP0": false
     },
-    "n5-cli": {"assertionIds": ["help-grammar-differential", "every-qualification-line-driven", "postponed-commands-exec-same-release-bun", "no-production-metrics"], "requiredInP0": false},
-    "n5-status": {"assertionIds": ["readonly-schema-diagnostics", "ruled-unsupported-only"], "requiredInP0": false},
-    "n5-monitor": {"assertionIds": ["filtered-lifecycle-reads", "high-water-cursor", "task-predicates", "row-projection"], "requiredInP0": false},
-    "n5-lifecycle": {"assertionIds": ["grant-authority-and-refusals", "credential-rotation-reconcile", "canonical-lifecycle-rows", "remote-origins"], "requiredInP0": false},
-    "n5-shutdown": {"assertionIds": ["bounded-teardown-steps", "held-body-drain-per-listener", "owner-writes-drained"], "requiredInP0": false},
-    "n5-server-owner": {"assertionIds": ["dead-owner-reclaim", "live-and-malformed-refusal", "concurrent-reclaimers"], "requiredInP0": false},
+    "n5-cli": {
+      "assertionIds": [
+        "help-grammar-differential",
+        "every-qualification-line-driven",
+        "postponed-commands-exec-same-release-bun",
+        "no-production-metrics"
+      ],
+      "requiredInP0": false
+    },
+    "n5-status": {
+      "assertionIds": [
+        "readonly-schema-diagnostics",
+        "ruled-unsupported-only"
+      ],
+      "requiredInP0": false
+    },
+    "n5-monitor": {
+      "assertionIds": [
+        "filtered-lifecycle-reads",
+        "high-water-cursor",
+        "task-predicates",
+        "row-projection"
+      ],
+      "requiredInP0": false
+    },
+    "n5-lifecycle": {
+      "assertionIds": [
+        "grant-authority-and-refusals",
+        "credential-rotation-reconcile",
+        "canonical-lifecycle-rows",
+        "remote-origins"
+      ],
+      "requiredInP0": false
+    },
+    "n5-shutdown": {
+      "assertionIds": [
+        "bounded-teardown-steps",
+        "held-body-drain-per-listener",
+        "owner-writes-drained"
+      ],
+      "requiredInP0": false
+    },
+    "n5-server-owner": {
+      "assertionIds": [
+        "dead-owner-reclaim",
+        "live-and-malformed-refusal",
+        "concurrent-reclaimers"
+      ],
+      "requiredInP0": false
+    },
     "n4-federation": {
       "assertionIds": [
         "home-decision-and-refusals-match-bun",
@@ -1767,25 +1810,19 @@
       "kind": "direct-store-call",
       "idPrefix": "direct:scripts/",
       "target": "UNSUPPORTED",
-      "reason": "Outside the approved native command set: standalone maintenance scripts, full capture verification, or run export/annotate remain Bun-owned under T-11820."
+      "reason": "Outside the approved native command set: standalone maintenance scripts and the capture verification library remain Bun-owned under T-11820."
     },
     {
       "kind": "direct-store-open",
       "idPrefix": "direct-open:scripts/",
       "target": "UNSUPPORTED",
-      "reason": "Outside the approved native command set: standalone maintenance scripts, full capture verification, or run export/annotate remain Bun-owned under T-11820."
-    },
-    {
-      "kind": "direct-store-call",
-      "idPrefix": "direct:packages/hrc-cli/src/run-invocation.ts:",
-      "target": "UNSUPPORTED",
-      "reason": "Outside the approved native command set: standalone maintenance scripts, full capture verification, or run export/annotate remain Bun-owned under T-11820."
+      "reason": "Outside the approved native command set: standalone maintenance scripts and the capture verification library remain Bun-owned under T-11820."
     },
     {
       "kind": "direct-store-call",
       "idPrefix": "direct:packages/hrc-capture-verifier/",
       "target": "UNSUPPORTED",
-      "reason": "Outside the approved native command set: standalone maintenance scripts, full capture verification, or run export/annotate remain Bun-owned under T-11820."
+      "reason": "Outside the approved native command set: standalone maintenance scripts and the capture verification library remain Bun-owned under T-11820."
     },
     {
       "kind": "cli-command",
@@ -1950,8 +1987,6 @@
     "cli:hrc monitor show": "direct-cli-sdk",
     "cli:hrc monitor watch": "direct-cli-sdk",
     "cli:hrc monitor wait": "direct-cli-sdk",
-    "cli:hrc run annotate": "direct-cli-sdk",
-    "cli:hrc run export": "direct-cli-sdk",
     "file:state-wal-shm": "n1-schema-refusal",
     "file:lifecycle-credentials": "n5-lifecycle",
     "file:broker-leases-raw-provider-artifacts": "n2-retained",
@@ -1963,13 +1998,10 @@
     "public:GET:/v1/sessions/metadata": "n1-session-routes",
     "public:PATCH:/v1/sessions/metadata": "n1-session-routes",
     "public:GET:/v1/runtimes/live-refs": "n1-session-routes",
-    "public:POST:/v1/surfaces/unbind": "n1-bun-passthrough",
     "public:POST:/v1/runtimes/sweep": "n1-maintenance",
     "public:POST:/v1/runtimes/prune": "n1-maintenance",
-    "public:POST:/v1/runtimes/ensure": "n1-bun-passthrough",
     "public:POST:/v1/runtimes/attach": "n1-runtime-surfaces",
     "public:GET:/v1/targets": "n1-bun-passthrough",
-    "public:GET:/v1/surfaces": "n1-bun-passthrough",
     "public:GET:/v1/placement/bindings": "n1-session-index",
     "public:GET:/v1/sessions/page": "n1-session-index",
     "public:GET:/v1/sessions/facets": "n1-session-index",
@@ -1979,7 +2011,6 @@
     "public:GET:/v1/targets/by-session-ref": "n1-runtime-reads",
     "public:POST:/v1/runtimes/inspect": "n1-runtime-reads",
     "store-source:packages/hrc-store-sqlite/src/repositories/runtime-repository.ts": "n1-runtime-reads",
-    "public:POST:/v1/surfaces/bind": "n1-runtime-surfaces",
     "store-source:packages/hrc-store-sqlite/src/repositories/bridge-repositories.ts": "n1-runtime-surfaces",
     "public:POST:/v1/placements/resolve": "n1-target-placement",
     "public:POST:/v1/targets/ensure": "n1-target-placement",
@@ -2092,11 +2123,8 @@
     "public:GET:/v1/inputs/:inputId": "n1-bun-passthrough",
     "public:GET:/v1/inputs/:inputId/watch": "n1-bun-passthrough",
     "public:POST:/v1/broker-sessions/open": "n1-bun-passthrough",
-    "public:POST:/v1/capture/recover": "n1-bun-passthrough",
     "public:POST:/v1/command-runs/launch": "n1-bun-passthrough",
     "public:POST:/v1/in-flight-input": "n1-bun-passthrough",
-    "public:POST:/v1/runs/recover-unstarted": "n1-bun-passthrough",
-    "public:POST:/v1/runtimes/capture/release": "n1-bun-passthrough",
     "public:POST:/v1/runtimes/restart-self": "GAP:N2",
     "store-op:packages/hrc-store-sqlite/src/collective-history-columns.ts:<module>:collectiveHistoryAddressRef:1118": "n4-history",
     "store-op:packages/hrc-store-sqlite/src/collective-history-columns.ts:<module>:collectiveHistoryFilterColumns:1301": "n4-history",
@@ -2329,10 +2357,7 @@
     "public:POST:/v1/federation/retire": "GAP:N4",
     "public:GET:/v1/presentation/runtimes": "GAP:N4",
     "public:POST:/v1/presentation/seats/read": "GAP:N4",
-    "public:GET:/v1/transcript-index/status": "GAP:N4",
-    "public:POST:/v1/transcript-index/rebuild": "GAP:N4",
     "public:POST:/v1/transcript-search": "GAP:N4",
-    "public:POST:/v1/server/tmux/kill-broker-leases": "GAP:N4",
     "file:spilled-blobs": "GAP:N4",
     "file:transcript-index": "GAP:N4",
     "store-op:packages/hrc-store-sqlite/src/federation-repositories.ts:BindingRegistry:designationHistory:15823": "GAP:N4",
@@ -2345,13 +2370,10 @@
     "store-source:packages/hrc-store-sqlite/src/federation-repositories.ts": "GAP:N4"
   },
   "coverageReasons": {
-    "public:POST:/v1/surfaces/unbind": "POSTPONED by observed-use audit T-11820; forwards to Bun through the validated separate-state pass-through.",
     "public:POST:/v1/runtimes/sweep": "Compared dry and destructive scratch maintenance, actual live broker protection, complete wire errors, row satellites, continuation flags and ordered lifecycle facts against Bun.",
     "public:POST:/v1/runtimes/prune": "Compared dry and destructive scratch maintenance, actual live broker protection, complete wire errors, row satellites, continuation flags and ordered lifecycle facts against Bun.",
-    "public:POST:/v1/runtimes/ensure": "POSTPONED by observed-use audit T-11820; forwards to Bun through the validated separate-state pass-through.",
     "public:POST:/v1/runtimes/attach": "Real ready-seat Bun/native attach and surface workflow compares full descriptors, binding fences, retries, tty displacement and committed surface events.",
     "public:GET:/v1/targets": "POSTPONED by observed-use audit T-11820; forwards to Bun through the validated separate-state pass-through.",
-    "public:GET:/v1/surfaces": "POSTPONED by observed-use audit T-11820; forwards to Bun through the validated separate-state pass-through.",
     "public:GET:/v1/placement/bindings": "Compared active local bindings, excluding remote and retired rows, plus required-query errors against Bun in the N1 index workflow.",
     "public:GET:/v1/sessions/page": "Local session-index HTTP and SQL projection compared against Bun, including filters, pagination, facets and actual-ledger high-water; peer aggregation remains the N4 federation workflow.",
     "public:GET:/v1/sessions/facets": "Local session-index HTTP and SQL projection compared against Bun, including filters, pagination, facets and actual-ledger high-water; peer aggregation remains the N4 federation workflow.",
@@ -2362,7 +2384,6 @@
     "public:GET:/v1/targets/by-session-ref": "Real completed-seat Bun/native comparison: full list/filter/cursor, inspect, live/failing seat and target responses; probe observations persist. Event projection and startup reconciliation remain N2.",
     "public:POST:/v1/runtimes/inspect": "Real completed-seat Bun/native comparison: full list/filter/cursor, inspect, live/failing seat and target responses; probe observations persist. Event projection and startup reconciliation remain N2.",
     "store-source:packages/hrc-store-sqlite/src/repositories/runtime-repository.ts": "Exercised by the passing N1 runtime-read workflow: canonical runtime/identity rows, host selection and committed broker sequence. Other mutations in this source remain separate operation gaps.",
-    "public:POST:/v1/surfaces/bind": "Real ready-seat Bun/native attach and surface workflow compares full descriptors, binding fences, retries, tty displacement and committed surface events.",
     "store-source:packages/hrc-store-sqlite/src/repositories/bridge-repositories.ts": "Surface binding queries and writes exercised by the N1 bind workflow; other bridge operations remain separate operation gaps.",
     "file:lifecycle-credentials": "N5 execution-owner lifecycle authorization and credential rotation/reconcile (mable EN-35963); the front stays writer-free.",
     "store-source:packages/hrc-store-sqlite/src/participant-host-binding-repository.ts": "Passing direct/classful and real-broker participant comparisons exercise initial address allocation, frozen descriptors/hosting, bounded establishment retries and activation; succession/recovery stays N2. Other operations retain individual workflow owners.",
@@ -2474,11 +2495,8 @@
     "public:GET:/v1/inputs/:inputId": "POSTPONED by observed-use audit T-11820; forwards to Bun through the validated separate-state pass-through.",
     "public:GET:/v1/inputs/:inputId/watch": "POSTPONED by observed-use audit T-11820; forwards to Bun through the validated separate-state pass-through.",
     "public:POST:/v1/broker-sessions/open": "POSTPONED by observed-use audit T-11820; forwards to Bun through the validated separate-state pass-through.",
-    "public:POST:/v1/capture/recover": "POSTPONED by observed-use audit T-11820; forwards to Bun through the validated separate-state pass-through.",
     "public:POST:/v1/command-runs/launch": "POSTPONED by observed-use audit T-11820; forwards to Bun through the validated separate-state pass-through.",
     "public:POST:/v1/in-flight-input": "POSTPONED by observed-use audit T-11820; forwards to Bun through the validated separate-state pass-through.",
-    "public:POST:/v1/runs/recover-unstarted": "POSTPONED by observed-use audit T-11820; forwards to Bun through the validated separate-state pass-through.",
-    "public:POST:/v1/runtimes/capture/release": "POSTPONED by observed-use audit T-11820; forwards to Bun through the validated separate-state pass-through.",
     "public:POST:/v1/runtimes/restart-self": "restart-self is blocked on the N5 lifecycle credential verifier (verify_caller, cody T-11819).",
     "store-op:packages/hrc-store-sqlite/src/collective-history-columns.ts:<module>:collectiveHistoryAddressRef:1118": "Collective history (N4): n4-history replicates real rows Bun to S, then each owner boots on the same store with tamper/change/insert controls, and compares collective queries and authority verbs against Bun in key order.",
     "store-op:packages/hrc-store-sqlite/src/collective-history-columns.ts:<module>:collectiveHistoryFilterColumns:1301": "Collective history (N4): n4-history replicates real rows Bun to S, then each owner boots on the same store with tamper/change/insert controls, and compares collective queries and authority verbs against Bun in key order.",
@@ -2503,7 +2521,7 @@
     "store-op:packages/hrc-store-sqlite/src/collective-history-repository.ts:CollectiveHistoryRepository:selectRows:12966": "Collective history (N4): n4-history replicates real rows Bun to S, then each owner boots on the same store with tamper/change/insert controls, and compares collective queries and authority verbs against Bun in key order.",
     "store-source:packages/hrc-store-sqlite/src/collective-history-columns.ts": "Collective history (N4): n4-history replicates real rows Bun to S, then each owner boots on the same store with tamper/change/insert controls, and compares collective queries and authority verbs against Bun in key order.",
     "store-source:packages/hrc-store-sqlite/src/collective-history-repository.ts": "Collective history (N4): n4-history replicates real rows Bun to S, then each owner boots on the same store with tamper/change/insert controls, and compares collective queries and authority verbs against Bun in key order.",
-    "public:POST:/v1/server/lifecycle": "N4 → N5 by mable EN-35963: grant-authorized local execution-owner stop/restart plus canonical lifecycle rows; lifecycle_actions and lifecycle_peer drive it on the native owner.",
+    "public:POST:/v1/server/lifecycle": "N4 \u2192 N5 by mable EN-35963: grant-authorized local execution-owner stop/restart plus canonical lifecycle rows; lifecycle_actions and lifecycle_peer drive it on the native owner.",
     "direct:packages/hrc-capture-verifier/src/sqlite.ts:3286": "broker-verify candidates reads the readonly store natively (n5b_admin); full capture verification stays Bun-owned.",
     "schema-sql:packages/hrc-store-sqlite/src/migrations/schema-migrations-mail-delivery.ts:12058": "Plan \"Explicitly unsupported\": no Rust schema migrator for production stores. Bun retains migration ownership; the native schema guard accepts existing legacy tables unchanged; no native migration introduced.",
     "schema-sql:packages/hrc-store-sqlite/src/migrations/schema-migrations-mail-delivery.ts:12444": "Plan \"Explicitly unsupported\": no Rust schema migrator for production stores. Bun retains migration ownership; the native schema guard accepts existing legacy tables unchanged; no native migration introduced.",
@@ -2657,10 +2675,7 @@
     "public:POST:/v1/federation/retire": "No native route; scope retirement is not ported.",
     "public:GET:/v1/presentation/runtimes": "Native implements it (front-safe) with n3-presentation/front_door compare evidence, but no n3 or n4 case is defined for it.",
     "public:POST:/v1/presentation/seats/read": "Native implements it (front-safe) with n3-presentation/front_door compare evidence, but no n3 or n4 case is defined for it.",
-    "public:GET:/v1/transcript-index/status": "Transcript index is not ported.",
-    "public:POST:/v1/transcript-index/rebuild": "Transcript index is not ported.",
     "public:POST:/v1/transcript-search": "Transcript index is not ported.",
-    "public:POST:/v1/server/tmux/kill-broker-leases": "No native route and no case.",
     "file:spilled-blobs": "Prune-script spill format; no native writer or reader and no case.",
     "file:transcript-index": "Transcript index is not ported.",
     "store-op:packages/hrc-store-sqlite/src/federation-repositories.ts:BindingRegistry:designationHistory:15823": "No caller outside the repository file.",

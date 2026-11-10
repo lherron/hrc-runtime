@@ -54,8 +54,6 @@ describe('T-08118 just install armed-window warning', () => {
       'hrc monitor show',
       'hrc monitor watch',
       'hrc monitor wait',
-      'hrc run export',
-      'hrc run annotate',
     ]) {
       expect(lines).toContain(command)
     }

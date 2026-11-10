@@ -24,24 +24,18 @@ Also not mapped, from the live surface on 2026-10-05 (T-10350), rechecked 2026-1
 (T-12291, native CLI) and 2026-11-09 (T-12756; `index/help-*.txt` in that task's artifacts):
 
 - Continuity writes `session rotate`, `session meta set|clear`, `session retitle` (deprecated alias of meta),
-  `session drop-continuation`, and run plumbing `runtime send` and `runtime interrupt`: feature 2 names them;
+  `session drop-continuation`, and run plumbing `runtime interrupt`: feature 2 names them;
   terminate and resume prove the continuation path, and nothing in this skill yet needs them driven. `meta
-  set|clear`, `retitle` and `runtime send` still run the Bun CLI against the native daemon.
-- `admin surface bind|unbind|list`: low-level surface plumbing that ACP and the viewer drive; prove it from
+  set|clear`, `retitle` still run the Bun CLI against the native daemon.
+- `admin surface bind`: low-level surface plumbing that ACP and the viewer drive; prove it from
   those consumers. (`admin bridge …` and `admin registrations gc` are gone since 4c7c3653, T-11542: `unknown
   command`, and their routes answer 404; 2026-10-26, T-11864.)
-- `~/.bun/bin/hrc index status|rebuild` (Bun CLI): the transcript search index behind feature 3's `monitor search`;
-  rebuild rewrites the live index.
-- `~/.bun/bin/hrc run annotate|export` (Bun CLI) and `admin runs recover-unstarted` (Bun CLI): run annotations and export,
-  and the Bun-era unstarted-run settle (native `reconcile-active` does not port it, T-12303's note). Nothing in
-  this skill needs them yet.
 - `~/.bun/bin/hrc restartme`: restarts the calling seat, so it is never driven from a scratch here. The seat-handoff
   and seat-work routes behind it (`/v1/seat-handoffs…`, GET/PUT `/v1/sessions/work`, schema 0130) are driven
   through `hrc handoff …` and `hrc seat work …` in feature 2 (listed in top-level `--help` on 2026-11-09; absent from T-12291's capture).
 - `hrc-pty` itself (each release's `bin/hrc-pty`): the native seat supervisor. Features 2 and 8 drive it through
   `hrc`; its own `ops` socket verbs (status, shutdown) are not driven (never send `shutdown`).
-- `admin runtime ensure|prune` (prune deletes keep-forever ledgers by exact manifest), `admin events drain`
-  (a dead container's ledger) and `server tmux kill`: operator repairs on real state.
+- `admin events drain` (a dead container's ledger): operator repair on real state.
 - `hrc-owner.sh stage|activate|refresh-plist`, `just switch-owner-rusthrc`, `just refresh-owner-exe`: owner
   operator steps (feature 6), never driven. `just front-door-*` is obsolete on a rusthrc owner node: enable and
   disable refuse it.

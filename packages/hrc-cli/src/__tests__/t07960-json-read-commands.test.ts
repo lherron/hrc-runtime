@@ -167,7 +167,6 @@ describe('T-07960 finite read JSON command contract', () => {
       ['monitor', 'session-report'],
       ['session', 'resolve'],
       ['session', 'get'],
-      ['admin', 'surface', 'list'],
       ['ls'],
     ]) {
       expect(commandAt(program, path).options.some((option) => option.long === '--json')).toBe(true)
@@ -179,13 +178,6 @@ describe('T-07960 finite read JSON command contract', () => {
     // list endpoints require an available runtime, so make its test-only lease
     // current immediately before exercising the read contracts.
     refreshReadRuntime()
-
-    const surfaces = await runCli(
-      ['admin', 'surface', 'list', RUNTIME_ID, '--output', 'json'],
-      cliEnv()
-    )
-    expect(surfaces.exitCode).toBe(0)
-    expect(JSON.parse(surfaces.stdout)).toEqual([])
 
     const transcript = await runCli(
       ['monitor', 'transcript', RUNTIME_ID, '--output', 'json'],

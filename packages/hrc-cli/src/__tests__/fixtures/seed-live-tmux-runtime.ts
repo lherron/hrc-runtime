@@ -1,8 +1,8 @@
 /**
  * T-08596 (T-08569A closure) — seed a LIVE legacy-tmux runtime row backed by a
  * real tmux pane for CLI plumbing tests (capture/attach/interrupt/terminate/
- * surface-bind/list). Birthing through `admin runtime ensure` is gone on nodes
- * that declare no aspd endpoint (typed `aspd_unconfigured` refusal), so tests
+ * surface-bind). Births on nodes without an aspd endpoint refuse with
+ * `aspd_unconfigured`, so tests
  * that exercise runtime ACTIONS rather than births seed the row directly.
  */
 import { randomUUID } from 'node:crypto'

@@ -17,7 +17,7 @@ beforeEach(setupCliFixture)
 afterEach(teardownCliFixture)
 
 describe('live transcript search CLI', () => {
-  it('reads the resident projection through status and search RPCs', async () => {
+  it('reads the resident projection through the search RPC', async () => {
     const db = openHrcDatabase(dbPath)
     db.brokerInvocationEvents.appendEvent({
       invocationId: 'inv-search-live',
@@ -51,10 +51,6 @@ describe('live transcript search CLI', () => {
         hrcTranscriptIndexTickIntervalMs: 10,
       })
     )
-
-    const status = await runCli(['index', 'status', '--json'], cliEnv())
-    expect(status.exitCode).toBe(0)
-    expect(JSON.parse(status.stdout)).toMatchObject({ turnsIndexed: 1, lagEvents: 0 })
 
     const search = await runCli(
       ['monitor', 'search', 'old ledger', '--target', 'rt-search-live', '--json'],

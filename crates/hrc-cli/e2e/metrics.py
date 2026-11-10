@@ -42,7 +42,7 @@ def main():
     bun = shutil.which('bun')
     with tempfile.TemporaryDirectory(prefix='n5-metrics-', dir='/tmp') as temp:
         root = Path(temp)
-        cases = [('help', ['runtime', 'list', '--help']), ('failure', ['runtime', 'list', 'extra']), ('postponed', ['index', 'status', '--help'])]
+        cases = [('help', ['runtime', 'list', '--help']), ('failure', ['runtime', 'list', 'extra']), ('postponed', ['monitor', 'search', '--help'])]
         if args.runtime_root:
             assert (args.runtime_root / 'hrc.sock').exists()
             assert not str(args.runtime_root.resolve()).startswith(str(Path.home() / 'praesidium/var'))

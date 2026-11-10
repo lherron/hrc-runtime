@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Transcript index differential: follower resume, search, status and rebuild.
+"""Transcript index differential: follower resume, and search.
 
 Bun indexes phase A of a broker ledger fixture, then phase B lands after its
 cursor. Each owner starts from that snapshot and must catch up from the cursor.
@@ -9,7 +9,7 @@ reindexes from zero (the sentinel Bun's row carries disappears); late prose or a
 terminal inversion not reindexed; wrong segment bounds, final/mid selection,
 block flattening, payload unwrapping or UTF-8 cap; search hits, order, score,
 snippet, per-runtime cap or filters differ; validation codes/messages differ;
-rebuild does not truncate and regenerate; status shape or counters differ.
+search shape or counters differ.
 """
 import hashlib
 import json
@@ -127,7 +127,6 @@ def cases(scope, host):
     task = scope.rsplit(':', 1)[1]
     search = lambda name, body: (name, 'POST', '/v1/transcript-search', body)
     return [
-        ('status', 'GET', '/v1/transcript-index/status', None),
         search('discovery', {'query': 'kestrel'}),
         search('discovery-limit', {'query': 'kestrel', 'limit': 2}),
         search('discovery-candidates', {'query': 'kestrel', 'candidateLimit': 3}),
@@ -156,11 +155,6 @@ def cases(scope, host):
         search('filter-not-string', {'query': 'kestrel', 'agent': 5}),
         search('body-array', []),
         search('body-absent', None),
-        ('status-post', 'POST', '/v1/transcript-index/status', {}),
-        ('rebuild', 'POST', '/v1/transcript-index/rebuild', {}),
-        ('status-after-rebuild', 'GET', '/v1/transcript-index/status', None),
-        search('sentinel-after-rebuild', {'query': SENTINEL}),
-        search('discovery-after-rebuild', {'query': 'kestrel'}),
     ]
 
 
@@ -170,15 +164,13 @@ def head(db):
 
 
 def settle(dbpath, name):
-    if name not in (None, 'rebuild'):
+    if name is not None:
         return
     deadline = time.time() + 10
     while time.time() < deadline:
         with sqlite3.connect(f'file:{dbpath}?mode=ro', uri=True) as db:
             cursor, ceiling = head(db)
-            stale = name == 'rebuild' and db.execute(
-                'SELECT count(*) FROM transcript_turns WHERE final_text LIKE ?', ('%'+SENTINEL+'%',)).fetchone()[0]
-        if cursor == ceiling and not stale:
+        if cursor == ceiling:
             return
         time.sleep(.05)
     # An owner that never indexes falls through; the comparison records it.

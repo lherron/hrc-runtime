@@ -76,16 +76,3 @@ export async function handleTranscriptSearch(
     throw error
   }
 }
-
-export function handleTranscriptIndexStatus(server: HrcServerInstanceForHandlers): Response {
-  return json(server.transcriptIndexer.stats())
-}
-
-export function handleTranscriptIndexRebuild(server: HrcServerInstanceForHandlers): Response {
-  void server.transcriptIndexer.rebuild().catch((error: unknown) => {
-    server.transcriptIndexer.log('WARN', 'transcript.index.rebuild_failed', {
-      error: error instanceof Error ? error.message : String(error),
-    })
-  })
-  return json({ accepted: true, index: server.transcriptIndexer.stats() })
-}

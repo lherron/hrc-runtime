@@ -1,9 +1,7 @@
 import { afterAll, afterEach, beforeEach, describe, expect, mock, spyOn, test } from 'bun:test'
-
-import { HrcDomainError, HrcErrorCode } from 'hrc-core'
 import { HrcClient } from 'hrc-sdk'
 
-import { cmdCaptureRelease, cmdCaptureStatus } from '../cli/handlers-capture.js'
+import { cmdCaptureStatus } from '../cli/handlers-capture.js'
 
 import { installOldEngineDaemon } from './old-engine-daemon.js'
 
@@ -100,78 +98,5 @@ describe('hrc capture control', () => {
     } finally {
       output.restore()
     }
-  })
-
-  test('sends the exact normalized-as request with a human operator principal', async () => {
-    const release = spyOn(HrcClient.prototype, 'brokerCaptureRelease').mockResolvedValue({
-      released: true,
-      invocationId: 'invocation-cli' as never,
-      rawRecordId: 'raw-cli',
-      disposition: 'normalized',
-      releasedSeq: 23,
-      normalizedSeq: 22,
-      resumedRecords: 1,
-      capture: { state: 'open', deferredCount: 0 },
-    })
-    const output = captureStdout()
-    try {
-      await cmdCaptureRelease([
-        RUNTIME_ID,
-        '--raw-record',
-        'raw-cli',
-        '--disposition',
-        'normalized-as',
-        '--event-type',
-        'driver.notice',
-        '--event-payload',
-        '{"message":"known native row"}',
-        '--turn-id',
-        'turn-cli',
-        '--note',
-        'operator disposition',
-      ])
-      expect(release).toHaveBeenCalledTimes(1)
-      const request = release.mock.calls[0]?.[0]
-      expect(request).toMatchObject({
-        runtimeId: RUNTIME_ID,
-        rawRecordId: 'raw-cli',
-        disposition: 'normalized-as',
-        normalizedAs: {
-          type: 'driver.notice',
-          payload: { message: 'known native row' },
-          turnId: 'turn-cli',
-        },
-        note: 'operator disposition',
-      })
-      expect(request?.operatorPrincipal).toMatch(/^human(?::|$)/)
-      expect(JSON.parse(output.read())).toMatchObject({ released: true, releasedSeq: 23 })
-    } finally {
-      output.restore()
-    }
-  })
-
-  test('refuses a scoped runtime and preserves raw_record_not_blocked from HRC', async () => {
-    process.env['HRC_SESSION_REF'] = 'agent:cody:project:hrc-runtime:task:T-07864~main'
-    process.env['ASP_SCOPE_REF'] = 'agent:cody:project:hrc-runtime:task:T-07864'
-    const release = spyOn(HrcClient.prototype, 'brokerCaptureRelease')
-
-    await expect(
-      cmdCaptureRelease([RUNTIME_ID, '--raw-record', 'raw-cli', '--disposition', 'ignored-known'])
-    ).rejects.toThrow(/operator shell|task-scoped runtime/)
-    expect(release).not.toHaveBeenCalled()
-
-    process.env['HRC_SESSION_REF'] = undefined
-    process.env['ASP_SCOPE_REF'] = undefined
-    release.mockRejectedValue(
-      new HrcDomainError(HrcErrorCode.MALFORMED_REQUEST, 'raw_record_not_blocked', {
-        reason: 'raw_record_not_blocked',
-      })
-    )
-    await expect(
-      cmdCaptureRelease([RUNTIME_ID, '--raw-record', 'raw-cli', '--disposition', 'ignored-known'])
-    ).rejects.toMatchObject({
-      message: 'raw_record_not_blocked',
-      detail: { reason: 'raw_record_not_blocked' },
-    })
   })
 })

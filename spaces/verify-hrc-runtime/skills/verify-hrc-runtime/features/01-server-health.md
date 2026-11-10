@@ -5,8 +5,7 @@ since 2026-10-26. Code: CLI `crates/hrc-cli/src/server_status.rs`, `local/doctor
 `local/server.rs` (`subscribers`, `tmux status`), `local/info.rs`, `server_start.rs`, `server_lifecycle.rs`;
 daemon `crates/hrc-native/src/main.rs` (`server serve` dispatch), `server.rs` (`/v1/status`, logging),
 `server/projection/doctor.rs` (every doctor row, served at `GET /v1/doctor` since 2c947087; the CLI only renders) and
-`server/front/{front,release,hosting}.rs` (listen socket, release block, store admission). `server tmux kill` is a
-Bun passthrough (`crates/hrc-cli/command-scope.json`). Docs: `docs/cli-surface.md`, `docs/operations-runbook.md`.
+`server/front/{front,release,hosting}.rs` (listen socket, release block, store admission). Docs: `docs/cli-surface.md`, `docs/operations-runbook.md`.
 
 ## Sub-features
 

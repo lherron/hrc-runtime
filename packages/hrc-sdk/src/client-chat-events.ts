@@ -5,7 +5,6 @@ import type {
   HrcMessageRecord,
   HrcTargetView,
 } from 'hrc-core'
-import type { CaptureRecoverRequest, CaptureRecoverResponse } from 'hrc-core'
 import { HrcClientDiagnosticsMethods } from './client-diagnostics.js'
 import {
   boolField,
@@ -68,11 +67,6 @@ export class HrcClientChatEventMethods extends HrcClientDiagnosticsMethods {
 
   async captureBySelector(request: CaptureBySelectorRequest): Promise<CaptureBySelectorResponse> {
     return this.postJson<CaptureBySelectorResponse>('/v1/capture/by-selector', request)
-  }
-
-  /** T-08566: one explicit retained-evidence recovery attempt, or a dry run. */
-  async captureRecover(request: CaptureRecoverRequest): Promise<CaptureRecoverResponse> {
-    return this.postJson<CaptureRecoverResponse>('/v1/capture/recover', request)
   }
 
   // -- hrcchat: durable messages -----------------------------------------------

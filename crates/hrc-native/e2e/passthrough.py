@@ -96,16 +96,10 @@ def main():
         assert all(proc.poll() is None for proc in (owners[0],owners[-1]))
         for method,path,body in [
             ('GET','/v1/targets?includeDormant=true&projectId=n1-t11818',None),
-            ('POST','/v1/runtimes/ensure',json.dumps({'hostSessionId':'hsid-body-forwarded'})),
-            ('POST','/v1/runtimes/ensure','{"broken":'),
-            ('POST','/v1/runtimes/ensure',' '*(3*1024*1024)+'{}'),
             ('DELETE','/v1/not-a-native-route?forwarded=yes','payload'),
-            ('POST','/v1/surfaces/unbind','{'),
-            ('POST','/v1/capture/recover','{'),
             ('POST','/v1/in-flight-input','{'),
+            ('POST','/v1/in-flight-input',' '*(3*1024*1024)+'{}'),
             ('POST','/v1/transcript-search','{'),
-            ('GET','/v1/surfaces',None),
-            ('GET','/v1/transcript-index/status',None),
         ]:
             direct=request(bun,method,path,body)
             forwarded=request(native,method,path,body)

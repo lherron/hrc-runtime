@@ -22,8 +22,6 @@
  * Reference: T-00946 (parent), T-00957 (CLI implementation task)
  */
 import { afterEach, beforeEach, describe, expect, it } from 'bun:test'
-import { mkdir } from 'node:fs/promises'
-import { join } from 'node:path'
 
 import { parseServerLog } from '../../../hrc-server/src/__tests__/fixtures/server-log'
 import {
@@ -33,7 +31,6 @@ import {
   setupCliFixture,
   teardownCliFixture,
   testProjectScope,
-  tmpDir,
   waitForServerLog,
   waitForServerStatus,
 } from './fixtures/cli.fixture'
@@ -56,7 +53,7 @@ describe('top-level commander help (Phase 6 T2b)', () => {
     expect(result.exitCode).toBe(0)
     expect(result.stdout).toMatch(/Usage:/)
     expect(result.stdout).toContain('--force-restart')
-    expect(result.stdout).toContain('preserve the conversation')
+    expect(result.stdout).toMatch(/preserve the\s+conversation/)
     expect(result.stdout).toContain('--new-session')
     expect(result.stdout).not.toContain('--no-attach')
     expect(result.stdout).toContain('--attach-only')
@@ -81,7 +78,6 @@ describe('top-level commander help (Phase 6 T2b)', () => {
     expect(result.exitCode).toBe(0)
     expect(result.stdout).toMatch(/Usage:/)
     expect(result.stdout).toContain('status')
-    expect(result.stdout).toContain('release')
   })
 
   it('hrc attach --help exits 0 with Usage', async () => {
@@ -182,36 +178,6 @@ describeDaemonLifecycle('server/tmux admin lifecycle', () => {
     }
   })
 
-  it('server log records codex launch execution JSON and CODEX_HOME', async () => {
-    const aspHome = join(tmpDir, 'asp-home')
-    await mkdir(aspHome, { recursive: true })
-    const env = cliEnv({ ASP_HOME: aspHome })
-
-    const startResult = await runCli(['server', 'start', '--daemon'], env)
-    expect(startResult.exitCode).toBe(0)
-    const status = await waitForServerStatus((value) => value.running === true, env)
-    expect(status.running).toBe(true)
-
-    const scope = testProjectScope('codex-launch-logging')
-    const hostSessionId = await resolveHostSessionId(scope)
-    const ensureResult = await runCli(
-      ['admin', 'runtime', 'ensure', hostSessionId, '--provider', 'openai'],
-      env
-    )
-    expect(ensureResult.exitCode).toBe(0)
-
-    // The native `hrc turn` provider comes from the target intent set up by
-    // `runtime ensure --provider openai` above.
-    const sendResult = await runCli(['turn', scope, 'log codex launch'], env)
-    expect(sendResult.exitCode).toBe(0)
-
-    const log = await waitForServerLog()
-    expect(log).toContain('launch.dispatch.prepared')
-    expect(log).toContain('"execution"')
-    expect(log).toContain('"codexHome"')
-    expect(log).toContain(`${aspHome}/codex-homes/`)
-  })
-
   it('server stop shuts down only the daemon and leaves the HRC tmux server running', async () => {
     const startResult = await runCli(['server', 'start', '--daemon'], cliEnv())
     expect(startResult.exitCode).toBe(0)
@@ -298,31 +264,6 @@ describeDaemonLifecycle('server/tmux admin lifecycle', () => {
     expect(monitor.session?.hostSessionId).toBe(seeded.hostSessionId)
     expect(monitor.runtime?.runtimeId).toBe(seeded.runtimeId)
     expect(monitor.runtime?.transport).toBe('tmux')
-  })
-
-  // T-09861: restart/stop proof, refusals and the retired launchctl-kill path
-  // are covered against scratch daemons in t09861-server-lifecycle-e2e.test.ts.
-
-  it('tmux kill requires --yes and then kills the HRC tmux server explicitly', async () => {
-    const startResult = await runCli(['server', 'start', '--daemon'], cliEnv())
-    expect(startResult.exitCode).toBe(0)
-    const readyStatus = await waitForServerStatus((value) => value.running === true, cliEnv())
-    expect(readyStatus.running).toBe(true)
-
-    await ensureTmuxRuntime(testProjectScope('tmux-kill-cli'))
-
-    const unsafeResult = await runCli(['server', 'tmux', 'kill'], cliEnv())
-    expect(unsafeResult.exitCode).toBe(1)
-    expect(unsafeResult.stderr).toMatch(/--yes/i)
-
-    const killResult = await runCli(['server', 'tmux', 'kill', '--yes'], cliEnv())
-    expect(killResult.exitCode).toBe(0)
-    expect(killResult.stderr).toMatch(/tmux server killed/i)
-
-    const statusResult = await runCli(['server', 'tmux', 'status', '--json'], cliEnv())
-    expect(statusResult.exitCode).toBe(0)
-    const status = JSON.parse(statusResult.stdout.trim()) as { running: boolean }
-    expect(status.running).toBe(false)
   })
 })
 

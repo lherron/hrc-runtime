@@ -72,22 +72,6 @@ function readStore<T>(dbPath: string, read: (db: Database) => T): T {
   }
 }
 
-function rowCounts(dbPath: string, runtimeId: string, invocationId: string) {
-  return readStore(dbPath, (db) =>
-    db
-      .query<
-        { hrc_events: number; broker_events: number; outcomes: number; cursor: number },
-        [string, string, string, string]
-      >(
-        `SELECT (SELECT COUNT(*) FROM hrc_events WHERE runtime_id = ?) AS hrc_events,
-                (SELECT COUNT(*) FROM broker_invocation_events WHERE invocation_id = ?) AS broker_events,
-                (SELECT COUNT(*) FROM retained_evidence_outcomes WHERE invocation_id = ?) AS outcomes,
-                (SELECT last_projected_seq FROM broker_invocations WHERE invocation_id = ?) AS cursor`
-      )
-      .get(runtimeId, invocationId, invocationId, invocationId)
-  )
-}
-
 function latestOutcome(dbPath: string, invocationId: string) {
   return readStore(dbPath, (db) =>
     db
@@ -224,26 +208,6 @@ describe('T-08566 stage-2 green recovery behaviour', () => {
   afterEach(async () => {
     await server.stop()
     await fixture.cleanup()
-  })
-
-  test('C4: an idempotent repeat adds only one outcome row', async () => {
-    const seeded = await seedOfflineRuntime(fixture, 'full')
-    await installPagedFullReader(seeded)
-    const first = await fixture.postJson('/v1/capture/recover', {
-      runtimeId: seeded.runtimeId,
-      yes: true,
-    })
-    expect(await first.json()).toMatchObject({ outcome: 'recovered', projectedThroughSeq: 61 })
-    const before = rowCounts(fixture.dbPath, seeded.runtimeId, seeded.invocationId)
-    const second = await fixture.postJson('/v1/capture/recover', {
-      runtimeId: seeded.runtimeId,
-      yes: true,
-    })
-    expect(await second.json()).toMatchObject({ outcome: 'recovered', class: 'complete' })
-    expect(rowCounts(fixture.dbPath, seeded.runtimeId, seeded.invocationId)).toEqual({
-      ...before!,
-      outcomes: before!.outcomes + 1,
-    })
   })
 
   test('O1: a terminal runtime report reads retained evidence instead of attaching', async () => {

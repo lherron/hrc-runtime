@@ -293,7 +293,6 @@ def main():
             check(f'front-safe {method} {path[:60]}', same, direct=d, front=f)
         forwarded = [('GET', '/v1/runtimes', None), ('GET', '/v1/events/page?afterSeq=0&limit=5', None),
                      ('GET', '/v1/presentation/runtimes', None), ('POST', '/v1/sessions/resolve', '{'),
-                     ('POST', '/v1/runtimes/ensure', '{"hostSessionId":"hsid-front-forwarded"}'),
                      ('DELETE', '/v1/not-a-route?x=1', 'payload'), ('GET', '/v1/server/subscribers', None)]
         for method, path, body in forwarded:
             d = request(private, method, path, body, {'x-front-test': 'kept'})

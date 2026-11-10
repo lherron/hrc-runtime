@@ -1,4 +1,4 @@
-import type { CaptureVerificationReport, VerificationCandidate } from 'hrc-capture-verifier'
+import type { VerificationCandidate } from 'hrc-capture-verifier'
 
 export function renderCandidatesHuman(
   scopeRef: string,
@@ -24,61 +24,4 @@ export function renderCandidatesHuman(
   }
   lines.push('')
   return `${lines.join('\n')}\n`
-}
-
-export function renderReportHuman(report: CaptureVerificationReport): string {
-  const lines = [
-    `broker verify run ${report.invocationId}`,
-    '',
-    `status: ${report.status}`,
-    `driver: ${report.brokerDriver}`,
-    `runtime: ${report.runtimeId}`,
-    `ledger: ${report.ledger.eventCount} event(s), seq ${report.ledger.firstSeq ?? '-'}..${report.ledger.lastSeq ?? '-'}`,
-  ]
-  if (report.transcriptPath !== undefined) {
-    lines.push(
-      `jsonl: ${report.transcriptPath}`,
-      `provider events: ${report.transcript?.observations.length ?? 0}`
-    )
-  }
-  if (report.transcriptArtifact !== undefined) {
-    lines.push(
-      `artifact: ${report.transcriptArtifact.artifactId}`,
-      `artifact hash: ${report.transcriptArtifact.hashStatus} stored=${report.transcriptArtifact.storedHash}${report.transcriptArtifact.currentHash !== undefined ? ` current=${report.transcriptArtifact.currentHash}` : ''}`
-    )
-  }
-  lines.push(...renderAnalyticsHuman(report), '')
-  const errors = report.findings.filter((issue) => issue.severity === 'error')
-  const warnings = report.findings.filter((issue) => issue.severity === 'warning')
-  lines.push(`issues: ${errors.length} error(s), ${warnings.length} warning(s)`, '')
-
-  for (const issue of report.findings) {
-    const loc =
-      issue.line !== undefined
-        ? `line ${issue.line}`
-        : issue.brokerSeq !== undefined
-          ? `seq ${issue.brokerSeq}`
-          : undefined
-    lines.push(
-      `${issue.severity.toUpperCase()} ${issue.code}${loc !== undefined ? ` (${loc})` : ''}: ${issue.message}`
-    )
-  }
-  if (report.findings.length === 0) {
-    lines.push('No broker capture or projection integrity issues found.')
-  }
-  lines.push('')
-  return `${lines.join('\n')}\n`
-}
-
-function renderAnalyticsHuman(report: CaptureVerificationReport): string[] {
-  const analytics = report.analytics
-  const provider = analytics.providerJsonl
-  return [
-    'analytics:',
-    provider !== undefined
-      ? `  provider JSONL: lines=${provider.totalLines} parsed=${provider.parsedRecords} applicable=${provider.applicableObservations} ignored=${provider.ignoredRecords} unsupported=${provider.unsupportedRecords} unknown=${provider.unknownRecords} warnings=${provider.warningCount}`
-      : '  provider JSONL: not supplied',
-    `  broker ledger: events=${analytics.brokerLedger.eventCount} applied=${analytics.brokerLedger.statuses['applied'] ?? 0} seq=${analytics.brokerLedger.firstSeq ?? '-'}..${analytics.brokerLedger.lastSeq ?? '-'} holes=${analytics.brokerLedger.seqHoleCount} duplicates=${analytics.brokerLedger.duplicateSeqCount}`,
-    `  lifecycle: present=${analytics.lifecycleProjection.present} expected=${analytics.lifecycleProjection.expected} missing=${analytics.lifecycleProjection.missing} suppressed=${analytics.lifecycleProjection.suppressed} notApplicable=${analytics.lifecycleProjection.notApplicable} policy=${analytics.lifecycleProjection.policyId}@${analytics.lifecycleProjection.policyHash}`,
-  ]
 }

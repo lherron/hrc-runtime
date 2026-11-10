@@ -2,7 +2,6 @@ import { HrcDomainError, HrcErrorCode } from 'hrc-core'
 import type {
   HrcRuntimeSnapshot,
   HrcSessionRecord,
-  KillBrokerTmuxLeasesResponse,
   SweepRuntimeResult,
   SweepRuntimeTransport,
   SweepRuntimesResponse,
@@ -313,21 +312,6 @@ export async function runRecurringTmuxAging(this: HrcServerInstanceForHandlers):
   }
 }
 
-export async function handleKillBrokerTmuxLeases(
-  this: HrcServerInstanceForHandlers
-): Promise<Response> {
-  await sweepOrphanedRendererControlSockets(this.options.runtimeRoot, { graceMs: 0 })
-  const result = await sweepOrphanedBrokerTmuxLeases(this.db, this.options.runtimeRoot, {
-    graceMs: 0,
-    removeDeadSocketFiles: true,
-    killLiveLeaseServers: true,
-  })
-  return json({
-    ok: true,
-    ...result,
-  } satisfies KillBrokerTmuxLeasesResponse)
-}
-
 export async function handleSweepZombieRuns(
   this: HrcServerInstanceForHandlers,
   request: Request
@@ -613,7 +597,6 @@ export const sweepHandlersMethods = {
   runTmuxAgingOnce,
   startTmuxAging,
   runRecurringTmuxAging,
-  handleKillBrokerTmuxLeases,
   handleSweepZombieRuns,
   startZombieRunSweeper,
   runRecurringZombieSweep,

@@ -125,7 +125,6 @@ mod tests {
             (Method::GET, "/v1/status"),
             (Method::GET, "/v1/runtimes"),
             (Method::POST, "/v1/server/subscribers"),
-            (Method::GET, "/v1/transcript-index/status"),
             (Method::POST, "/v1/sessions"),
             (Method::POST, "/v1/turns"),
         ] {

@@ -21,11 +21,7 @@ import {
   handlePatchSessionMetadata,
 } from './session-metadata-handlers.js'
 import { handleRestartSession } from './session-restart.js'
-import {
-  handleTranscriptIndexRebuild,
-  handleTranscriptIndexStatus,
-  handleTranscriptSearch,
-} from './transcript-index-handlers.js'
+import { handleTranscriptSearch } from './transcript-index-handlers.js'
 
 export function buildExactRouteHandlers(
   server: HrcServerInstance
@@ -69,10 +65,6 @@ export function buildExactRouteHandlers(
       server.handleBrokerForensics(url),
     [exactRouteKey('POST', '/v1/transcript-search')]: (request) =>
       handleTranscriptSearch(server, request),
-    [exactRouteKey('GET', '/v1/transcript-index/status')]: () =>
-      handleTranscriptIndexStatus(server),
-    [exactRouteKey('POST', '/v1/transcript-index/rebuild')]: () =>
-      handleTranscriptIndexRebuild(server),
     [exactRouteKey('GET', '/v1/events/latest-by-session')]: (_request, url) =>
       server.handleEventsLatestBySession(url),
     [exactRouteKey('GET', '/v1/server/subscribers')]: () =>
@@ -81,8 +73,6 @@ export function buildExactRouteHandlers(
       server.handleSubscriberReceiptAck(request),
     [exactRouteKey('POST', '/v1/server/lifecycle')]: (request) =>
       server.lifecycleController.handleLocalRequest(request),
-    [exactRouteKey('POST', '/v1/runtimes/ensure')]: (request) =>
-      server.handleEnsureRuntime(request),
     [exactRouteKey('POST', '/v1/runtimes/start')]: (request) => server.handleStartRuntime(request),
     [exactRouteKey('POST', HRC_RESTART_SELF_PATH)]: (request) => handleRestartSelf(server, request),
     [exactRouteKey('POST', '/v1/command-runs/launch')]: (request) =>
@@ -108,20 +98,12 @@ export function buildExactRouteHandlers(
       server.handleBrokerInspect(request),
     [exactRouteKey('POST', '/v1/runtimes/capture/status')]: (request) =>
       server.handleBrokerCaptureStatus(request),
-    [exactRouteKey('POST', '/v1/runtimes/capture/release')]: (request) =>
-      server.handleBrokerCaptureRelease(request),
-    [exactRouteKey('POST', '/v1/capture/recover')]: (request) =>
-      server.handleCaptureRecover(request),
     [exactRouteKey('POST', '/v1/runtimes/sweep')]: (request) => server.handleSweepRuntimes(request),
     [exactRouteKey('POST', '/v1/runtimes/prune')]: (request) => server.handlePruneRuntimes(request),
-    [exactRouteKey('POST', '/v1/server/tmux/kill-broker-leases')]: () =>
-      server.handleKillBrokerTmuxLeases(),
     [exactRouteKey('POST', '/v1/runs/sweep-zombies')]: (request) =>
       server.handleSweepZombieRuns(request),
     [exactRouteKey('POST', '/v1/runs/reconcile-active')]: (request) =>
       server.handleReconcileActiveRuns(request),
-    [exactRouteKey('POST', '/v1/runs/recover-unstarted')]: (request) =>
-      server.handleRecoverUnstartedRun(request),
     [exactRouteKey('POST', '/v1/runs/prepare-attached')]: (request) =>
       server.handlePrepareAttachedRun(request),
     [exactRouteKey('POST', '/v1/runs/resume-attached')]: (request) =>
@@ -146,9 +128,6 @@ export function buildExactRouteHandlers(
     [exactRouteKey('GET', '/v1/capture')]: (_request, url) => server.handleCapture(url),
     [exactRouteKey('GET', '/v1/attach')]: (_request, url) => server.handleAttach(url),
     [exactRouteKey('POST', '/v1/surfaces/bind')]: (request) => server.handleBindSurface(request),
-    [exactRouteKey('POST', '/v1/surfaces/unbind')]: (request) =>
-      server.handleUnbindSurface(request),
-    [exactRouteKey('GET', '/v1/surfaces')]: (_request, url) => server.handleListSurfaces(url),
     [exactRouteKey('POST', '/v1/interrupt')]: (request) => server.handleInterrupt(request),
     [exactRouteKey('POST', '/v1/terminate')]: (request) => server.handleTerminate(request),
     [exactRouteKey('POST', '/v1/clear-context')]: (request) => server.handleClearContext(request),

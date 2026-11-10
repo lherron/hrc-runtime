@@ -14,8 +14,8 @@
     },
     {
       "command": "admin broker-verify",
-      "disposition": "POSTPONED",
-      "implementation": "bun"
+      "disposition": "IMPLEMENT",
+      "implementation": "native"
     },
     {
       "command": "admin broker-verify candidates",
@@ -23,14 +23,9 @@
       "implementation": "native"
     },
     {
-      "command": "admin broker-verify run",
-      "disposition": "POSTPONED",
-      "implementation": "bun"
-    },
-    {
       "command": "admin events",
-      "disposition": "POSTPONED",
-      "implementation": "bun"
+      "disposition": "IMPLEMENT",
+      "implementation": "native"
     },
     {
       "command": "admin events drain",
@@ -54,8 +49,8 @@
     },
     {
       "command": "admin runs",
-      "disposition": "POSTPONED",
-      "implementation": "bun"
+      "disposition": "IMPLEMENT",
+      "implementation": "native"
     },
     {
       "command": "admin runs reconcile-active",
@@ -63,29 +58,9 @@
       "implementation": "native"
     },
     {
-      "command": "admin runs recover-unstarted",
-      "disposition": "POSTPONED",
-      "implementation": "bun"
-    },
-    {
       "command": "admin runs sweep-zombies",
       "disposition": "IMPLEMENT",
       "implementation": "native"
-    },
-    {
-      "command": "admin runtime",
-      "disposition": "POSTPONED",
-      "implementation": "bun"
-    },
-    {
-      "command": "admin runtime ensure",
-      "disposition": "POSTPONED",
-      "implementation": "bun"
-    },
-    {
-      "command": "admin runtime prune",
-      "disposition": "POSTPONED",
-      "implementation": "bun"
     },
     {
       "command": "admin status",
@@ -94,23 +69,13 @@
     },
     {
       "command": "admin surface",
-      "disposition": "POSTPONED",
-      "implementation": "bun"
+      "disposition": "IMPLEMENT",
+      "implementation": "native"
     },
     {
       "command": "admin surface bind",
       "disposition": "IMPLEMENT",
       "implementation": "native"
-    },
-    {
-      "command": "admin surface list",
-      "disposition": "POSTPONED",
-      "implementation": "bun"
-    },
-    {
-      "command": "admin surface unbind",
-      "disposition": "POSTPONED",
-      "implementation": "bun"
     },
     {
       "command": "admin worktrees",
@@ -134,18 +99,8 @@
     },
     {
       "command": "capture",
-      "disposition": "POSTPONED",
-      "implementation": "bun"
-    },
-    {
-      "command": "capture recover",
-      "disposition": "POSTPONED",
-      "implementation": "bun"
-    },
-    {
-      "command": "capture release",
-      "disposition": "POSTPONED",
-      "implementation": "bun"
+      "disposition": "IMPLEMENT",
+      "implementation": "native"
     },
     {
       "command": "capture status",
@@ -164,21 +119,6 @@
     },
     {
       "command": "federation retire",
-      "disposition": "POSTPONED",
-      "implementation": "bun"
-    },
-    {
-      "command": "index",
-      "disposition": "POSTPONED",
-      "implementation": "bun"
-    },
-    {
-      "command": "index rebuild",
-      "disposition": "POSTPONED",
-      "implementation": "bun"
-    },
-    {
-      "command": "index status",
       "disposition": "POSTPONED",
       "implementation": "bun"
     },
@@ -263,19 +203,9 @@
       "implementation": "native"
     },
     {
-      "command": "run annotate",
-      "disposition": "POSTPONED",
-      "implementation": "bun"
-    },
-    {
-      "command": "run export",
-      "disposition": "POSTPONED",
-      "implementation": "bun"
-    },
-    {
       "command": "runtime",
-      "disposition": "POSTPONED",
-      "implementation": "bun"
+      "disposition": "IMPLEMENT",
+      "implementation": "native"
     },
     {
       "command": "runtime capture",
@@ -306,11 +236,6 @@
       "command": "runtime prune",
       "disposition": "IMPLEMENT",
       "implementation": "native"
-    },
-    {
-      "command": "runtime send",
-      "disposition": "POSTPONED",
-      "implementation": "bun"
     },
     {
       "command": "runtime status",
@@ -354,8 +279,8 @@
     },
     {
       "command": "server",
-      "disposition": "POSTPONED",
-      "implementation": "bun"
+      "disposition": "IMPLEMENT",
+      "implementation": "native"
     },
     {
       "command": "server restart",
@@ -389,13 +314,8 @@
     },
     {
       "command": "server tmux",
-      "disposition": "POSTPONED",
-      "implementation": "bun"
-    },
-    {
-      "command": "server tmux kill",
-      "disposition": "POSTPONED",
-      "implementation": "bun"
+      "disposition": "IMPLEMENT",
+      "implementation": "native"
     },
     {
       "command": "server tmux status",
@@ -499,8 +419,8 @@
     },
     {
       "command": "target",
-      "disposition": "POSTPONED",
-      "implementation": "bun"
+      "disposition": "IMPLEMENT",
+      "implementation": "native"
     },
     {
       "command": "target bindings",

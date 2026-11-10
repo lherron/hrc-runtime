@@ -32,7 +32,6 @@ import { createClient, fatal } from './shared.js'
 export { formatCaptureState, printBrokerInspect, printRuntimeInspect }
 export {
   cmdRunReconcileActive,
-  cmdRunRecoverUnstarted,
   cmdRunSweepZombies,
   cmdRuntimePrune,
   cmdRuntimeSweep,

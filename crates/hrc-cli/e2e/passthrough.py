@@ -39,7 +39,7 @@ def main():
         link = root / 'rusthrc'
         link.symlink_to(native)
         env = dict(os.environ, HRC_RUNTIME_DIR=str(root / 'run'), HRC_STATE_DIR=str(root / 'state'), NO_COLOR='1', FORCE_COLOR='0', HRC_METRICS='0')
-        cases = [['session', 'meta', 'set'], ['capture', 'release'], ['runtime', 'prune', '--wat'], ['run', 'export', 'run-missing'], ['run', 'annotate', 'run-missing', '-'], ['admin', 'metrics', 'report', '--json'], ['index', 'status', '--json']]
+        cases = [['session', 'meta', 'set'], ['session', 'meta', 'clear'], ['session', 'retitle'], ['monitor', 'search'], ['federation', 'retire'], ['admin', 'worktrees', 'prune', '--help'], ['admin', 'metrics', '--help'], ['runtime', 'prune', '--wat'], ['admin', 'metrics', 'report', '--json']]
         for argv in cases:
             observed = []
             for command in (['bun', str(args.oracle.resolve())], [str(link)]):
@@ -83,13 +83,13 @@ def main():
         (shim / 'bun').write_text('#!' + sys.executable + '\nimport os,sys,json\nprint(json.dumps(dict(pid=os.getpid(),argv=sys.argv[1:],stdin=sys.stdin.read())))\nprint("forwarded stderr",file=sys.stderr)\nsys.exit(37)\n')
         (shim / 'bun').chmod(0o755)
         env['PATH'] = str(shim)
-        child = subprocess.Popen([str(link), 'run', 'annotate', 'literal $(not shell)', '-'], env=env, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+        child = subprocess.Popen([str(link), 'session', 'meta', 'set', 'literal $(not shell)', '-'], env=env, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
         out, err = child.communicate('exact stdin\n', timeout=10)
         try:
             value = json.loads(out)
         except json.JSONDecodeError:
             value = {}
-        good = child.returncode == 37 and err == 'forwarded stderr\n' and value == dict(pid=child.pid, argv=[str(native.resolve().parents[1] / 'packages/hrc-cli/bin/hrc.js'), 'run', 'annotate', 'literal $(not shell)', '-'], stdin='exact stdin\n')
+        good = child.returncode == 37 and err == 'forwarded stderr\n' and value == dict(pid=child.pid, argv=[str(native.resolve().parents[1] / 'packages/hrc-cli/bin/hrc.js'), 'session', 'meta', 'set', 'literal $(not shell)', '-'], stdin='exact stdin\n')
         results.append(dict(case='exec identity and literal argv/stdin/stderr/exit', subject=dict(exit=child.returncode, stdout=out, stderr=err), **{'pass': good}))
         scope = json.loads((ROOT / 'crates/hrc-cli/command-scope.json').read_text())
         for command in scope['commands']:

@@ -5,10 +5,6 @@
  *   - POST /v1/surfaces/bind creates new binding + emits surface.bound
  *   - POST /v1/surfaces/bind same runtime is no-op (returns existing)
  *   - POST /v1/surfaces/bind different runtime => surface.rebound event
- *   - POST /v1/surfaces/unbind => surface.unbound event
- *   - POST /v1/surfaces/unbind on unknown surface => 404
- *   - POST /v1/surfaces/unbind on already-unbound => idempotent return
- *   - GET /v1/surfaces?runtimeId= returns active binding list
  *   - Stale fence on bind => 409 stale_context
  *   - Bindings survive daemon restart (DB persistence)
  *
@@ -18,11 +14,7 @@
  *   3. POST /v1/surfaces/bind with same runtimeId => 200 + same record (no-op)
  *   4. POST /v1/surfaces/bind with different runtimeId => 200 + surface.rebound event
  *   5. surface.rebound event includes previousRuntimeId/previousHostSessionId
- *   6. POST /v1/surfaces/unbind => 200 + binding with unboundAt set
  *   7. Events stream contains surface.unbound with runtimeId and reason
- *   8. POST /v1/surfaces/unbind on unknown => 404 unknown_surface
- *   9. POST /v1/surfaces/unbind on already-unbound => 200 idempotent
- *  10. GET /v1/surfaces?runtimeId=X => 200 + array of active bindings
  *  11. Stale hostSessionId/generation on bind => 409 stale_context
  *  12. After server stop+restart, bindings are still queryable
  */
@@ -38,7 +30,6 @@ import { openHrcDatabase } from 'hrc-store-sqlite'
 // RED GATE: These imports will fail until server surface endpoints are fully wired
 import { createHrcServer } from '../index'
 import type { HrcServer, HrcServerOptions } from '../index'
-import { TmuxManager } from '../tmux'
 import { createSocketScratch } from './fixtures/socket-scratch'
 
 let tmpDir: string
@@ -124,73 +115,6 @@ async function ensureRuntime(scopeRef: string): Promise<{
     generation: resolved.generation,
     runtimeId,
   }
-}
-
-async function ensureInteractiveRuntime(
-  scopeRef: string,
-  options: { controllerKind?: string } = {}
-): Promise<{
-  hostSessionId: string
-  generation: number
-  runtimeId: string
-}> {
-  const resolveRes = await postJson('/v1/sessions/resolve', {
-    sessionRef: `agent:${scopeRef}/lane:default`,
-    create: true,
-  })
-  const resolved = (await resolveRes.json()) as {
-    hostSessionId: string
-    generation: number
-  }
-
-  const tmux = new TmuxManager(tmuxSocketPath)
-  await tmux.initialize()
-  const pane = await tmux.ensurePane(resolved.hostSessionId, 'reuse_pty')
-  const runtimeId = `rt-test-${randomUUID()}`
-  const now = ts()
-  const db = openHrcDatabase(dbPath)
-  try {
-    db.runtimes.insert({
-      runtimeId,
-      hostSessionId: resolved.hostSessionId,
-      scopeRef: `agent:${scopeRef}`,
-      laneRef: 'default',
-      generation: resolved.generation,
-      transport: 'tmux',
-      harness: 'claude-code',
-      provider: 'anthropic',
-      status: 'ready',
-      tmuxJson: pane,
-      supportsInflightInput: false,
-      ...(options.controllerKind ? { controllerKind: options.controllerKind } : {}),
-      lastActivityAt: now,
-      createdAt: now,
-      updatedAt: now,
-    })
-  } finally {
-    db.close()
-  }
-
-  return {
-    hostSessionId: resolved.hostSessionId,
-    generation: resolved.generation,
-    runtimeId,
-  }
-}
-
-async function hasTmuxSession(hostSessionId: string): Promise<boolean> {
-  const sessionName = `hrc-${hostSessionId.slice(0, 12)}`
-  const proc = Bun.spawn(
-    ['tmux', '-S', tmuxSocketPath, 'list-panes', '-t', `=${sessionName}:main`, '-F', '#{pane_id}'],
-    {
-      stdout: 'pipe',
-      stderr: 'pipe',
-      stdin: 'ignore',
-    }
-  )
-
-  const exitCode = await proc.exited
-  return exitCode === 0
 }
 
 /**
@@ -427,217 +351,5 @@ describe('POST /v1/surfaces/bind', () => {
     expect(res.status).toBe(409)
     const err = (await res.json()) as { error: HrcHttpError }
     expect(err.error.code).toBe(HrcErrorCode.STALE_CONTEXT)
-  })
-})
-
-// ---------------------------------------------------------------------------
-// 2. POST /v1/surfaces/unbind — unbind + surface.unbound event
-// ---------------------------------------------------------------------------
-describe('POST /v1/surfaces/unbind', () => {
-  let server: HrcServer
-
-  afterEach(async () => {
-    if (server) await server.stop()
-  })
-
-  it('unbinds an active surface and emits surface.unbound', async () => {
-    server = await createHrcServer(serverOpts())
-    const { hostSessionId, generation, runtimeId } = await ensureRuntime('unbind-test')
-
-    // Bind first
-    await postJson('/v1/surfaces/bind', {
-      surfaceKind: 'operator-terminal',
-      surfaceId: 'ghost-unbind',
-      runtimeId,
-      hostSessionId,
-      generation,
-    })
-
-    // Unbind
-    const res = await postJson('/v1/surfaces/unbind', {
-      surfaceKind: 'operator-terminal',
-      surfaceId: 'ghost-unbind',
-      reason: 'tab-closed',
-    })
-
-    expect(res.status).toBe(200)
-    const binding = (await res.json()) as HrcSurfaceBindingRecord
-    expect(binding.unboundAt).toBeDefined()
-    expect(binding.reason).toBe('tab-closed')
-
-    // Check for surface.unbound event
-    const events = await fetchEvents()
-    const unboundEvent = events.find((e) => e.eventKind === 'surface.unbound')
-    expect(unboundEvent).toBeDefined()
-    const ej = unboundEvent!.payload as Record<string, unknown>
-    expect(ej['surfaceKind']).toBe('operator-terminal')
-    expect(ej['surfaceId']).toBe('ghost-unbind')
-    expect(ej['reason']).toBe('tab-closed')
-  })
-
-  it('returns 404 for unknown surface', async () => {
-    server = await createHrcServer(serverOpts())
-
-    const res = await postJson('/v1/surfaces/unbind', {
-      surfaceKind: 'operator-terminal',
-      surfaceId: 'nonexistent',
-    })
-
-    expect(res.status).toBe(404)
-    const err = (await res.json()) as { error: HrcHttpError }
-    expect(err.error.code).toBe(HrcErrorCode.UNKNOWN_SURFACE)
-  })
-
-  it('returns already-unbound binding idempotently', async () => {
-    server = await createHrcServer(serverOpts())
-    const { hostSessionId, generation, runtimeId } = await ensureRuntime('unbind-idem')
-
-    await postJson('/v1/surfaces/bind', {
-      surfaceKind: 'operator-terminal',
-      surfaceId: 'ghost-idem',
-      runtimeId,
-      hostSessionId,
-      generation,
-    })
-
-    // Unbind once
-    await postJson('/v1/surfaces/unbind', {
-      surfaceKind: 'operator-terminal',
-      surfaceId: 'ghost-idem',
-    })
-
-    // Unbind again — should return same record, not error
-    const res = await postJson('/v1/surfaces/unbind', {
-      surfaceKind: 'operator-terminal',
-      surfaceId: 'ghost-idem',
-    })
-    expect(res.status).toBe(200)
-    const binding = (await res.json()) as HrcSurfaceBindingRecord
-    expect(binding.unboundAt).toBeDefined()
-  })
-})
-
-// ---------------------------------------------------------------------------
-// 3. GET /v1/surfaces?runtimeId= — active binding list
-// ---------------------------------------------------------------------------
-describe('GET /v1/surfaces', () => {
-  let server: HrcServer
-
-  afterEach(async () => {
-    if (server) await server.stop()
-  })
-
-  it('returns active bindings for the given runtimeId', async () => {
-    server = await createHrcServer(serverOpts())
-    const { hostSessionId, generation, runtimeId } = await ensureRuntime('list-test')
-
-    // Bind two surfaces
-    await postJson('/v1/surfaces/bind', {
-      surfaceKind: 'operator-terminal',
-      surfaceId: 'list-1',
-      runtimeId,
-      hostSessionId,
-      generation,
-    })
-    await postJson('/v1/surfaces/bind', {
-      surfaceKind: 'operator-terminal',
-      surfaceId: 'list-2',
-      runtimeId,
-      hostSessionId,
-      generation,
-    })
-
-    const res = await fetchSocket(`/v1/surfaces?runtimeId=${runtimeId}`)
-    expect(res.status).toBe(200)
-    const bindings = (await res.json()) as HrcSurfaceBindingRecord[]
-    expect(bindings.length).toBe(2)
-    expect(bindings.map((b) => b.surfaceId).sort()).toEqual(['list-1', 'list-2'])
-  })
-
-  it('excludes unbound surfaces from the list', async () => {
-    server = await createHrcServer(serverOpts())
-    const { hostSessionId, generation, runtimeId } = await ensureRuntime('list-exclude-test')
-
-    await postJson('/v1/surfaces/bind', {
-      surfaceKind: 'operator-terminal',
-      surfaceId: 'still-bound',
-      runtimeId,
-      hostSessionId,
-      generation,
-    })
-    await postJson('/v1/surfaces/bind', {
-      surfaceKind: 'operator-terminal',
-      surfaceId: 'was-bound',
-      runtimeId,
-      hostSessionId,
-      generation,
-    })
-
-    await postJson('/v1/surfaces/unbind', {
-      surfaceKind: 'operator-terminal',
-      surfaceId: 'was-bound',
-    })
-
-    const res = await fetchSocket(`/v1/surfaces?runtimeId=${runtimeId}`)
-    const bindings = (await res.json()) as HrcSurfaceBindingRecord[]
-    expect(bindings.length).toBe(1)
-    expect(bindings[0].surfaceId).toBe('still-bound')
-  })
-
-  it('returns 400 when runtimeId is missing', async () => {
-    server = await createHrcServer(serverOpts())
-
-    const res = await fetchSocket('/v1/surfaces')
-    expect(res.status).toBe(400)
-  })
-})
-
-// ---------------------------------------------------------------------------
-// 4. Restart survival — bindings persist across daemon restart
-// ---------------------------------------------------------------------------
-describe('restart survival', () => {
-  it('bindings survive daemon stop and restart while tmux sessions stay alive', async () => {
-    // Start server, bind a surface. T-01760 (Wave C): the daemon-startup legacy
-    // sweep stales any non-'harness-broker' runtime, so this restart-survival
-    // invariant is asserted on a HARNESS-BROKER runtime — its live tmux lease
-    // re-associates on restart and its surface binding survives, while a legacy
-    // (unset controllerKind) runtime would be swept. The sweep keys strictly on
-    // controllerKind!=='harness-broker'.
-    let server = await createHrcServer(serverOpts())
-    const { hostSessionId, generation, runtimeId } = await ensureInteractiveRuntime(
-      'restart-test',
-      {
-        controllerKind: 'harness-broker',
-      }
-    )
-
-    await postJson('/v1/surfaces/bind', {
-      surfaceKind: 'operator-terminal',
-      surfaceId: 'restart-surf',
-      runtimeId,
-      hostSessionId,
-      generation,
-    })
-
-    expect(await hasTmuxSession(hostSessionId)).toBe(true)
-
-    // Stop the server
-    await server.stop()
-    expect(await hasTmuxSession(hostSessionId)).toBe(true)
-
-    // Restart with same DB path
-    server = await createHrcServer(serverOpts())
-    try {
-      expect(await hasTmuxSession(hostSessionId)).toBe(true)
-      // Query the binding — it should still be there
-      const res = await fetchSocket(`/v1/surfaces?runtimeId=${runtimeId}`)
-      expect(res.status).toBe(200)
-      const bindings = (await res.json()) as HrcSurfaceBindingRecord[]
-      expect(bindings.length).toBe(1)
-      expect(bindings[0].surfaceId).toBe('restart-surf')
-      expect(bindings[0].runtimeId).toBe(runtimeId)
-    } finally {
-      await server.stop()
-    }
   })
 })

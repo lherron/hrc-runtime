@@ -14,7 +14,6 @@ import {
   cmdServerStatus,
   cmdServerStop,
   cmdServerSubscribers,
-  cmdTmuxKill,
   cmdTmuxStatus,
 } from './handlers-server.js'
 import {
@@ -200,18 +199,6 @@ Exit codes:
         booleans: ['json'],
       })
       await cmdTmuxStatus(args)
-    })
-
-  serverTmux
-    .command('kill')
-    .description('kill the HRC tmux server and broker-tmux leases, claimed orphans included')
-    .option('--yes', 'confirm destructive operation')
-    .action(async (_opts, cmd: Command) => {
-      const args = toLegacyArgv([], cmd.opts(), {
-        strings: [],
-        booleans: ['yes'],
-      })
-      await cmdTmuxKill(args)
     })
 
   // -- session group (commander, Phase 6 T2) ---------------------------------

@@ -260,39 +260,6 @@ describe('RED (GAP 1): broker-tmux orphan-session sweep on restart', () => {
     }
   })
 
-  it('operator reap RPC stales and reaps a dead lease socket claimed by a non-terminal runtime', async () => {
-    const server = await createHrcServer(fixture.serverOpts())
-    servers.push(server)
-
-    const driver = 'cc'
-    const runtimeId = 'claimDeadB'
-    const socketPath = join(btmuxDir(), `${driver}-${runtimeId}.sock`)
-    await mkdir(btmuxDir(), { recursive: true })
-    await writeFile(socketPath, '')
-    seedClaimingRuntime(driver, runtimeId, socketPath)
-
-    const response = await fixture.postJson('/v1/server/tmux/kill-broker-leases', {})
-    expect(response.status).toBe(200)
-    const body = (await response.json()) as {
-      skippedClaimed: number
-      removedDeadSocketFiles: number
-      reapedClaimedOrphans: number
-      staledClaimedRuntimes: number
-    }
-
-    expect(existsSync(socketPath)).toBe(false)
-    expect(body.skippedClaimed).toBe(0)
-    expect(body.removedDeadSocketFiles).toBe(1)
-    expect(body.reapedClaimedOrphans).toBe(1)
-    expect(body.staledClaimedRuntimes).toBe(1)
-    const db = openHrcDatabase(fixture.dbPath)
-    try {
-      expect(db.runtimes.getByRuntimeId(runtimeId)?.status).toBe('stale')
-    } finally {
-      db.close()
-    }
-  })
-
   it('does NOT remove a fresh dead lease socket file within grace', async () => {
     const socketPath = join(btmuxDir(), 'cx-deadC.sock')
     await mkdir(btmuxDir(), { recursive: true })
@@ -304,35 +271,5 @@ describe('RED (GAP 1): broker-tmux orphan-session sweep on restart', () => {
     servers.push(server)
 
     expect(existsSync(socketPath)).toBe(true)
-  })
-
-  it('operator reap RPC kills unclaimed lease servers and preserves claimed leases', async () => {
-    const unclaimed = await createLeaseSession('cc', 'opA')
-    const claimed = await createLeaseSession('cx', 'opB')
-    seedClaimingRuntime('cx', 'opB', claimed.socketPath)
-
-    process.env[GRACE_ENV] = '600000'
-
-    const server = await createHrcServer(fixture.serverOpts())
-    servers.push(server)
-
-    expect(await sessionAlive(unclaimed.socketPath, unclaimed.sessionName)).toBe(true)
-    expect(await sessionAlive(claimed.socketPath, claimed.sessionName)).toBe(true)
-
-    const response = await fixture.postJson('/v1/server/tmux/kill-broker-leases', {})
-    expect(response.status).toBe(200)
-    const body = (await response.json()) as {
-      ok: true
-      killedLiveLeaseServers: number
-      removedDeadSocketFiles: number
-      skippedClaimed: number
-    }
-
-    expect(body.ok).toBe(true)
-    expect(body.killedLiveLeaseServers).toBe(1)
-    expect(body.removedDeadSocketFiles).toBe(0)
-    expect(body.skippedClaimed).toBe(1)
-    expect(await sessionAlive(unclaimed.socketPath, unclaimed.sessionName)).toBe(false)
-    expect(await sessionAlive(claimed.socketPath, claimed.sessionName)).toBe(true)
   })
 })

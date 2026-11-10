@@ -37,10 +37,6 @@ import { createHrcServer } from '../index'
 import type { HrcServer } from '../index'
 
 import { installFakeCodex } from './fixtures/fake-harness-driver'
-import {
-  seedSessionContinuation,
-  seedTerminatedTmuxRuntime,
-} from './fixtures/sdk-dispatch-database.fixture'
 import { createSocketScratch } from './fixtures/socket-scratch'
 
 let tmpDir: string
@@ -452,39 +448,6 @@ describe('runtime lifecycle start/attach', () => {
       inputDispatched: inputDispatched.promise,
     }
   }
-
-  it('interactive ensure fails closed when no broker-admissible route exists', async () => {
-    const hsid = await resolveSession('interactive-dispatch-no-stale-session-continuation')
-    seedTerminatedTmuxRuntime(dbPath, {
-      hostSessionId: hsid,
-      scopeRef: 'agent:interactive-dispatch-no-stale-session-continuation',
-      runtimeId: 'rt-prior-terminated-no-continuation',
-    })
-    seedSessionContinuation(dbPath, hsid, 'stale-session-continuation')
-
-    const ensureRes = await postJson('/v1/runtimes/ensure', {
-      hostSessionId: hsid,
-      intent: interactiveCliIntent('openai'),
-    })
-    expect(ensureRes.status).toBe(503)
-    const body = (await ensureRes.json()) as { error?: { code?: string; message?: string } }
-    expect(body.error?.code).toBe('runtime_unavailable')
-    expect(body.error?.message).toContain('aspd-independent execution closure')
-  })
-
-  it('interactive ensure does not mint legacy tmux runtimes with runtime continuation present', async () => {
-    const hsid = await resolveSession('interactive-dispatch-runtime-continuation')
-    seedSessionContinuation(dbPath, hsid, 'stale-session-continuation')
-
-    const ensureRes = await postJson('/v1/runtimes/ensure', {
-      hostSessionId: hsid,
-      intent: interactiveCliIntent('openai'),
-    })
-    expect(ensureRes.status).toBe(503)
-    const body = (await ensureRes.json()) as { error?: { code?: string; message?: string } }
-    expect(body.error?.code).toBe('runtime_unavailable')
-    expect(body.error?.message).toContain('aspd-independent execution closure')
-  })
 
   it('headless codex dispatch fails closed instead of using legacy exec', async () => {
     const fakeCodex = await installFakeCodex(tmpDir, 'fake-codex-headless-session-continuation')

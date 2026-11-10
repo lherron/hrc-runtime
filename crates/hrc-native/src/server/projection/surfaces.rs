@@ -7,24 +7,6 @@ use axum::{
 };
 use serde_json::{Value, json};
 use std::{env, os::unix::fs::PermissionsExt, path::PathBuf};
-pub fn list(
-    server: &Server,
-    query: &std::collections::HashMap<String, String>,
-) -> Result<Response, ApiError> {
-    let id = query
-        .get("runtimeId")
-        .map(|s| hrc_common::js::trim(s))
-        .filter(|s| !s.is_empty())
-        .ok_or_else(|| ApiError::bad("runtimeId is required", Some(json!({}))))?;
-    let db = server.store.lock().unwrap();
-    let runtime = db.runtime(id)?;
-    let rows = if runtime.as_ref().is_none_or(is_unavailable) {
-        Vec::new()
-    } else {
-        db.surfaces_for_runtime(id)?
-    };
-    Ok(Json(rows).into_response())
-}
 fn text<'a>(body: &'a Value, key: &str) -> Result<&'a str, ApiError> {
     body[key]
         .as_str()
@@ -289,37 +271,4 @@ pub fn bind(server: &Server, body: Value) -> Result<Response, ApiError> {
             .bind_surface(&parsed, &runtime)?,
     )
     .into_response())
-}
-
-/// Idempotent unbind preserves the first disposition and emits one durable fact.
-pub fn unbind(server: &Server, body: Value) -> Result<Response, ApiError> {
-    object(&body)?;
-    let kind = text(&body, "surfaceKind")?;
-    let id = text(&body, "surfaceId")?;
-    // readOptionalStringField trims and omits blank reasons.
-    let reason = match body.get("reason") {
-        None => None,
-        Some(Value::String(s)) => (!s.trim().is_empty()).then(|| s.trim()),
-        _ => {
-            return Err(ApiError::bad(
-                "reason must be a string",
-                Some(json!({"field":"reason"})),
-            ));
-        }
-    };
-    let result = server
-        .store
-        .lock()
-        .unwrap()
-        .unbind_surface(kind, id, reason)?;
-    let binding = result.ok_or_else(|| {
-        ApiError::domain(
-            StatusCode::NOT_FOUND,
-            "unknown_surface",
-            format!("unknown surface binding \"{kind}:{id}\""),
-            Some(json!({"surfaceKind":kind,"surfaceId":id})),
-        )
-    })?;
-    server.ledger_committed();
-    Ok(Json(binding).into_response())
 }

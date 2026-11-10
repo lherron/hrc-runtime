@@ -11,7 +11,7 @@
  * in the frozen start request that reached `invocation.start`, and never at the
  * post-boot executor.
  */
-import { afterEach, beforeEach, describe, expect, it, spyOn } from 'bun:test'
+import { afterEach, beforeEach, describe, expect, it } from 'bun:test'
 import { mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -488,27 +488,6 @@ describe('T-08560 bare interactive birth doors (G-route)', () => {
     expect(ledger.commands[0]).toContain(join(releaseA.releaseRoot, 'harness-broker'))
   })
 
-  it('POST /v1/runtimes/ensure does not register a local start singleflight or select a driver', async () => {
-    const s = await session()
-    const registrations: string[] = []
-    const map = internal().runtimeStartOperations
-    const set = map.set.bind(map)
-    map.set = (key: string, value: Promise<HrcRuntimeSnapshot>) => {
-      registrations.push(key)
-      return set(key, value)
-    }
-    const response = await fixture.postJson('/v1/runtimes/ensure', {
-      hostSessionId: s.hostSessionId,
-      intent: interactiveIntent(),
-    })
-    map.set = set
-    expect(response.status).toBe(503)
-    expect(registrations).toEqual([])
-    const [op] = operations(s.hostSessionId)
-    expect(op?.record.route).toBe('producer-selected-execution')
-    expect(aspd.compileCalls).toBe(1)
-  })
-
   it('rotation relaunch births the successor session through aspd', async () => {
     const s = await seedInteractive()
     const rotated = await internal().rotateSessionContext(s, { relaunch: true, reason: 't8560' })
@@ -727,32 +706,6 @@ describe('T-08560 joins, backstop and durable IPC on the aspd route', () => {
     expect(ledger.startCalls).toHaveLength(1)
     expect(initialInputText(ledger.startCalls[0]?.request)).toBe('T8560-FIRST')
     expect(delivered.map((d) => d.prompt)).toEqual(['T8560-SECOND'])
-  })
-
-  it('a participant-registered scope refuses at the chokepoint before any aspd compile', async () => {
-    const s = await seedInteractive()
-    const registrations = internal().db.participantRegistrations
-    const spy = spyOn(registrations, 'getRegistrationByScopeRef').mockImplementation(
-      (scopeRef: string) =>
-        (scopeRef === s.scopeRef ? { registrationId: 'reg-t8560' } : null) as never
-    )
-    try {
-      await expect(
-        internal().startInteractiveTmuxBrokerRuntime(s, interactiveIntent(), 'run-backstop', {
-          flagEnvName: 'HRC_CODEX_CLI_TMUX_BROKER_ENABLED',
-          allowedBrokerDriver: 'codex-app-server',
-          coldBirthPrompt: MARK,
-        })
-      ).rejects.toThrow('participant address')
-      const ensured = await fixture.postJson('/v1/runtimes/ensure', {
-        hostSessionId: s.hostSessionId,
-        intent: interactiveIntent(),
-      })
-      expect(ensured.status).toBe(503)
-    } finally {
-      spy.mockRestore()
-    }
-    expect(aspd.compileCalls).toBe(0)
   })
 
   it('ordinary v2 births do not take the retired durable-interactive IPC gate', async () => {

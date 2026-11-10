@@ -1,18 +1,17 @@
 """Transcript index parity: identical wire values/key order and index effects.
 
 Positive controls run on both owners so a Bun baseline that skipped the
-follower, the repairs or the rebuild cannot qualify a matching native run.
+follower or the repairs cannot qualify a matching native run.
 """
 import json
 from pathlib import Path
 
-CASES = ('status', 'discovery', 'discovery-limit', 'discovery-candidates', 'within-runtime',
+CASES = ('discovery', 'discovery-limit', 'discovery-candidates', 'within-runtime',
          'within-invocation', 'phrase', 'filters', 'blank-filters', 'resume-sentinel', 'late-prose',
          'inversion', 'truncated', 'no-match', 'missing-query', 'query-not-string', 'blank-query',
          'unmatched-quote', 'empty-phrase', 'adjacent-phrase', 'inner-quote', 'limit-zero',
          'limit-fraction', 'limit-string', 'candidates-zero', 'filter-not-string', 'body-array',
-         'body-absent', 'status-post', 'rebuild', 'status-after-rebuild', 'sentinel-after-rebuild',
-         'discovery-after-rebuild')
+         'body-absent')
 ERRORS = ('missing-query', 'query-not-string', 'blank-query', 'unmatched-quote', 'empty-phrase',
           'adjacent-phrase', 'inner-quote', 'limit-zero', 'limit-fraction', 'limit-string',
           'candidates-zero', 'filter-not-string', 'body-array', 'body-absent')
@@ -31,8 +30,8 @@ def controls(rows):
     by = {r['case']: r for r in rows}
     body = lambda name: by[name]['response']['body'] if isinstance(by[name]['response']['body'], dict) else {}
     hits = lambda name: body(name).get('hits', [])
-    status = body('status')
-    first = by['status']
+    status = body('discovery').get('index', {})
+    first = by['discovery']
     discovery = hits('discovery')
     per_runtime = {}
     for hit in discovery:
@@ -50,9 +49,6 @@ def controls(rows):
         'truncated': len(truncated) == 1 and truncated[0]['truncated'] is True,
         'filters': len(hits('filters')) > 0 and all(h.get('agent') == 'tabularasa' for h in hits('filters')),
         'errors': all(by[name]['response']['status'] == 400 for name in ERRORS),
-        'rebuild-accepted': body('rebuild').get('accepted') is True,
-        'rebuild-regenerated': len(hits('sentinel-after-rebuild')) == 0 and by['status-after-rebuild']['cursor'] == first['ceiling']
-                               and body('status-after-rebuild').get('turnsIndexed') == status.get('turnsIndexed'),
     }
 
 

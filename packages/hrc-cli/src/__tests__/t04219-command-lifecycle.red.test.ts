@@ -300,7 +300,7 @@ async function seedSessionAndRuntime(
   const hostSessionId = resolved.hostSessionId
 
   // Seed the runtime row directly. These selector/list contracts only need the
-  // row to exist — `hrc admin runtime ensure` against a live broker-enabled server
+  // row to exist. A broker-enabled runtime birth
   // would START a real interactive harness (per-runtime tmux server +
   // harness-broker + launch runner + claude TUI) per seed, which nothing in
   // this suite tears down.
