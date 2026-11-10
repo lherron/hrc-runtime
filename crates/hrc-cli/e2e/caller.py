@@ -91,8 +91,7 @@ def main():
                      HRC_WRKQD_TOKEN_FILE='', WRKQD_TOKEN_FILE='', WRKQD_TOKEN='',
                      HRC_PEER_CONFIG_FILE=str(root / 'absent.json'), HRC_ACP_WEBHOOK_URL='', ASP_PROJECT_ROOT_OVERRIDE=str(root / PROJECT),
                      HRC_EVENT_INGEST_SOCKET=str(root / 'run/ingest.sock'), HRC_METRICS='1')
-        subprocess.run(['bun', '-e', 'import {openHrcDatabase} from "./packages/hrc-store-sqlite/src/database.ts";'
-                        'openHrcDatabase(process.argv[1]).close()', str(r.db_path)],
+        subprocess.run([str(binary), 'store', 'migrate', str(r.db_path)],
                        cwd=REPO, env=r.env, check=True, capture_output=True)
         # Grounded in aspc.resolveRuntimeDeclaration's real absent-agent reply
         # (T-12542/aspc-2.json). HRC treats that advisory placement refusal as

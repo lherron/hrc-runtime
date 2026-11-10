@@ -35,7 +35,7 @@ def main():
     p.add_argument('--artifacts', type=Path, required=True)
     args = p.parse_args()
     args.artifacts.mkdir(parents=True, exist_ok=True)
-    node = Node(args.scratch_root / 'n', args.installed_release, args.aspd_socket, args.artifacts, 'stop')
+    node = Node(args.scratch_root / 'n', args.installed_release, args.aspd_socket, args.artifacts, 'stop', args.binary)
     token = secrets.token_hex(24)
     results = {}
     try:

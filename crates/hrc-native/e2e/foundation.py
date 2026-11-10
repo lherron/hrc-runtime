@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
-"""Workflow checks against a Bun-created scratch store, never production state.
+"""Workflow checks against a native-created scratch store, never production state.
 
 Failure modes: missing/extra migration must not change the main DB; an existing owner must
-not lose its socket; native session creation must survive a Bun store read;
+not lose its socket; native session creation must survive a read-only store open;
 unknown routes must retain Bun's 404; shutdown must leave durable rows intact.
 """
 import argparse
@@ -11,6 +11,7 @@ import json
 import os
 from pathlib import Path
 import socket
+import shutil
 import sqlite3
 import subprocess
 import sys
@@ -25,8 +26,11 @@ def daemon_env(env, fixture_bins=()):
     Explicit fixture bins stay first for tests that inject a ledger fault.
     The caller's mapping and the prae recipe/CLI PATH remain unchanged.
     """
-    bins = [*(str(path) for path in fixture_bins),
-            str(Path.home() / '.local/bin'), str(Path.home() / '.bun/bin')]
+    bins = [*(str(path) for path in fixture_bins), str(Path.home() / '.local/bin')]
+    # Preserve a Bun-absent caller for native qualification. Retained Bun
+    # comparisons still receive their normal owner-client path.
+    if shutil.which('bun', path=env.get('PATH', os.defpath)):
+        bins.append(str(Path.home() / '.bun/bin'))
     return {**env, 'PATH': os.pathsep.join([*bins, env.get('PATH', os.defpath)])}
 
 
@@ -89,11 +93,9 @@ def main():
         schema_db = args.schema_db
         if schema_db is None:
             schema_db = root / 'source.sqlite'
-            # Bun owns even scratch schema creation. No daemon is started here.
+            # Create the scratch schema with the native migrator, without starting a daemon.
             repo = Path(__file__).resolve().parents[3]
-            subprocess.run(['bun', '-e',
-                'import {openHrcDatabase} from "./packages/hrc-store-sqlite/src/database.ts"; openHrcDatabase(process.argv[1]).close()',
-                str(schema_db)], cwd=repo, check=True, capture_output=True)
+            subprocess.run([str(binary), 'store', 'migrate', str(schema_db)], cwd=repo, check=True, capture_output=True)
         source = sqlite3.connect(f'file:{schema_db.resolve()}?mode=ro', uri=True)
         for variant in ('extra', 'missing', 'current'):
             subject = root / variant

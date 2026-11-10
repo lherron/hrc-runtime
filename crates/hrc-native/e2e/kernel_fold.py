@@ -108,8 +108,7 @@ def substrate(root, artifacts, binary):
         (root / d).mkdir(parents=True)
     clean = {k: v for k, v in os.environ.items() if not k.startswith(LEAK)}
     subprocess.run(['git', 'init', '-q'], cwd=root / PROJECT, check=True, env=clean)
-    subprocess.run(['bun', '-e', 'import {openHrcDatabase} from "./packages/hrc-store-sqlite/src/database.ts";'
-                    'openHrcDatabase(process.argv[1]).close()', str(r.db_path)],
+    subprocess.run([str(binary), 'store', 'migrate', str(r.db_path)],
                    cwd=REPO, check=True, capture_output=True, env=clean)
     config = root / 'federation.json'
     # seat.summon is an implicit exact-scope start: it needs an enforced gate.

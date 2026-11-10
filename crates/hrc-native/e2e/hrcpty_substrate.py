@@ -708,8 +708,7 @@ def main():
         (root / d).mkdir()
     subprocess.run(['git', 'init', '-q'], cwd=root / PROJECT, check=True,
                    env={k: v for k, v in os.environ.items() if not k.startswith(LEAK)})
-    subprocess.run(['bun', '-e', 'import {openHrcDatabase} from "./packages/hrc-store-sqlite/src/database.ts";'
-                    'openHrcDatabase(process.argv[1]).close()', str(r.db_path)],
+    subprocess.run([str(binary), 'store', 'migrate', str(r.db_path)],
                    cwd=REPO, check=True, capture_output=True, env={k: v for k, v in os.environ.items() if not k.startswith(LEAK)})
     config = root / 'federation.json'
     def free_port():

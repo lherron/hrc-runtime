@@ -1,7 +1,12 @@
 # Native workflow tests
 
-`just cargo-check` runs `foundation.py` here, plus the CLI differential chain
-and the five kernel workflows. It runs no other native scripts.
+`just cargo-check` runs `kernel_fold.py`, `runtime_created.py`,
+`kernel_fd_cost.py`, `foundation.py`, `store_migration.py`,
+`lifecycle_publication.py` and `command_runs.py`, plus the CLI differential.
+Rust tests create stores through the library migrator; Python drivers use
+`rusthrc store migrate`. These native drivers need no Bun for store creation.
+The CLI differential still needs its Bun oracle, as do the manual comparisons
+and drivers exercising Bun repositories, SDKs or a Bun backend.
 
 `just e2e-native-full` runs eight standing product workflows, by hand only. It
 is not on the post-push runner, because it needs a Bun baseline and live model
@@ -12,7 +17,7 @@ It builds the native/kernel binaries and runs each script even if an earlier
 one fails. A failure is a failed check; no expected-red list masks it.
 
 Run from a clean terminal (for example `ghostmux new --cwd <checkout>`).
-Required: Bun (migration owner and parity baseline), the current installed Bun
+Required: Bun (parity baseline), the current installed Bun
 release, live aspd, tmux, wrkq and harness credentials. The runner copies the
 Bun release outside the atomic tree before any daemon starts. All writes use
 fresh disposable runtime/state/project roots. It never installs or restarts a

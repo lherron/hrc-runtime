@@ -44,6 +44,10 @@ def main():
                    HRC_PEER_CONFIG_FILE=str(root/'absent-federation.json'))
         processes = []
         def spawn(owner, run, state, label):
+            if not (state / 'state.sqlite').exists():
+                state.mkdir(parents=True, exist_ok=True)
+                subprocess.run([str(a.binary.resolve()), 'store', 'migrate', str(state / 'state.sqlite')],
+                               env=env, check=True, capture_output=True)
             child_env = dict(env, HRC_RUNTIME_DIR=str(run), HRC_STATE_DIR=str(state),
                              HRC_EVENT_INGEST_SOCKET=str(run/'ingest.sock'))
             if owner == 'bun':
@@ -80,9 +84,6 @@ def main():
         try:
             for owner in ('bun','native'):
                 run=root/(owner+'-crash')/'run';state=run.parent/'state'
-                if owner=='native':
-                    bootstrap=spawn('bun',run,state,'native-crash-schema')
-                    assert ready(bootstrap,run);stop(bootstrap)
                 first=spawn(owner,run,state,owner+'-first')
                 assert ready(first,run),'initial owner did not boot'
                 first.kill();first.wait(timeout=5)
@@ -109,10 +110,7 @@ def main():
                 }
                 for index,(name,(raw,expected)) in enumerate(variants.items()):
                     run=root/(owner[0]+'-'+str(index))/'run';run.mkdir(parents=True)
-                    # Bootstrap each schema under its own Bun owner first.
                     state=run.parent/'state'
-                    bootstrap=spawn('bun',run,state,owner+'-'+name+'-schema')
-                    assert ready(bootstrap,run);stop(bootstrap)
                     path=run/'server.lock';path.write_text(raw)
                     sentinel='unchanged sentinel\n';(run/'server.pid').write_text(sentinel)
                     held=None;claim=None
@@ -147,8 +145,6 @@ def main():
                                         started=started,pass_=passed))
                 # Two real successors compete for the same stale lock.
                 run=root/(owner+'-race')/'run';run.mkdir(parents=True);state=run.parent/'state'
-                bootstrap=spawn('bun',run,state,owner+'-race-schema')
-                assert ready(bootstrap,run);stop(bootstrap)
                 (run/'server.lock').write_text(lock(dead.pid))
                 rivals=[spawn(owner,run,state,owner+'-race-'+str(i)) for i in range(2)]
                 time.sleep(.5)

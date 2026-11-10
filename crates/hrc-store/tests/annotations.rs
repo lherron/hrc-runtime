@@ -109,8 +109,8 @@ fn body_of_size(size: usize) -> Value {
     body
 }
 
-// Failure 1: a Bun store without the 0128 row is refused by name, and a fresh
-// Bun-migrated store is admitted.
+// Failure 1: a store without the 0128 row is refused by name, and a fresh
+// Rust-migrated store is admitted.
 #[test]
 fn schema_admits_fresh_store_and_refuses_one_missing_0128() {
     let (scratch, db) = fixture::ScratchStore::new().unwrap();

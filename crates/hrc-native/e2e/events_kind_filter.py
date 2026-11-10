@@ -135,7 +135,7 @@ def main():
         p.add_argument('--' + k, type=Path, required=True)
     a = p.parse_args()
     a.artifacts.mkdir(parents=True, exist_ok=True)
-    node = Node(a.scratch_root, a.installed_release, a.aspd_socket, a.artifacts, 'kind')
+    node = Node(a.scratch_root, a.installed_release, a.aspd_socket, a.artifacts, 'kind', a.binary)
     report = {'failureModes': [l for l in __doc__.split('\n') if l[:1] == 'F' or l.startswith('   ')]}
     try:
         node.bun_store('seed', seed_js(0, 120), node.db)

@@ -60,7 +60,8 @@ def free_port(host=TAILNET):
 
 
 class Node:
-    def __init__(self, root, installed, aspd, artifacts, name):
+    def __init__(self, root, installed, aspd, artifacts, name, binary):
+        self.binary = Path(binary).resolve()
         self.root = Path(root).absolute()
         self.root.mkdir(parents=True)
         self.name = name
@@ -89,7 +90,7 @@ class Node:
         self.steps, self.procs, self.logs = [], [], []
         self.run('git-init', ['git', 'init', '-q'])
         self.run('wrkq-migrate', ['wrkqadm', 'migrate'])
-        self.bun_store('schema', 'openHrcDatabase(a[0]).close()', self.db)
+        self.run('schema', [self.binary, 'store', 'migrate', self.db])
 
     def run(self, name, argv, stdin=None):
         argv = [self.release / 'packages/hrc-cli/bin/hrc.js' if str(argv[0]) == 'hrc' else argv[0], *argv[1:]]
@@ -254,8 +255,8 @@ def main():
         raise SystemExit('scratch root must be fresh')
     args.artifacts.mkdir(parents=True, exist_ok=True)
     real = Path.home() / 'praesidium/var/state/hrc/federation.json'
-    a = Node(args.scratch_root / 'a', args.installed_release, args.aspd_socket, args.artifacts, 'a')
-    b = Node(args.scratch_root / 'b', args.installed_release, args.aspd_socket, args.artifacts, 'b')
+    a = Node(args.scratch_root / 'a', args.installed_release, args.aspd_socket, args.artifacts, 'a', args.binary)
+    b = Node(args.scratch_root / 'b', args.installed_release, args.aspd_socket, args.artifacts, 'b', args.binary)
     ports = {k: free_port() for k in ('b_registry', 'b_peer', 'a_peer', 'dead_registry', 'dead_peer')}
     # One bearer per node pair: the registry listener authenticates the
     # receiver's own `token` for that peer, the peer listener its accepted set.

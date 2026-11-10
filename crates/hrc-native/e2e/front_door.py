@@ -138,6 +138,11 @@ def main():
     def spawn(name, argv):
         log = (art / f'{name}.log').open('w')
         logs.append(log)
+        schema_path = Path(env['HRC_STATE_DIR']) / 'state.sqlite'
+        if not schema_path.exists():
+            schema_path.parent.mkdir(parents=True, exist_ok=True)
+            subprocess.run([str(args.rusthrc.resolve()), 'store', 'migrate', str(schema_path)],
+                           env=env, check=True, capture_output=True)
         proc = subprocess.Popen([str(a) for a in argv], env=daemon_env(env), cwd=project, stdout=log, stderr=log)
         owners[name] = proc
         return proc

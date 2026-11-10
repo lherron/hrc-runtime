@@ -92,6 +92,11 @@ def main(isolation):
             preflight_unmanaged(oracle, child_env, args.artifacts/'release-preflight.json')
             log = (args.artifacts/(('target' if root==target else 'origin')+'-'+owner+'.log')).open('a')
             command = [bun, str(oracle)] if owner=='bun' else [str(args.binary.resolve())]
+            schema_path = Path(child_env['HRC_STATE_DIR']) / 'state.sqlite'
+            if not schema_path.exists():
+                schema_path.parent.mkdir(parents=True, exist_ok=True)
+                subprocess.run([str(args.binary.resolve()), 'store', 'migrate', str(schema_path)],
+                               env=child_env, check=True, capture_output=True)
             proc = subprocess.Popen(command+['server','serve'], cwd=root, env=daemon_env(child_env),
                                     stdin=subprocess.DEVNULL, stdout=log, stderr=log)
             processes.append(proc)

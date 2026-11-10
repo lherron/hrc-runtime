@@ -118,8 +118,8 @@ def main():
         raise SystemExit('scratch root must be fresh')
     args.artifacts.mkdir(parents=True, exist_ok=True)
     real = Path.home() / 'praesidium/var/state/hrc/federation.json'
-    a = Node(args.scratch_root / 'a', args.installed_release, args.aspd_socket, args.artifacts, 'a')
-    s = Node(args.scratch_root / 's', args.installed_release, args.aspd_socket, args.artifacts, 's')
+    a = Node(args.scratch_root / 'a', args.installed_release, args.aspd_socket, args.artifacts, 'a', args.binary)
+    s = Node(args.scratch_root / 's', args.installed_release, args.aspd_socket, args.artifacts, 's', args.binary)
     ports = {k: free_port() for k in ('s_peer', 'a_peer')}
     token = secrets.token_hex(24)
     s_endpoint, a_endpoint = f'http://{TAILNET}:{ports["s_peer"]}', f'http://{TAILNET}:{ports["a_peer"]}'

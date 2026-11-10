@@ -146,8 +146,7 @@ def main(case_factory=None, observe=None, paginate=True, before_subject=None, be
         command('wrkq-migrate', ['wrkqadm', 'migrate'])
         command('wrkq-project', [str(Path.home() / ".local/bin/wrkq"), 'mkdir', '/n1-t11818', '--kind', 'project', '--json'])
         command('wrkq-root', [str(Path.home() / ".local/bin/wrkq"), 'set', '/n1-t11818', '--root', project, '--json'])
-        command('schema-create', ['bun', '-e',
-            f'import {{openHrcDatabase}} from {json.dumps(str(release / "packages/hrc-store-sqlite/src/database.ts"))};openHrcDatabase(process.argv[1]).close()', db_path])
+        command('schema-create', [args.binary.resolve(), 'store', 'migrate', db_path])
         bun = up('bun', 0)
         start = command('bun-ordinary-start', ['hrc', 'start', scope, '--project-id', 'n1-t11818',
                         '--project-root', project, '--cwd', project, '-p',

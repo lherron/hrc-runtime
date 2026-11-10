@@ -35,6 +35,11 @@ def down():
 def up(kind,label=None):
  global proc,log
  log=(a.artifacts/((label or kind)+'.log')).open('w');argv=[str(a.binary.resolve()),'server'] if kind=='native' else ['bun',str(release/'packages/hrc-cli/src/cli.ts'),'server','serve']
+ schema_path = Path(env['HRC_STATE_DIR']) / 'state.sqlite'
+ if not schema_path.exists():
+     schema_path.parent.mkdir(parents=True, exist_ok=True)
+     subprocess.run([str(a.binary.resolve()), 'store', 'migrate', str(schema_path)],
+                    env=env, check=True, capture_output=True)
  proc=subprocess.Popen(argv,env=daemon_env(env),cwd=root,stdout=log,stderr=log)
  for _ in range(300):
   assert proc.poll() is None,kind+' exited'

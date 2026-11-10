@@ -35,7 +35,7 @@ def main():
     a.binary = a.binary.resolve()
     assert not a.scratch_root.exists()
     a.artifacts.mkdir(parents=True, exist_ok=True)
-    node = Node(a.scratch_root, a.installed_release, a.aspd_socket, a.artifacts, 'succession')
+    node = Node(a.scratch_root, a.installed_release, a.aspd_socket, a.artifacts, 'succession', a.binary)
     node.write_config({'nodeId': 'max3', 'peers': {}})
     base = {'registrationMode':'direct', 'requestedSessionRef':'agent:foundry:project:n4-t11872:task:primary',
             'hostIncarnationId':'foundry-predecessor', 'laneRef':'main',

@@ -47,9 +47,7 @@ def main():
         project.mkdir()
         state = root / 'state'
         state.mkdir()
-        subprocess.run(['bun', '-e',
-            'import {openHrcDatabase} from "./packages/hrc-store-sqlite/src/database.ts";openHrcDatabase(process.argv[1]).close()',
-            str(state / 'state.sqlite')], cwd=repo, capture_output=True, check=True)
+        subprocess.run([str(args.binary.resolve()), 'store', 'migrate', str(state / 'state.sqlite')], cwd=repo, capture_output=True, check=True)
         env = dict(os.environ, HRC_RUNTIME_DIR=str(root / 'run'), HRC_STATE_DIR=str(state),
                    HRC_ASPD_SOCKET=str(args.aspd_socket.resolve()), ASP_AGENTS_ROOT=str(root / 'agents'),
                    ASP_PROJECT_ROOT_OVERRIDE=str(project))

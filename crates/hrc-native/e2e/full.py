@@ -3,7 +3,7 @@
 
 Run every selected workflow even after a failure. Each keeps its own artifacts;
 summary.json records argv and exit status, and the recipe fails if any failed.
-Bun is required: it owns scratch migrations and supplies the parity baseline.
+Bun supplies the retained parity baseline; Rust creates scratch stores.
 """
 import argparse
 import json

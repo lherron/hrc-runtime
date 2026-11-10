@@ -39,8 +39,9 @@ predicate: >
   peer annotation GET refuses true with 403 local_only_forbidden before
   internal local dispatch; ordinary forwarded reads remain unchanged.
   This exception grants no write or home-binding authority and changes no
-  other route. Bun supplies schema migration, SDK and CLI, not annotation
-  handlers. The Bun migration and Rust MIGRATIONS entry land together.
+  other route. Rust owns schema migration and admission through its legacy
+  and forward registries (T-12840/T-13009). Bun supplies the retained SDK and CLI, not
+  annotation handlers; TypeScript migration ids are frozen at 0131.
   Historical projection contract (T-12183, superseded below on 2026-11-02):
   the embedded kernel projected hrc.generation keyed by hostSessionId and
   hrc.annotation keyed by sessionRef, hostSessionId, ns, kind and id alongside

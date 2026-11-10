@@ -27,7 +27,7 @@ def main():
     ports = [free_port(host) for _ in range(3)]
     token = secrets.token_hex(24)
     a, b = [Node(args.scratch_root / name, args.installed_release,
-                 args.aspd_socket, args.artifacts, name) for name in ('a', 'b')]
+                 args.aspd_socket, args.artifacts, name, args.binary) for name in ('a', 'b')]
     binary = args.binary.resolve()
     if binary.is_relative_to(args.installed_release.resolve()):
         binary = a.release / binary.relative_to(args.installed_release.resolve())

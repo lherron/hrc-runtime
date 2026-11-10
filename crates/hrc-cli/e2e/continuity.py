@@ -58,6 +58,11 @@ def main():
             log = (args.artifacts / (owner + '.log')).open('w')
             if owner == 'bun':preflight_unmanaged(daemon_oracle, child_env, args.artifacts / 'bun-release-preflight.json')
             command = [bun, str(daemon_oracle), 'server', 'serve'] if owner == 'bun' else [str(args.binary.resolve()), 'server', 'serve']
+            schema_path = Path(child_env['HRC_STATE_DIR']) / 'state.sqlite'
+            if not schema_path.exists():
+                schema_path.parent.mkdir(parents=True, exist_ok=True)
+                subprocess.run([str(args.binary.resolve()), 'store', 'migrate', str(schema_path)],
+                               env=child_env, check=True, capture_output=True)
             proc = subprocess.Popen(command, env=daemon_env(child_env), cwd=root, stdout=log, stderr=log)
             log.close()
             for _ in range(200):

@@ -17,7 +17,7 @@ def prepare(release,dbpath,scope,host,env):
     global node
     suite.prepare(release,dbpath,scope,host,env)
     artifacts=Path(sys.argv[sys.argv.index('--artifacts')+1])
-    node=Node(dbpath.parent.parent/'r',release,dbpath.parent/'unused-aspd.sock',artifacts,'registry')
+    node=Node(dbpath.parent.parent/'r',release,dbpath.parent/'unused-aspd.sock',artifacts,'registry', Path(sys.argv[sys.argv.index('--binary')+1]))
     token=secrets.token_hex(24)
     peer_port,registry_port=free_port(),free_port()
     node.write_config({'nodeId':'operator-registry','peers':{'operator-test':{'endpoint':f'http://{TAILNET}:{peer_port}','token':token}},'registry':{'bind':f'http://{TAILNET}:{registry_port}'},'gate':{'mode':'off','registryHost':'operator-registry'}})

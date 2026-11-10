@@ -45,9 +45,7 @@ def drive(binary, out, atomic=False, owner_roots=False):
             runtime = home / 'praesidium/var/run/hrc'
             state = home / 'praesidium/var/state/hrc'
         state.mkdir(parents=True)
-        subprocess.run(['bun', '-e',
-                        'import {openHrcDatabase} from "./packages/hrc-store-sqlite/src/database.ts";'
-                        'openHrcDatabase(process.argv[1]).close()', str(state / 'state.sqlite')],
+        subprocess.run([str(binary), 'store', 'migrate', str(state / 'state.sqlite')],
                        cwd=REPO, check=True, capture_output=True)
         if atomic:
             release = root / 'atomic/hrc-runtime-releases/release-t12677'

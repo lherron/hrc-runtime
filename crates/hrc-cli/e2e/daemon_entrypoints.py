@@ -30,7 +30,7 @@ def main():
         env = {k: v for k, v in os.environ.items() if not k.startswith(('ASP_', 'HRC_', 'WRKQ'))}
         env.update(HRC_STATE_DIR=str(root / 'source-state'), HRC_RUNTIME_DIR=str(root / 'source-run'))
         source = root / 'source.sqlite'
-        subprocess.run(['bun', '-e', 'import {openHrcDatabase} from "./packages/hrc-store-sqlite/src/database.ts"; openHrcDatabase(process.argv[1]).close()', str(source)], cwd=ROOT, env=env, check=True, capture_output=True)
+        subprocess.run([str(args.binary.resolve()), 'store', 'migrate', str(source)], cwd=ROOT, env=env, check=True, capture_output=True)
         for argv in (['server'], ['server', 'serve'], ['--agent', 'server', 'serve'], ['server', 'serve', '--human']):
             case = root / '-'.join(argv)
             state = case / 'state'

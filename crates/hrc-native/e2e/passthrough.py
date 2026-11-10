@@ -50,6 +50,11 @@ def main():
         log=(args.artifacts/(kind+'.log')).open('a');logs.append(log)
         argv=[str(args.binary.resolve()),'server'] if kind=='native' else ['bun',str(release/'packages/hrc-cli/src/cli.ts'),'server','serve']
         if proxy:argv.extend(['--bun-socket',str(proxy)])
+        schema_path = Path(env['HRC_STATE_DIR']) / 'state.sqlite'
+        if not schema_path.exists():
+            schema_path.parent.mkdir(parents=True, exist_ok=True)
+            subprocess.run([str(args.binary.resolve()), 'store', 'migrate', str(schema_path)],
+                           env=env, check=True, capture_output=True)
         proc=subprocess.Popen(argv,env=daemon_env(env),cwd=root,stdout=log,stderr=log);owners.append(proc)
         socket=root/kind/'run/hrc.sock'
         for _ in range(300):
@@ -68,7 +73,7 @@ def main():
         assert created['status']==200,created
         host=json.loads(created['body'])['hostSessionId']
         db=root/'native/state/state.sqlite';db.parent.mkdir(parents=True)
-        subprocess.run(['bun','-e',f'import {{openHrcDatabase}} from {json.dumps(str(release/"packages/hrc-store-sqlite/src/database.ts"))};openHrcDatabase(process.argv[1]).close()',str(db)],check=True)
+        subprocess.run([str(args.binary.resolve()), 'store', 'migrate', str(db)],check=True)
         native=up('native')
         disabled=request(native,'GET','/v1/targets')
         assert disabled['status']==404 and disabled['body']=='Not Found', disabled

@@ -118,9 +118,7 @@ class Scratch:
         self.command('wrkq-migrate', ['wrkqadm', 'migrate'])
         self.command('wrkq-project', [str(Path.home() / ".local/bin/wrkq"), 'mkdir', '/' + self.project_id, '--kind', 'project', '--json'])
         self.command('wrkq-root', [str(Path.home() / ".local/bin/wrkq"), 'set', '/' + self.project_id, '--root', self.project, '--json'])
-        self.command('schema-create', ['bun', '-e',
-                     'import {openHrcDatabase} from ' + json.dumps(str(self.release / 'packages/hrc-store-sqlite/src/database.ts'))
-                     + ';openHrcDatabase(process.argv[1]).close()', self.db_path])
+        self.command('schema-create', [self.binary, 'store', 'migrate', self.db_path])
 
     def up(self, kind, tag):
         log = (self.artifacts / f'{kind}-{tag}.log').open('w')

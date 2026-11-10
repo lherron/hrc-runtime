@@ -46,6 +46,11 @@ def main():
         log=(args.artifacts/(kind+'.log')).open('w');logs.append(log)
         argv=[str(args.binary.resolve()),'server'] if kind.startswith('native') else ['bun',str(release/'packages/hrc-cli/src/cli.ts'),'server','serve']
         if proxy:argv.extend(['--bun-socket',str(proxy)])
+        schema_path = Path(env['HRC_STATE_DIR']) / 'state.sqlite'
+        if not schema_path.exists():
+            schema_path.parent.mkdir(parents=True, exist_ok=True)
+            subprocess.run([str(args.binary.resolve()), 'store', 'migrate', str(schema_path)],
+                           env=env, check=True, capture_output=True)
         proc=subprocess.Popen(argv,env=daemon_env(env),cwd=root,stdout=log,stderr=log);owners.append(proc)
         socket=runtime/'hrc.sock'
         for _ in range(300):
@@ -64,7 +69,7 @@ def main():
         response=http.getresponse();assert response.status==200
         host=json.loads(response.read())['hostSessionId'];http.close()
         state=root/'native/state';state.mkdir(parents=True)
-        subprocess.run(['bun','-e',f'import {{openHrcDatabase}} from {json.dumps(str(release/"packages/hrc-store-sqlite/src/database.ts"))};openHrcDatabase(process.argv[1]).close()',str(state/'state.sqlite')],check=True)
+        subprocess.run([str(args.binary.resolve()), 'store', 'migrate', str(state/'state.sqlite')],check=True)
         native=up('native',bun)
         # Run a whole systematic tail, avoiding the UTC-minute boundary.
         if time.time()%60>50:time.sleep(60-time.time()%60+.1)

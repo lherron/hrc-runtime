@@ -56,11 +56,11 @@ class Server(socketserver.ThreadingMixIn, socketserver.UnixStreamServer):
 
 
 class Fixture:
-    def __init__(self, root):
+    def __init__(self, root, binary):
         self.root, self.queues, self.requests = root, [], []
         self.lock = threading.Lock()
         self.db = root / 'state.sqlite'
-        subprocess.run(['bun', '-e', 'import {openHrcDatabase} from "./packages/hrc-store-sqlite/src/database.ts"; openHrcDatabase(process.argv[1]).close()', str(self.db)], cwd=ROOT, check=True, capture_output=True)
+        subprocess.run([str(binary.resolve()), 'store', 'migrate', str(self.db)], cwd=ROOT, check=True, capture_output=True)
         self.conn = sqlite3.connect(self.db)
         self.incarnation = self.conn.execute('SELECT ledger_incarnation_id FROM hrc_event_ledger_metadata').fetchone()[0]
         now = '2026-11-04T19:00:00.000Z'
@@ -148,7 +148,7 @@ def lag_snapshot(binary, root, artifacts, interval=1000):
     """Check the reported resolution on an actual debug owner, isolated from live."""
     (root/'state').mkdir(parents=True)
     (root/'run').mkdir()
-    subprocess.run(['bun', '-e', 'import {openHrcDatabase} from "./packages/hrc-store-sqlite/src/database.ts"; openHrcDatabase(process.argv[1]).close()', str(root/'state/state.sqlite')], cwd=ROOT, check=True, capture_output=True)
+    subprocess.run([str(binary.resolve()), 'store', 'migrate', str(root/'state/state.sqlite')], cwd=ROOT, check=True, capture_output=True)
     prefixes = ('HRC_', 'HARNESS', 'AGENT', 'ASP_', 'CLAUDE', 'CODEX', 'WRKQ', 'TMUX', 'XPC_SERVICE_NAME')
     env = {k:v for k,v in os.environ.items() if not k.startswith(prefixes)}
     env.update(HRC_RUNTIME_DIR=str(root/'run'), HRC_STATE_DIR=str(root/'state'), HRC_WRKQ_DB=str(root/'private-wrkq.sqlite'), HRC_LAUNCHD_LABEL='fixture.idle')
@@ -195,7 +195,7 @@ def main():
         for name in cases:
             root = scratch/name
             root.mkdir()
-            fixture = Fixture(root)
+            fixture = Fixture(root, args.binary)
             if name == 'response':
                 for _ in range(5):
                     fixture.event('turn.message', notify=False)

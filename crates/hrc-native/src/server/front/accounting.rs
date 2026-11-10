@@ -18,9 +18,17 @@ use std::{
     task::{Context, Poll},
     time::{Duration, Instant, SystemTime},
 };
-include!(concat!(env!("OUT_DIR"), "/accounting_routes.rs"));
+include!("accounting_routes.rs");
 const FILE_PREFIX: &str = "rusthrc-server-";
+// Native policy values, preserved from the request-metrics ownership cutover.
 const MAX_FILE: u64 = 128 * 1024 * 1024;
+const RETENTION: Duration = Duration::from_secs(14 * 24 * 60 * 60);
+const MAX_BUFFERED_LINES: usize = 20_000;
+const MAX_BUFFERED_BYTES: usize = 8 * 1024 * 1024;
+const FLUSH_INTERVAL: Duration = Duration::from_millis(1000);
+const SAMPLE_EVERY: u64 = 20;
+const UNSAMPLED_PER_MINUTE: u32 = 10;
+const ALWAYS_KEEP_MS: f64 = 25.0;
 #[derive(Default)]
 struct Sample {
     minute: i64,
@@ -54,7 +62,7 @@ impl Accounting {
         }
         let line = format!("{record}\n");
         let mut q = self.queue.lock().unwrap();
-        if q.lines.len() >= 20_000 || q.bytes + line.len() > 8 * 1024 * 1024 {
+        if q.lines.len() >= MAX_BUFFERED_LINES || q.bytes + line.len() > MAX_BUFFERED_BYTES {
             q.dropped += 1;
             return;
         }
@@ -67,7 +75,7 @@ impl Accounting {
         }
     }
     fn weight(&self, entry: &Entry, status: u16, ms: f64, now: i64) -> u32 {
-        if !entry.request_id.is_empty() || status >= 400 || ms >= 25.0 {
+        if !entry.request_id.is_empty() || status >= 400 || ms >= ALWAYS_KEEP_MS {
             return 1;
         }
         let mut samples = self.samples.lock().unwrap();
@@ -82,12 +90,16 @@ impl Accounting {
             s.minute = minute;
             s.head = 0;
         }
-        if s.head < 10 {
+        if s.head < UNSAMPLED_PER_MINUTE {
             s.head += 1;
             return 1;
         }
         s.eligible += 1;
-        if s.eligible.is_multiple_of(20) { 20 } else { 0 }
+        if s.eligible.is_multiple_of(SAMPLE_EVERY) {
+            SAMPLE_EVERY as u32
+        } else {
+            0
+        }
     }
     /// The lines waiting for the writer, for tests that read what was metered.
     #[cfg(test)]
@@ -124,7 +136,7 @@ impl Writer {
             // Coalesce only after work arrives. Idle queues have no timer.
             tokio::select! {
                 _ = &mut stopped => break,
-                _ = tokio::time::sleep(Duration::from_secs(1)) => {}
+                _ = tokio::time::sleep(FLUSH_INTERVAL) => {}
             }
             self = tokio::task::spawn_blocking(move || {
                 self.flush();
@@ -190,7 +202,7 @@ impl Writer {
                             .and_then(|m| m.modified())
                             .ok()
                             .and_then(|m| SystemTime::now().duration_since(m).ok())
-                            .is_some_and(|age| age > Duration::from_secs(14 * 24 * 3600))
+                            .is_some_and(|age| age > RETENTION)
                     {
                         let _ = fs::remove_file(file.path());
                     }

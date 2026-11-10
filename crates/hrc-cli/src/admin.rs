@@ -106,16 +106,13 @@ fn assert_schema_current(path: &std::path::Path) -> Result<()> {
         // Bun's open creates the empty file first; the refusal is the same.
         (
             None,
-            hrc_store::MIGRATIONS
-                .iter()
-                .map(|m| (*m).to_owned())
-                .collect(),
+            hrc_store::migration_ids().map(str::to_owned).collect(),
         )
     };
     if pending.is_empty() {
         return Ok(());
     }
-    let release = hrc_store::MIGRATIONS.last().copied().unwrap_or("none");
+    let release = hrc_store::migration_ids().next_back().unwrap_or("none");
     Err(Error::failure(match store_version {
         None => format!(
             "store has no HRC schema (0 of {} migrations applied); it is not an HRC store, or no daemon has ever opened it. Refusing to create one from a non-owning open",

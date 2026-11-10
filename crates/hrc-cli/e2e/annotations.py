@@ -3,7 +3,7 @@
 seat-annotations r1.1 §4, §5, §7 claims 1 and 2).
 
 `rusthrc session annotation list|put|delete|act` against ONE isolated scratch
-rusthrc: a Bun-created schema, a fake aspd and the stub broker release
+rusthrc: a Rust-created schema, a fake aspd and the stub broker release
 (hrcpty_substrate.py's substrate), so an hrcpty seat births and runs a real
 turn without a model. Never the live daemon, ledger or kernel.
 
@@ -109,8 +109,7 @@ def main():
         (root / d).mkdir()
     clean = {k: v for k, v in os.environ.items() if not k.startswith(LEAK)}
     subprocess.run(['git', 'init', '-q'], cwd=root / PROJECT, check=True, env=clean)
-    subprocess.run(['bun', '-e', 'import {openHrcDatabase} from "./packages/hrc-store-sqlite/src/database.ts";'
-                    'openHrcDatabase(process.argv[1]).close()', str(r.db_path)],
+    subprocess.run([str(binary), 'store', 'migrate', str(r.db_path)],
                    cwd=REPO, check=True, capture_output=True, env=clean)
     aspd_socket = root / 'aspd.sock'
     aspd = FakeAspd(aspd_socket, release, a.artifacts / 'fake-aspd.ndjson')

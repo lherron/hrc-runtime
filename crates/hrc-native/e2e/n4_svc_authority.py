@@ -236,7 +236,7 @@ def main():
     nodes = []
     try:
         for owner in args.owners.split(','):
-            node = Node(args.scratch_root / owner, args.installed_release, args.aspd_socket, args.artifacts, owner)
+            node = Node(args.scratch_root / owner, args.installed_release, args.aspd_socket, args.artifacts, owner, args.binary)
             nodes.append(node)
             seed(node, args.history_db, args.registry_db)
             ports = {k: free_port() for k in ('peer', 'registry', 'max3', 'hrcdev')}

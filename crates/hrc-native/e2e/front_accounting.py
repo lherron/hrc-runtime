@@ -30,6 +30,11 @@ def up(kind,proxy=None):
  log=(a.artifacts/(kind+'.log')).open('w');logs.append(log)
  argv=[str(a.binary.resolve()),'server'] if kind=='native' else ['bun',str(release/'packages/hrc-cli/src/cli.ts'),'server','serve']
  if proxy:argv.extend(['--bun-socket',str(proxy)])
+ schema_path = Path(env['HRC_STATE_DIR']) / 'state.sqlite'
+ if not schema_path.exists():
+     schema_path.parent.mkdir(parents=True, exist_ok=True)
+     subprocess.run([str(a.binary.resolve()), 'store', 'migrate', str(schema_path)],
+                    env=env, check=True, capture_output=True)
  owner=subprocess.Popen(argv,env=daemon_env(env),cwd=root,stdout=log,stderr=log);owners.append(owner);endpoint=runtime/'hrc.sock'
  for _ in range(300):
   assert owner.poll() is None,kind+' exited'
@@ -70,8 +75,7 @@ try:
  subprocess.run(['wrkqadm','migrate'],env=base,capture_output=True,check=True)
  backend=up('bun')
  state=root/'native/state';state.mkdir(parents=True)
- module=release/'packages/hrc-store-sqlite/src/database.ts'
- subprocess.run(['bun','-e','import {openHrcDatabase} from '+json.dumps(str(module))+';openHrcDatabase(process.argv[1]).close()',str(state/'state.sqlite')],env=dict(base,HRC_STATE_DIR=str(state)),capture_output=True,check=True)
+ subprocess.run([str(a.binary.resolve()), 'store', 'migrate', str(state/'state.sqlite')],env=dict(base,HRC_STATE_DIR=str(state)),capture_output=True,check=True)
  tap=root/'tap.sock';listener=socket.socket(socket.AF_UNIX,socket.SOCK_STREAM);listener.bind(str(tap));listener.listen();listener.settimeout(.2)
  acceptor=threading.Thread(target=accept,args=(backend,),daemon=True);acceptor.start()
  front=up('native',tap)

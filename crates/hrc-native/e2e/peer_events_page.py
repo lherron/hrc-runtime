@@ -53,7 +53,7 @@ def main():
         parser.add_argument('--' + key, type=Path, required=True)
     args = parser.parse_args()
     args.artifacts.mkdir(parents=True, exist_ok=True)
-    node = Node(args.scratch_root, args.installed_release, args.aspd_socket, args.artifacts, 'events')
+    node = Node(args.scratch_root, args.installed_release, args.aspd_socket, args.artifacts, 'events', args.binary)
     token = secrets.token_hex(24)
     address = local_tailnet_address()
     endpoint = f'http://{address}:{free_port(address)}'

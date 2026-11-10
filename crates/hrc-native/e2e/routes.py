@@ -59,6 +59,10 @@ def main(prepare=None, case_factory=None, observe=None, suite="n1-routes", settl
         return {'status':response.status,'body':value,'headers':headers}
     def up(kind,label):
         nonlocal proc,log
+        if not dbpath.exists():
+            dbpath.parent.mkdir(parents=True, exist_ok=True)
+            subprocess.run([str(args.binary.resolve()), 'store', 'migrate', str(dbpath)],
+                           env=env, check=True, capture_output=True)
         log = (args.artifacts/f'{label}.log').open('w')
         argv = [str(args.binary.resolve()),'server'] if kind=='native' else ['bun',str(release/'packages/hrc-cli/src/cli.ts'),'server','serve']
         proc = subprocess.Popen(argv,env=daemon_env(env),cwd=root,stdout=log,stderr=log)

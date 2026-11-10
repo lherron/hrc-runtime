@@ -10,9 +10,8 @@
 # run there natively on Linux, and the rusthrc/hrc-pty debug binaries are
 # cross-built there and pulled back for the e2e legs, which run here. rbuild
 # runs each step here when build1 is down and prints where it ran; without
-# rbuild, scripts/rbuild-local.sh runs them here the same way. On build1 the
-# test leg first runs `bun install` (store tests migrate scratch stores through
-# Bun; build1 reaches mini's registry over Tailscale). hrc-pty is excluded from
+# rbuild, scripts/rbuild-local.sh runs them here the same way. On build1
+# stores are created by the Rust migrator. hrc-pty is excluded from
 # that Linux leg because its vendored libghostty-vt.a is arm64-only: its tests
 # are cross-built on build1 instead (`--mac`), pulled back and run here. The
 # standalone e2e recipes cross-build their binaries on build1 the same way.
@@ -200,7 +199,7 @@ cargo-check:
     python3 scripts/check-rust-crate-edges.py
     {{rbuild}} cargo fmt --manifest-path crates/Cargo.toml --all -- --check
     {{rbuild}} --mac cargo clippy --manifest-path crates/Cargo.toml --workspace --all-targets --locked -- -D warnings
-    {{rbuild}} sh -c '[ "$(uname)" = Darwin ] || bun install --frozen-lockfile --silent; exec cargo test --manifest-path crates/Cargo.toml --workspace --locked --exclude hrc-pty'
+    {{rbuild}} cargo test --manifest-path crates/Cargo.toml --workspace --locked --exclude hrc-pty
     {{rbuild}} --mac cargo test --manifest-path crates/Cargo.toml --locked -p hrc-pty
     {{rbuild}} --mac --pull {{mac_debug}}/rusthrc --pull {{mac_debug}}/hrc-pty cargo build --manifest-path crates/Cargo.toml --locked -p hrc-native -p hrc-pty
     python3 crates/hrc-cli/e2e/differential.py --binary {{rusthrc_mac_debug}} --artifacts "${HRC_CLI_E2E_ARTIFACTS:-/tmp/hrc-cli-e2e-$(date +%s)-$$}"

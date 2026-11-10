@@ -119,9 +119,7 @@ def main():
         for key in ('HRC_WRKQ_DB', 'WRKQ_DB', 'HRC_WRKQD_TOKEN_FILE', 'WRKQD_TOKEN_FILE', 'WRKQD_TOKEN'):
             b.env[key] = a.env[key]
         b.command('project-init', ['git', 'init', '-q'])
-        b.command('schema-create', ['bun', '-e', 'import {openHrcDatabase} from ' + json.dumps(
-            str(b.release / 'packages/hrc-store-sqlite/src/database.ts')) + ';openHrcDatabase(process.argv[1]).close()',
-            b.db_path])
+        b.command('schema-create', [b.binary, 'store', 'migrate', b.db_path])
         a.start('mail')
         b.start('mail')
         rt = {'a': a.birth('mail-a'), 'b': b.birth('mail-b')}

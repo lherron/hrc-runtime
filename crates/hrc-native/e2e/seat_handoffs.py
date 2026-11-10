@@ -35,7 +35,7 @@ def main():
         ('HRC_', 'HARNESS', 'ASP_', 'WRKQ', 'CODEX', 'CLAUDE', 'AGENT', 'TMUX'))}
     env.update(HRC_RUNTIME_DIR=str(root / 'run'), HRC_STATE_DIR=str(root / 'state'),
                HRC_ACP_WEBHOOK_URL='', HRC_WRKQ_DB=str(root / 'private-wrkq.sqlite'))
-    subprocess.run(['bun', '-e', "import {openHrcDatabase} from './packages/hrc-store-sqlite/src/database.ts';openHrcDatabase(process.argv[1]).close()", str(root / 'state/state.sqlite')], cwd=repo, env=env, check=True)
+    subprocess.run([str(binary), 'store', 'migrate', str(root / 'state/state.sqlite')], cwd=repo, env=env, check=True)
     scope = 'agent:handoff:project:hrc-runtime:task:T-12248'
     session = scope + '/lane:main'
     steps = []

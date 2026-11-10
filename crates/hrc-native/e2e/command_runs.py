@@ -30,7 +30,7 @@ def main():
     state.mkdir(); run.mkdir()
     repo = Path(__file__).resolve().parents[3]
     dbpath = state / 'state.sqlite'
-    subprocess.run(['bun', '-e', 'import {openHrcDatabase} from "./packages/hrc-store-sqlite/src/database.ts"; openHrcDatabase(process.argv[1]).close()', str(dbpath)], cwd=repo, check=True, capture_output=True)
+    subprocess.run([str(a.binary.resolve()), 'store', 'migrate', str(dbpath)], cwd=repo, check=True, capture_output=True)
     script = root / 'job.py'
     script.write_text('import json,os,sys\nfrom pathlib import Path\np=Path("calls")\np.write_text(p.read_text()+"x" if p.exists() else "x")\nPath("observed.json").write_text(json.dumps({"stdin":json.load(sys.stdin),"binding":os.environ["WRKF_TASK_ID"],"env":os.environ["CONFIG_ENV"],"unset":os.environ.get("REMOVE_ME"),"path":os.environ["PATH"]}))\nsys.stderr.write("z"*100000)\n')
     config = root / 'targets.json'

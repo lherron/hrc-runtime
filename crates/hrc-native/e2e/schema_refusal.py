@@ -35,7 +35,7 @@ def main():
     env=dict(os.environ,HRC_STATE_DIR=str(root/'bootstrap-state'),HRC_RUNTIME_DIR=str(root/'bootstrap-run'))
     for key in ('HRC_METRICS','HRC_BUN_PASSTHROUGH_SOCKET'):env.pop(key,None)
     source=root/'source.sqlite'
-    subprocess.run(['bun','-e','import {openHrcDatabase} from "./packages/hrc-store-sqlite/src/database.ts"; openHrcDatabase(process.argv[1]).close()',str(source)],cwd=repo,env=env,check=True,capture_output=True)
+    subprocess.run([str(args.binary.resolve()), 'store', 'migrate', str(source)],cwd=repo,env=env,check=True,capture_output=True)
     observations=[]
     for mode in ('checkpointed','live-wal','checkpointed-owner'):
         for mismatch in ('extra','missing'):

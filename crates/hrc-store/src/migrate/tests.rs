@@ -147,20 +147,6 @@ fn baseline_with_history(dir: &Dir) -> PathBuf {
     db
 }
 
-#[test]
-fn legacy_list_is_the_build_admission_set() {
-    assert_eq!(LEGACY_IDS.len(), 109);
-    assert_eq!(LEGACY_IDS.last(), Some(&BASELINE_HEAD));
-    let legacy = LEGACY_IDS.iter().copied().collect::<BTreeSet<_>>();
-    assert_eq!(legacy.len(), 109, "duplicate legacy id");
-    let build = crate::MIGRATIONS.iter().copied().collect::<BTreeSet<_>>();
-    assert_eq!(
-        legacy, build,
-        "admission and the baseline name the same set"
-    );
-    assert!(FORWARD.is_empty(), "no forward migration ships before A4");
-}
-
 /// Failure modes 2 and 3: creation pragmas, and a minted incarnation per store.
 #[test]
 fn fresh_stores_have_creation_pragmas_and_distinct_incarnations() {

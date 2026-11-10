@@ -90,7 +90,13 @@ pub fn with_session_identity(session: Value, identity: Value) -> Value {
     ordered.into()
 }
 
-include!(concat!(env!("OUT_DIR"), "/migrations.rs"));
+/// Admission and diagnostics share the migrator's ordered Rust registry.
+pub fn migration_ids() -> impl DoubleEndedIterator<Item = &'static str> {
+    migrate::LEGACY_IDS
+        .iter()
+        .copied()
+        .chain(migrate::FORWARD.iter().map(|m| m.id))
+}
 
 pub struct Store {
     // Must drop before sqlite: unregistration needs the live connection.
@@ -103,10 +109,7 @@ pub fn timestamp() -> String {
 }
 
 fn assert_schema(db: &Connection) -> Result<()> {
-    let expected = MIGRATIONS
-        .iter()
-        .map(|s| (*s).to_owned())
-        .collect::<BTreeSet<_>>();
+    let expected = migration_ids().map(str::to_owned).collect::<BTreeSet<_>>();
     assert_migration_set(db, &expected)
 }
 

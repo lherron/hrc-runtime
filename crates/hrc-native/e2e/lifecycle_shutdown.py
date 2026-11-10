@@ -3,13 +3,12 @@
 
 Failure modes: no request reached the handler; stop waits indefinitely; timed-out
 teardown claims server.stopped; the clean control also loses its terminal row;
-cleanup clears another owner's files. Uses copied Bun only to create the schema.
+cleanup clears another owner's files. Rust creates the scratch schema.
 """
 import argparse
 import json
 import os
 from pathlib import Path
-import shutil
 import secrets
 import socket
 import sqlite3
@@ -20,7 +19,6 @@ import time
 
 ROOT = Path(__file__).resolve().parents[3]
 sys.path.insert(0, str(ROOT / 'crates/hrc-cli/e2e'))
-from copied_release import copied_bun_cli, preflight_unmanaged
 from foundation import daemon_env, UnixHTTP
 from metrics_isolation import isolated_suite
 
@@ -28,8 +26,9 @@ from metrics_isolation import isolated_suite
 @isolated_suite
 def main():
     parser = argparse.ArgumentParser()
-    for name in ('binary', 'oracle', 'environment', 'artifacts'):
+    for name in ('binary', 'environment', 'artifacts'):
         parser.add_argument('--' + name, type=Path, required=True)
+    parser.add_argument('--oracle', type=Path, help='Retained compatibility argument; unused')
     parser.add_argument('--held-only', action='store_true')
     parser.add_argument('--listener', choices=('unix', 'peer', 'registry'), default='unix')
     parser.add_argument('--federation-host', default='100.73.60.81')
@@ -60,7 +59,6 @@ def main():
                 gate=dict(mode='off', registryHost='n5stop'))))
             config.chmod(0o600)
             env['HRC_PEER_CONFIG_FILE'] = str(config)
-        oracle = copied_bun_cli(args.oracle, root/'release')
         proc = None
         held = None
 
@@ -96,10 +94,9 @@ def main():
                 return list(db.execute("SELECT hrc_seq,event_kind,payload_json FROM hrc_events WHERE scope_ref='server:hrc' ORDER BY hrc_seq"))
 
         try:
-            preflight_unmanaged(oracle, env, args.artifacts/'release-preflight.json')
-            boot([shutil.which('bun'), str(oracle)], 'schema-bootstrap')
-            proc.terminate()
-            proc.wait(timeout=15)
+            (root / 'state').mkdir()
+            subprocess.run([str(args.binary.resolve()), 'store', 'migrate', str(root / 'state/state.sqlite')],
+                           env=env, check=True, capture_output=True)
             for partial in ([True] if args.held_only else [False, True]):
                 name = ('held-request' if partial else 'clean')+'-'+args.listener
                 boot([str(args.binary.resolve())], name)

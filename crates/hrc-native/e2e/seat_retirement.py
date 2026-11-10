@@ -2,7 +2,7 @@
 """Task-seat retirement and hrcpty aging, end to end on one isolated rusthrc (T-12236).
 
 Reuses the hrcpty_substrate.py substrate: a fresh short root with a
-Bun-created schema, a FAKE aspd and the stub broker release. Claude seats
+Rust-created schema, a FAKE aspd and the stub broker release. Claude seats
 (`claude-code-hrcpty`) run the stub's line-echo child; codex seats
 (`codex-app-server` on hrcpty) use the real T-12163 aspc response. The
 daemon's wrkq client reads a scratch wrkq DB (HRC_WRKQ_DB) holding the seat
@@ -97,8 +97,7 @@ def main():
     for d in ('run', 'state', PROJECT):
         (root / d).mkdir()
     subprocess.run(['git', 'init', '-q'], cwd=root / PROJECT, check=True, env=clean)
-    subprocess.run(['bun', '-e', 'import {openHrcDatabase} from "./packages/hrc-store-sqlite/src/database.ts";'
-                    'openHrcDatabase(process.argv[1]).close()', str(r.db_path)],
+    subprocess.run([str(binary), 'store', 'migrate', str(r.db_path)],
                    cwd=REPO, check=True, capture_output=True, env=clean)
     config = root / 'federation.json'
     config.write_text(json.dumps({'nodeId': 'h12236', 'peers': {}, 'gate': {'mode': 'off'}}))

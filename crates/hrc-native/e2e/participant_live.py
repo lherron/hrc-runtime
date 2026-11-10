@@ -36,7 +36,7 @@ def rows():
   return {t:[dict(r) for r in db.execute('SELECT * FROM '+t)] for t in ['participant_registrations','participant_registration_attempts','participant_host_bindings','sessions','continuities','runtimes','runtime_operations','broker_invocations','hrc_events']}
 for kind in ['bun','native']:
  side=root/kind;side.mkdir();base.update(HRC_RUNTIME_DIR=str(side/'run'),HRC_STATE_DIR=str(side/'state'),HRC_EVENT_INGEST_SOCKET=str(side/'run/ingest.sock'))
- Path(base['HRC_RUNTIME_DIR']).joinpath('btmux').mkdir(parents=True);Path(base['HRC_STATE_DIR']).mkdir();subprocess.run(['bun','-e','import {openHrcDatabase} from '+json.dumps(str(release/'packages/hrc-store-sqlite/src/database.ts'))+';openHrcDatabase(process.argv[1]).close()',str(side/'state/state.sqlite')],env=base,capture_output=True,check=True)
+ Path(base['HRC_RUNTIME_DIR']).joinpath('btmux').mkdir(parents=True);Path(base['HRC_STATE_DIR']).mkdir();subprocess.run([str(a.binary.resolve()), 'store', 'migrate', str(side/'state/state.sqlite')],env=base,capture_output=True,check=True)
  log=(a.artifacts/(kind+'.log')).open('w');brokerlog=(a.artifacts/(kind+'-broker.log')).open('w');broker=None;owner=None;record={}
  try:
   argv=[str(a.binary.resolve()),'server'] if kind=='native' else ['bun',str(release/'packages/hrc-cli/src/cli.ts'),'server','serve']

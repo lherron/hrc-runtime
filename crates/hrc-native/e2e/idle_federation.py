@@ -62,7 +62,7 @@ def main():
     host = local_tailnet_address()
     authority = ThreadingHTTPServer((host, 0), Authority)
     threading.Thread(target=authority.serve_forever, daemon=True).start()
-    node = Node(a.scratch_root, a.installed_release, a.aspd_socket, a.artifacts, 'idle')
+    node = Node(a.scratch_root, a.installed_release, a.aspd_socket, a.artifacts, 'idle', a.binary)
     node.write_config({'nodeId': 'idle-fixture', 'peers': {'svc': {
         'endpoint': f'http://{host}:{authority.server_port}', 'token': 'private-fixture-token'}},
         'gate': {'mode': 'off'}})

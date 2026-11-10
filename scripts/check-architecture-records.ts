@@ -196,6 +196,35 @@ function render(records: ArchitectureRecord[], kind: 'invariant' | 'accepted_ris
   return `${generated}\n\n# ${project} — ${title}${body ? `\n\n${body.trimEnd()}` : ''}\n`
 }
 
+// The TypeScript graph is frozen at 0131. Rust alone owns forward migrations.
+// Scan every TS source, including new files that are not imported yet.
+async function checkFrozenMigrations(directory: string): Promise<void> {
+  const legacySource = await readFile(join(root, 'crates/hrc-store/src/migrate/legacy.rs'), 'utf8')
+  const legacy = new Set([...legacySource.matchAll(/"([0-9]{4}_[^"]+)"/g)].map((m) => m[1]))
+  if (legacy.size !== 109)
+    throw new Error('frozen TypeScript migration baseline must contain 109 ids')
+  async function visit(path: string): Promise<void> {
+    for (const entry of await readdir(path, { withFileTypes: true })) {
+      const file = join(path, entry.name)
+      if (entry.isDirectory()) await visit(file)
+      else if (entry.name.endsWith('.ts')) {
+        const source = await readFile(file, 'utf8')
+        for (const match of source.matchAll(
+          /\bid:\s*['"`]([0-9]{4}_[^'"`]+)['"`]|['"`]([0-9]{4}_[A-Za-z0-9_-]+)['"`]/g
+        )) {
+          const id = match[1] ?? match[2]
+          if (!legacy.has(id))
+            throw new Error(
+              `${file}: TypeScript migration ${id} is forbidden; add forward migrations in Rust`
+            )
+        }
+      }
+    }
+  }
+  await visit(directory)
+}
+await checkFrozenMigrations(join(root, 'packages/hrc-store-sqlite/src'))
+
 const paths = [...(await filesUnder('invariants')), ...(await filesUnder('risks'))]
 const records = await Promise.all(
   paths.map(async (path) => parseRecord(await readFile(path, 'utf8'), path))

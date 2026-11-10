@@ -277,7 +277,7 @@ fn failed(runtime: &Path, state: &Path, message: String) -> Value {
     let lock = runtime.join("server.lock");
     let tmux = runtime.join("tmux.sock");
     json!({"ok":false,"status":"probe-failed","exitCode":3,"running":false,
-      "schema":{"readable":false,"releaseVersion":hrc_store::MIGRATIONS.last().unwrap(),"pending":[],"schemaAhead":false,"error":"status diagnostic failed"},
+      "schema":{"readable":false,"releaseVersion":hrc_store::migration_ids().next_back().unwrap(),"pending":[],"schemaAhead":false,"error":"status diagnostic failed"},
       "runtimeRoot":runtime,"stateRoot":state,"pidAlive":false,"pidPath":pid,
       "daemon":{"running":false,"pidAlive":false,"pidPath":pid,"pidFileExists":pid.exists()},
       "socketPath":socket,"socketResponsive":false,"socket":{"path":socket,"responsive":false},

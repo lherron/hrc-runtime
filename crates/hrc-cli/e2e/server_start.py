@@ -81,6 +81,10 @@ try:s.connect(str(path));sys.exit(0)
 except OSError:pass
 finally:s.close()
 cmd=[c['binary'],'server','--front','--bun-socket',str(r/'hrc-bun.sock')] if front else [c['bun'],c['oracle'],'server','serve']+(['--listen-socket',str(path)] if private else [])
+db=Path(c['environment']['HRC_STATE_DIR'])/'state.sqlite'
+if not db.exists():
+ db.parent.mkdir(parents=True,exist_ok=True)
+ subprocess.run([c['binary'],'store','migrate',str(db)],env=c['environment'],check=True,capture_output=True)
 if not front:preflight_unmanaged(c['oracle'],c['environment'],root/'release-preflight.json',bun=c['bun'])
 with (root/(label+'.log')).open('a') as log:
  p=subprocess.Popen(cmd,env=c['environment'],stdin=subprocess.DEVNULL,stdout=log,stderr=log,start_new_session=True)
