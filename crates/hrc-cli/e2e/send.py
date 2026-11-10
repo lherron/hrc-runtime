@@ -6,7 +6,7 @@ incorrect enter/length, accidental model turn, foreign target, hidden Bun exec.
 import argparse, json, os, shutil, subprocess, sys, uuid
 from pathlib import Path
 from metrics_isolation import isolated_suite
-from runtime import ROOT
+ROOT = Path(__file__).resolve().parents[3]
 sys.path.insert(0, str(ROOT / 'crates/hrc-native/e2e'))
 from foundation import UnixHTTP
 

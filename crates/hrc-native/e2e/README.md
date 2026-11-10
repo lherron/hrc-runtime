@@ -116,7 +116,6 @@ Deleted entries stay listed to explain their removal; their source remains in gi
 | `n3_kernel_volume.py` | Historical independent-kernel survival workflow; superseded by embedded kernel checks (T-12141). | delete |
 | `n3_mail.py` | Stop gate on real private wrkc obligations, with identical Bun/native drives. (requires explicit scratch/capture inputs; retained qualification) | keep-manual |
 | `n3_messages.py` | Message filters/row shape against real Bun repo inserts and HTTP responses. (requires explicit scratch/capture inputs; retained qualification) | keep-manual |
-| `n3_presentation.py` | Compare the two real kernel presentation routes on one real-born seat. (requires explicit scratch/capture inputs; retained qualification) | keep-manual |
 | `n3_publication.py` | Replay real Bun lifecycle rows through both publication observers. (requires explicit scratch/capture inputs; retained qualification) | keep-manual |
 | `n3_replay.py` | Bun/native stream replay, receipt headers and bounded-loss wire parity. (requires explicit scratch/capture inputs; retained qualification) | keep-manual |
 | `n3_streams.py` | Replay/live/reconnect streams and the unchanged kernel on real HTTP writes. (requires explicit scratch/capture inputs; retained qualification) | keep-manual |

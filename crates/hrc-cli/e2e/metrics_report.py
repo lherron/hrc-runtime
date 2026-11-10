@@ -1,10 +1,7 @@
 #!/usr/bin/env python3
 """`hrc admin metrics report|routes`: native against a frozen, Bun-verified golden.
 
-The Bun implementation was deleted in T-13047. Its last differential is frozen
-in fixtures/metrics-golden.json: `--record` re-runs it (it needs a checkout
-that still has the Bun CLI, or a Bun --oracle) and refuses to write unless
-native equals Bun on every case except the two declared deltas below.
+The existing immutable fixture is fixtures/metrics-golden.json.
 
 Failure modes: rollups drift on JS number semantics (percentile ranks, toFixed
 ties, Math.round halves, float parsing, Number() limits, Date range); files
@@ -16,9 +13,7 @@ line (the daemon appending mid-read) fails the report.
 Declared deltas from Bun (T-13047): every writer's day files are read, so
 `filesScanned` counts them all; `--idle` names the routes only rusthrc serves
 (admin/route-inventory.json); CLI and launch records of bin `rusthrc` (the
-native CLI) are reported under their own bin, where Bun dropped them. `--record`
-compares Bun on the fixture without those records and freezes native's output
-on the full fixture.
+native CLI) are reported under their own bin, where Bun dropped them. The frozen output covers the full fixture.
 
 Times: the fixture is anchored at a whole UTC minute, and every timestamp in
 the output is rewritten as its offset from that anchor, so the golden holds at
@@ -183,17 +178,6 @@ def writers_variant(root):
         '{"v":1,"kind":"script","ts":"%s","script":"reap","cmd":"-y","exitCode":0,"durMs":256}\n' % iso(datetime.now(timezone.utc)))
 
 
-def bunera_variant(root):
-    """`full` without the native CLI's records: what Bun-era files held, and
-    the only population `--record` can compare against Bun (Bun drops them)."""
-    full, out = root / 'full' / 'metrics', root / 'bunera' / 'metrics'
-    shutil.copytree(full, out, symlinks=True)
-    for path in out.iterdir():
-        if path.is_file() and path.name.startswith('cli-'):
-            lines = path.read_bytes().split(b'\n')
-            path.write_bytes(b'\n'.join(l for l in lines if b'"bin":"rusthrc"' not in l))
-
-
 def normalize(text, anchor):
     for pattern, replacement in CUTOFF:
         text = re.sub(pattern, replacement, text)
@@ -215,8 +199,6 @@ def main():
     p = argparse.ArgumentParser()
     p.add_argument('--binary', type=Path, required=True)
     p.add_argument('--artifacts', type=Path, required=True)
-    p.add_argument('--record', action='store_true', help='re-verify against Bun and rewrite the golden')
-    p.add_argument('--oracle', type=Path, default=ROOT / 'packages/hrc-cli/bin/hrc.js')
     args = p.parse_args()
     args.artifacts.mkdir(parents=True, exist_ok=True)
     # Anchor at a whole minute, never within two minutes of UTC midnight (day files).
@@ -227,14 +209,9 @@ def main():
     fix = Path(tempfile.mkdtemp(prefix='hrc-metrics-report-', dir='/tmp')).resolve()
     metrics_fixture(fix / 'metrics', anchor)
     writers_variant(fix / 'metrics')
-    bunera_variant(fix / 'metrics')
     state = fix / 'state'
     env = {k: v for k, v in os.environ.items() if not k.startswith(('ASP_', 'HRC_', 'WRKQ', 'AGENT_ID'))}
     env.update(HRC_RUNTIME_DIR=str(fix / 'run'), HRC_STATE_DIR=str(state), HRC_METRICS='0', NO_COLOR='1', FORCE_COLOR='0')
-    if not args.record:
-        bin_dir = fix / 'no-bun'
-        bin_dir.mkdir()
-        env['PATH'] = f'{bin_dir}:/usr/bin:/bin'  # no `bun`: every case must be native
 
     def observe(command, variant, argv):
         shutil.rmtree(state, ignore_errors=True)
@@ -243,38 +220,12 @@ def main():
         return dict(exit=c.returncode, stdout=normalize(c.stdout, anchor), stderr=normalize(c.stderr, anchor))
 
     results = []
-    if args.record:
-        inventory = {(e['listener'], e['method'], e['route']) for e in json.loads((ROOT / 'crates/hrc-cli/src/admin/route-inventory.json').read_text())['inventory']}
-        bun_inventory = (json.loads(subprocess.run(['bun', '-e', "import {listRequestRouteInventory} from './packages/hrc-server/src/request-route-inventory.ts'; console.log(JSON.stringify(listRequestRouteInventory().map(e => [e.listener, e.method, e.route])))"], cwd=ROOT, capture_output=True, text=True, check=True).stdout))
-        bun_inventory = {tuple(e) for e in bun_inventory}
-    golden = {} if args.record else json.loads(GOLDEN.read_text())['cases']
+    golden = json.loads(GOLDEN.read_text())['cases']
+    assert set(golden) == {f'[{variant}] ' + ' '.join(argv) for variant, argv in cases()}, 'golden case manifest drift'
     for variant, argv in cases():
         key = f'[{variant}] ' + ' '.join(argv)
         subject = observe([str(args.binary.resolve())], variant, argv)
-        if args.record:
-            # Bun never read `rusthrc` CLI records: compare it on the Bun-era
-            # population, and freeze native's output on the full one.
-            compared = 'bunera' if variant == 'full' else variant
-            oracle = observe(['bun', str(args.oracle.resolve())], compared, argv)
-            native_compared = subject if compared == variant else observe([str(args.binary.resolve())], compared, argv)
-            # The declared deltas: files of every writer, and native-only idle routes.
-            def bun_view(item):
-                item = dict(item, stdout=FILES.sub(r'\g<1>0', item['stdout']))
-                if '--idle' in argv and item['exit'] == 0 and item['stdout'].lstrip().startswith('{'):
-                    report = json.loads(item['stdout'])
-                    report['idle'] = [e for e in report['idle'] if (e['listener'], e['method'], e['route']) in bun_inventory]
-                    item['stdout'] = json.dumps(report, indent=2) + '\n'
-                elif '--idle' in argv and item['exit'] == 0:
-                    lines = item['stdout'].split('\n')
-                    kept = [l for l in lines if not (l.startswith('  ') and tuple(l.split()) in inventory and tuple(l.split()) not in bun_inventory)]
-                    item['stdout'] = re.sub(r'Idle routes \(no request in window\): \d+', 'Idle routes', '\n'.join(kept))
-                return item
-            # `report` read every file Bun read here (cli-*, server-*): exact.
-            same = bun_view(oracle) == bun_view(native_compared) if 'routes' in argv else oracle == native_compared
-            results.append(dict(case=key, **{'pass': same}, oracle=oracle, subject=subject))
-            golden[key] = subject
-        else:
-            results.append(dict(case=key, **{'pass': subject == golden.get(key)}, expected=golden.get(key), subject=subject))
+        results.append(dict(case=key, **{'pass': subject == golden.get(key)}, expected=golden.get(key), subject=subject))
     # Every writer's day files read once: `writers` reads exactly as `full`,
     # with one more file scanned (script-*).
     for argv in [['admin', 'metrics', 'report'] + f for f in REPORT_FLAGS] + [['admin', 'metrics', 'routes'] + f for f in ROUTE_FLAGS]:
@@ -283,9 +234,6 @@ def main():
         strip = lambda item: dict(item, stdout=FILES.sub(r'\g<1>0', item['stdout']))
         good = strip(full) == strip(writers) and [n + 1 for n in counts(full)] == counts(writers)
         results.append(dict(case='[writers = full] ' + ' '.join(argv), **{'pass': good}, full=full, writers=writers))
-    if args.record and all(r['pass'] for r in results):
-        GOLDEN.parent.mkdir(exist_ok=True)
-        GOLDEN.write_text(json.dumps(dict(recordedFrom='native, verified equal to Bun but for the declared deltas', cases=golden), indent=1, ensure_ascii=False) + '\n')
     failed = [r['case'] for r in results if not r['pass']]
     (args.artifacts / 'results.json').write_text(json.dumps(dict(cases=len(results), failed=failed, results=results), indent=2) + '\n')
     print(json.dumps(dict(cases=len(results), failed=len(failed))))

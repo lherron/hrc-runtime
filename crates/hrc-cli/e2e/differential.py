@@ -103,12 +103,13 @@ def main():
         results.append({'case': name, 'argv': argv, 'pass': good,
                         'oracle': expected, 'subject': subject, 'diff': diff})
     # This bounded run proves grammar; execution belongs to the named suites.
-    # Every grammar node is native; the map names its execution qualification.
+    # Every grammar node is native; retired-* labels mark removed parity
+    # obligations explicitly, not a runnable execution qualification.
     families = {
-        'runtime.py': 'runtime list|runtime inspect|runtime status|show|ls|session list|session get|session meta get|admin status',
-        'continuity.py': 'session resolve',
-        'targets.py': 'target locate|target bindings|peek',
-        'launch.py': 'start|run|attach',
+        'retired-runtime-parity': 'runtime list|runtime inspect|runtime status|show|ls|session list|session get|session meta get|admin status',
+        'retired-continuity-parity': 'session resolve',
+        'retired-target-parity': 'target locate|target bindings|peek',
+        'retired-launch-parity': 'start|run|attach',
         'restart.py': 'restart', 'restartme.py': 'restartme',
         'resume.py': 'resume', 'send.py': 'send', 'summon.py': 'summon',
         '../../hrc-native/e2e/seat_handoffs.py': 'handoff|handoff create|handoff get|handoff acknowledge|handoff list',
@@ -119,11 +120,11 @@ def main():
         'server_lifecycle.py': 'server stop|server restart',
         'server_start.py': 'server start', 'daemon_entrypoints.py': 'server|server serve',
         'differential.py': '|monitor|admin|admin broker-verify|admin events|admin runs|admin surface|capture|federation|runtime|server tmux|session|session meta|target',
-        'status.py': 'server status', 'turn_protocol.py': 'turn',
-        'n5b_monitor_reads.py': 'monitor events|monitor transcript|monitor stats|monitor show|monitor session-report',
-        'n5b_monitor_wait.py': 'monitor wait', 'n5b_monitor_watch.py': 'monitor watch',
-        'n5b_local.py': 'info|doctor|runtime diagnostics|runtime prune|runtime sweep|server subscribers|server tmux status',
-        'n5b_admin.py': 'admin broker-verify candidates|admin events drain|admin runs reconcile-active|admin runs sweep-zombies|admin worktrees|admin worktrees audit|admin worktrees prune',
+        'status.py': 'server status', 'retired-turn-protocol-parity': 'turn',
+        'retired-monitor-read-parity': 'monitor events|monitor transcript|monitor stats|monitor show|monitor session-report',
+        'retired-monitor-wait-parity': 'monitor wait', 'retired-monitor-watch-parity': 'monitor watch',
+        'retired-local-parity': 'info|doctor|runtime diagnostics|runtime prune|runtime sweep|server subscribers|server tmux status',
+        'retired-admin-parity': 'admin broker-verify candidates|admin events drain|admin runs reconcile-active|admin runs sweep-zombies|admin worktrees|admin worktrees audit|admin worktrees prune',
         'transcript_search.py': 'monitor search',
         'metrics_report.py': 'admin metrics|admin metrics report|admin metrics routes',
         'session_meta_retire.py': 'session meta set|session meta clear|session retitle|federation retire',

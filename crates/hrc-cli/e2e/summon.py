@@ -6,7 +6,7 @@ lost directives, duplicate sessions, human/JSON drift, silent Bun fallback.
 import argparse, json, os, shutil, subprocess, sys, uuid
 from pathlib import Path
 from metrics_isolation import isolated_suite
-from runtime import ROOT, normalize
+from controls import ROOT, normalize
 sys.path.insert(0, str(ROOT / 'crates/hrc-native/e2e'))
 from foundation import UnixHTTP
 

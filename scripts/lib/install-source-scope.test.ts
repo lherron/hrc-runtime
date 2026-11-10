@@ -12,7 +12,7 @@ describe('isInstallSourcePath', () => {
     expect(isInstallSourcePath('packages/hrc-server/src/launch/broker.ts')).toBe(true)
     expect(isInstallSourcePath('scripts/atomic-install.ts')).toBe(true)
     expect(isInstallSourcePath('tools/fitkit/s6-hrc-runtime-verify-evidence.mjs')).toBe(true)
-    expect(isInstallSourcePath('integration-tests/fixtures/hrc-shim/harness')).toBe(true)
+    expect(isInstallSourcePath('integration-tests/fixtures/example/harness')).toBe(true)
   })
 
   test('build inputs at the repository root are source', () => {
@@ -47,7 +47,7 @@ describe('isInstallSourcePath', () => {
 
   test('fails closed on anything it does not recognize', () => {
     expect(isInstallSourcePath('launchd/com.praesidium.hrc-server.plist')).toBe(true)
-    expect(isInstallSourcePath('.github/workflows/publish.yml')).toBe(true)
+    expect(isInstallSourcePath('.github/workflows/example.yml')).toBe(true)
     expect(isInstallSourcePath('newly-invented-directory/thing.conf')).toBe(true)
     expect(isInstallSourcePath('.npmrc')).toBe(true)
   })

@@ -2,16 +2,7 @@
 """`hrc session meta set|clear`, `session retitle`, `federation retire`: native
 against a frozen, Bun-verified golden, on ONE isolated scratch rusthrc.
 
-The Bun implementation was deleted in T-13049. `--oracle <hrc.js>` re-runs the
-differential against a Bun CLI that still has it (the canonical checkout before
-the deletion, or a copied release) and, with `--record`, refuses to write the
-golden unless every case is identical. Without `--oracle`, `bun` is absent from
-PATH and native output and stored state are compared with
-fixtures/meta-retire-golden.json.
-
-Twins: Bun and native each act on their own continuity or scope, set up the
-same way, so each side's write starts from the same state. Those names, host
-session ids and timestamps are the only normalization.
+The existing immutable fixture checks output and stored state on one native owner.
 
 Failure modes, each a case:
   grammar    a flag, alias or positional form Bun accepted is refused, or a
@@ -47,11 +38,12 @@ REPO = HERE.parents[2]
 sys.path.insert(0, str(REPO / 'crates/hrc-native/e2e'))
 from hrcpty_substrate import AGENT, PROJECT  # noqa: E402
 from kernel_fold import placement_hint, substrate  # noqa: E402
+from n2_scratch import reap_root  # noqa: E402
 
 GOLDEN = HERE / 'fixtures/meta-retire-golden.json'
 LIVE_STATE = Path.home() / 'praesidium/var'
 ISO = re.compile(r'\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d(\.\d+)?Z')
-SIDES = {'bun': 'twbun', 'native': 'twnat'}
+SIDES = {'native': 'twnat'}
 
 
 def scope(task):
@@ -159,18 +151,16 @@ def retire_forms(task):
 def main():
     p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     p.add_argument('--binary', type=Path, default=REPO / 'crates/target/aarch64-apple-darwin/debug/rusthrc')
-    p.add_argument('--oracle', type=Path, help='a Bun hrc.js that still has these commands')
-    p.add_argument('--record', action='store_true', help='with --oracle: rewrite the golden when every case matches')
     p.add_argument('--root', type=Path, default=Path(f'/tmp/hmeta-{os.getpid()}'))
     p.add_argument('--artifacts', type=Path, required=True)
     a = p.parse_args()
-    assert not a.record or a.oracle, '--record needs --oracle'
     binary = a.binary.resolve()
     root = a.root.absolute()
+    assert root.resolve().is_relative_to(Path('/tmp').resolve()), 'scratch must be under /tmp'
     root.mkdir(parents=True)  # refuse a reused root
     assert not str(root).startswith(str(LIVE_STATE))
     a.artifacts.mkdir(parents=True, exist_ok=True)
-    sides = ['bun', 'native'] if a.oracle else ['native']
+    sides = ['native']
     # kernel_fold's node: a declaring fake aspd, the stub broker release, a
     # private wrkqd, and an enforced gate on a peerless node that hosts its own
     # binding registry, so an explicit create establishes the scope here and
@@ -189,11 +179,10 @@ def main():
     (root / 'no-bun').mkdir()
     r.env.update(HRC_METRICS='0', NO_COLOR='1', FORCE_COLOR='0')
     env = r.env
-    cli_env = {'bun': dict(env), 'native': dict(env, PATH=f"{root / 'no-bun'}:/usr/bin:/bin")}
-    assert shutil.which('bun', path=cli_env['native']['PATH']) is None
+    cli_env = {'native': dict(env)}
 
     def cli(side, argv):
-        command = [shutil.which('bun'), str(a.oracle.resolve())] if side == 'bun' else [str(binary)]
+        command = [str(binary)]
         c = subprocess.run(command + argv, env=cli_env[side], cwd=root / PROJECT, text=True, capture_output=True, timeout=60)
         return {'exit': c.returncode, 'stdout': c.stdout, 'stderr': c.stderr}
 
@@ -231,16 +220,11 @@ def main():
         return json.loads(ISO.sub('<ts>', text))
 
     results = []
-    golden = {} if a.oracle else json.loads(GOLDEN.read_text())['cases']
+    golden = json.loads(GOLDEN.read_text())['cases']
 
     def judge(name, observed):
-        if a.oracle:
-            ok = observed.get('bun') == observed['native']
-            results.append({'case': name, 'pass': ok, 'oracle': observed.get('bun'), 'subject': observed['native']})
-            golden[name] = observed['native']
-        else:
-            ok = golden.get(name) == observed['native']
-            results.append({'case': name, 'pass': ok, 'expected': golden.get(name), 'subject': observed['native']})
+        ok = golden.get(name) == observed['native']
+        results.append({'case': name, 'pass': ok, 'expected': golden.get(name), 'subject': observed['native']})
         print(('PASS ' if ok else 'FAIL ') + name, flush=True)
 
     try:
@@ -285,20 +269,17 @@ def main():
         for proc in r.owners:
             if proc.poll() is None:
                 r.down(proc)
+        aspd.close()
+        reap_root(root, a.artifacts)
         for log in r.logs:
             log.close()
-        (a.artifacts / 'results.json').write_text(json.dumps({'mode': 'bun differential' if a.oracle else 'golden',
+        (a.artifacts / 'results.json').write_text(json.dumps({'mode': 'golden',
                                                               'cases': len(results), 'results': results},
                                                              indent=2, ensure_ascii=False) + '\n')
 
+    assert {x['case'] for x in results} == set(golden), 'golden case manifest drift'
     failed = [x['case'] for x in results if not x['pass']]
-    if a.record and not failed:
-        GOLDEN.parent.mkdir(exist_ok=True)
-        oracle_commit = subprocess.run(['git', '-C', str(a.oracle.resolve().parent), 'rev-parse', '--short', 'HEAD'],
-                                       capture_output=True, text=True).stdout.strip() or 'unknown'
-        GOLDEN.write_text(json.dumps({'recordedFrom': f'native, verified identical to the Bun CLI at {oracle_commit}', 'cases': golden},
-                                     indent=1, ensure_ascii=False) + '\n')
-    (a.artifacts / 'results.json').write_text(json.dumps({'mode': 'bun differential' if a.oracle else 'golden',
+    (a.artifacts / 'results.json').write_text(json.dumps({'mode': 'golden',
                                                           'cases': len(results), 'failed': failed, 'results': results},
                                                          indent=2, ensure_ascii=False) + '\n')
     print(json.dumps({'cases': len(results), 'failed': len(failed)}))

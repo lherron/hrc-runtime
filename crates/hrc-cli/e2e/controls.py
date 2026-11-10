@@ -4,12 +4,29 @@ Failure modes: selector/error drift, capture text changed, flags dropped before
 RPC, binding fence stale, rotation clears wrong continuity, native execs Bun.
 Fresh host/runtime IDs are replaced only after ownership and effects are
 asserted. Raw outputs accompany those cases; read-only output normalizes only
-the explicitly declared clock fields in runtime.py.
+the explicitly declared clock fields below.
 """
-import argparse, json, os, shutil, subprocess, sys, uuid
+import argparse, json, os, re, shutil, subprocess, sys, uuid
 from pathlib import Path
 from metrics_isolation import isolated_suite
-from runtime import normalize, ROOT
+ROOT = Path(__file__).resolve().parents[3]
+NORMALIZATION = {
+    'federation_latency_json': (r'("latencyMs": )[\d.]+', r'\1<latency>'),
+    'federation_latency_human': (r', [\d.]+ms,', ', <latency>ms,'),
+    'timestamp': (r'\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d\.\d{3}Z', '<timestamp>'),
+    'age_json': (r'("(?:createdAgeSec|lastActivityAgeSec)": )[\d.]+', r'\1<age>'),
+    'age_human': (r'\(age: [^)]+\)', '(age: <age>)'),
+}
+
+
+def normalize(item):
+    item = dict(item)
+    for stream in ('stdout', 'stderr'):
+        for pattern, replacement in NORMALIZATION.values():
+            item[stream] = re.sub(pattern, replacement, item[stream])
+    return item
+
+
 sys.path.insert(0, str(ROOT / 'conformance/hrc-parity'))
 from key_order import cli_orders
 sys.path.insert(0, str(ROOT / 'crates/hrc-native/e2e'))

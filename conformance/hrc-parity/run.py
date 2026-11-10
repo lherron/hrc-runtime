@@ -1373,32 +1373,6 @@ def source_identity():
             'dirty': git('status', '--porcelain')}
 
 
-def inventory(args, checks):
-    command = ['bun', str(ROOT / 'conformance/hrc-parity/inventory.ts'), '--source-ref', args.source_ref]
-    child = subprocess.run(command, cwd=ROOT, text=True, capture_output=True, timeout=120)
-    Path(args.out, 'extractor.stderr').write_text(child.stderr)
-    if child.returncode:
-        check(checks, 'inventory:extractor', False, child.stderr or child.stdout, 2)
-        return {}
-    observed = json.loads(child.stdout)
-    definitions = json.loads((ROOT / 'contract/hrc-parity/cases.json').read_text())
-    report = coverage_report(observed, definitions)
-    write(Path(args.out) / 'coverage-report.json', report)
-    check(checks, 'inventory:nonempty', bool(report['items']), 'no extracted inventory entries', 2)
-    check(checks, 'inventory:unresolved', not observed.get('unresolved'),
-          'unresolved source expressions cannot pass coverage discovery', 2)
-    ids = [i['id'] for i in report['items']]
-    check(checks, 'inventory:unique', len(set(ids)) == len(ids), 'duplicate inventory identity', 2)
-    for item in report['items']:
-        check(checks, 'inventory:mapped:' + item['id'], item['target'] is not None,
-              'unmapped inventory item: ' + item['id'], 2)
-    return {'coverageReportHash': digest(Path(args.out) / 'coverage-report.json'),
-            'sourceCommit': observed['sourceCommit'],
-            'inventoryComplete': all(c['pass'] for c in checks),
-            'behaviorQualified': False, 'counts': report['counts'],
-            'coverage': {'gaps': [i['id'] for i in report['items'] if (i['target'] or '').startswith('GAP:')]}}
-
-
 # UNSUPPORTED maps an item only with one of these exact reasons, each citing
 # its ruling (mable EN-36516). Add a package's reasons here, not prose.
 UNSUPPORTED_REASONS = {
@@ -1454,7 +1428,7 @@ def controls(args, checks):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('command', choices=['inventory', 'run', 'compare', 'controls'])
+    parser.add_argument('command', choices=['run', 'compare', 'controls'])
     parser.add_argument('--out', required=True)
     parser.add_argument('--profile')
     parser.add_argument('--suite', default='p0-bun')
@@ -1474,8 +1448,6 @@ def main():
             data = run_suite(args, checks)
         elif args.command == 'compare':
             data = compare(args, checks)
-        elif args.command == 'inventory':
-            data = inventory(args, checks)
         elif args.command == 'controls':
             data = controls(args, checks)
     except Exception as error:

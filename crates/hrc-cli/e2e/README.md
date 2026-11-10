@@ -1,45 +1,24 @@
-# CLI workflow tests
+# CLI workflow checks
 
-The landing gate (`just cargo-check`) starts `differential.py`, which actually
-runs `status.py`, `metrics.py`, `native_surface.py`, `daemon_entrypoints.py` and
-`client_errors.py`. Coverage-obligation names in differential's report do not
-mean those other scripts ran. `metrics_isolation.py` is a shared helper. `native_surface.py` replaces the
-retired CLI passthrough driver: every help node and grammar refusal must run
-without Bun. The separate native daemon proxy driver was also deleted: its
-only workflow required the retired `--bun-socket` flag.
+`just cargo-check` runs the frozen grammar differential and its status,
+metrics, transport-error, native-surface, daemon-entrypoint and caller checks.
+Obligation labels in the grammar report never mean a workflow ran.
 
-`just e2e-native-full` is the separate, run-by-hand native workflow set; it does
-not imply the remaining CLI qualification corpus ran. The scripts below stay
-manual because they require explicitly owned seats, paired captures, private
-ledger/daemon environments or model calls. Supply their `--help` inputs on
-fresh disposable roots; never point a mutating qualification at a live seat.
-Keep `copied_release.py`, `n5b_common.py`, `turn_protocol.py` and
-`turn_validation.py`: they are shared helpers rather than independent scripts.
+Hand-run native checks (no recording mode):
 
-T-11945 comment C-32046 records the pre-deletion triage and its evidence.
+- `metrics_report.py --binary BIN --artifacts DIR`: immutable metrics golden,
+  every writer's day files read once, malformed/torn input and duration errors.
+- `session_meta_retire.py --binary BIN --artifacts DIR`: immutable output and
+  stored-state golden, on a private native owner with fake aspd and stub broker.
+- `transcript_search.py --binary BIN --root /tmp/OWNED --artifacts DIR`: immutable
+  search results, forwarding requests and clocks; requires that scratch's
+  `run/hrc.sock`, `state/state.sqlite` and private declaration resolver `aspd.sock`.
+- `monitor_idle.py --binary BIN --artifacts DIR`: Linux SQLite-open observer,
+  event/message notification, watch/wait deadlines and event-loop resolution.
 
-| Script | Product claim / reason | Verdict |
-| --- | --- | --- |
-| `annotations.py` | Seat annotations Gates 1–3 (T-12186, T-12187, T-12188): `session annotation` CLI (with `--as`), routes, SDK, kernel nodes, the `seat.annotation.put`/`act` kernel ops and ledger rows on a private scratch rusthrc with a stub-broker hrcpty seat. No model, no live roots. | `just e2e-annotations` (in `just e2e`) |
-| `continuity.py` | Bun creates real continuity and metadata via public APIs. Both CLI binaries (requires explicit scratch/capture inputs; retained qualification) | keep-manual |
-| `controls.py` | Real owned-seat control commands. No production roots or foreign mutations. (requires explicit scratch/capture inputs; retained qualification) | keep-manual |
-| `launch.py` | Managed launch grammar and previews against an explicit scratch daemon. (requires explicit scratch/capture inputs; retained qualification) | keep-manual |
-| `n5b_admin.py` | admin runs/broker-verify/events-drain/worktrees-audit: Bun oracle vs rusthrc. (requires explicit scratch/capture inputs; retained qualification) | keep-manual |
-| `metrics_report.py` | admin metrics report/routes: native vs the frozen Bun-verified golden (`fixtures/metrics-golden.json`; `--record` re-verifies against Bun), and every writer's day files read once. | keep-manual |
-| `session_meta_retire.py` | session meta set/clear, session retitle, federation retire: native vs the frozen Bun-verified golden (`fixtures/meta-retire-golden.json`; `--oracle <hrc.js> --record` re-verifies against Bun), output and the stored metadata/retirement ledger after each call, on one scratch rusthrc with an enforced gate and local registry. | keep-manual |
-| `n5b_local.py` | server subscribers, server tmux status, runtime diagnostics/sweep/prune, (requires explicit scratch/capture inputs; retained qualification) | keep-manual |
-| `n5b_monitor_pty.py` | monitor output under a real PTY: TTY format defaults, chalk color, width. (requires explicit scratch/capture inputs; retained qualification) | keep-manual |
-| `n5b_monitor_reads.py` | monitor events/transcript/stats/show/session-report against a real owned seat. (requires explicit scratch/capture inputs; retained qualification) | keep-manual |
-| `n5b_monitor_wait.py` | monitor wait (and blocking watch) against a real owned seat, at arm and live. (requires explicit scratch/capture inputs; retained qualification) | keep-manual |
-| `n5b_monitor_watch.py` | monitor watch against a real owned seat: replay, conditions, follow, live. (requires explicit scratch/capture inputs; retained qualification) | keep-manual |
-| `restart.py` | Restart parity on disposable scratch scopes, never an existing agent seat. (requires explicit scratch/capture inputs; retained qualification) | keep-manual |
-| `restartme.py` | Self-restart parity on an owned runtime and isolated wrkq authority. (requires explicit scratch/capture inputs; retained qualification) | keep-manual |
-| `resume.py` | Continuation resume plans/refusals on an owned scratch project. (requires explicit scratch/capture inputs; retained qualification) | keep-manual |
-| `runtime.py` | Read-only differential commands against an explicitly provisioned real seat. (requires explicit scratch/capture inputs; retained qualification) | keep-manual |
-| `send.py` | Literal send against owned disposable brokers, with no model dispatch. (requires explicit scratch/capture inputs; retained qualification) | keep-manual |
-| `server_lifecycle.py` | Native lifecycle refusal parity on an owned daemon. (requires explicit scratch/capture inputs; retained qualification) | keep-manual |
-| `server_start.py` | Start with real owned daemon processes and a controlled launchctl boundary. (requires explicit scratch/capture inputs; retained qualification) | keep-manual |
-| `summon.py` | Strict target materialization, on unique scratch project/scopes only. (requires explicit scratch/capture inputs; retained qualification) | keep-manual |
-| `targets.py` | Read-only placement and pane commands on a real owned seat. Verify scope (requires explicit scratch/capture inputs; retained qualification) | keep-manual |
-| `turn_live.py` | Real model qualification on an explicitly owned daemon and scratch project. (requires explicit scratch/capture inputs; retained qualification) | keep-manual |
-| `transcript_search.py` | T-13053 native search against a Bun-verified golden: real native index, forwarding request tap, every filter/target, output and refusal, duration clocks and unreachable transport. | keep-manual |
+The remaining manual drivers are listed for follow-up in T-13069's disposition
+artifact. They require owned seats, an isolated authority, retained SDK client
+qualification or model calls and have not been qualified without Bun.
+The listed controls driver holds their existing clock-normalization helper.
+`copied_release.py` remains only for the listed server-start driver; retire it
+when that last caller moves. Never point these drivers at a shared/live node.

@@ -7,7 +7,7 @@ rotation after cancellation; shelling to Bun. Never use a production seat.
 import argparse, json, os, shutil, subprocess, sys, time
 from pathlib import Path
 from metrics_isolation import isolated_suite
-from runtime import ROOT
+ROOT = Path(__file__).resolve().parents[3]
 sys.path.insert(0, str(ROOT / 'crates/hrc-native/e2e'))
 from foundation import UnixHTTP
 

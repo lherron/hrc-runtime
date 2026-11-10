@@ -4,8 +4,8 @@
 Failure cases were recorded before implementation in T-13053/failure-cases.md.
 Runs against one isolated native daemon via a recording forwarding socket;
 compares bytes/status plus request omission/order and duration call clocks.
---record requires a live Bun oracle and refuses to freeze a mismatch.
-Start a fresh hv scratch and pass --scratch NAME. No installed writes.
+The existing golden is read only.
+Pass --root for an isolated native scratch. No installed writes.
 """
 import argparse
 from datetime import datetime, timezone
@@ -133,23 +133,21 @@ def run(cmd, argv, env, proxy, proxy_root):
 def main():
     p = argparse.ArgumentParser(description=__doc__)
     p.add_argument('--binary', type=Path, required=True)
-    p.add_argument('--scratch', required=True)
+    p.add_argument('--root', type=Path, required=True, help='owned native scratch with run/hrc.sock and state/state.sqlite')
     p.add_argument('--artifacts', type=Path, required=True)
-    p.add_argument('--oracle', type=Path)
-    p.add_argument('--record', action='store_true')
     p.add_argument('--golden', type=Path, default=GOLDEN)
     a = p.parse_args()
-    assert not a.record or a.oracle, '--record requires --oracle'
     a.artifacts.mkdir(parents=True, exist_ok=True)
-    root = Path('/tmp/hv') / a.scratch
+    root = a.root.resolve()
+    assert root.is_relative_to(Path('/tmp').resolve()), 'scratch must be under /tmp'
     assert (root / 'run/hrc.sock').exists()
     fixture(root)
-    expected = None if a.record else json.loads(a.golden.read_text())
+    expected = json.loads(a.golden.read_text())
     rows = []
     with tempfile.TemporaryDirectory(prefix='t13053-proxy-', dir='/tmp') as temp:
         proxy_root = Path(temp)
         env = {k: v for k, v in os.environ.items() if not k.startswith(('HRC_', 'ASP_', 'AGENT', 'HARNESS', 'CODEX', 'CLAUDE', 'WRKQ', 'TMUX'))}
-        env.update(HRC_RUNTIME_DIR=temp, HRC_STATE_DIR=str(root / 'state'), HRC_METRICS_DIR=str(proxy_root / 'metrics'))
+        env.update(HRC_RUNTIME_DIR=temp, HRC_STATE_DIR=str(root / 'state'), HRC_ASPD_SOCKET=str(root / 'aspd.sock'), HRC_METRICS_DIR=str(proxy_root / 'metrics'))
         with Proxy(str(proxy_root / 'hrc.sock'), Handler) as proxy:
             proxy.upstream = root / 'run/hrc.sock'
             proxy.requests = []
@@ -160,17 +158,10 @@ def main():
                 divergence = bool(re.fullmatch(r'\d+(?:\.\d+)?[mhdw]', raw_since) and ('.' in raw_since or raw_since[-1] in 'dw'))
                 if divergence:
                     assert actual['code'] == 0 and len(actual['requests']) == 1, actual
-                if a.oracle:
-                    oracle = run(['bun', str(a.oracle.resolve())], argv, env, proxy, proxy_root)
-                    if divergence:
-                        assert oracle == dict(code=2, stdout='', stderr=f'hrc: invalid duration: {raw_since} (expected e.g. 30s, 5m, 1h)\n', requests=[]), oracle
-                    if not divergence and actual != oracle:
-                        (a.artifacts / 'mismatch.json').write_text(json.dumps(dict(argv=argv, actual=actual, oracle=oracle), indent=2))
-                        raise AssertionError((i, argv, actual, oracle))
                 row = dict(argv=argv, result=actual)
                 if divergence:
                     row['intentionalDivergence'] = 'T-13053 C-36148: handler duration grammar'
-                    row['bunResult'] = oracle if a.oracle else expected[i]['bunResult']
+                    row['bunResult'] = expected[i]['bunResult']
                 rows.append(row)
                 if expected is not None:
                     assert row == expected[i], (i, row, expected[i])
@@ -186,17 +177,13 @@ def main():
                              ['kestrel', '--target', 'scope:' + SCOPE, '--since', 'invalid'],
                              ['kestrel', '--target', 'scope:' + SCOPE, '--limit', '0']]:
                     actual = run([str(a.binary.resolve())], argv, dead_env, proxy, proxy_root)
-                    if a.oracle:
-                        oracle = run(['bun', str(a.oracle.resolve())], argv, dead_env, proxy, proxy_root)
-                        assert actual == oracle, (mode, argv, actual, oracle)
                     row = dict(transport=mode, argv=argv, result=actual)
                     if expected is not None:
                         assert row == expected[len(rows)], row
                     rows.append(row)
             proxy.shutdown()
-    if a.record:
-        a.golden.write_text(json.dumps(rows, indent=2, ensure_ascii=False) + '\n')
-    (a.artifacts / 'result.json').write_text(json.dumps(dict(passed=len(rows), differential=bool(a.oracle), cases=rows), indent=2, ensure_ascii=False) + '\n')
+    assert len(rows) == len(expected), 'golden case manifest drift'
+    (a.artifacts / 'result.json').write_text(json.dumps(dict(passed=len(rows), mode='golden', cases=rows), indent=2, ensure_ascii=False) + '\n')
     print(f'PASS {len(rows)} transcript search cases')
 
 
