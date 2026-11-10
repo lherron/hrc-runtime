@@ -91,6 +91,24 @@ fn attach(args: AttachArgs, control: UnixStream) -> anyhow::Result<i32> {
     let drain = control.try_clone()?;
     let mut client = rpc::Client::new(BufReader::new(control.try_clone()?), control);
     client.call("hello", json!({"token": token}))?;
+    // Hold SIGWINCH before the size is read: a resize that lands while the
+    // attach reply is outstanding then stays pending for the signal thread
+    // instead of being dropped, which left the client registered at the size
+    // it read first. Only SIGWINCH: the others stay deliverable so a stalled
+    // attach can still be interrupted.
+    // SAFETY: sigset manipulation on a local.
+    unsafe {
+        let mut winch: libc::sigset_t = std::mem::zeroed();
+        libc::sigemptyset(&mut winch);
+        libc::sigaddset(&mut winch, libc::SIGWINCH);
+        libc::pthread_sigmask(libc::SIG_BLOCK, &winch, std::ptr::null_mut());
+        // XNU drops a default-ignore signal that has no handler even while
+        // it is blocked, so sigwait would never see SIGWINCH without one.
+        libc::signal(
+            libc::SIGWINCH,
+            noop_handler as *const () as libc::sighandler_t,
+        );
+    }
     let ws = winsize();
     let mut params = size_params(&ws);
     params["readOnly"] = json!(args.read_only);
@@ -99,8 +117,8 @@ fn attach(args: AttachArgs, control: UnixStream) -> anyhow::Result<i32> {
     let attached = client.call("attach", params)?;
     let attach_id = attached["attachId"].as_str().unwrap_or("").to_owned();
 
-    // Block the signals before any thread exists so only the signal thread
-    // takes them.
+    // Block the rest before any thread exists so only the signal thread
+    // takes them. SIGWINCH is already blocked and has its handler.
     // SAFETY: sigset manipulation on a local.
     let set = unsafe {
         let mut set: libc::sigset_t = std::mem::zeroed();
@@ -110,12 +128,6 @@ fn attach(args: AttachArgs, control: UnixStream) -> anyhow::Result<i32> {
         }
         libc::pthread_sigmask(libc::SIG_BLOCK, &set, std::ptr::null_mut());
         libc::signal(libc::SIGPIPE, libc::SIG_IGN);
-        // XNU drops a default-ignore signal that has no handler even while
-        // it is blocked, so sigwait would never see SIGWINCH without one.
-        libc::signal(
-            libc::SIGWINCH,
-            noop_handler as *const () as libc::sighandler_t,
-        );
         set
     };
 
