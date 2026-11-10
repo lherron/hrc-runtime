@@ -3,13 +3,11 @@
 
 Failures: CLI delegates with Bun absent, wrong run/seat, receipt mistaken for
 completion, missing final render, summary seats leak, attach mutates continuity.
-Each birth uses a fresh task; every created runtime is terminated in finally.
+A configured harness runs one native subject. Each birth uses a fresh task;
+every created runtime is terminated in finally.
 """
-import argparse
 import json
-import os
 from pathlib import Path
-import shutil
 import subprocess
 import sys
 import time
@@ -17,28 +15,33 @@ import urllib.parse
 import uuid
 
 from metrics_isolation import isolated_suite
+from native_seat import Fixture, arguments
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / 'hrc-native/e2e'))
 from foundation import UnixHTTP
 
 
 @isolated_suite
 def main():
-    parser = argparse.ArgumentParser(description=__doc__)
-    for key in ('binary', 'oracle', 'runtime-root', 'state-root', 'token-file', 'cwd', 'artifacts'):
-        parser.add_argument('--' + key, type=Path, required=True)
-    parser.add_argument('--authority', required=True)
-    parser.add_argument('--project', required=True)
-    parser.add_argument('--agent', default='tabularasa')
+    parser = arguments()
+    parser.add_argument('--harness-config', type=Path, help='explicit project asp-targets.toml for real model qualification')
+    parser.add_argument('--aspd-socket', type=Path, help='the named compiler socket for that harness')
     parser.add_argument('--mode', choices=('stream', 'wait', 'stacked'), default='stream')
     args = parser.parse_args()
-    assert args.project.startswith('n5-'), 'use a unique scratch project'
-    assert str(args.runtime_root.resolve()).startswith('/private/tmp/') or str(args.runtime_root).startswith('/tmp/')
     args.artifacts.mkdir(parents=True, exist_ok=True)
-    env = {k: v for k, v in os.environ.items() if not k.startswith(('ASP_', 'HRC_', 'WRKQ', 'HARNESS_BROKER_'))}
-    env.update(HRC_RUNTIME_DIR=str(args.runtime_root), HRC_STATE_DIR=str(args.state_root),
-               WRKQ_DB=args.authority, HRC_WRKQ_DB=args.authority,
-               WRKQD_TOKEN_FILE=str(args.token_file), HRC_WRKQD_TOKEN_FILE=str(args.token_file),
-               NO_COLOR='1', FORCE_COLOR='0')
+    if args.harness_config is None:
+        result = {'skipped': True, 'reason': 'No model harness configured; pass --harness-config and --aspd-socket explicitly.'}
+        (args.artifacts / 'results.json').write_text(json.dumps(result, indent=2))
+        print(json.dumps(result))
+        return 0
+    assert args.aspd_socket and args.aspd_socket.is_socket(), '--aspd-socket is required for model qualification'
+    with Fixture(args) as fixture:
+        return drive(fixture, args)
+
+
+def drive(fixture, args):
+    args.project, args.agent, args.cwd = fixture.s.project_id, 'tabularasa', fixture.project
+    args.runtime_root = fixture.root / 'run'
+    env = fixture.env
 
     def call(path, body=None):
         client = UnixHTTP(args.runtime_root / 'hrc.sock')
@@ -60,8 +63,7 @@ def main():
     before = {r['runtimeId'] for r in rows()}
     owned_scopes, owned_summaries, observations, terminated = set(), set(), [], []
     try:
-        for label, command in [('oracle', [shutil.which('bun'), str(args.oracle.resolve())]),
-                               ('subject', [str(args.binary.resolve())])]:
+        for label, command in [('native', [str(args.binary.resolve())])]:
             task = 'n5-turn-' + uuid.uuid4().hex
             scope = f'agent:{args.agent}:project:{args.project}:task:{task}'
             owned_scopes.add(scope)
@@ -69,8 +71,6 @@ def main():
             flags = {'stream': ['--format', 'ndjson'], 'wait': ['--wait', 'final', '--timeout', '90s'],
                      'stacked': ['--stacked', '30s']}[args.mode]
             child_env = dict(env)
-            if label == 'subject':
-                child_env['PATH'] = str(args.artifacts / 'no-bun')
             started = time.time()
             child = subprocess.run(command + ['turn', target, 'Reply with exactly the word OK and nothing else. No tools.',
                                                '--as', 'human', '--stall-after', '90s'] + flags,
@@ -130,7 +130,7 @@ def main():
         assert {r['runtimeId'] for r in cleanup_rows} == set(terminated), cleanup_rows
         assert all(r['status'] == 'terminated' for r in cleanup_rows), cleanup_rows
         (args.artifacts / 'cleanup.json').write_text(json.dumps({'terminated': terminated, 'runtimes': cleanup_rows}, indent=2))
-    report = {'pass': len(observations) == 2, 'mode': args.mode, 'subjects': len(observations),
+    report = {'pass': len(observations) == 1, 'mode': args.mode, 'subjects': len(observations),
               'terminated': terminated}
     (args.artifacts / 'results.json').write_text(json.dumps(report, indent=2))
     print(json.dumps(report))

@@ -1,51 +1,44 @@
 #!/usr/bin/env python3
-"""Restart parity on disposable scratch scopes, never an existing agent seat.
+"""Native restart contracts on disposable scratch scopes, never an existing agent seat.
 Failure modes: wrong scope, missing generation fence, refusal rotates anyway,
 lost launch failure, wrong JSON/exit, old broker retained, silent Bun exec.
-Each binary gets a fresh host; IDs normalize only after effects are asserted.
+Each case gets a fresh host; generation and termination are independently checked.
 """
-import argparse, json, os, shutil, subprocess, sys, uuid
-from pathlib import Path
-from metrics_isolation import isolated_suite
-ROOT = Path(__file__).resolve().parents[3]
-sys.path.insert(0, str(ROOT / 'crates/hrc-native/e2e'))
-from foundation import UnixHTTP
+import json
+import subprocess
+import uuid
+from native_seat import suite, report, refusal
 
 
-@isolated_suite
-def main():
-    p = argparse.ArgumentParser()
-    for name in ('binary', 'oracle', 'runtime-root', 'state-root', 'seat', 'artifacts'):
-        p.add_argument('--' + name, type=Path, required=True)
-    p.add_argument('--lifecycle', action='store_true')
-    a = p.parse_args()
-    a.artifacts.mkdir(parents=True, exist_ok=True)
-    assert all(root.resolve().is_relative_to(Path('/tmp').resolve()) for root in (a.runtime_root, a.state_root))
-    seat = json.loads(a.seat.read_text())
-    env = {k: v for k, v in os.environ.items() if not k.startswith(('ASP_', 'HRC_', 'WRKQ'))}
-    env.update(HRC_RUNTIME_DIR=str(a.runtime_root), HRC_STATE_DIR=str(a.state_root), NO_COLOR='1', FORCE_COLOR='0')
-    commands = [('oracle', [shutil.which('bun'), str(a.oracle.resolve())]), ('subject', [str(a.binary.resolve())])]
+
+assert_matrix = refusal
+
+
+@suite
+def main(f, a):
     results = []
+    seat = f.birth()
+    rid = seat["runtimeId"]
+    env = f.env
+    commands = [("subject", [str(a.binary.resolve())])]
 
-    def run(label, cmd, argv):
-        c = subprocess.run(cmd + argv, cwd=a.runtime_root.parent / 'project', env=env if label == 'oracle' else dict(env, PATH=str(a.artifacts / 'no-bun')), capture_output=True, text=True, timeout=60)
-        return dict(exit=c.returncode, stdout=c.stdout, stderr=c.stderr)
+    def run(label, cmd, argv, stdin="", extra=None):
+        if isinstance(stdin, dict):
+            extra, stdin = stdin, ""
+        return f.run(argv, stdin, extra)
 
-    def call(path, body=None):
-        h = UnixHTTP(a.runtime_root / 'hrc.sock')
-        h.request('POST' if body is not None else 'GET', path, json.dumps(body) if body is not None else None, {'Content-Type': 'application/json'})
-        response = h.getresponse()
-        value = json.loads(response.read())
-        h.close()
-        assert response.status == 200, value
-        return value
+    def call(*values):
+        if len(values) > 1 and values[0] in ("GET", "POST"):
+            return f.call(values[1], values[2] if len(values) > 2 else None)
+        return f.call(*values)
 
     # Observe the real wire shape before constructing any lifecycle fixture.
     missing = call('/v1/sessions/resolve', {'sessionRef': 'agent:tabularasa:project:n5-t11819:task:absent-' + uuid.uuid4().hex + '/lane:main'})
     assert missing['found'] is False, missing
     for argv in (['restart'], ['restart', 'bad:scope'], ['restart', 'tabularasa@n5-t11819:missing-' + uuid.uuid4().hex], ['restart', 'tabularasa@n5-t11819:missing-' + uuid.uuid4().hex, '--json'], ['restart', 'bad:scope', '--output', 'json']):
         records = [run(label, cmd, argv) for label, cmd in commands]
-        results.append(dict(argv=argv, oracle=records[0], subject=records[1], **{'pass': records[0] == records[1]}))
+        assert_matrix(records[0], argv)
+        results.append(dict(argv=argv, subject=records[0], **{'pass': True}))
 
     for live in ([False, True] if a.lifecycle else [False]):
         for flags in ([], ['--json'], ['--force', '--json']):
@@ -60,6 +53,10 @@ def main():
                 old_runtime = None
                 if live:
                     old_runtime = call('/v1/runtimes/start', {'hostSessionId': before['hostSessionId'], 'intent': intent})['runtimeId']
+                    f.broker(old_runtime)
+                    turn = call('/v1/turns', dict(hostSessionId=before['hostSessionId'], prompt='fixture completed turn', runtimeIntent=intent))
+                    assert turn['runtimeId'] == old_runtime, turn
+                    f.s.wait_completed(turn['runId'], 30)
                 after = None
                 try:
                     out = run(label, cmd, ['restart', target] + flags)
@@ -104,11 +101,8 @@ def main():
                             if row['status'] != 'terminated':
                                 call('/v1/terminate', {'runtimeId': row['runtimeId'], 'reason': 'owned N5 restart test cleanup'})
                             assert call('/v1/runtimes/inspect', {'runtimeId': row['runtimeId']})['status'] == 'terminated'
-            results.append(dict(argv=['restart', '<fresh-owned-live>' if live else '<fresh-owned-no-intent>'] + flags, oracle=records[0], subject=records[1], oracleRaw=raw[0], subjectRaw=raw[1], effects=effects, **{'pass': records[0] == records[1]}))
-    report = dict(cases=results, **{'pass': sum(r['pass'] for r in results), 'fail': sum(not r['pass'] for r in results)})
-    (a.artifacts / 'results.json').write_text(json.dumps(report, indent=2) + '\n')
-    print(json.dumps({k: report[k] for k in ('pass', 'fail')}))
-    return int(bool(report['fail']))
+            results.append(dict(argv=['restart', '<fresh-owned-live>' if live else '<fresh-owned-no-intent>'] + flags, subject=records[0], subjectRaw=raw[0], effects=effects, **{'pass': True}))
+    return report(a, results)
 
 
 if __name__ == '__main__':

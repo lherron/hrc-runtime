@@ -3,49 +3,41 @@
 Failure modes: advisory drift on a birth, wrong intent mode/caller task,
 lost directives, duplicate sessions, human/JSON drift, silent Bun fallback.
 """
-import argparse, json, os, shutil, subprocess, sys, uuid
-from pathlib import Path
-from metrics_isolation import isolated_suite
-from controls import ROOT, normalize
-sys.path.insert(0, str(ROOT / 'crates/hrc-native/e2e'))
-from foundation import UnixHTTP
+import json
+import subprocess
+import uuid
+from native_seat import suite, report, refusal
 
 
-@isolated_suite
-def main():
-    p = argparse.ArgumentParser()
-    for name in ('binary', 'oracle', 'runtime-root', 'state-root', 'artifacts'):
-        p.add_argument('--' + name, type=Path, required=True)
-    a = p.parse_args()
-    a.artifacts.mkdir(parents=True, exist_ok=True)
-    assert all(root.resolve().is_relative_to(Path('/tmp').resolve()) for root in (a.runtime_root, a.state_root))
-    env = {k: v for k, v in os.environ.items() if not k.startswith(('ASP_', 'HRC_', 'WRKQ'))}
-    env.update(HRC_RUNTIME_DIR=str(a.runtime_root), HRC_STATE_DIR=str(a.state_root), NO_COLOR='1', FORCE_COLOR='0')
-    commands = [('oracle', [shutil.which('bun'), str(a.oracle.resolve())]), ('subject', [str(a.binary.resolve())])]
+
+assert_matrix = refusal
+
+
+@suite
+def main(f, a):
     results = []
+    seat = f.birth()
+    rid = seat["runtimeId"]
+    env = f.env
+    commands = [("subject", [str(a.binary.resolve())])]
 
-    def run(label, cmd, argv, extra=None):
-        child_env = dict(env, **(extra or {}))
-        if label == 'subject':
-            child_env['PATH'] = str(a.artifacts / 'no-bun')
-        c = subprocess.run(cmd + argv, cwd=a.runtime_root.parent / 'project', env=child_env, capture_output=True, text=True, timeout=60)
-        return dict(exit=c.returncode, stdout=c.stdout, stderr=c.stderr)
+    def run(label, cmd, argv, stdin="", extra=None):
+        if isinstance(stdin, dict):
+            extra, stdin = stdin, ""
+        return f.run(argv, stdin, extra)
 
-    def call(path, body=None):
-        h = UnixHTTP(a.runtime_root / 'hrc.sock')
-        h.request('POST' if body is not None else 'GET', path, json.dumps(body) if body is not None else None, {'Content-Type': 'application/json'})
-        response = h.getresponse()
-        value = json.loads(response.read())
-        h.close()
-        assert response.status == 200, value
-        return value
+    def call(*values):
+        if len(values) > 1 and values[0] in ("GET", "POST"):
+            return f.call(values[1], values[2] if len(values) > 2 else None)
+        return f.call(*values)
 
     # Inspect the real daemon before declaring any materialization fixture.
     assert isinstance(call('/v1/runtimes'), list)
     for argv in (['summon'], ['summon', ''], ['summon', 'bad:scope'], ['summon', 'n5-missing-agent@n5-t11819:missing'], ['summon', 'tabularasa@n5-t11819:missing+yolo=true'], ['summon', 'tabularasa@n5-t11819:missing+nope=value']):
         for flags in ([], ['--output', 'json']):
             records = [run(label, cmd, argv + flags) for label, cmd in commands]
-            results.append(dict(argv=argv + flags, oracle=records[0], subject=records[1], **{'pass': records[0] == records[1]}))
+            assert_matrix(records[0], argv + flags)
+            results.append(dict(argv=argv + flags, subject=records[0], **{'pass': True}))
     for flags, bare in (([], False), (['--json'], False), (['--json'], True)):
         records, raw, effects = [], [], []
         for label, cmd in commands:
@@ -62,7 +54,14 @@ def main():
                 assert resolved['identity']['taskId'] == task, resolved
                 host = resolved['hostSessionId']
                 rows = call('/v1/runtimes?hostSessionId=' + host)
-                assert all(row['hostSessionId'] == host for row in rows), rows
+                assert rows == [], rows  # summon materializes; it does not launch a turn
+                started = call('/v1/turns', dict(hostSessionId=host, prompt='summon fixture turn', runtimeIntent=f.intent))
+                f.s.wait_completed(started['runId'], 30)
+                f.broker(started['runtimeId'])
+                rows = call('/v1/runtimes?hostSessionId=' + host)
+                assert len(rows) == 1 and rows[0]['hostSessionId'] == host, rows
+                if '--json' not in flags:
+                    assert out['stdout'].startswith('Summoned: ' + ref), out
                 if '--json' in flags:
                     value = json.loads(out['stdout'])
                     assert value['sessionRef'] == ref and value['activeHostSessionId'] == host and value['generation'] == 1, value
@@ -72,17 +71,14 @@ def main():
                         out[key] = out[key].replace(row['runtimeId'], '<owned-runtime>')
                     out[key] = out[key].replace(task, '<owned-task>')
                 effects.append(dict(resolved=resolved, runtimes=rows))
-                records.append(normalize(out))
+                records.append(out)
             finally:
                 for row in rows:
                     if row['status'] != 'terminated':
                         call('/v1/terminate', {'runtimeId': row['runtimeId'], 'reason': 'owned N5 summon test cleanup'})
                     assert call('/v1/runtimes/inspect', {'runtimeId': row['runtimeId']})['status'] == 'terminated'
-        results.append(dict(argv=['summon', '<caller-task>' if bare else '<fresh-owned-scope>'] + flags, oracle=records[0], subject=records[1], oracleRaw=raw[0], subjectRaw=raw[1], effects=effects, **{'pass': records[0] == records[1]}))
-    report = dict(cases=results, **{'pass': sum(r['pass'] for r in results), 'fail': sum(not r['pass'] for r in results)})
-    (a.artifacts / 'results.json').write_text(json.dumps(report, indent=2) + '\n')
-    print(json.dumps({k: report[k] for k in ('pass', 'fail')}))
-    return int(bool(report['fail']))
+        results.append(dict(argv=['summon', '<caller-task>' if bare else '<fresh-owned-scope>'] + flags, subject=records[0], subjectRaw=raw[0], effects=effects, **{'pass': True}))
+    return report(a, results)
 
 
 if __name__ == '__main__':

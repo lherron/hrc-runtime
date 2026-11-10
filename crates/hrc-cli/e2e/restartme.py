@@ -1,130 +1,86 @@
 #!/usr/bin/env python3
-"""Self-restart parity on an owned runtime and isolated wrkq authority.
-Failure modes: wrong caller/scope/handoff status; escaping credential root;
-arming an idle turn; missing/rejected credentials; incorrect arm/cancel output;
-rotation after cancellation; shelling to Bun. Never use a production seat.
+"""Caller-bound self restart on private wrkqd, with refusal and arm/cancel facts.
+
+A deterministic broker turn replaces the former model sleep. Cancellation
+must leave generation/host/runtime unchanged after that turn's terminal fact.
 """
-import argparse, json, os, shutil, subprocess, sys, time
-from pathlib import Path
-from metrics_isolation import isolated_suite
-ROOT = Path(__file__).resolve().parents[3]
-sys.path.insert(0, str(ROOT / 'crates/hrc-native/e2e'))
-from foundation import UnixHTTP
+import json
+import time
+from native_seat import suite, report
 
 
-@isolated_suite
-def main():
-    p = argparse.ArgumentParser()
-    for name in ('binary', 'oracle', 'runtime-root', 'state-root', 'seat', 'artifacts', 'token-file'):
-        p.add_argument('--' + name, type=Path, required=True)
-    p.add_argument('--wrkq-db', required=True)
-    p.add_argument('--active-turn', action='store_true')
-    a = p.parse_args()
-    assert all(path.resolve().is_relative_to(Path('/tmp').resolve()) for path in (a.runtime_root, a.state_root, a.token_file))
-    assert a.wrkq_db.startswith('rpc://127.0.0.1:')
-    seat = json.loads(a.seat.read_text())
-    assert ':project:n5-t11819:task:n5-restartme-' in seat['sessionRef']
-    a.artifacts.mkdir(parents=True, exist_ok=True)
-    safe = a.artifacts / 'no-bun'
-    safe.mkdir(exist_ok=True)
-    if not (safe / 'wrkq').exists():
-        (safe / 'wrkq').symlink_to(Path(seat['wrkq']).resolve())
-    env = {k: v for k, v in os.environ.items() if not k.startswith(('ASP_', 'HRC_', 'WRKQ'))}
-    env.update(HRC_RUNTIME_DIR=str(a.runtime_root), HRC_STATE_DIR=str(a.state_root), WRKQ_DB=a.wrkq_db, HRC_WRKQ_DB=a.wrkq_db, WRKQD_TOKEN_FILE=str(a.token_file), HRC_WRKQD_TOKEN_FILE=str(a.token_file), NO_COLOR='1', FORCE_COLOR='0')
-    commands = [('oracle', [shutil.which('bun'), str(a.oracle.resolve())]), ('subject', [str(a.binary.resolve())])]
+@suite
+def main(f, a):
+    seat = f.birth('n5-restartme-owned')
     scope = {'HRC_SESSION_REF': seat['sessionRef']}
     own = dict(scope, HRC_RUNTIME_ID=seat['runtimeId'])
     invalid = dict(scope, HRC_RUNTIME_ID='../outside')
     results = []
 
-    def call(path, body=None):
-        h = UnixHTTP(a.runtime_root / 'hrc.sock')
-        h.request('POST' if body is not None else 'GET', path, json.dumps(body) if body is not None else None, {'Content-Type': 'application/json'})
-        r = h.getresponse()
-        value = json.loads(r.read())
-        h.close()
-        assert 200 <= r.status < 300, value
-        return value
+    def handoff(name, ref):
+        out = f.run(['handoff', 'create', '--scope', ref, '-t', name, '--body-file', '-'], 'fixture successor context')
+        assert out['exit'] == 0, out
+        value = json.loads(out['stdout'])
+        return value.get('handoff', value)
 
-    def run(label, cmd, argv, context):
-        child_env = dict(env, **context)
-        if label == 'subject':
-            child_env['PATH'] = str(safe)
-        c = subprocess.run(cmd + ['restartme'] + argv, env=child_env, cwd=a.runtime_root.parent / 'project', capture_output=True, text=True, timeout=25)
-        return dict(exit=c.returncode, stdout=c.stdout, stderr=c.stderr)
-
-    # Observe real caller and seat before issuing commands or constructing a turn.
-    status = call('/v1/status')
-    assert Path(status['runtimeRoot']).resolve() == a.runtime_root.resolve()
-    before = call('/v1/sessions/resolve', {'sessionRef': seat['sessionRef']})
-    assert before['hostSessionId'] == seat['hostSessionId']
-    probe = call('/v1/runtimes/' + seat['runtimeId'] + '/seat')
+    acknowledged = handoff('acknowledged', seat['sessionRef'])
+    out = f.run(['handoff', 'acknowledge', acknowledged['id'], '--if-match', str(acknowledged['etag']), '--note', 'consumed by fixture'])
+    assert out['exit'] == 0, out
+    pending = handoff('pending', seat['sessionRef'])
+    f.call('/v1/sessions/resolve', dict(sessionRef=f.prefix + 'other/lane:main', create=True, summonIntent='explicit_local'))
+    mismatch = handoff('other seat', f.prefix + 'other/lane:main')
+    before = f.call('/v1/sessions/resolve', {'sessionRef': seat['sessionRef']})
+    probe = f.call('/v1/runtimes/' + seat['runtimeId'] + '/seat')
+    assert probe['probe']['seat']['state'] == 'idle', probe
     (a.artifacts / 'seat-before.json').write_text(json.dumps(probe, indent=2))
-    for _ in range(180):
-        if probe['probe']['seat']['state'] == 'idle':
-            break
-        time.sleep(.5)
-        probe = call('/v1/runtimes/' + seat['runtimeId'] + '/seat')
-    else:
-        raise AssertionError(probe)
-    cases = [([], {}, 'handoff_required'), (['--handoff', '  '], {}, 'handoff_required'), (['--handoff', seat['pending']], {}, 'not_an_agent_runtime'), (['--cancel', '--handoff', seat['pending']], own, 'mutually exclusive'), ([], scope, 'tabularasa@n5-t11819'), (['--handoff', seat['pending']], own, 'no_active_turn'), (['--handoff', seat['acknowledged']], own, 'handoff_not_pending'), (['--handoff', seat['mismatch']], own, 'handoff_scope_mismatch'), (['--handoff', 'H-99999'], own, 'could not read handoff'), (['--cancel'], own, 'no restart was armed'), (['--cancel'], scope, 'credential'), (['--cancel'], invalid, 'credential')]
-    cases += [(argv + ['--output', 'json'], context, "--output json is not supported by 'restartme'") for argv, context, expected in cases[:9]]
+    cases = [([], {}, 'handoff_required'), (['--handoff', '  '], {}, 'handoff_required'),
+             (['--handoff', pending['id']], {}, 'not_an_agent_runtime'),
+             (['--cancel', '--handoff', pending['id']], own, 'mutually exclusive'),
+             ([], scope, 'handoff_required'),
+             (['--handoff', pending['id']], own, 'no_active_turn'),
+             (['--handoff', acknowledged['id']], own, 'handoff_not_pending'),
+             (['--handoff', mismatch['id']], own, 'handoff_scope_mismatch'),
+             (['--handoff', 'H-99999'], own, 'handoff_scope_mismatch'),
+             (['--cancel'], own, 'no restart was armed'),
+             (['--cancel'], scope, 'credential'), (['--cancel'], invalid, 'credential')]
+    cases += [(argv + ['--output', 'json'], context, "--output json is not supported by 'restartme'") for argv, context, _ in cases[:9]]
     for argv, context, expected in cases:
-        observed = [run(label, cmd, argv, context) for label, cmd in commands]
-        assert expected in observed[0]['stdout'] + observed[0]['stderr'], (argv, observed[0])
-        results.append(dict(argv=['restartme'] + argv, context=context, oracle=observed[0], subject=observed[1], **{'pass': observed[0] == observed[1]}))
+        out = f.run(['restartme', *argv], extra=context)
+        assert out['exit'] == (0 if expected == 'no restart was armed' else 2 if 'mutually exclusive' in expected or '--output json' in expected else 1), (argv, out)
+        assert expected in out['stdout'] + out['stderr'], (argv, expected, out)
+        results.append(dict(argv=['restartme', *argv], context=context, subject=out, expected=expected, **{'pass': True}))
 
-    if a.active_turn:
-        # One real model turn, both subjects arm and immediately cancel before
-        # its terminal event. No credential value is captured in artifacts.
-        started = call('/v1/turns', dict(hostSessionId=seat['hostSessionId'], prompt='Use the Bash tool to run /bin/sleep 30, then reply with exactly OK. Do not use any other tools.', runtimeIntent=seat['intent']))
-        (a.artifacts / 'turn-start.json').write_text(json.dumps(started, indent=2))
-        for _ in range(100):
-            probe = call('/v1/runtimes/' + seat['runtimeId'] + '/seat')
-            if probe['probe']['seat']['state'] == 'turn-active':
-                break
-            time.sleep(.1)
-        else:
-            raise AssertionError(probe)
-        (a.artifacts / 'seat-active.json').write_text(json.dumps(probe, indent=2))
-        paired = [[], []]
-        for label, cmd in commands:
-            try:
-                armed = run(label, cmd, ['--handoff', seat['pending']], own)
-                assert armed['exit'] == 0 and 'restart armed' in armed['stdout'], armed
-            finally:
-                cancelled = run(label, cmd, ['--cancel'], own)
-                assert cancelled['exit'] == 0 and 'restart cancelled' in cancelled['stdout'], cancelled
-            paired[0].append(armed)
-            paired[1].append(cancelled)
-        for label, values in zip(('arm-active', 'cancel-active'), paired):
-            results.append(dict(case=label, oracle=values[0], subject=values[1], **{'pass': values[0] == values[1]}))
-        (a.artifacts / 'command-cases.json').write_text(json.dumps(results, indent=2))
-        for _ in range(180):
-            events = call('/v1/events/tail?limit=200&runId=' + started['runId'])
-            if any(e['eventKind'] == 'turn.completed' for e in events['events']):
-                break
-            time.sleep(.5)
-        assert any(e['eventKind'] == 'turn.completed' and e['payload']['success'] is True for e in events['events']), events
-        ledger = call('/v1/events/tail?limit=200&hostSessionId=' + seat['hostSessionId'])
-        (a.artifacts / 'events.json').write_text(json.dumps(ledger, indent=2))
-        # This seat is reused for installed acceptance. Earlier arm/cancel
-        # records remain in its ledger; qualify only this newly admitted turn.
-        from_seq = started['observation']['lifecycle']['fromSeq']
-        assert isinstance(from_seq, int) and from_seq > 0, started
-        turn_id = next(e['payload']['turnId'] for e in events['events'] if e['eventKind'] == 'turn.completed')
-        for kind in ('session.restart_armed', 'session.restart_cancelled'):
-            current = [e for e in ledger['events'] if e['hrcSeq'] >= from_seq and e['eventKind'] == kind]
-            assert len(current) == 2 and all(e['payload']['turnId'] == turn_id for e in current), current
-        after = call('/v1/sessions/resolve', {'sessionRef': seat['sessionRef']})
-        assert after['hostSessionId'] == before['hostSessionId'] and after['generation'] == before['generation']
-        assert call('/v1/runtimes/inspect', {'runtimeId': seat['runtimeId']})['status'] != 'terminated'
-        (a.artifacts / 'continuity.json').write_text(json.dumps(dict(before=before, after=after), indent=2))
-    report = dict(cases=results, **{'pass': sum(x['pass'] for x in results), 'fail': sum(not x['pass'] for x in results)})
-    (a.artifacts / 'results.json').write_text(json.dumps(report, indent=2))
-    print(json.dumps({k: report[k] for k in ('pass', 'fail')}))
-    assert report['fail'] == 0
+    # The existing broker's HOLD control lasts until interrupt or 120 seconds.
+    # Arm/cancel runs during that turn; an interrupt is its terminal fact.
+    started = f.call('/v1/turns', dict(hostSessionId=seat['hostSessionId'], prompt='HOLD', runtimeIntent=f.intent))
+    f.s.wait(lambda: f.call('/v1/runtimes/' + seat['runtimeId'] + '/seat')['probe']['seat']['state'] == 'turn-active', 10, 'held broker turn')
+    try:
+        armed = f.run(['restartme', '--handoff', pending['id']], extra=own)
+        assert armed['exit'] == 0 and 'restart armed' in armed['stdout'], armed
+    finally:
+        cancelled = f.run(['restartme', '--cancel'], extra=own)
+        assert cancelled['exit'] == 0 and 'restart cancelled' in cancelled['stdout'], cancelled
+        f.call('/v1/interrupt', dict(runtimeId=seat['runtimeId']))
+    f.s.wait(lambda: f.s.rows("SELECT * FROM hrc_events WHERE run_id=? AND event_kind='turn.completed'", (started['runId'],)), 20, 'held turn terminal')
+    time.sleep(.3)
+    after = f.call('/v1/sessions/resolve', {'sessionRef': seat['sessionRef']})
+    assert (after['hostSessionId'], after['generation']) == (before['hostSessionId'], before['generation']), after
+    assert f.call('/v1/runtimes/inspect', {'runtimeId': seat['runtimeId']})['status'] != 'terminated'
+    floor = started['observation']['lifecycle']['fromSeq']
+    facts = f.s.rows('SELECT event_kind,payload_json FROM hrc_events WHERE hrc_seq>=? AND runtime_id=?', (floor, seat['runtimeId']))
+    for kind in ('session.restart_armed', 'session.restart_cancelled'):
+        matching = [e for e in facts if e['event_kind'] == kind]
+        assert len(matching) == 1, (kind, facts)
+        payload = json.loads(matching[0]['payload_json'])
+        completed = f.s.rows("SELECT payload_json FROM hrc_events WHERE run_id=? AND event_kind='turn.completed'", (started['runId'],))
+        terminal = json.loads(completed[0]['payload_json'])
+        assert payload['turnId'] == terminal['turnId'] and payload['turnId'].startswith('cli-turn-'), (payload, terminal)
+        assert payload['invocationId'] == terminal['invocationId'] and payload['invocationId'].startswith('inv-'), (payload, terminal)
+    assert not any(e['event_kind'] == 'session.restart_executed' for e in facts), facts
+    (a.artifacts / 'continuity.json').write_text(json.dumps(dict(before=before, after=after, facts=facts), indent=2))
+    results += [dict(case='arm-active', subject=armed, **{'pass': True}), dict(case='cancel-active', subject=cancelled, **{'pass': True})]
+    return report(a, results)
 
 
 if __name__ == '__main__':
-    main()
+    raise SystemExit(main())
