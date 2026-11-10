@@ -202,6 +202,37 @@ fn never_attached(db: &Connection, attempt: &Value) -> Result<bool> {
         && !exists)
 }
 impl Store {
+    /// Change a reservation's display disposition and append its observation in
+    /// the caller's transaction. Replays do not change the timestamp or ledger.
+    pub fn set_participant_disposition(
+        db: &Connection,
+        reservation_id: &str,
+        disposition: Option<&str>,
+        now: &str,
+    ) -> Result<()> {
+        let changed = db.query_row(
+            "UPDATE participant_address_reservations SET disposition=?,disposition_at=CASE WHEN ? IS NULL THEN NULL ELSE COALESCE(disposition_at,?) END,updated_at=CASE WHEN ? IS NOT NULL AND disposition IS NULL THEN ? ELSE updated_at END WHERE reservation_id=? AND disposition IS NOT ? RETURNING scope_ref,lane_ref,disposition_at",
+            params![disposition,disposition,now,disposition,now,reservation_id,disposition],
+            |r| Ok((r.get::<_,String>(0)?,r.get::<_,String>(1)?,r.get::<_,Option<String>>(2)?)),
+        ).optional()?;
+        if let Some((scope, lane, at)) = changed {
+            crate::append_event(db, &crate::EventWrite {
+                ts: now,
+                host_session_id: Some("hrc-participant"),
+                generation: Some(0),
+                scope_ref: Some(&scope),
+                lane_ref: Some(&lane),
+                category: "participant",
+                event_kind: "participant.disposition_changed",
+                payload_json: &json!({"disposition":disposition,"dispositionAt":at,"reservationId":reservation_id}).to_string(),
+                ..Default::default()
+            })?;
+        }
+        Ok(())
+    }
+}
+
+impl Store {
     /// The body has crossed the direct-registration grammar before this call.
     /// A transaction serializes local allocation and refuses occupied addresses.
     pub fn register_direct_participant(
@@ -403,7 +434,7 @@ impl Store {
         }
         tx.execute("INSERT INTO participant_registrations(registration_id,class_id,join_direction,participant_key,scope_ref,lane_ref,host_session_id,generation,workspace_cwd,serving_socket_path,address_policy,continuity_policy,lifecycle_owner,replay_semantics,host_incarnation_id,created_at,updated_at) VALUES (?,?,'participant-served',?,?,?,?,1,?,?,'selected-scope','host-incarnation','externally-owned','full-source-replay',?,?,?)",params![reg,opt("classId"),opt("participantKey"),scope,lane,host,opt("workspaceCwd"),opt("socketPath"),incarnation,now,now])?;
         tx.execute("INSERT INTO participant_host_bindings(binding_id,reservation_id,registration_id,host_incarnation_id,host_session_id,generation,runtime_id,state,admitted_at,updated_at) VALUES (?,?,?,?,?,1,?,'BINDING',?,?)",params![binding,reservation_id,reg,incarnation,host,runtime,now,now])?;
-        tx.execute("UPDATE participant_address_reservations SET disposition=NULL,disposition_at=NULL WHERE reservation_id=?",[&reservation_id])?;
+        Self::set_participant_disposition(&tx, &reservation_id, None, &now)?;
         tx.execute("INSERT INTO participant_registration_attempts(attempt_id,registration_id,attach_epoch,request_id,operation_id,invocation_id,runtime_id,host_binding_id,state,recovery_disposition,establishment_work_state,establishment_attempt_count,continuation_carried,continuation_reason,continuation_resume_state,created_at,updated_at) VALUES (?,?,1,?,?,?,?,?,'IDENTITY_MINTED','unresolved','pending',0,0,'no_continuation','not_requested',?,?)",params![attempt,reg,request,operation,invocation,runtime,binding,now,now])?;
         crate::append_event_at(
             &tx,

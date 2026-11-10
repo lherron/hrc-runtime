@@ -116,3 +116,23 @@ fields; retrying an existing registration does not. Parking changes no
 reservation, binding, continuation, refusal or retry policy. Migration
 `0133_participant_parked_disposition` adds these nullable columns to the
 exported reservation table.
+
+### Session disposition observation (T-13153)
+
+Local `GET /v1/sessions/get` records and every `GET /v1/sessions/page` item
+always include top-level `disposition` and `dispositionAt`. A parked address
+returns `"parked"` and its original park timestamp; all other addresses,
+including seats without reservations, return null for both. The join uses the
+exact stored scope and lane. Peer reads preserve those members when served,
+and preserve their absence on an older peer. Status and effectiveStatus retain
+their existing meanings.
+
+`participant.disposition_changed` (category `participant`) is appended in the
+same transaction as parking or clearing on admitted registration/succession,
+only when the value changes. Its envelope carries scopeRef and laneRef, with
+the same `hrc-participant` / generation 0 sentinel and no runtime as the host
+request event. Its payload is `{disposition, dispositionAt, reservationId}`;
+clearing has null for both disposition members. The exact `eventKind` filter
+on the bounded stream selects it for live observation and durable replay.
+Replayed eviction/registration emits nothing. No upgrade backfill or event for
+manual SQL writes is promised. No reservation schema migration is required.

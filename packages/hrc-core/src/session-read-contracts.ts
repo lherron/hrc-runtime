@@ -46,6 +46,9 @@ export type SessionPageRequest = SessionPageFilters & {
 export type SessionFacetsRequest = SessionPageFilters
 
 export type SessionPageItem = {
+  /** Always present on native local reads; older peers may omit both. */
+  disposition?: 'parked' | null | undefined
+  dispositionAt?: string | null | undefined
   identity?: SessionIdentity | undefined
   nodeId: string
   hostSessionId: string

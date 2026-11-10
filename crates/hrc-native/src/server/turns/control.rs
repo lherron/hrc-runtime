@@ -671,8 +671,12 @@ pub(super) fn evict_external(
         }
         // A replay must not re-park an address a successor attempt cleared.
         if let Some(disposition) = disposition {
-            db.execute("UPDATE participant_address_reservations SET disposition=?,disposition_at=COALESCE(disposition_at,?),updated_at=CASE WHEN disposition IS NULL THEN ? ELSE updated_at END WHERE reservation_id IN (SELECT reservation_id FROM participant_host_bindings WHERE runtime_id=?)",
-                params![disposition,now,now,rt.runtime_id])?;
+            let reservations = db.prepare("SELECT DISTINCT reservation_id FROM participant_host_bindings WHERE runtime_id=?")?
+                .query_map([&rt.runtime_id], |r| r.get::<_,String>(0))?
+                .collect::<rusqlite::Result<Vec<_>>>()?;
+            for id in reservations {
+                hrc_store::Store::set_participant_disposition(db, &id, Some(disposition), &now)?;
+            }
         }
         if let Some(invocation) = &rt.active_invocation_id {
             db::update_invocation(

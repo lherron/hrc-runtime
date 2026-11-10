@@ -5,6 +5,7 @@ use axum::{
     http::{HeaderMap, Method, StatusCode},
     response::{IntoResponse, Response},
 };
+use rusqlite::OptionalExtension;
 use serde_json::{Value, json};
 use std::collections::HashMap;
 
@@ -109,6 +110,13 @@ pub async fn handle(
     let mut result = if metadata { stored.clone() } else { json!({}) };
     if !metadata {
         let facts=db.sqlite.query_row("SELECT effective_status,execution_mode,last_activity_at FROM session_index WHERE scope_ref=? AND lane_ref=?",[scope,lane],|r|Ok(json!({"effectiveStatus":r.get::<_,String>(0)?,"executionMode":r.get::<_,String>(1)?,"lastActivityAt":r.get::<_,String>(2)?}))).unwrap_or_else(|_|json!({"effectiveStatus":"inactive","executionMode":"nonInteractive","lastActivityAt":session["updatedAt"]}));
+        let disposition = db.sqlite.query_row(
+            "SELECT disposition,disposition_at FROM participant_address_reservations WHERE scope_ref=? AND lane_ref=?",
+            [scope,lane],
+            |r| Ok((r.get::<_,Option<String>>(0)?,r.get::<_,Option<String>>(1)?)),
+        ).optional().map_err(anyhow::Error::from)?.unwrap_or((None,None));
+        result["disposition"] = disposition.0.into();
+        result["dispositionAt"] = disposition.1.into();
         result["home"] = home.unwrap();
         result["continuity"] = json!({"scopeRef":scope,"laneRef":hrc_store::canonical_lane(lane)});
         let seat = db.seat_state(scope, lane)?;

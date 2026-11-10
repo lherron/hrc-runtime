@@ -217,6 +217,9 @@ export function formatSessionIdentityHandle(identity: SessionIdentity): string {
 }
 
 export type SessionGetResponse = SessionMetadataResponse & {
+  /** Always present on native local reads; older peers may omit both. */
+  disposition?: 'parked' | null | undefined
+  dispositionAt?: string | null | undefined
   continuity: { scopeRef: string; laneRef: string }
   identity: SessionIdentity
   generation: {

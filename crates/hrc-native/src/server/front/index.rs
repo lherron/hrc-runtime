@@ -240,6 +240,8 @@ const ITEM_ORDER: &[&str] = &[
     "effectiveStatus",
     "executionMode",
     "lastActivityAt",
+    "disposition",
+    "dispositionAt",
 ];
 /// handleSessionFacets' response literal.
 const FACETS_ORDER: &[&str] = &[

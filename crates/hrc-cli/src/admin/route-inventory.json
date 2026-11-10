@@ -661,5 +661,30 @@
       "method": "POST",
       "route": "/v1/federation/registry/delete"
     }
-  ]
+  ],
+  "participantDispositionContract": {
+    "localSessionRecord": {
+      "routes": [
+        "GET /v1/sessions/get",
+        "GET /v1/sessions/page"
+      ],
+      "disposition": "always present: parked or null",
+      "dispositionAt": "always present: park timestamp or null",
+      "peer": "preserve peer field presence; older peers may omit both"
+    },
+    "event": {
+      "eventKind": "participant.disposition_changed",
+      "category": "participant",
+      "envelope": [
+        "scopeRef",
+        "laneRef"
+      ],
+      "payload": [
+        "disposition",
+        "dispositionAt",
+        "reservationId"
+      ],
+      "emission": "same transaction, only on value change; hrc-participant generation 0"
+    }
+  }
 }

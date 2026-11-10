@@ -168,9 +168,10 @@ impl Store {
             "SELECT page.host_session_id,page.scope_ref,page.lane_ref,page.generation,\
              page.agent_id AS index_agent_id,page.project_id AS index_project_id,\
              page.created_at,page.effective_status,page.execution_mode,page.last_activity_at,page.title,\
-             c.scope_kind,c.agent_id,c.project_id,c.task_id,c.role_name,c.seat_kind,c.seat_work_json FROM \
+             c.scope_kind,c.agent_id,c.project_id,c.task_id,c.role_name,c.seat_kind,c.seat_work_json,p.disposition,p.disposition_at FROM \
              (SELECT * FROM session_index {clause} ORDER BY last_activity_at DESC, host_session_id DESC LIMIT ?) page \
              LEFT JOIN continuities c ON c.scope_ref=page.scope_ref AND c.lane_ref=page.lane_ref \
+             LEFT JOIN participant_address_reservations p ON p.scope_ref=page.scope_ref AND p.lane_ref=page.lane_ref \
              ORDER BY page.last_activity_at DESC,page.host_session_id DESC"
         );
         let mut stmt = self.sqlite.prepare(&sql)?;
@@ -191,6 +192,8 @@ impl Store {
                     &[("title", "title"), ("index_project_id", "projectId")],
                     &[],
                 )?;
+                row["disposition"] = r.get::<_, Option<String>>("disposition")?.into();
+                row["dispositionAt"] = r.get::<_, Option<String>>("disposition_at")?.into();
                 row["identity"] = if r.get::<_, Option<String>>("scope_kind")?.is_some() {
                     super::identity_row(r)?
                 } else {
