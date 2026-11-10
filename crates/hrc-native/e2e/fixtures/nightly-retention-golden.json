@@ -1,0 +1,86 @@
+{
+  "sourceSha256": "edea1a84fe9a830705726d02d2946be08f7004cde00b2a7c61c71ff04d3c3e89",
+  "provenance": "T-13053 live Bun f682cba8 differential; artifact retention-differential; no-window and no-mark PASS",
+  "cases": {
+    "no-window": {
+      "survivors": {
+        "keys": {
+          "runtime_buffers": {
+            "rows": 20,
+            "sha256": "6ef0b357c9c99ade26470e0901ba83f2ba817a7f772ceeb7580a33565d982fc7"
+          },
+          "broker_projection_dispositions": {
+            "rows": 928,
+            "sha256": "0559232db730fa6b337bfb940ce9cd05b54633d645b4f2f70de32ba2a20c3902"
+          },
+          "hrcmail_stop_refusals": {
+            "rows": 5,
+            "sha256": "b9f9bfac67aa9133b6cb856b6144a4b9eb1da1659c767796c1d574f68abf30c9"
+          }
+        },
+        "bundles": {
+          "runtime_artifacts": {
+            "rows": 151,
+            "sha256": "cd36641736d870f93ef0115d7b50e8ed9f4452d3277d4bac76ddc92d61d5b90f"
+          },
+          "runtime_first_turn_watch": {
+            "rows": 270,
+            "sha256": "40bf73bc76b68755fe420c7b7c04606b3079284fa8e4073e826efc9b288b1807"
+          }
+        }
+      },
+      "backupsKept": [
+        "pre-activate-20261301T000000Z-10.sqlite",
+        "pre-activate-<stamp>-2.sqlite",
+        "pre-activate-<stamp>-3.sqlite",
+        "pre-activate-<stamp>-4.sqlite",
+        "pre-activate-<stamp>-5.sqlite",
+        "pre-activate-<stamp>-6.sqlite",
+        "pre-activate-<stamp>-7.sqlite",
+        "pre-activate-<stamp>-8.sqlite",
+        "pre-activate-<stamp>-9.sqlite",
+        "pre-activate-malformed.sqlite"
+      ]
+    },
+    "no-mark": {
+      "survivors": {
+        "keys": {
+          "runtime_buffers": {
+            "rows": 20,
+            "sha256": "6ef0b357c9c99ade26470e0901ba83f2ba817a7f772ceeb7580a33565d982fc7"
+          },
+          "broker_projection_dispositions": {
+            "rows": 928,
+            "sha256": "0559232db730fa6b337bfb940ce9cd05b54633d645b4f2f70de32ba2a20c3902"
+          },
+          "hrcmail_stop_refusals": {
+            "rows": 5,
+            "sha256": "b9f9bfac67aa9133b6cb856b6144a4b9eb1da1659c767796c1d574f68abf30c9"
+          }
+        },
+        "bundles": {
+          "runtime_artifacts": {
+            "rows": 151,
+            "sha256": "cd36641736d870f93ef0115d7b50e8ed9f4452d3277d4bac76ddc92d61d5b90f"
+          },
+          "runtime_first_turn_watch": {
+            "rows": 270,
+            "sha256": "40bf73bc76b68755fe420c7b7c04606b3079284fa8e4073e826efc9b288b1807"
+          }
+        }
+      },
+      "backupsKept": [
+        "pre-activate-20261301T000000Z-10.sqlite",
+        "pre-activate-<stamp>-2.sqlite",
+        "pre-activate-<stamp>-3.sqlite",
+        "pre-activate-<stamp>-4.sqlite",
+        "pre-activate-<stamp>-5.sqlite",
+        "pre-activate-<stamp>-6.sqlite",
+        "pre-activate-<stamp>-7.sqlite",
+        "pre-activate-<stamp>-8.sqlite",
+        "pre-activate-<stamp>-9.sqlite",
+        "pre-activate-malformed.sqlite"
+      ]
+    }
+  }
+}

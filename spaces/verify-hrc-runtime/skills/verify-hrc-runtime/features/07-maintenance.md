@@ -1,13 +1,11 @@
 # 7. Maintenance
 
-The repair and inspection cellar (`~/.bun/bin/hrc admin --help`, which is the Bun CLI's commander help: the remaining Bun groups
-pass through) and the scheduled retention job. Native CLI: `crates/hrc-cli/src/admin.rs` →
+The native repair and inspection cellar (`~/.bun/bin/hrc admin --help`) and the scheduled retention job. Native CLI: `crates/hrc-cli/src/admin.rs` →
 `admin/run_repair.rs`, `admin/metrics_report/{mod,report,routes}.rs`, `admin/broker_verify.rs`,
 `admin/worktrees.rs`; `local/sweep.rs` (runtime sweep|prune), `local/diagnostics.rs`; `commands.rs` (admin status,
 capture status). Daemon `crates/hrc-native/src/server/broker/{sweeps,reconcile,maintenance,seat_retirement,
 first_turn}.rs`, `broker/startup/sweeps.rs`, `front/accounting.rs` (request log, metrics file), `server.rs`
-(`/v1/status`). Bun only: `worktree-prune.ts`,
-the historical `scripts/prune-hrc-event-deltas.ts` repair operators only. Native nightly
+(`/v1/status`). The historical Bun prune/repair script is retired (T-13053). Native nightly
 retention: `broker/ledger_prune.rs`, `broker/ledger_prune/retention.rs` and
 `crates/hrc-store/src/maintenance.rs`. Docs: `docs/state-retention.md`, `docs/operations-runbook.md`.
 

@@ -1,7 +1,9 @@
 #!/usr/bin/env python3
-"""Keep-manual C1b differential, using APFS clones of a real pre-prune store.
-Requires --source (offline state.sqlite), --binary (built rusthrc), --out.
-Reconstructs the pre-change Bun job from --bun-ref into /tmp; no live writes.
+"""Keep-manual C1b retention against the last Bun-verified golden (T-13053).
+Requires --source (the same offline pre-prune store identified by golden SHA256),
+--binary (built rusthrc), --out. No Bun leg or live writes. Golden freezes exact
+survivor keys and normalized bundle rows; unrelated table digests, protected
+backups, bounded write holds, checkpoint and 20k-page vacuum remain asserted.
 """
 import argparse
 import datetime as dt
@@ -9,18 +11,16 @@ import hashlib
 import json
 import os
 from pathlib import Path
-import shutil
 import sqlite3
 import subprocess
 import sys
-import tempfile
 import time
 # The artifact copy is runnable from the repository as well as from e2e/.
 REPO = Path(__file__).resolve().parents[3]
 if not (REPO / 'crates/hrc-native/e2e/ledger_prune.py').exists():
     REPO = Path(subprocess.check_output(['git', 'rev-parse', '--show-toplevel'], text=True).strip())
 sys.path.insert(0, str(REPO / 'crates/hrc-native/e2e'))
-from ledger_prune import Owner, relocate, ro
+from ledger_prune import Owner, ro
 
 TARGETS = ('runtime_buffers', 'broker_projection_dispositions', 'hrcmail_stop_refusals')
 BUNDLE_TABLES = ('runtime_artifacts', 'runtime_first_turn_watch')
@@ -187,87 +187,76 @@ def reports(owner):
     return result
 
 
+def normalized_digest(rows):
+    encoded = json.dumps(rows, sort_keys=True, separators=(',', ':')).encode()
+    return {'rows': len(rows), 'sha256': hashlib.sha256(encoded).hexdigest()}
+
+
+def survivors(path, root):
+    return {'keys': {k: normalized_digest(v) for k, v in keys(path).items()},
+            'bundles': {k: normalized_digest(v) for k, v in bundle_state(path, root).items()}}
+
+
+def normalized_backups(names):
+    import re
+    return sorted(re.sub(r'pre-activate-(?!20260230|20261301)[0-9]{8}T[0-9]{6}Z-', 'pre-activate-<stamp>-', n)
+                  for n in names)
+
+
 def main():
     a = argparse.ArgumentParser(description=__doc__)
     a.add_argument('--source', type=Path, required=True)
     a.add_argument('--binary', type=Path, required=True)
     a.add_argument('--out', type=Path, required=True)
-    a.add_argument('--bun-ref', default='f682cba8')
     args = a.parse_args()
     args.out.mkdir(parents=True, exist_ok=True)
-    repo = REPO
-    reference = Path(tempfile.mkdtemp(prefix='t13046-bun-', dir='/tmp'))
-    archive = subprocess.Popen(['git', 'archive', args.bun_ref], cwd=repo, stdout=subprocess.PIPE)
-    subprocess.run(['tar', '-xf', '-', '-C', str(reference)], stdin=archive.stdout, check=True)
-    assert archive.wait() == 0
-    (reference / 'node_modules').symlink_to(Path.home() / 'praesidium/node_modules', target_is_directory=True)
+    golden_path = REPO / 'crates/hrc-native/e2e/fixtures/nightly-retention-golden.json'
+    golden = json.loads(golden_path.read_text())
+    with args.source.open('rb') as source:
+        source_sha = hashlib.file_digest(source, 'sha256').hexdigest()
+    assert source_sha == golden['sourceSha256'], 'golden requires its recorded offline source; never a live SQLite file'
     outcomes = []
-    try:
-        for case, window in [('no-window', None), ('no-mark', '14d')]:
-            (args.out / case).mkdir(exist_ok=True)
-            o = Owner('retention-' + case, args.source.resolve(), args.binary.resolve(), args.out, None, window, tz=tz_for())
-            bun_root = Path(tempfile.mkdtemp(prefix='t13046-compare-', dir='/tmp'))
-            try:
-                initial_backups = backups(o.root)
-                bundle_fixture(o.root)
-                table_fixtures(o.root)
-                (bun_root / 'state').mkdir()
-                (bun_root / 'run').mkdir()
-                # A second APFS clone, with exactly the same relational and file fixtures.
-                subprocess.run(['cp', '-c', str(o.db), str(bun_root / 'state/state.sqlite')], check=True)
-                relocate(bun_root / 'state/state.sqlite', bun_root)
-                conn = sqlite3.connect(bun_root / 'state/state.sqlite')
-                for table, col in [('runtime_first_turn_watch', 'bundle_dir'), ('runtime_artifacts', 'artifact_path')]:
-                    conn.execute(f'UPDATE {table} SET {col}=replace({col},?,?)', (str(o.root), str(bun_root)))
-                conn.commit()
-                conn.close()
-                shutil.copytree(o.root / 'state/backups', bun_root / 'state/backups', symlinks=True)
-                shutil.copytree(o.root / 'run/artifacts', bun_root / 'run/artifacts', dirs_exist_ok=True)
-                before_bun = digest(bun_root / 'state/state.sqlite')
-                o.env['TZ'] = tz_for()
-                o.up()
-                before_native = digest(o.db)
-                start = time.time()
-                # Run the old plist's max3 arguments (three tables) against the clone.
-                cmd = ['bun', str(reference / 'scripts/prune-hrc-event-deltas.ts'), '--db', str(bun_root / 'state/state.sqlite'), '--runtime-root', str(bun_root / 'run'), '--apply', '--tables', ','.join(TARGETS), '--runtime-buffer-retention-days', '1', '--incremental-vacuum-pages', '20000', '--deadline-minutes', '30', '--pace-millis', '250', '--max-write-hold-millis', '500', '--max-duty-cycle', '.25', '--incremental-vacuum-chunk-pages', '100']
-                result = subprocess.run(cmd, cwd=reference, capture_output=True, text=True, timeout=1900)
-                (args.out / case / 'bun.log').write_text(result.stdout + result.stderr)
-                assert result.returncode == 0, result.stdout + result.stderr
-                while time.time() - start < 1800 and 'retention.report' not in reports(o):
-                    time.sleep(1)
-                logged = reports(o)
-                assert set(logged) == {'prune.report', 'retention.report'}, logged
-                native = logged['retention.report']['data']
-                after_native, after_bun = digest(o.db), digest(bun_root / 'state/state.sqlite')
-                assert keys(o.db) == keys(bun_root / 'state/state.sqlite'), 'primary key differential'
-                # Native daemon boot/stop changes are outside the baseline interval.
-                for name, before, after in [('native', before_native, after_native), ('bun', before_bun, after_bun)]:
-                    changed = [t for t in before if before[t] != after[t] and t not in (*TARGETS, *BUNDLE_TABLES)]
-                    assert not changed, (name, changed)
-                kept_native = sorted(p.name for p in (o.root / 'state/backups').iterdir())
-                kept_bun = sorted(p.name for p in (bun_root / 'state/backups').iterdir())
-                assert kept_native == kept_bun and len(kept_native) == len(initial_backups) - 2
-                assert native['firstTurnBundles']['expired'] >= 1 and native['firstTurnBundles']['orphanDirs'] >= 1
-                assert not list((o.root / 'run/artifacts').glob('*/first-turn-missing/900000001'))
-                assert not list((bun_root / 'run/artifacts').glob('*/first-turn-missing/900000001'))
-                assert bundle_state(o.db, o.root) == bundle_state(bun_root / 'state/state.sqlite', bun_root), 'bundle row differential'
-                assert native['checkpointed'] is True
-                assert native['pagesReturned'] == 20000
-                assert all(native['rowsDeleted'][t] > 0 for t in TARGETS)
-                assert native['maxWriteHoldMs'] <= 500, native
-                assert native['stopReason'] == 'complete', native
-                assert logged['prune.report']['data']['stopReason'] == ('no_window' if window is None else 'no_mark')
-                outcome = {'case': case, 'pass': True, 'reports': logged, 'backupsKept': kept_native, 'nativeBefore': before_native, 'nativeAfter': after_native, 'bunBefore': before_bun, 'bunAfter': after_bun}
-                (args.out / case / 'result.json').write_text(json.dumps(outcome, indent=2))
-                outcomes.append({'case': case, 'pass': True, 'retention': native})
-                print(json.dumps(outcomes[-1]), flush=True)
-            finally:
-                if o.proc and o.proc.poll() is None:
-                    o.down()
-                o.cleanup()
-                shutil.rmtree(bun_root)
-    finally:
-        shutil.rmtree(reference)
+    for case, window in [('no-window', None), ('no-mark', '14d')]:
+        (args.out / case).mkdir(exist_ok=True)
+        o = Owner('retention-' + case, args.source.resolve(), args.binary.resolve(), args.out, None, window, tz=tz_for())
+        try:
+            initial_backups = backups(o.root)
+            bundle_fixture(o.root)
+            table_fixtures(o.root)
+            o.env['TZ'] = tz_for()
+            o.up()
+            before_native = digest(o.db)
+            start = time.time()
+            while time.time() - start < 1800 and 'retention.report' not in reports(o):
+                time.sleep(1)
+            logged = reports(o)
+            assert set(logged) == {'prune.report', 'retention.report'}, logged
+            native = logged['retention.report']['data']
+            after_native = digest(o.db)
+            observed = survivors(o.db, o.root)
+            assert observed == golden['cases'][case]['survivors'], ('survivor golden mismatch', observed)
+            changed = [t for t in before_native if before_native[t] != after_native[t] and t not in (*TARGETS, *BUNDLE_TABLES)]
+            assert not changed, changed
+            kept = sorted(p.name for p in (o.root / 'state/backups').iterdir())
+            assert normalized_backups(kept) == golden['cases'][case]['backupsKept']
+            assert len(kept) == len(initial_backups) - 2
+            assert native['firstTurnBundles']['expired'] >= 1 and native['firstTurnBundles']['orphanDirs'] >= 1
+            assert not list((o.root / 'run/artifacts').glob('*/first-turn-missing/900000001'))
+            assert native['checkpointed'] is True
+            assert native['pagesReturned'] == 20000
+            assert all(native['rowsDeleted'][t] > 0 for t in TARGETS)
+            assert native['maxWriteHoldMs'] <= 500, native
+            assert native['stopReason'] == 'complete', native
+            assert logged['prune.report']['data']['stopReason'] == ('no_window' if window is None else 'no_mark')
+            outcome = {'case': case, 'pass': True, 'reports': logged, 'backupsKept': kept,
+                       'survivors': observed, 'nativeBefore': before_native, 'nativeAfter': after_native}
+            (args.out / case / 'result.json').write_text(json.dumps(outcome, indent=2))
+            outcomes.append({'case': case, 'pass': True, 'retention': native})
+            print(json.dumps(outcomes[-1]), flush=True)
+        finally:
+            if o.proc and o.proc.poll() is None:
+                o.down()
+            o.cleanup()
     (args.out / 'result.json').write_text(json.dumps(outcomes, indent=2))
 
 
