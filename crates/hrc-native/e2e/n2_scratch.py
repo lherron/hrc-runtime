@@ -77,7 +77,10 @@ def native_provenance(binary):
     """
     binary = Path(binary).resolve()
     out = subprocess.run([str(binary), '--version'], capture_output=True, text=True, check=True,
-                         env={'PATH': '/usr/bin:/bin', 'HOME': os.environ.get('HOME', '')}, timeout=30).stdout.strip()
+                         # HRC_METRICS=0: the bare env still names HOME, and the CLI would
+                         # otherwise record this call in the production metrics dir.
+                         env={'PATH': '/usr/bin:/bin', 'HOME': os.environ.get('HOME', ''), 'HRC_METRICS': '0'},
+                         timeout=30).stdout.strip()
     match = re.fullmatch(r'(\S+) (\S+) \(releaseId (\S+), sourceCommit (\S+)\)', out)
     assert match, ('unrecognized --version', out)
     return {'binary': str(binary), 'name': match[1], 'version': match[2],
