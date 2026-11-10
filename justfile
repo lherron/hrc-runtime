@@ -161,7 +161,12 @@ verify:
     eval "$(bun scripts/validation-scope.ts)"
     just architecture-records
     python3 scripts/check-rust-crate-edges.py
+    python3 scripts/agent-scope-fixtures.py check
     if [ "$HRC_VERIFY_CARGO" = 1 ]; then just cargo-check; fi
+
+# Copy agent-spaces' scope and env conformance fixtures into conformance/agent-scope/
+sync-agent-scope-fixtures:
+    python3 scripts/agent-scope-fixtures.py sync
 
 # The Bun leg (`verify-bun`). It depends on `env-up` by ruling (T-06900 +
 # T-06902, joint): the gate provisions the environment it needs instead of

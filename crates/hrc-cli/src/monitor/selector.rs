@@ -1,7 +1,8 @@
 //! hrc-core monitor selector grammar (`parseSelector` for strings) and the
 //! profile-aware wrapper the monitor verbs parse their selectors with.
-use crate::selectors::{token, validate_scope};
+use crate::selectors::validate_scope;
 use crate::{Error, Result, client::Daemon, js};
+use hrc_common::scope;
 use serde_json::{Value, json};
 
 #[derive(Clone, Debug)]
@@ -84,8 +85,8 @@ pub(crate) struct ScopeParts {
 }
 /// agent-scope `parseScopeRef` (errors carry the `Invalid ScopeRef` prefix).
 pub(crate) fn parse_scope_ref(scope: &str) -> std::result::Result<ScopeParts, String> {
-    let parts = hrc_common::scope::ScopeRef::parse(scope)
-        .map_err(|e| format!("Invalid ScopeRef \"{scope}\": {e}"))?;
+    let parts =
+        scope::ScopeRef::parse(scope).map_err(|e| format!("Invalid ScopeRef \"{scope}\": {e}"))?;
     Ok(ScopeParts {
         agent: parts.agent.into(),
         project: parts.project.map(str::to_owned),
@@ -93,7 +94,6 @@ pub(crate) fn parse_scope_ref(scope: &str) -> std::result::Result<ScopeParts, St
         role: parts.role.map(str::to_owned),
     })
 }
-pub(crate) use hrc_common::scope::build_scope_ref;
 /// hrc-core `formatSessionIdentityHandle`.
 pub(crate) fn identity_handle(identity: &Value) -> String {
     let field = |k: &str| identity[k].as_str().filter(|s| !s.is_empty());
@@ -110,152 +110,29 @@ pub(crate) fn identity_handle(identity: &Value) -> String {
     h
 }
 
-struct HandleSplit<'a> {
-    agent: &'a str,
-    project: Option<&'a str>,
-    task: Option<&'a str>,
-    role: Option<&'a str>,
-}
-fn split_handle(handle: &str) -> HandleSplit<'_> {
-    let Some(at) = handle.find('@') else {
-        return match handle.split_once(':') {
-            None => HandleSplit {
-                agent: handle,
-                project: None,
-                task: None,
-                role: None,
-            },
-            Some((a, t)) => HandleSplit {
-                agent: a,
-                project: None,
-                task: Some(t),
-                role: None,
-            },
-        };
-    };
-    let after = &handle[at + 1..];
-    let (main, role) = after
-        .split_once('/')
-        .map_or((after, None), |(m, r)| (m, Some(r)));
-    let (project, task) = main
-        .split_once(':')
-        .map_or((main, None), |(p, t)| (p, Some(t)));
-    HandleSplit {
-        agent: &handle[..at],
-        project: Some(project),
-        task,
-        role,
-    }
-}
-fn validate_scope_handle(handle: &str) -> std::result::Result<(), String> {
-    if handle.is_empty() {
-        return Err("ScopeHandle must not be empty".into());
-    }
-    if handle.contains('+') {
-        return Err("provisioning directives (\"+key=value\") are not part of a ScopeHandle; pass the directed input to resolveQualifiedScopeInput instead".into());
-    }
-    let s = split_handle(handle);
-    token(s.agent, "agentId")?;
-    for (v, label) in [
-        (s.project, "projectId"),
-        (s.task, "taskId"),
-        (s.role, "roleName"),
-    ] {
-        if let Some(v) = v {
-            token(v, label)?;
-        }
-    }
-    Ok(())
-}
-/// agent-scope `parseScopeHandle`: the canonical scope ref.
-pub(crate) use hrc_common::scope::parse_scope_handle;
-/// agent-scope `parseSessionHandle` → (scopeRef, laneRef).
-fn parse_session_handle(handle: &str) -> std::result::Result<(String, String), String> {
-    let (scope_part, lane) = handle
-        .split_once('~')
-        .map_or((handle, None), |(s, l)| (s, Some(l)));
-    let scope = parse_scope_handle(scope_part)?;
-    let lane_ref = match lane {
-        None | Some("main") => "main".into(),
-        Some(id) => format!("lane:{id}"),
-    };
-    Ok((scope, lane_ref))
-}
-fn lane_id_from_ref(lane_ref: &str) -> String {
-    if lane_ref == "main" {
-        "main".into()
-    } else {
-        lane_ref.strip_prefix("lane:").unwrap_or(lane_ref).into()
-    }
-}
-
-/// agent-scope `resolveQualifiedScopeInput` → (scopeRef, laneRef).
+/// agent-scope `resolveQualifiedScopeInput` → (scopeRef, laneRef), through
+/// hrc-common; `ASP_DEFAULT_TASK` is read here, per call.
 pub(crate) fn resolve_qualified(
     input: &str,
     default_role: Option<&str>,
 ) -> std::result::Result<(String, String), String> {
-    let handle = input.split_once('+').map_or(input, |(h, _)| h);
-    let (agent, project, mut task, mut role, lane_ref);
-    if handle.contains('~') {
-        let (scope, lane) = parse_session_handle(handle)?;
-        let p = parse_scope_ref(&scope)?;
-        (agent, project, task, role) = (p.agent, p.project, p.task, p.role);
-        lane_ref = lane;
-    } else if validate_scope(handle).is_ok() {
-        let p = parse_scope_ref(handle)?;
-        (agent, project, task, role) = (p.agent, p.project, p.task, p.role);
-        lane_ref = "main".into();
-    } else if validate_scope_handle(handle).is_ok() {
-        let s = split_handle(handle);
-        agent = s.agent.into();
-        project = s.project.map(str::to_owned);
-        task = s.task.map(str::to_owned);
-        role = s.role.map(str::to_owned);
-        lane_ref = "main".into();
-    } else {
-        return Err(format!(
-            "Invalid scope input \"{handle}\": expected a ScopeHandle, SessionHandle, or ScopeRef"
-        ));
-    }
-    if task.is_some() && role.is_none() {
-        role = default_role.map(str::to_owned);
-    }
-    if task.is_none() && project.is_some() {
-        task = Some(
-            std::env::var("ASP_DEFAULT_TASK")
-                .ok()
-                .map(|v| js::trim(&v).to_owned())
-                .filter(|v| !v.is_empty())
-                .unwrap_or_else(|| "primary".into()),
-        );
-    }
-    if let (Some(t), None) = (&task, &project) {
-        return Err(format!(
-            "Invalid scope input \"{input}\": task \"{t}\" requires a project; use \"{agent}@<project>:{t}\", or set ASP_PROJECT / run from a project directory"
-        ));
-    }
-    let scope = build_scope_ref(&agent, project.as_deref(), task.as_deref(), role.as_deref());
-    parse_scope_ref(&scope)?;
-    Ok((scope, lane_ref))
+    let env_task = std::env::var("ASP_DEFAULT_TASK").ok();
+    let opts = scope::ResolveOptions {
+        env_default_task: env_task.as_deref(),
+        default_role_name: default_role,
+        ..Default::default()
+    };
+    let r = scope::resolve_qualified_scope_input(input, &opts)?;
+    Ok((r.scope_ref, r.lane_ref))
 }
 
-/// hrc-core `splitSessionRef` (laneRef is the bare lane id).
+/// agent-scope `parseSessionRef` → (scopeRef, bare lane id).
 pub(crate) fn split_session_ref(
     session_ref: &str,
 ) -> std::result::Result<(String, String), String> {
-    let parts = session_ref.split('/').collect::<Vec<_>>();
-    if parts.len() != 2 || !parts[1].starts_with("lane:") {
-        return Err("sessionRef must use \"<scopeRef>/lane:<laneRef>\" format".into());
-    }
-    let scope = js::trim(parts[0]);
-    let lane = js::trim(parts[1]);
-    let lane = &lane[lane.len().min(5)..];
-    if scope.is_empty() || lane.is_empty() {
-        return Err("sessionRef must include non-empty scopeRef and laneRef values".into());
-    }
-    validate_scope(scope)
-        .map_err(|e| format!("sessionRef must include a canonical agent ScopeRef: {e}"))?;
-    Ok((scope.into(), lane.into()))
+    let s = scope::parse_session_ref(session_ref)?;
+    let lane = s.lane_id().to_owned();
+    Ok((s.scope_ref, lane))
 }
 
 fn non_empty(value: &str, kind: &str, position: usize) -> std::result::Result<String, Invalid> {
@@ -331,19 +208,12 @@ pub(crate) fn parse(input: &str, default_role: Option<&str>) -> std::result::Res
             )),
         };
     }
+    // hrc-core parseTargetMonitorSelector: a bare target is a session handle
+    // (so directives and malformed lanes refuse), then the qualified scope.
     let target = || -> std::result::Result<Sel, String> {
-        let (_, lane_ref) = parse_session_handle(&raw)?;
+        let lane_ref = scope::parse_session_handle(&raw)?.lane_ref;
         let (scope, _) = resolve_qualified(&raw, default_role)?;
-        validate_scope(&scope)?;
-        let lane_id = if lane_ref == "main" {
-            "main".to_owned()
-        } else {
-            let id = lane_id_from_ref(&lane_ref);
-            token(&id, "laneId")?;
-            id
-        };
-        let session_ref = format!("{scope}/lane:{lane_id}");
-        let (scope, _) = split_session_ref(&session_ref)?;
+        let session_ref = scope::format_session_ref(&scope, &lane_ref)?;
         Ok(Sel::Target { scope, session_ref })
     };
     target().map_err(|e| invalid("target", 0, e))

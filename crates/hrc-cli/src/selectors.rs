@@ -27,21 +27,11 @@ fn invalid(raw: &str, message: impl std::fmt::Display) -> Error {
         format!("invalid selector \"{raw}\": {message}"),
     )
 }
-pub(crate) use hrc_common::scope::token;
+use hrc_common::scope;
 pub use hrc_common::scope::validate_scope;
+/// `session:` values are agent-scope session refs (scope ref, bare lane id).
 fn session(value: &str) -> std::result::Result<(String, String), String> {
-    let p = value.split('/').collect::<Vec<_>>();
-    if p.len() != 2 || !p[1].starts_with("lane:") {
-        return Err("sessionRef must use \"<scopeRef>/lane:<laneRef>\" format".into());
-    }
-    let scope = p[0].trim();
-    let lane = p[1].trim().strip_prefix("lane:").unwrap_or("");
-    if scope.is_empty() || lane.is_empty() {
-        return Err("sessionRef must include non-empty scopeRef and laneRef values".into());
-    }
-    validate_scope(scope)
-        .map_err(|e| format!("sessionRef must include a canonical agent ScopeRef: {e}"))?;
-    Ok((scope.into(), lane.into()))
+    crate::monitor::selector::split_session_ref(value)
 }
 fn parse(raw: &str, client: Option<&Daemon>) -> Result<Selector> {
     if raw.is_empty() {
@@ -95,73 +85,38 @@ fn parse(raw: &str, client: Option<&Daemon>) -> Result<Selector> {
             )),
         };
     }
-    let (handle, lane) = raw
-        .split_once('~')
-        .map(|(h, l)| (h, Some(l)))
-        .unwrap_or((raw, None));
-    if handle.contains('+') {
-        return Err(invalid(
-            raw,
-            format!(
-                "Invalid ScopeHandle \"{handle}\": provisioning directives (\"+key=value\") are not part of a ScopeHandle; pass the directed input to resolveQualifiedScopeInput instead"
-            ),
-        ));
-    }
-    let (agent, rest) = handle
-        .split_once('@')
-        .map(|(a, r)| (a, Some(r)))
-        .unwrap_or((handle, None));
-    let (project, task, role) = if let Some(rest) = rest {
-        let (main, role) = rest
-            .split_once('/')
-            .map(|(m, r)| (m, Some(r)))
-            .unwrap_or((rest, None));
-        let (p, t) = main
-            .split_once(':')
-            .map(|(p, t)| (p, Some(t)))
-            .unwrap_or((main, None));
-        (Some(p), t, role)
-    } else {
-        (None, None, None)
+    // A bare target is an agent-scope session handle (directives and bad
+    // lanes refuse), qualified as `input.resolve` with no project default;
+    // the profile's role applies only to an explicit task.
+    let lane_ref = scope::parse_session_handle(raw)
+        .map_err(|e| invalid(raw, e))?
+        .lane_ref;
+    let parts = scope::parse_scope_input(raw, None).map_err(|e| invalid(raw, e))?;
+    let env_task = std::env::var("ASP_DEFAULT_TASK").ok();
+    let opts = scope::ResolveOptions {
+        env_default_task: env_task.as_deref(),
+        ..Default::default()
     };
-    for (value, label) in [
-        (Some(agent), "agentId"),
-        (project, "projectId"),
-        (task, "taskId"),
-        (role, "roleName"),
-    ] {
-        if let Some(value) = value {
-            token(value, label)
-                .map_err(|e| invalid(raw, format!("Invalid ScopeHandle \"{handle}\": {e}")))?;
-        }
-    }
-    let mut scope = format!("agent:{agent}");
-    let task_default = std::env::var("ASP_DEFAULT_TASK")
-        .ok()
-        .filter(|s| !s.trim().is_empty())
-        .unwrap_or_else(|| "primary".into());
-    let resolved_task = project.map(|_| task.unwrap_or(task_default.trim()));
-    if let Some(p) = project {
-        scope.push_str(&format!(":project:{p}:task:{}", resolved_task.unwrap()));
-    }
     let mut observed_role = None;
     if let Some(client) = client {
-        observed_role = placement_role(agent, project, resolved_task, client)
+        let r = parts
+            .clone()
+            .qualify(raw, &opts)
+            .map_err(|e| invalid(raw, e))?;
+        observed_role = placement_role(&r.agent, r.project.as_deref(), r.task.as_deref(), client)
             .map_err(|e| invalid(raw, e.message))?;
     }
-    if let Some(role) = role.or_else(|| {
-        if task.is_some() {
-            observed_role.as_deref()
-        } else {
-            None
-        }
-    }) {
-        scope.push_str(&format!(":role:{role}"));
-    }
-    if let Some(l) = lane {
-        token(l, "laneId").map_err(|e| invalid(raw, e))?;
-    }
-    let lane = lane.map(str::to_owned);
+    let opts = scope::ResolveOptions {
+        default_role_name: observed_role.as_deref(),
+        ..opts
+    };
+    let scope = parts
+        .qualify(raw, &opts)
+        .map_err(|e| invalid(raw, e))?
+        .scope_ref;
+    let lane = raw
+        .contains('~')
+        .then(|| scope::lane_id_from_ref(&lane_ref).to_owned());
     Ok(Selector::Scope(scope, lane))
 }
 /// The profile's default role for a handle (hrc-sdk resolveProfileAwareScopeInput

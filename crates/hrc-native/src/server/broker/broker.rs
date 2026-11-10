@@ -195,7 +195,8 @@ async fn prepare_dispatch(server: &Shared, birth: &Birth<'_>) -> Result<(Value, 
     }
     let given = intent.clone();
     let intent = compile::normalize_placement(intent, session, run);
-    let dispatch_env = dispatch_environment(session, &intent, &server.runtime, run)?;
+    let daemon = WriterInputs::from_process(&server.runtime);
+    let dispatch_env = dispatch_environment(session, &intent, &daemon, run)?;
     let mut stored = if run.is_some() { intent.clone() } else { given };
     if run.is_some()
         && let Some(map) = stored.as_object_mut()
@@ -594,12 +595,37 @@ async fn launch_carried_submission(
     }
 }
 
+/// The daemon's own inputs to the managed env writer: its wrkq target, its
+/// wrkqd token file path and its runtime root. Read from the daemon's process
+/// env by the caller, so the writer itself reads no environment and the
+/// conformance cases (conformance/agent-scope/env-cases.json) drive it.
+pub(super) struct WriterInputs<'a> {
+    pub wrkq_db: String,
+    pub wrkqd_token_file: Option<String>,
+    pub runtime_root: &'a Path,
+}
+impl<'a> WriterInputs<'a> {
+    pub fn from_process(runtime_root: &'a Path) -> Self {
+        Self {
+            wrkq_db: env::var("HRC_WRKQ_DB")
+                .or_else(|_| env::var("WRKQ_DB"))
+                .unwrap_or_default(),
+            wrkqd_token_file: env::var("HRC_WRKQD_TOKEN_FILE")
+                .ok()
+                .map(|f| f.trim().to_owned())
+                .filter(|f| !f.is_empty()),
+            runtime_root,
+        }
+    }
+}
+
 /// buildManagedBrokerDispatchEnv over buildHrcCorrelationEnv + the launch
-/// config, in Bun's key order.
+/// config, in Bun's key order: steps 1 and 2 of the managed composition
+/// (agent-spaces architecture/contracts/scope-env-conformance.md).
 fn dispatch_environment(
     session: &Value,
     intent: &Value,
-    root: &Path,
+    daemon: &WriterInputs<'_>,
     run_id: Option<&str>,
 ) -> Result<Value> {
     let scope = string(session, "scopeRef")?;
@@ -715,22 +741,36 @@ fn dispatch_environment(
     if let Some(map) = envs.as_object_mut() {
         map.shift_remove("WRKQD_TOKEN");
     }
-    envs["WRKQ_DB"] = env::var("HRC_WRKQ_DB")
-        .or_else(|_| env::var("WRKQ_DB"))
-        .unwrap_or_default()
-        .into();
+    envs["WRKQ_DB"] = daemon.wrkq_db.clone().into();
     envs["WRKQ_DB_PATH"] = "".into();
     envs["WRKQ_DB_PATH_FILE"] = "".into();
     // injectRuntimeWrkqAuthority: the daemon's token file path, never its contents.
-    if let Some(file) = env::var("HRC_WRKQD_TOKEN_FILE")
-        .ok()
-        .map(|f| f.trim().to_owned())
-        .filter(|f| !f.is_empty())
-    {
-        envs["WRKQD_TOKEN_FILE"] = file.into();
+    if let Some(file) = &daemon.wrkqd_token_file {
+        envs["WRKQD_TOKEN_FILE"] = file.clone().into();
     }
-    envs["HRC_MAIL_STOP_SOCKET"] = json!(root.join("hrc.sock"));
+    envs["HRC_MAIL_STOP_SOCKET"] = json!(daemon.runtime_root.join("hrc.sock"));
     Ok(envs)
+}
+
+/// Steps 3 and 4 of the managed composition: HRC's plumbing ids over its own
+/// map, then every key the compiled plan's `lockedEnv` holds removed, since
+/// `lockedEnv` supplies it.
+fn compose_dispatch_env(mut dispatch_env: Value, identity: &Value, locked: &Value) -> Value {
+    for (key, field) in [
+        ("HRC_RUNTIME_ID", "runtimeId"),
+        ("HRC_INVOCATION_ID", "invocationId"),
+        ("HRC_INITIAL_INPUT_ID", "initialInputId"),
+        ("AGENT_RUN_ID", "runId"),
+        ("HRC_RUN_ID", "runId"),
+    ] {
+        if let Some(v) = identity.get(field) {
+            dispatch_env[key] = v.clone();
+        }
+    }
+    if let Some(map) = dispatch_env.as_object_mut() {
+        map.retain(|k, _| locked.get(k).is_none());
+    }
+    dispatch_env
 }
 
 fn preparation(
@@ -815,22 +855,11 @@ fn preparation(
     let mut policy = json!({"schemaVersion":"harness-broker.lifecycle-policy/v1","policyId":policy_driver,"retention":{"mode":"keep-alive"},"harnessRecovery":{"mode":"none"},"turnRetry":{"mode":"none"}});
     policy["policyHash"] = compile::digest(compile::canonical(&policy).as_bytes()).into();
     // HRC's own map is the base; aspd's dispatchRequest.dispatchEnv only echoed it.
-    let mut dispatch_env = compiled.request["placement"]["dispatchEnv"].clone();
-    for (key, field) in [
-        ("HRC_RUNTIME_ID", "runtimeId"),
-        ("HRC_INVOCATION_ID", "invocationId"),
-        ("HRC_INITIAL_INPUT_ID", "initialInputId"),
-        ("AGENT_RUN_ID", "runId"),
-        ("HRC_RUN_ID", "runId"),
-    ] {
-        if let Some(v) = identity.get(field) {
-            dispatch_env[key] = v.clone();
-        }
-    }
-    let locked = &execution["dispatchRequest"]["startRequest"]["spec"]["process"]["lockedEnv"];
-    if let Some(map) = dispatch_env.as_object_mut() {
-        map.retain(|k, _| locked.get(k).is_none());
-    }
+    let dispatch_env = compose_dispatch_env(
+        compiled.request["placement"]["dispatchEnv"].clone(),
+        identity,
+        &execution["dispatchRequest"]["startRequest"]["spec"]["process"]["lockedEnv"],
+    );
     let mut route = json!({"route":"broker","selectedBy":"producer-selected-execution","headlessRoute":"durable-leased","brokerTransport":"unix-jsonrpc-ndjson","hostingPresentation":presentation,"preparation":"aspd","aspdEndpoint":compiled.service["endpoint"],"aspdRelease":compiled.service["release"],"executionReleaseId":compiled.response["executionRelease"]["releaseId"]});
     if execution["dispatchRequest"]["startRequest"]["spec"]["launch"]
         .get("initialPrompt")
@@ -1226,5 +1255,99 @@ mod seat_gate_tests {
             .is_err(),
             "the same continuity under either lane spelling is one gate"
         );
+    }
+}
+
+#[cfg(test)]
+mod env_conformance {
+    //! agent-scope env fixture, `managed` cases: HRC's map after steps 1, 3
+    //! and 4 of the managed composition, produced by the writer the daemon
+    //! runs (`dispatch_environment`, then `compose_dispatch_env`), with the
+    //! launch override channel empty as every case has it.
+    use super::*;
+    use std::collections::BTreeMap;
+
+    const FIXTURE: &str = concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/../../conformance/agent-scope/env-cases.json"
+    );
+
+    fn writer_map(input: &Value) -> Value {
+        let mut intent = json!({"placement":input["placement"],"launch":input["launch"]});
+        if let Some(task) = input.get("taskContext") {
+            intent["taskContext"] = task.clone();
+        }
+        let daemon = &input["daemon"];
+        let root = PathBuf::from(daemon["runtimeRoot"].as_str().unwrap());
+        let inputs = WriterInputs {
+            wrkq_db: daemon["wrkqDb"].as_str().unwrap().to_owned(),
+            wrkqd_token_file: daemon["wrkqdTokenFile"].as_str().map(str::to_owned),
+            runtime_root: &root,
+        };
+        let run_id = input["runId"].as_str();
+        let base = dispatch_environment(&input["session"], &intent, &inputs, run_id).unwrap();
+        let mut identity = input["ids"].clone();
+        if let Some(run) = run_id {
+            identity["runId"] = run.into();
+        }
+        let locked = input["lockedEnvKeys"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|k| (k.as_str().unwrap().to_owned(), json!("<locked>")))
+            .collect::<serde_json::Map<_, _>>();
+        compose_dispatch_env(base, &identity, &Value::Object(locked))
+    }
+
+    #[test]
+    fn managed_cases_match_the_writer_exactly() {
+        let fixture: Value = serde_json::from_str(&fs::read_to_string(FIXTURE).unwrap()).unwrap();
+        assert_eq!(fixture["version"], 1, "fixture version");
+        let managed = fixture["cases"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter(|c| c["kind"] == "managed")
+            .collect::<Vec<_>>();
+        assert!(!managed.is_empty(), "no managed cases in {FIXTURE}");
+        let mut failures = vec![];
+        for case in &managed {
+            let input = &case["in"];
+            assert!(
+                input["launch"]["env"]
+                    .as_object()
+                    .is_some_and(|m| m.is_empty())
+                    && input["launch"]["unsetEnv"]
+                        .as_array()
+                        .is_some_and(|a| a.is_empty()),
+                "{}: managed cases run with the override channel empty",
+                case["id"]
+            );
+            let as_map = |v: &Value| {
+                v.as_object()
+                    .unwrap()
+                    .iter()
+                    .map(|(k, v)| (k.clone(), v.clone()))
+                    .collect::<BTreeMap<_, _>>()
+            };
+            let (got, want) = (as_map(&writer_map(input)), as_map(&case["expected"]));
+            if got != want {
+                let extra = got
+                    .iter()
+                    .filter(|(k, v)| want.get(*k) != Some(*v))
+                    .map(|(k, v)| format!("{k}={v}"))
+                    .collect::<Vec<_>>();
+                let missing = want
+                    .iter()
+                    .filter(|(k, v)| got.get(*k) != Some(*v))
+                    .map(|(k, v)| format!("{k}={v}"))
+                    .collect::<Vec<_>>();
+                failures.push(format!(
+                    "{}: writer has {extra:?}; expected has {missing:?}",
+                    case["id"]
+                ));
+            }
+        }
+        assert!(failures.is_empty(), "{}", failures.join("\n"));
     }
 }

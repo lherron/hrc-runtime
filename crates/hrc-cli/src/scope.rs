@@ -1,10 +1,7 @@
 //! Qualified operator inputs (distinct from prefixed object selectors). Scope
 //! defaults and observed profile roles follow agent-scope/hrc-sdk semantics.
-use crate::{
-    Error, Result,
-    client::Daemon,
-    selectors::{token, validate_scope},
-};
+use crate::{Error, Result, client::Daemon};
+use hrc_common::scope::{self as grammar, ResolveOptions};
 use serde_json::{Value, json};
 
 pub(crate) struct Qualified {
@@ -142,71 +139,13 @@ impl Qualified {
         caller_task: bool,
         project_hint: Option<String>,
     ) -> Result<Self> {
-        let (handle, directives) = input
-            .split_once('+')
-            .map(|(h, d)| (h, Some(d)))
-            .unwrap_or((input, None));
-        let (base, lane) = handle.split_once('~').unwrap_or((handle, "main"));
-        let has_lane = handle.contains('~');
-        let generic = || {
-            Error::failure(format!(
-                "Invalid scope input \"{handle}\": expected a ScopeHandle, SessionHandle, or ScopeRef"
-            ))
-        };
-        let mut agent;
-        let mut project = None;
-        let mut task = None;
-        let mut role = None;
-        if !has_lane && validate_scope(base).is_ok() {
-            let parts = hrc_common::scope::ScopeRef::parse(base).map_err(Error::failure)?;
-            agent = parts.agent.to_owned();
-            project = parts.project.map(str::to_owned);
-            task = parts.task.map(str::to_owned);
-            role = parts.role.map(str::to_owned);
-        } else {
-            let (a, p) = base
-                .split_once('@')
-                .map(|(a, p)| (a, Some(p)))
-                .unwrap_or((base, None));
-            agent = a.to_owned();
-            if let Some(p) = p {
-                let (p, r) = p
-                    .split_once('/')
-                    .map(|(p, r)| (p, Some(r)))
-                    .unwrap_or((p, None));
-                role = r.map(str::to_owned);
-                let (p, t) = p
-                    .split_once(':')
-                    .map(|(p, t)| (p, Some(t)))
-                    .unwrap_or((p, None));
-                project = Some(p.into());
-                task = t.map(str::to_owned);
-            } else if let Some((a, t)) = base.split_once(':') {
-                agent = a.into();
-                task = Some(t.into());
-            }
-            for (value, label) in [
-                (Some(agent.as_str()), "agentId"),
-                (project.as_deref(), "projectId"),
-                (task.as_deref(), "taskId"),
-                (role.as_deref(), "roleName"),
-            ] {
-                if let Some(value) = value {
-                    token(value, label).map_err(|e| {
-                        if has_lane {
-                            Error::failure(format!("Invalid ScopeHandle \"{base}\": {e}"))
-                        } else {
-                            generic()
-                        }
-                    })?;
-                }
-            }
-            if has_lane && project.is_none() && task.is_some() {
-                return Err(Error::failure("taskId requires projectId"));
-            }
-        }
-        let explicit_task = task.is_some();
-        let explicit_role = role.is_some();
+        // agent-scope `resolveQualifiedScopeInput`, with the project, the
+        // caller's task and ASP_DEFAULT_TASK filled only when the input lacks
+        // them (the project lookup may walk the filesystem).
+        let (handle, directives) = grammar::split_directive_block(input);
+        let parts = grammar::parse_scope_input(handle, None).map_err(Error::failure)?;
+        let explicit_task = parts.task.is_some();
+        let explicit_role = parts.role.is_some();
         let project_origin = if input.contains('@')
             || input.contains(":project:")
             || input.starts_with("project:")
@@ -215,59 +154,39 @@ impl Qualified {
         } else {
             "inferred"
         };
-        if project.is_none() {
-            project = project_hint
+        let project = if parts.project.is_none() {
+            project_hint
                 .or_else(default_project)
-                .filter(|s| !s.is_empty());
-        }
-        if task.is_none() && project.is_some() {
-            task = if caller_task {
-                std::env::var("HRC_SESSION_REF").ok().and_then(|s| {
-                    let scope = s.split("/lane:").next()?;
-                    if validate_scope(scope).is_err() {
-                        return None;
-                    }
-                    hrc_common::scope::legacy_adjacent_segment(scope, "task").map(str::to_owned)
-                })
-            } else {
-                None
-            };
-            if task.is_none() {
-                task = Some(
-                    std::env::var("ASP_DEFAULT_TASK")
-                        .ok()
-                        .filter(|s| !s.trim().is_empty())
-                        .map(|s| s.trim().to_owned())
-                        .unwrap_or_else(|| "primary".into()),
-                );
-            }
-        }
-        if let Some(task) = &task
-            && project.is_none()
-        {
-            return Err(Error::failure(format!(
-                "Invalid scope input \"{input}\": task \"{task}\" requires a project; use \"{agent}@<project>:{task}\", or set ASP_PROJECT / run from a project directory"
-            )));
-        }
-        let mut scope = format!("agent:{agent}");
-        if let Some(p) = &project {
-            scope.push_str(&format!(":project:{p}"));
-        }
-        if let Some(t) = task {
-            scope.push_str(&format!(":task:{t}"));
-        }
-        if let Some(r) = role {
-            scope.push_str(&format!(":role:{r}"));
-        }
-        validate_scope(&scope).map_err(Error::failure)?;
+                .filter(|s| !s.is_empty())
+        } else {
+            None
+        };
+        let caller =
+            (caller_task && parts.task.is_none() && (parts.project.is_some() || project.is_some()))
+                .then(|| std::env::var("HRC_SESSION_REF").ok())
+                .flatten()
+                .and_then(|s| {
+                    let session = grammar::parse_session_ref(&s).ok()?;
+                    let task = grammar::ScopeRef::parse(&session.scope_ref).ok()?.task?;
+                    Some(task.to_owned())
+                });
+        let env_task = std::env::var("ASP_DEFAULT_TASK").ok();
+        let opts = ResolveOptions {
+            project_id: project.as_deref(),
+            task_id: caller.as_deref(),
+            env_default_task: env_task.as_deref(),
+            ..Default::default()
+        };
+        let resolved = parts.qualify(input, &opts).map_err(Error::failure)?;
         if let Some(directives) = directives {
             validate_directives(directives)?;
         }
+        let lane = resolved.lane_id().to_owned();
         Ok(Self {
-            scope,
-            lane: lane.into(),
-            agent,
-            project,
+            scope: resolved.scope_ref,
+            lane,
+            agent: resolved.agent,
+            project: resolved.project,
             explicit_task,
             explicit_role,
             project_origin,
