@@ -35,16 +35,12 @@ async function inputDigest(root: string): Promise<string> {
   }
   for (const dir of [
     'crates',
-    // Rust build scripts read these selected release inputs too.
+    // The one file outside crates/ a Rust build reads (include_str! in
+    // crates/hrc-cli/src/admin/events_drain.rs), and the checked-in contract
+    // identity the native suites pin.
     'packages/hrc-core/package.json',
-    'packages/hrc-core/src/self-restart.ts',
-    'packages/hrc-server/src/server-exact-routes.ts',
-    'packages/hrc-server/src/request-log.ts',
-    'packages/hrc-server/src/request-metrics.ts',
     'contract',
     'conformance',
-    'packages/hrc-store-sqlite/src/migrations',
-    'packages/hrc-store-sqlite/src/migrations.ts',
   ]) {
     await visit(join(root, dir))
   }

@@ -1,8 +1,8 @@
 # Atomic HRC CLI installs
 
 `just install` prepares a complete HRC runtime image away from the checkout and
-cuts the installed commands over only after dependency installation, build, and
-entrypoint smoke checks succeed. It selects a local release candidate. The
+cuts the installed commands over only after dependency installation, build, the
+native binary probes and the release shape check succeed. It selects a local release candidate. The
 separate `just publish` command later proves and publishes that selected
 candidate.
 
@@ -75,16 +75,18 @@ The active commands use one stable indirection:
 ```
 
 Each release directory contains its own source snapshot, workspace packages,
-build outputs, `node_modules`, and `praesidium-release.json`. That manifest
+build outputs, `node_modules`, and `praesidium-release.json`. A prepared release
+is selected only when it holds `bin/rusthrc`, `bin/hrc-pty` and `node_modules`
+(`RELEASE_SHAPE` in `scripts/atomic-install.ts`) plus a valid manifest; no
+TypeScript package directory is required. That manifest
 records the release ID, the exact local HRC package build candidate, the exact
 ASP package build selected by the lock/install, and the installation
 time. Cutover is refused unless both coherent build tuples validate. The
 checkout's dependency graph is not removed or rewritten by a main-checkout
 install. The final rename of `hrc-runtime-current` changes both CLI names
-together. The Bun `hrc-cli` package declares no `hrc` bin, so publishing or
-globally installing the current package cannot reclaim the command. Install also
-removes stale `node_modules/.bin/hrc` symlinks to Bun entrypoints in the checkout
-and its parent development workspace. `hrcchat`,
+together. There is no Bun CLI in the release: install no longer links a global
+`hrc-cli` package, and removes the one earlier installs created
+(`global/node_modules/hrc-cli -> hrc-runtime-current/packages/hrc-cli`). `hrcchat`,
 `hrcmail`, `hrc-desktop-hook` and `hrc-viewer` remain ACP-owned.
 
 Main-checkout atomic installs are local release selection. They archive the
@@ -97,11 +99,12 @@ after publication. It refuses name/version replacement and rechecks that the
 selected release has not changed. Linked-worktree publication remains explicitly
 noncanonical.
 
-On the first atomic install, the installer converts legacy Bun links that point
-directly into the checkout. It first points `hrc-runtime-current` at the same
-currently installed root, changes the stable package links to use that
-indirection, and only then prepares and selects the new release. A failure at
-any point before the final rename leaves the previous command surface usable.
+Before preparing, every install points `hrc` and `rusthrc` at
+`hrc-runtime-current/bin/rusthrc`, whatever they named before (a Bun
+`packages/hrc-cli` entrypoint of an older release included). If
+`hrc-runtime-current` does not exist yet, it starts at the checkout until the
+cutover replaces it. A failure at any point before the final rename leaves the
+previous command surface usable.
 
 ## Concurrency contract
 
@@ -127,7 +130,7 @@ release.
 
 - Dependency, build, or smoke failure deletes only the incomplete
   uniquely named release and leaves `hrc-runtime-current` unchanged.
-- `hrc --help`, `hrcchat --help`, and `hrcmail --help` run from the prepared image before cutover.
+- `bin/rusthrc --help` and `bin/hrc-pty version` run from the prepared image before cutover.
 - Old releases are not retained (T-10024). After the cutover, install deletes
   every `release-*` directory except the new current one and the one the
   running daemon reports in `hrc server status`, plus every release held by a
@@ -141,6 +144,12 @@ release.
   `ingest.status`, not an install gate.
 - A daemon restart is still required after `just install` when server code has
   changed; the running process does not reload merely because the CLI link moved.
+- After the cutover, install reads the store schema through the new release's
+  `rusthrc store state` (read-only, no store lock). `pending` prints the armed
+  window: the migrations the next boot applies and the direct-open commands
+  (`hrc monitor show/watch/wait`) that refuse until `hrc server restart`.
+  `current` prints one quiet line; `ahead` says the store came from a newer
+  release, which this release's daemon refuses at boot.
 
 ## Observable release identity
 
@@ -159,6 +168,5 @@ reports that captured HRC/ASP identity and recomputes
 The deterministic concurrency harness is
 `scripts/atomic-install-live-harness.test.ts`. It repeatedly invokes the stable
 installed CLI while a new release intentionally has no dependencies yet, then
-checks failed-preparation and concurrent-installer behavior. The release A/B
-status and restart contract is covered by
-`packages/hrc-server/src/__tests__/t06958-release-provenance.test.ts`.
+checks failed-preparation, incomplete-release refusal and concurrent-installer
+behavior, with fixture releases built from `RELEASE_SHAPE`.

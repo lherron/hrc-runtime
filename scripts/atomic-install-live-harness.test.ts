@@ -19,8 +19,8 @@ import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 
 import {
-  CLI_PACKAGES,
   type InstalledSurfacePaths,
+  RELEASE_SHAPE,
   type RunningReleaseAnswer,
   installAtomicRelease,
 } from './atomic-install'
@@ -41,7 +41,7 @@ async function makeLegacyLinkedSurface(): Promise<{
   fixtures.push(root)
 
   const checkout = join(root, 'checkout')
-  const packageRoot = join(checkout, 'packages', 'hrc-cli')
+  const packageRoot = join(checkout, 'packages', 'legacy-cli')
   const dependencyRoot = join(checkout, 'node_modules')
   const globalModules = join(root, 'global', 'node_modules')
   const binDir = join(root, 'bin')
@@ -66,56 +66,49 @@ async function makeLegacyLinkedSurface(): Promise<{
     "export default 'legacy-surface-ok'\n"
   )
 
-  await symlink(packageRoot, join(globalModules, 'hrc-cli'))
+  await symlink(packageRoot, join(globalModules, 'legacy-cli'))
   const binPath = join(binDir, 'hrc')
-  await symlink(join(globalModules, 'hrc-cli', 'src', 'cli.ts'), binPath)
+  await symlink(join(globalModules, 'legacy-cli', 'src', 'cli.ts'), binPath)
 
   return { binPath, dependencyRoot }
 }
 
+type ShapeEntry =
+  | (typeof RELEASE_SHAPE.executables)[number]
+  | (typeof RELEASE_SHAPE.directories)[number]
+
 /**
- * Every entrypoint the real installer will look for, derived from the real
- * table rather than restated here.
+ * A release holding exactly what the real installer demands, read from its own
+ * table rather than restated here, minus `omit`. A hand-written list drifts in
+ * the direction that matters: a new requirement would make the installer
+ * refuse a release this harness built itself. No package directory is written,
+ * so the five retired packages cannot be what makes a release valid.
  *
- * A hand-written list drifts silently in the direction that matters: adding a
- * CLI package makes `validateReleaseShape` demand an entrypoint this fixture
- * never wrote, and the harness fails with "prepared release is missing …" about
- * a release it built itself. The nested path is `dirname`d for the same reason —
- * not every entrypoint lives directly under `src`.
+ * Every executable prints `<generation>:dependency-ok`; `bin/rusthrc` is what
+ * the installed `hrc` and `rusthrc` names run.
  */
-async function writeCliSources(releasePath: string, generation: string): Promise<void> {
-  for (const [packageName, cli] of Object.entries(CLI_PACKAGES)) {
-    const sourcePath = join(releasePath, 'packages', packageName, cli.entrypoint)
-    await mkdir(dirname(sourcePath), { recursive: true })
-    await writeFile(
-      sourcePath,
-      `#!/usr/bin/env bun\nimport value from 'fixture-dependency'\nconsole.log('${generation}:' + value)\n`
-    )
-    await chmod(sourcePath, 0o755)
+async function writeRelease(
+  releasePath: string,
+  generation: string,
+  omit: readonly ShapeEntry[] = []
+): Promise<void> {
+  for (const directory of RELEASE_SHAPE.directories) {
+    if (!omit.includes(directory)) await mkdir(join(releasePath, directory), { recursive: true })
+  }
+  for (const executable of RELEASE_SHAPE.executables) {
+    if (omit.includes(executable)) continue
+    const path = join(releasePath, executable)
+    await mkdir(dirname(path), { recursive: true })
+    await writeFile(path, `#!/bin/sh\nprintf '%s\\n' '${generation}:dependency-ok'\n`)
+    // Left non-executable on purpose: the installer marks them executable.
+    await chmod(path, 0o644)
   }
 }
 
-async function writeNativeCli(releasePath: string, generation: string): Promise<void> {
-  await mkdir(join(releasePath, 'bin'), { recursive: true })
-  const binary = join(releasePath, 'bin', 'rusthrc')
-  await writeFile(binary, `#!/bin/sh\nprintf '%s\\n' '${generation}:dependency-ok'\n`)
-  await chmod(binary, 0o755)
-}
-
-async function writeReleaseDependency(releasePath: string): Promise<void> {
-  const dependencyRoot = join(releasePath, 'node_modules', 'fixture-dependency')
-  await mkdir(dependencyRoot, { recursive: true })
-  await writeFile(
-    join(dependencyRoot, 'package.json'),
-    JSON.stringify({ name: 'fixture-dependency', type: 'module', exports: './index.js' })
-  )
-  await writeFile(join(dependencyRoot, 'index.js'), "export default 'dependency-ok'\n")
-}
-
-async function writeRelease(releasePath: string, generation: string): Promise<void> {
-  await writeCliSources(releasePath, generation)
-  await writeNativeCli(releasePath, generation)
-  await writeReleaseDependency(releasePath)
+/** Every path under a release, relative to it, sorted. */
+async function releaseTree(releasePath: string): Promise<string[]> {
+  const entries = await readdir(releasePath, { recursive: true })
+  return entries.map(String).sort()
 }
 
 function fixtureBuilds() {
@@ -140,7 +133,14 @@ function fixtureBuilds() {
   }
 }
 
-async function makeAtomicSurface(): Promise<{
+/**
+ * Today's installed topology: `hrc-runtime-current` names release-old and both
+ * command names go through it. `legacyBunCli` instead leaves `hrc` where an
+ * install from before the native CLI did: on the Bun entrypoint of an older
+ * release (now gone, so dangling), with the global `hrc-cli` package link
+ * those installs created.
+ */
+async function makeAtomicSurface(options: { legacyBunCli?: boolean } = {}): Promise<{
   binPath: string
   oldRelease: string
   paths: InstalledSurfacePaths
@@ -158,16 +158,31 @@ async function makeAtomicSurface(): Promise<{
   }
   const oldRelease = join(paths.releaseRoot, 'release-old')
   await writeRelease(oldRelease, 'old')
+  await chmod(join(oldRelease, 'bin', 'rusthrc'), 0o755)
   await mkdir(paths.globalModules, { recursive: true })
   await mkdir(paths.binDir, { recursive: true })
-
-  // Model the pre-migration Bun-link topology. installAtomicRelease first
-  // converts this to the stable current-link topology without changing roots.
-  await symlink(join(oldRelease, 'packages', 'hrc-cli'), join(paths.globalModules, 'hrc-cli'))
-  await symlink(join(paths.globalModules, 'hrc-cli', 'src', 'cli.ts'), join(paths.binDir, 'hrc'))
+  await symlink(oldRelease, paths.currentLink)
   const binPath = join(paths.binDir, 'hrc')
+  await symlink(join(paths.currentLink, 'bin', 'rusthrc'), join(paths.binDir, 'rusthrc'))
+  if (options.legacyBunCli) {
+    await symlink(join(oldRelease, 'packages', 'hrc-cli', 'bin', 'hrc.js'), binPath)
+    await symlink(
+      join(paths.currentLink, 'packages', 'hrc-cli'),
+      join(paths.globalModules, 'hrc-cli')
+    )
+  } else {
+    await symlink(join(paths.currentLink, 'bin', 'rusthrc'), binPath)
+  }
 
   return { binPath, oldRelease, paths, sourceRoot: join(root, 'checkout') }
+}
+
+async function selectedLinks(paths: InstalledSurfacePaths): Promise<Record<string, string>> {
+  return {
+    current: await readlink(paths.currentLink),
+    hrc: await readlink(join(paths.binDir, 'hrc')),
+    rusthrc: await readlink(join(paths.binDir, 'rusthrc')),
+  }
 }
 
 function invokeInstalled(binPath: string): { exitCode: number; stderr: string; stdout: string } {
@@ -180,73 +195,90 @@ function invokeInstalled(binPath: string): { exitCode: number; stderr: string; s
 }
 
 describe('T-06685 installed CLI continuity harness', () => {
-  test('published Bun package cannot reclaim hrc on global install', async () => {
-    const manifest = JSON.parse(
-      await readFile(join(import.meta.dir, '../packages/hrc-cli/package.json'), 'utf8')
+  test("moves an hrc link left on an older release's Bun CLI entrypoint to bin/rusthrc", async () => {
+    const fixture = await makeAtomicSurface({ legacyBunCli: true })
+    expect(await readlink(fixture.binPath)).toBe(
+      join(fixture.oldRelease, 'packages', 'hrc-cli', 'bin', 'hrc.js')
     )
-    expect(manifest.bin?.hrc).toBeUndefined()
-  })
-
-  test('reinstall repairs a legacy link and refuses a release missing rusthrc', async () => {
-    const fixture = await makeAtomicSurface()
-    const workspaceBins = [
-      join(fixture.sourceRoot, 'node_modules/.bin'),
-      join(dirname(fixture.sourceRoot), 'node_modules/.bin'),
-    ]
-    for (const bin of workspaceBins) {
-      await mkdir(bin, { recursive: true })
-      await symlink(join(fixture.oldRelease, 'packages/hrc-cli/src/cli.ts'), join(bin, 'hrc'))
-    }
-    for (const id of ['release-first', 'release-second']) {
-      await installAtomicRelease({
-        context: 'main',
-        linkMode: 'on',
-        paths: fixture.paths,
-        sourceRoot: fixture.sourceRoot,
-        releaseId: id,
-        readRunningRelease: () => ({ answered: true }),
-        prepareRelease: async (path) => {
-          await writeRelease(path, id)
-          return fixtureBuilds()
-        },
-      })
-      expect(await readlink(fixture.binPath)).toBe(
+    await expect(realpath(fixture.binPath)).rejects.toMatchObject({ code: 'ENOENT' })
+    await installAtomicRelease({
+      context: 'main',
+      linkMode: 'on',
+      paths: fixture.paths,
+      sourceRoot: fixture.sourceRoot,
+      releaseId: 'release-first',
+      readRunningRelease: () => ({ answered: true }),
+      prepareRelease: async (path) => {
+        await writeRelease(path, 'release-first')
+        return fixtureBuilds()
+      },
+    })
+    for (const name of ['hrc', 'rusthrc']) {
+      expect(await readlink(join(fixture.paths.binDir, name))).toBe(
         join(fixture.paths.currentLink, 'bin', 'rusthrc')
       )
-      expect(invokeInstalled(fixture.binPath).stdout).toBe(`${id}:dependency-ok\n`)
+      expect(invokeInstalled(join(fixture.paths.binDir, name)).stdout).toBe(
+        'release-first:dependency-ok\n'
+      )
     }
-    for (const bin of workspaceBins) {
-      await expect(lstat(join(bin, 'hrc'))).rejects.toMatchObject({ code: 'ENOENT' })
-    }
-    await expect(
-      installAtomicRelease({
-        context: 'main',
-        linkMode: 'on',
-        paths: fixture.paths,
-        sourceRoot: fixture.sourceRoot,
-        releaseId: 'release-missing-native',
-        readRunningRelease: () => ({ answered: true }),
-        prepareRelease: async (path) => {
-          await writeCliSources(path, 'missing')
-          await writeReleaseDependency(path)
-          return fixtureBuilds()
-        },
-      })
-    ).rejects.toThrow('bin/rusthrc')
-    expect(invokeInstalled(fixture.binPath).stdout).toBe('release-second:dependency-ok\n')
+    await expect(lstat(join(fixture.paths.globalModules, 'hrc-cli'))).rejects.toMatchObject({
+      code: 'ENOENT',
+    })
   })
 
-  test('entrypoint smoke expects the HRC CLI exit', () => {
-    expect(CLI_PACKAGES['hrc-cli'].helpExitCode).toBe(0)
+  test('the installer selects a release with no package directories', async () => {
+    const fixture = await makeAtomicSurface()
+    const installed = await installAtomicRelease({
+      context: 'main',
+      linkMode: 'on',
+      paths: fixture.paths,
+      sourceRoot: fixture.sourceRoot,
+      releaseId: 'release-native',
+      readRunningRelease: () => ({ answered: true }),
+      prepareRelease: async (path) => {
+        await writeRelease(path, 'native')
+        return fixtureBuilds()
+      },
+    })
+    expect(await realpath(fixture.paths.currentLink)).toBe(await realpath(installed))
+    expect(await releaseTree(installed)).toEqual(
+      [
+        'bin',
+        'praesidium-release.json',
+        ...RELEASE_SHAPE.executables,
+        ...RELEASE_SHAPE.directories,
+      ].sort()
+    )
+    for (const executable of RELEASE_SHAPE.executables) {
+      expect((await stat(join(installed, executable))).mode & 0o111, executable).not.toBe(0)
+    }
+    expect(invokeInstalled(fixture.binPath).stdout).toBe('native:dependency-ok\n')
   })
 
-  test('real atomic-install entrypoints are executable before publication', async () => {
-    for (const [packageName, cli] of Object.entries(CLI_PACKAGES)) {
-      const entrypoint = join('packages', packageName, cli.entrypoint)
-      const metadata = await stat(join(import.meta.dir, '..', entrypoint))
-      expect(metadata.mode & 0o111, entrypoint).not.toBe(0)
-    }
-  })
+  for (const missing of [...RELEASE_SHAPE.executables, ...RELEASE_SHAPE.directories]) {
+    test(`a release without ${missing} is refused and the selected links stay as they were`, async () => {
+      const fixture = await makeAtomicSurface()
+      const before = await selectedLinks(fixture.paths)
+      const releasesBefore = await readdir(fixture.paths.releaseRoot)
+      await expect(
+        installAtomicRelease({
+          context: 'main',
+          linkMode: 'on',
+          paths: fixture.paths,
+          sourceRoot: fixture.sourceRoot,
+          releaseId: 'release-incomplete',
+          readRunningRelease: () => ({ answered: true }),
+          prepareRelease: async (path) => {
+            await writeRelease(path, 'incomplete', [missing])
+            return fixtureBuilds()
+          },
+        })
+      ).rejects.toThrow(`prepared release is missing ${missing}`)
+      expect(await selectedLinks(fixture.paths)).toEqual(before)
+      expect(await readdir(fixture.paths.releaseRoot)).toEqual(releasesBefore)
+      expect(invokeInstalled(fixture.binPath).stdout).toBe('old:dependency-ok\n')
+    })
+  }
 
   test('legacy checkout link deterministically exposes the dependency-gap failure', async () => {
     const fixture = await makeLegacyLinkedSurface()
@@ -283,11 +315,10 @@ describe('T-06685 installed CLI continuity harness', () => {
       sourceRoot: fixture.sourceRoot,
       readRunningRelease: () => ({ answered: true }),
       prepareRelease: async (releasePath) => {
-        await writeCliSources(releasePath, 'new')
+        await writeRelease(releasePath, 'new', RELEASE_SHAPE.executables)
         signalPreparationStarted()
         await preparationMayFinish
-        await writeReleaseDependency(releasePath)
-        await writeNativeCli(releasePath, 'new')
+        await writeRelease(releasePath, 'new')
         return fixtureBuilds()
       },
     })
@@ -337,7 +368,7 @@ describe('T-06685 installed CLI continuity harness', () => {
         sourceRoot: fixture.sourceRoot,
         readRunningRelease: () => ({ answered: true }),
         prepareRelease: async (releasePath) => {
-          await writeCliSources(releasePath, 'broken')
+          await writeRelease(releasePath, 'broken')
           throw new Error('deterministic preparation failure')
         },
       })

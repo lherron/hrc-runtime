@@ -1,4 +1,4 @@
-// WHY: Verify that prepack + postpack on the 17 cross-repo boundary packages
+// WHY: Verify that prepack + postpack on the cross-repo boundary packages
 // actually produce tarballs with no `bun` export condition. `bun pm pack` does
 // not auto-invoke prepack/postpack lifecycle hooks for private workspace
 // packages, so this script explicitly runs `bun run prepack` (strips bun keys),
@@ -14,25 +14,15 @@ import { join, resolve } from 'node:path'
 
 const ROOT = resolve(import.meta.dir, '..')
 
+// Every published package that strips the `bun` condition at prepack (the
+// publisher's list in publish-local-verdaccio.ts; hrc-turn-attention has no
+// prepack and no `bun` condition).
 const PACKAGES = [
-  'packages/agent-scope',
-  'packages/cli-kit',
-  'packages/config',
-  'packages/runtime',
-  'packages/execution',
-  'packages/harness-claude',
-  'packages/harness-codex',
-  'packages/harness-pi',
-  'packages/harness-pi-sdk',
-  'packages/agent-spaces',
   'packages/agent-action-render',
   'packages/hrc-core',
   'packages/hrc-sdk',
   'packages/hrc-frame-render',
-  'packages/hrc-server',
   'packages/hrc-events',
-  'packages/hrc-store-sqlite',
-  'packages/hrc-transcript-index',
 ] as const
 
 type CheckOutcome =

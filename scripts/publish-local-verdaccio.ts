@@ -24,15 +24,7 @@ const PACKAGES = [
   'packages/hrc-sdk',
   'packages/hrc-frame-render',
   'packages/hrc-events',
-  'packages/hrc-store-sqlite',
-  'packages/hrc-transcript-index',
-  'packages/hrc-capture-verifier',
-  'packages/hrc-server',
-  // CLIs last: they consume the libraries above. Added for F-1 T-06649 — svc
-  // must run installed artifacts, which requires these to be published at all.
-  // hrc-capture-verifier is a runtime dep of hrc-cli; a registry install of
-  // hrc-cli cannot resolve without it (devbox T-06833).
-  'packages/hrc-cli',
+  // Last: it consumes hrc-core and hrc-sdk.
   'packages/hrc-turn-attention',
 ] as const
 

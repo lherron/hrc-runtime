@@ -6,6 +6,7 @@ import {
   mkdir,
   mkdtemp,
   readFile,
+  readlink,
   realpath,
   rename,
   rm,
@@ -23,7 +24,6 @@ import {
   pruneReleaseDirs,
   resolveDatabasePath,
 } from 'hrc-core'
-import { DIRECT_STORE_OPEN_COMMANDS, readStoreSchemaState } from 'hrc-store-sqlite'
 
 import type { InstallContext, PublicationMode, SideEffectMode } from './install-policy'
 import { acquireInstallLock } from './lib/install-lock'
@@ -38,15 +38,36 @@ import {
 
 export { acquireInstallLock } from './lib/install-lock'
 
-export const CLI_PACKAGES = {
-  'hrc-cli': { entrypoint: 'src/cli.ts', helpExitCode: 0 },
+/**
+ * What a prepared release must hold before it can be selected, besides the
+ * release manifest. `hrc` and `rusthrc` both resolve to `bin/rusthrc`;
+ * `hrc-pty` is the per-seat supervisor rusthrc starts from beside itself.
+ * `node_modules` serves the retained TypeScript packages (publication and the
+ * owner stage's retention step import them from the release).
+ */
+export const RELEASE_SHAPE = {
+  executables: ['bin/rusthrc', 'bin/hrc-pty'],
+  directories: ['node_modules'],
 } as const
 
-type CliPackageName = keyof typeof CLI_PACKAGES
+/**
+ * Every command that opens the store directly instead of going over the socket,
+ * and therefore refuses while the store's applied migrations differ from the
+ * installed release's (T-08118): `hrc monitor show/watch/wait` open the
+ * daemon-reported dbPath through `Store::open_readonly`, whose admission
+ * refuses a missing or unknown migration (crates/hrc-store/src/lib.rs).
+ * Copy-pasteable command paths.
+ */
+export const DIRECT_STORE_OPEN_COMMANDS = [
+  'hrc monitor show',
+  'hrc monitor watch',
+  'hrc monitor wait',
+] as const
 
 export type InstalledSurfacePaths = {
   binDir: string
   currentLink: string
+  /** Only to remove the Bun `hrc-cli` package link earlier installs created. */
   globalModules: string
   lockDir: string
   releaseRoot: string
@@ -121,43 +142,6 @@ async function atomicSymlink(target: string, linkPath: string): Promise<void> {
 function isWithin(parent: string, candidate: string): boolean {
   const rel = relative(resolve(parent), resolve(candidate))
   return rel !== '..' && !rel.startsWith(`..${sep}`) && !isAbsolute(rel)
-}
-
-async function existingInstalledRoot(paths: InstalledSurfacePaths): Promise<string | undefined> {
-  const roots: string[] = []
-  for (const packageName of Object.keys(CLI_PACKAGES) as CliPackageName[]) {
-    const packageLink = join(paths.globalModules, packageName)
-    if ((await pathKind(packageLink)) === 'missing') continue
-    if ((await pathKind(packageLink)) !== 'symlink') {
-      throw new Error(`installed package path is not a symlink: ${packageLink}`)
-    }
-    // A DANGLING link carries no release root. Pre-split leftovers exist in the
-    // wild (`hrc-server -> agent-spaces/packages/hrc-server`, from before the
-    // repo split), and `realpath` throws ENOENT on one — which would turn a
-    // bootstrap install into a hard failure over an artifact the very next
-    // `installLinks` replaces.
-    let packageRoot: string
-    try {
-      packageRoot = await realpath(packageLink)
-    } catch (error) {
-      if (errorCode(error) === 'ENOENT') continue
-      throw error
-    }
-    if (basename(packageRoot) !== packageName || basename(dirname(packageRoot)) !== 'packages') {
-      throw new Error(
-        `cannot derive an HRC release root from installed link ${packageLink} -> ${packageRoot}`
-      )
-    }
-    roots.push(dirname(dirname(packageRoot)))
-  }
-
-  const unique = [...new Set(roots)]
-  if (unique.length > 1) {
-    throw new Error(
-      `installed HRC package links disagree on their release root: ${unique.join(', ')}`
-    )
-  }
-  return unique[0]
 }
 
 function expectExactFields(
@@ -241,23 +225,18 @@ function expectAspContracts(value: unknown): asserts value is AspContractPackage
 }
 
 async function validateReleaseShape(releasePath: string, releaseId: string): Promise<void> {
-  for (const [packageName, cli] of Object.entries(CLI_PACKAGES)) {
-    const entrypoint = join(releasePath, 'packages', packageName, cli.entrypoint)
-    const nodeModules = join(releasePath, 'node_modules')
-    if ((await pathKind(entrypoint)) === 'missing') {
-      throw new Error(`prepared release is missing ${relative(releasePath, entrypoint)}`)
+  for (const executable of RELEASE_SHAPE.executables) {
+    const path = join(releasePath, executable)
+    if ((await pathKind(path)) === 'missing') {
+      throw new Error(`prepared release is missing ${executable}`)
     }
-    if ((await pathKind(nodeModules)) === 'missing') {
-      throw new Error('prepared release is missing node_modules')
+    await chmod(path, 0o755)
+  }
+  for (const directory of RELEASE_SHAPE.directories) {
+    if ((await pathKind(join(releasePath, directory))) === 'missing') {
+      throw new Error(`prepared release is missing ${directory}`)
     }
-    await chmod(entrypoint, 0o755)
   }
-
-  const nativeCli = join(releasePath, 'bin', 'rusthrc')
-  if ((await pathKind(nativeCli)) === 'missing') {
-    throw new Error('prepared release is missing bin/rusthrc')
-  }
-  await chmod(nativeCli, 0o755)
 
   const manifestPath = join(releasePath, 'praesidium-release.json')
   const manifest = JSON.parse(await readFile(manifestPath, 'utf8')) as unknown
@@ -281,9 +260,11 @@ async function validateReleaseShape(releasePath: string, releaseId: string): Pro
 }
 
 /**
- * Convert legacy Bun links to the installed native CLI and stable package
- * indirections. Once bootstrapped, every future release is one atomic rename
- * of `currentLink`.
+ * Point `hrc` and `rusthrc` at `currentLink/bin/rusthrc`, whatever they named
+ * before (a Bun `packages/hrc-cli` entrypoint of an older release included).
+ * Once bootstrapped, every future release is one atomic rename of
+ * `currentLink`. A missing `currentLink` starts at the checkout until the
+ * cutover replaces it.
  */
 export async function bootstrapInstalledSurface(
   paths: InstalledSurfacePaths,
@@ -294,39 +275,23 @@ export async function bootstrapInstalledSurface(
     throw new Error(`installed current path is not a symlink: ${paths.currentLink}`)
   }
   if (currentKind === 'missing') {
-    const bootstrapRoot = (await existingInstalledRoot(paths)) ?? sourceRoot
-    await atomicSymlink(bootstrapRoot, paths.currentLink)
+    await atomicSymlink(sourceRoot, paths.currentLink)
   } else {
     await realpath(paths.currentLink)
-  }
-
-  // Bun leaves obsolete workspace bin links behind when a package drops its
-  // bin declaration. They shadow PATH inside `bun run`, including in the
-  // generated parent workspace. Remove only links to our legacy Bun entrypoints.
-  for (const root of new Set([sourceRoot, dirname(sourceRoot)])) {
-    const legacyBin = join(root, 'node_modules', '.bin', 'hrc')
-    if ((await pathKind(legacyBin)) !== 'symlink') continue
-    let target: string
-    try {
-      target = await realpath(legacyBin)
-    } catch (error) {
-      if (errorCode(error) === 'ENOENT') continue
-      throw error
-    }
-    if (/[/\\]hrc-cli[/\\](?:src[/\\]cli\.ts|bin[/\\]hrc\.js)$/.test(target)) {
-      await rm(legacyBin)
-    }
   }
 
   for (const bin of ['hrc', 'rusthrc']) {
     await atomicSymlink(join(paths.currentLink, 'bin', 'rusthrc'), join(paths.binDir, bin))
   }
 
-  for (const packageName of Object.keys(CLI_PACKAGES)) {
-    await atomicSymlink(
-      join(paths.currentLink, 'packages', packageName),
-      join(paths.globalModules, packageName)
-    )
+  // Earlier installs linked the Bun CLI package here through currentLink. The
+  // release no longer selects it, so remove that link and only that link.
+  const legacyPackageLink = join(paths.globalModules, 'hrc-cli')
+  if (
+    (await pathKind(legacyPackageLink)) === 'symlink' &&
+    (await readlink(legacyPackageLink)) === join(paths.currentLink, 'packages', 'hrc-cli')
+  ) {
+    await rm(legacyPackageLink)
   }
 }
 
@@ -469,8 +434,7 @@ async function runCommand(
   command: string,
   args: string[],
   cwd: string,
-  env: Record<string, string | undefined> = process.env,
-  expectedExitCode = 0
+  env: Record<string, string | undefined> = process.env
 ): Promise<void> {
   const child = Bun.spawn([command, ...args], {
     cwd,
@@ -480,10 +444,8 @@ async function runCommand(
     stderr: 'inherit',
   })
   const exitCode = await child.exited
-  if (exitCode !== expectedExitCode) {
-    throw new Error(
-      `${command} ${args.join(' ')} failed with exit code ${exitCode}; expected ${expectedExitCode}`
-    )
+  if (exitCode !== 0) {
+    throw new Error(`${command} ${args.join(' ')} failed with exit code ${exitCode}`)
   }
 }
 
@@ -600,16 +562,6 @@ async function prepareProductionRelease(
     runCommand
   )
 
-  for (const [packageName, cli] of Object.entries(CLI_PACKAGES)) {
-    await runCommand(
-      join(releasePath, 'packages', packageName, cli.entrypoint),
-      ['--help'],
-      releasePath,
-      process.env,
-      cli.helpExitCode
-    )
-  }
-
   return { hrcBuild, aspContracts }
 }
 
@@ -706,32 +658,83 @@ async function main(): Promise<void> {
     )
   }
   console.log(`[install] atomic HRC CLI cutover complete: ${releasePath}`)
-  for (const line of schemaArmedWindowLines()) console.log(line)
+  for (const line of schemaArmedWindowLines(join(releasePath, 'bin', 'rusthrc'))) console.log(line)
 }
 
 /**
  * The install→restart armed window (T-08118). The CLI surface is now this
  * release; the daemon still runs the previous one against a store at the
- * previous schema. The direct-open commands refuse until the restart, so say so
- * here rather than letting the operator meet the refusal cold.
+ * previous schema, and migrates it when it next boots this release. The
+ * direct-open commands refuse until the restart, so say so here rather than
+ * letting the operator meet the refusal cold.
  *
- * Returns lines rather than printing them so both states — armed and quiet —
- * are assertable. A warning that is emitted in every state teaches the reader
- * to skip it.
+ * The reading comes from `rusthrc` of the release just selected (`rusthrc
+ * store state`, read-only, no store lock): the build whose migration registry
+ * the next boot applies, so "pending" means exactly what that boot will do. A
+ * store from a newer release reads `ahead`, which that boot refuses.
+ *
+ * Returns lines rather than printing them so every state is assertable. A
+ * warning that is emitted in every state teaches the reader to skip it. Never
+ * throws: the cutover has already happened.
  */
-export function schemaArmedWindowLines(dbPath: string = resolveDatabasePath()): string[] {
-  const schema = readStoreSchemaState(dbPath)
-  if (!schema.readable) {
-    return [`[install] store schema: unreadable (${schema.error ?? 'unknown'})`]
+export function schemaArmedWindowLines(
+  rusthrc: string,
+  dbPath: string = resolveDatabasePath()
+): string[] {
+  const result = spawnSync(rusthrc, ['store', 'state', dbPath], {
+    encoding: 'utf8',
+    stdio: ['ignore', 'pipe', 'pipe'],
+    timeout: 15_000,
+    killSignal: 'SIGKILL',
+  })
+  let reading: {
+    state?: unknown
+    releaseVersion?: unknown
+    pending?: unknown
+    unknown?: unknown
+    missing?: unknown
+    error?: unknown
   }
-  if (!schema.schemaAhead) {
-    return [`[install] store schema: ${schema.storeVersion ?? '(none)'} matches running`]
+  try {
+    if (result.error !== undefined) throw result.error
+    reading = JSON.parse(result.stdout ?? '')
+    if (reading === null || typeof reading !== 'object') throw new Error('not an object')
+  } catch (error) {
+    const detail = error instanceof Error ? error.message : String(error)
+    return [
+      `[install] store schema: unreadable (${rusthrc} store state gave no reading: ${detail}; exit ${result.status})`,
+    ]
   }
-  return [
-    `[install] store schema: ${schema.storeVersion ?? '(none)'} differs from running — this release carries ${schema.pending.length} unapplied migration(s) (through ${schema.releaseVersion}).`,
-    '[install] run `hrc server restart` to apply them. Until then these refuse:',
-    ...DIRECT_STORE_OPEN_COMMANDS.map((command) => `[install]   ${command}`),
-  ]
+  const release = String(reading.releaseVersion ?? '(unknown)')
+  const ids = (value: unknown) => (Array.isArray(value) ? value.map(String) : [])
+  switch (reading.state) {
+    case 'current':
+      return [`[install] store schema: ${release} matches running`]
+    case 'pending': {
+      const pending = ids(reading.pending)
+      return [
+        `[install] store schema: differs from running — this release carries ${pending.length} unapplied migration(s) (through ${release}): ${pending.join(', ')}.`,
+        '[install] run `hrc server restart` to apply them. Until then these refuse:',
+        ...DIRECT_STORE_OPEN_COMMANDS.map((command) => `[install]   ${command}`),
+      ]
+    }
+    case 'ahead':
+      return [
+        `[install] store schema: ahead of this release (${release}); it carries migration(s) this release does not know: ${ids(reading.unknown).join(', ')}. This release's daemon refuses that store at its next boot.`,
+      ]
+    case 'absent':
+      return [`[install] store schema: unreadable (store not found at ${dbPath})`]
+    case 'unreadable':
+      return [`[install] store schema: unreadable (${String(reading.error ?? 'unknown')})`]
+    case 'below_baseline':
+      return [
+        `[install] store schema: below this release's baseline; missing ${ids(reading.missing).join(', ')}`,
+      ]
+    case 'not_hrc':
+      return [`[install] store schema: ${dbPath} is not an HRC store`]
+    default:
+      return [`[install] store schema: unreadable (unknown state ${JSON.stringify(reading.state)})`]
+  }
 }
 
 if (import.meta.main) {
