@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, test } from 'bun:test'
-import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
+import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
@@ -26,6 +26,17 @@ async function writeContractSet(root: string, version = '0.1.1-dev.fixture'): Pr
 }
 
 describe('T-06958 installed package build readers (T-08596: contracts, not a coherent tuple)', () => {
+  test('every contract name is a package the committed lock installs', async () => {
+    // The fixture below is built from the same constant, so it cannot notice a
+    // name no manifest declares any more. The real lock can (T-13157: a release
+    // install failed ENOENT on spaces-aspc-protocol after hrc-server left).
+    const lock = await readFile(join(import.meta.dir, '..', '..', 'bun.lock'), 'utf8')
+    const missing = ASP_CONTRACT_PACKAGE_NAMES.filter(
+      (name) => !lock.includes(`"${name}": ["${name}@`)
+    )
+    expect(missing).toEqual([])
+  })
+
   test('reads the thin contract set versions and rejects name/version mismatch', async () => {
     const root = await mkdtemp(join(tmpdir(), 'hrc-asp-build-reader-'))
     fixtures.push(root)

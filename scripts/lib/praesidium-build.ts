@@ -18,11 +18,14 @@ export const PRAESIDIUM_BUILD_FIELDS = [
  * agent-spaces packages an HRC release installs. Stamped into
  * praesidium-release.json as `aspContracts` (names plus installed versions)
  * instead of the deleted coherent execution-build tuple.
+ *
+ * Every name here must be a package `bun.lock` installs, because
+ * `readInstalledAspContracts` opens each one in the release's node_modules.
+ * `spaces-aspc-protocol` left with hrc-server, its only dependent (T-13157).
  */
 export const ASP_CONTRACT_PACKAGE_NAMES = [
   'agent-scope',
   'cli-kit',
-  'spaces-aspc-protocol',
   'spaces-harness-broker-protocol',
   'spaces-harness-broker-client',
   'spaces-runtime-contracts',

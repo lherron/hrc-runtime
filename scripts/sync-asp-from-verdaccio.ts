@@ -25,9 +25,9 @@ export const aspSyncSpec: SyncSpec = {
         // and agent-spaces leave this list with the manifests that declared
         // them. The later CLI-route consolidation also removed aspc and the
         // standalone harness packages from HRC manifests. hrc-frame-render
-        // keeps a type-only spaces-runtime edge.
+        // keeps a type-only spaces-runtime edge. spaces-aspc-protocol left
+        // with hrc-server, the only manifest that declared it (T-13157).
         'spaces-runtime-contracts',
-        'spaces-aspc-protocol',
       ],
     },
   ],
