@@ -27,8 +27,24 @@ predicate: >
   per-seat storage limit and images without placements are outside replay.
   HRC and presentation restarts preserve the supervisor and Claude; a
   supervisor crash does not promise child survival or supervisor recovery.
-authority: Lance ownership and driver-selection rulings 2026-10-29; Daedalus approval of wrkq:T-12046 spec REV 5, reply to EN-38360, 2026-10-29
+  Established harness death uses the existing hrcpty death predicate: a missing
+  supervisor, an exited broker, or an exited Claude child; a Codex presentation
+  child exit alone is not harness death. An identified supervisor that does not
+  answer remains inconclusive. Established death during an in-flight turn fails
+  that run with the existing broker_hrcpty reason, takes the runtime out of
+  service, and ends the identified lease through lease liveness reconciliation;
+  the in-flight aging exclusion does not suppress death reconciliation. At birth,
+  established death releases an out-of-service runtime's live-broker refusal
+  after its lease ends, preserving the continuation. A live or inconclusive
+  supervisor preserves that refusal. Idle child exit retains remain-on-exit
+  until aging or the next birth ends the lease; silence alone never proves death.
+authority: Lance ownership and driver-selection rulings 2026-10-29; Daedalus approval of wrkq:T-12046 spec REV 5, reply to EN-38360, 2026-10-29; wrkq:T-13219 specification etag 2, Daedalus approval EN-50466, 2026-11-10
 source:
+  - wrkq:T-13219
+  - crates/hrc-native/src/server/broker/lease.rs
+  - crates/hrc-native/src/server/broker/hrcpty.rs
+  - crates/hrc-native/src/server/broker/maintenance.rs
+  - crates/hrc-native/src/server/turns/turns/route.rs
   - wrkq:T-12046
   - architecture/records/invariants/hrc-runtime.aspd-prepared-execution-release.yaml
   - architecture/records/invariants/hrc-runtime.harness-broker-admission-client.yaml
@@ -37,6 +53,7 @@ source:
   - crates/hrc-native/src/server/broker/controller/mod.rs
   - crates/hrc-native/src/server/broker/controller/attach.rs
 required_tests:
+  - T-13219 product acceptance for Claude child death mid-turn, dead-harness rebirth on the same continuation, and refusal with a live harness behind a stale row
   - T-12046 G1 full-capability byte trace against direct Ghostty
   - T-12046 G2 detached birth and later attach with capture and visible output evidence
   - T-12046 G3 HRC and Loggia restart survival with unchanged Claude pid and subsequent delivery receipt
@@ -47,6 +64,7 @@ last_verified:
   date: 2026-10-29
   evidence: Design-only source verification of T-12046 REV 5 against HRC admission, allocation, transport-close and attach paths and scriptable-ghostty commit 07da02bffc358e42d3bdcab2660c160505dba9cb. No implementation gate, spike result, build, install or service-health result is established; runner evidence remains pending.
 reopen_when:
+  - death evidence, inconclusive-probe preservation, in-flight death settlement, or dead-harness birth refusal semantics change
   - supervisor, broker, HRC or presentation-client ownership or lifetime changes
   - broker respawn, invocation adoption or supervisor crash recovery is introduced
   - producer selection, frozen execution allocation or tmux coexistence boundaries change
@@ -54,3 +72,9 @@ reopen_when:
   - replay ordering, placement-class identity, continuation or image-retention bounds change
 supersedes: []
 superseded_by: []
+design_review: >
+  2026-11-10 T-13219 specification etag 2 approved in EN-50466 by source
+  reading of lease liveness, supervisor reports and socket-bound process
+  identification, aging exclusion, and the continuity-gated birth refusal.
+  Implementation and acceptance evidence remain pending; last_verified is
+  historical and is not refreshed by this design review.

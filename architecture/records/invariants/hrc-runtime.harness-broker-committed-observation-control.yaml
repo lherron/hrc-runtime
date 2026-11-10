@@ -143,7 +143,14 @@ predicate: >
   recovery outcome is absent or has class incomplete, retryable, or paused.
   Expiry removes only the revivable-status hold, never an outcome hold. The hold
   ends only when the status is not revivable or its hold age has expired, and
-  every invocation's latest outcome is recovered or operator_disposed. Unbound
+  every invocation's latest outcome is recovered or operator_disposed.
+  Under existing lifecycle authority and ownership rules, explicit operator
+  termination admits an unavailable HRC-owned runtime that is not already
+  terminated, ends its identified lease if present, settles runtime and invocation
+  state with the operator's reason, and preserves the existing continuation keep
+  or drop semantics. Termination does not itself delete retained evidence or
+  record a recovered or operator_disposed outcome; outcome holds remain governed
+  by the same predicate in every runtime status. Unbound
   expired revivable runtimes receive their unrecoverable-by-design outcome before
   sweep removal, as unbound terminated runtimes do. An external lifecycle owner's
   unavailable runtime stops referencing its endpoint and ledger paths after this
@@ -183,8 +190,11 @@ predicate: >
   /v1/internal/desktop/register, T-08567) answers 404; Desktop threads join
   through the generic participant door governed by
   hrc-runtime.participant-session-lifecycle.
-authority: wrkq:T-11700 broker disposition retention design approval (EN-34727; Mable rule acceptance EN-34723), 2026-10-23; wrkq:T-10632 spec revision 2 age-bound directory holds and expired-revivable death-evidence admission (Daedalus approval), 2026-10-09; wrkq:T-08566 H1 directory-hold reconciliation revision 3 (Daedalus approval), 2026-09-17; wrkq:T-08566 stages 2-3 retained-evidence consumer and verifier revision 5 (Daedalus approval), 2026-09-16; wrkq:T-08566 stage-1 launch-wrapper ingest retirement (Daedalus approval EN-13178), 2026-09-17; Lance HCS T-07827 / Daedalus approvals wrkq:T-07853, companion design wrkq:T-08098, wrkq:T-08201 revision 5 (C-19938), and wrkq:T-08207 revisions 10 and 11 (2026-09-26)
+authority: wrkq:T-13219 specification etag 2, Daedalus approval EN-50466 of unavailable-runtime operator termination with independent outcome holds, 2026-11-10; wrkq:T-11700 broker disposition retention design approval (EN-34727; Mable rule acceptance EN-34723), 2026-10-23; wrkq:T-10632 spec revision 2 age-bound directory holds and expired-revivable death-evidence admission (Daedalus approval), 2026-10-09; wrkq:T-08566 H1 directory-hold reconciliation revision 3 (Daedalus approval), 2026-09-17; wrkq:T-08566 stages 2-3 retained-evidence consumer and verifier revision 5 (Daedalus approval), 2026-09-16; wrkq:T-08566 stage-1 launch-wrapper ingest retirement (Daedalus approval EN-13178), 2026-09-17; Lance HCS T-07827 / Daedalus approvals wrkq:T-07853, companion design wrkq:T-08098, wrkq:T-08201 revision 5 (C-19938), and wrkq:T-08207 revisions 10 and 11 (2026-09-26)
 source:
+  - wrkq:T-13219
+  - crates/hrc-native/src/server/turns/control.rs
+  - crates/hrc-native/src/server/broker/retained/mod.rs
   - wrkq:T-11700
   - crates/hrc-native/src/server/projection/projection/mod.rs
   - crates/hrc-store/src/broker_reads.rs
@@ -240,18 +250,24 @@ required_tests:
   - offline read issues no acknowledgement or ledger-directory write, while release mismatch and reader contract violation project nothing
   - torn-tail and paused-retry outcomes hold the ledger directory, and recovery outcomes produce no hrc_events row
   - every hold consumer agrees for each runtime status and absent, recovered, operator-disposed, incomplete, retryable, and paused outcomes
-  - direct termination of a stale held runtime refuses without mutation, while disposition and adopt then terminate then recovery each provide an authorized release path
+  - T-13219 explicit termination of a stale runtime ends the identified lease, settles runtime and invocation state, and honors continuation keep or drop without deleting retained evidence or recording operator disposition; existing retained-evidence outcome holds remain independent
   - explicit disposition admits each non-live status but refuses external ownership, active runs, unsettled absorbed auxiliaries, live processes, live tmux sessions, private broker leases, and probe uncertainty
 last_verified:
   date: 2026-09-06
   evidence: T-08098 observed-mode mapper gates verify durable own foreign and unknown attribution, no nearest-input borrowing, no foreign terminalization, later own completion, and sequence-stable idempotent replay. Earlier authority is Daedalus source-grounded approval of revised T-07853 after resolution of Pi authority, retention ownership, and permission-timeout authority flaws. T-08201 revision 5 was source-reviewed and approved in C-19938 on 2026-09-07; its implementation and installed gates remain pending, and this date is not refreshed by design approval.
 design_review: >
+  2026-11-10 T-13219 specification etag 2 approved in EN-50466 by source
+  reading of terminate, lease teardown, and the retained-evidence hold predicate.
+  This supersedes the prior direct-stale-termination refusal expectation, without
+  changing the outcome-hold predicate. Implementation and acceptance evidence
+  remain pending; last_verified is unchanged.
   2026-10-23 T-11700 broker disposition retention approved by source reading:
   project-envelope cursor fallback, contiguous advancement, terminal timestamp
   writers, and controller gap repair. No test, build, install, restart, live
   cleanup, or service-health result is established; implementation gates remain
   the requester's work. Existing last_verified evidence is unchanged.
 reopen_when:
+  - unavailable-runtime operator termination admission or its independence from retained-evidence disposition changes
   - disposition terminal-age bound, owner identity, orphan eligibility, compaction cursor fence, or compacted-prefix conflict guarantee changes
   - HRC projects an uncommitted broker fact or BrokerEventMapper ceases to be the sole interpreter
   - projection transaction cursor acknowledgement or post-commit ordering changes
