@@ -451,7 +451,47 @@ pub fn diagnostic_payload(envelope: &Value, run_id: Option<&str>) -> Value {
     v
 }
 
-/// The canonical prompt already on the ledger for this turn window (echo).
+/// The body of a message that is exactly one tag pair around it: an opening
+/// tag on its own line, the body, and a closing tag naming the same element on
+/// its own line, with only whitespace outside. Claude Code records a
+/// multi-line paste this way (`<pasted_content id="N">…</pasted_content id="N">`);
+/// the match keys on that shape, not on the element name or the id.
+fn single_tag_body(text: &str) -> Option<&str> {
+    let t = text.trim();
+    let open_end = t.find('>')?;
+    let open = t.strip_prefix('<')?.get(..open_end - 1)?;
+    let name_len = open.find(|c: char| c.is_whitespace()).unwrap_or(open.len());
+    let name = &open[..name_len];
+    let named = |s: &str| {
+        !s.is_empty()
+            && s.chars()
+                .all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-')
+    };
+    if !named(name) || open.contains('\n') {
+        return None;
+    }
+    let rest = t[open_end + 1..].strip_prefix('\n')?;
+    let close_start = rest.rfind("\n</")?;
+    let close = rest[close_start + 3..].strip_suffix('>')?;
+    let close_name = close.get(..name_len)?;
+    let after = &close[name_len..];
+    if close_name != name
+        || close.contains('\n')
+        || !(after.is_empty() || after.starts_with(char::is_whitespace))
+    {
+        return None;
+    }
+    Some(&rest[..close_start])
+}
+
+/// The prompt already on the ledger that this broker `user.message` echoes.
+///
+/// Candidates are the prompts since the last `turn.completed` of this runtime
+/// (an absorbed steer echoes into the turn it joined) and the prompts already
+/// recorded for the echo's own run (a mail dispatched while the previous turn
+/// was finishing is recorded before that turn's terminal). The echo matches a
+/// candidate when its whole text, or the whole body inside one tag pair, equals
+/// it; a message that merely contains a prompt is a prompt of its own.
 pub fn echoed_user_prompt(db: &Connection, envelope: &Value, ev: &Ev) -> Result<bool> {
     if envelope["type"] != "user.message" {
         return Ok(false);
@@ -459,7 +499,10 @@ pub fn echoed_user_prompt(db: &Connection, envelope: &Value, ev: &Ev) -> Result<
     let Some(content) = envelope["payload"]["content"].as_str() else {
         return Ok(false);
     };
-    let canonical = user_prompt_payload(content)["message"]["content"].clone();
+    let canonical = |text: &str| user_prompt_payload(text)["message"]["content"].clone();
+    let echoes: Vec<Value> = std::iter::once(canonical(content))
+        .chain(single_tag_body(content).map(canonical))
+        .collect();
     let runtime = ev.runtime_id.as_deref();
     let last_terminal: Option<i64> = db
         .query_row(
@@ -469,14 +512,22 @@ pub fn echoed_user_prompt(db: &Connection, envelope: &Value, ev: &Ev) -> Result<
         )
         .optional()?;
     let from = last_terminal.map_or(1, |s| s + 1);
-    let mut stmt = db.prepare("SELECT payload_json FROM hrc_events WHERE event_kind='turn.user_prompt' AND host_session_id=? AND generation=? AND runtime_id IS ? AND hrc_seq>=? ORDER BY hrc_seq ASC")?;
+    // Two branches so each keeps its own index: the window on (host session,
+    // generation, seq), the run's earlier prompts on (run, kind, seq). Unpinned,
+    // the planner reads the run branch off the session index too, which scans
+    // the generation's whole history before the window.
+    let mut stmt = db.prepare(
+        "SELECT payload_json FROM hrc_events WHERE event_kind='turn.user_prompt' AND host_session_id=?1 AND generation=?2 AND runtime_id IS ?3 AND hrc_seq>=?4
+         UNION ALL
+         SELECT payload_json FROM hrc_events INDEXED BY idx_hrc_events_run_kind_seq WHERE run_id=?5 AND event_kind='turn.user_prompt' AND host_session_id=?1 AND generation=?2 AND runtime_id IS ?3 AND hrc_seq<?4",
+    )?;
     let rows = stmt.query_map(
-        params![ev.host_session_id, ev.generation, runtime, from],
+        params![ev.host_session_id, ev.generation, runtime, from, ev.run_id],
         |r| r.get::<_, String>(0),
     )?;
     for raw in rows {
         let payload: Value = serde_json::from_str(&raw?).unwrap_or(Value::Null);
-        if payload["message"]["role"] == "user" && payload["message"]["content"] == canonical {
+        if payload["message"]["role"] == "user" && echoes.contains(&payload["message"]["content"]) {
             return Ok(true);
         }
     }
