@@ -166,6 +166,9 @@ try:
     report['successor'] = s.http('POST','/v1/participants/register',request)
     assert report['successor'][0] == 200 and report['successor'][1]['status']=='registered', report['successor']
     assert reservation()['disposition'] is None and reservation()['disposition_at'] is None
+    cleared = reservation()
+    report['oldEvictionAfterSuccessor'] = s.http('POST','/v1/terminate',retire)
+    assert report['oldEvictionAfterSuccessor'][0] == 200 and reservation() == cleared
     # External invocation exit without terminate: stopped runtime, TERMINAL
     # attempt, held address. The attempt predicate still reports demand.
     stopped_scope = prefix+'external-exit'; stopped_case = report['externalExit'] = {}

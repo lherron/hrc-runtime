@@ -666,12 +666,13 @@ pub(super) fn evict_external(
     let now = hrc_store::timestamp();
     commit(server, |db| {
         let rt = db::runtime(db, &snapshot.runtime_id)?.unwrap_or_else(|| snapshot.clone());
+        if rt.status == "terminated" && rt.state_object()["terminalReason"] == "operator_evict" {
+            return Ok(());
+        }
+        // A replay must not re-park an address a successor attempt cleared.
         if let Some(disposition) = disposition {
             db.execute("UPDATE participant_address_reservations SET disposition=?,disposition_at=COALESCE(disposition_at,?),updated_at=CASE WHEN disposition IS NULL THEN ? ELSE updated_at END WHERE reservation_id IN (SELECT reservation_id FROM participant_host_bindings WHERE runtime_id=?)",
                 params![disposition,now,now,rt.runtime_id])?;
-        }
-        if rt.status == "terminated" && rt.state_object()["terminalReason"] == "operator_evict" {
-            return Ok(());
         }
         if let Some(invocation) = &rt.active_invocation_id {
             db::update_invocation(
