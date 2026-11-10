@@ -168,9 +168,25 @@ pub fn replay_body(server: &Shared, run_id: &str) -> Result<Value, ApiError> {
         observation["broker"] = json!({"selector":{"invocationId":i,"runId":run.run_id,"runtimeId":rt,"generation":run.generation},"afterSeq":0});
     }
     body["observation"] = observation;
+    // The replay reports what the submission record says happened to the
+    // first submission, not merely that the broker named it (T-13242 s3).
+    let record = crate::server::submission_record::by_run(&db.sqlite, run_id)?;
     if let Some(s) = &run.broker_submission_id {
         body["submissionId"] = s.as_str().into();
-        body["admission"] = "admitted".into();
+        let disposition = record.as_ref().map(|r| &r["disposition"]);
+        let refused = record.as_ref().is_some_and(|r| r["handedAt"].is_null())
+            && disposition.is_some_and(|d| d["deliveryEvidence"] == "refused_at_admission");
+        body["admission"] = if refused { "rejected" } else { "admitted" }.into();
+        if let Some(reason) = disposition.filter(|_| refused).map(|d| d["reason"].clone())
+            && !reason.is_null()
+        {
+            body["reason"] = reason;
+        }
+    }
+    if let Some(r) = record {
+        body["grade"] = r["grade"].clone();
+        body["bodyRetryPermitted"] = r["bodyRetryPermitted"].clone();
+        body["submission"] = r;
     }
     let error: Option<(Option<String>, Option<String>)> = db
         .sqlite
@@ -327,6 +343,25 @@ pub fn final_message(conn: &rusqlite::Connection, run_id: &str) -> anyhow::Resul
     })
 }
 
+/// A replay keeps its identity and the record's grade through the collapsed
+/// rejected and closed bodies.
+fn with_replay(mut out: Value, dispatch: &Value) -> Value {
+    if dispatch["replayed"] == true {
+        for k in [
+            "runId",
+            "replayed",
+            "grade",
+            "bodyRetryPermitted",
+            "submission",
+        ] {
+            if let Some(v) = dispatch.get(k) {
+                out[k] = v.clone();
+            }
+        }
+    }
+    out
+}
+
 /// projectSubmissionResponse
 fn project_submission(dispatch: Value, projection: &Value) -> Value {
     if dispatch.get("submissionId").is_none() || dispatch.get("admission").is_none() {
@@ -342,7 +377,7 @@ fn project_submission(dispatch: Value, projection: &Value) -> Value {
         out["disposition"] = disposition.cloned().unwrap_or_else(
             || json!({"type":"rejected","reason":reason.clone().unwrap_or(json!("rejected"))}),
         );
-        return out;
+        return with_replay(out, &dispatch);
     }
     if disposition.is_some_and(|d| {
         ["rejected", "expired", "cancelled", "lost"]
@@ -354,7 +389,7 @@ fn project_submission(dispatch: Value, projection: &Value) -> Value {
             out["reason"] = r.clone();
         }
         out["disposition"] = disposition.cloned().unwrap();
-        return out;
+        return with_replay(out, &dispatch);
     }
     let mut out = dispatch;
     out["admission"] = "admitted".into();

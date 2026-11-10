@@ -167,6 +167,11 @@ pub fn publish_presentation(
     Ok(())
 }
 
+/// The submission's `origin.envelopeId`, written with the run row.
+fn envelope<'a>(o: &Options<'a>) -> Option<&'a str> {
+    o.submission_origin.and_then(|x| x["envelopeId"].as_str())
+}
+
 fn run_active(status: &str) -> bool {
     matches!(status, "accepted" | "started" | "running")
 }
@@ -205,10 +210,8 @@ async fn input_turn(
                     json!({"runtimeId":rt.runtime_id,"runId":o.run_id,"status":r.status,"route":route}),
                 ));
             }
-            Some(_) => db::update_run(
-                &db.sqlite,
-                o.run_id,
-                &[
+            Some(_) => {
+                let mut cols = vec![
                     ("runtime_id", db::text(rt.runtime_id.as_str())),
                     ("invocation_id", db::text(invocation.as_str())),
                     (
@@ -216,12 +219,16 @@ async fn input_turn(
                         db::opt_text(rt.active_operation_id.as_deref()),
                     ),
                     ("updated_at", db::text(now.as_str())),
-                ],
-            )?,
+                ];
+                if let Some(e) = envelope(o) {
+                    cols.push(("envelope_id", db::text(e)));
+                }
+                db::update_run(&db.sqlite, o.run_id, &cols)?;
+            }
             None => {
                 db.sqlite.execute(
-                    "INSERT INTO runs (run_id, host_session_id, runtime_id, scope_ref, lane_ref, generation, transport, status, accepted_at, updated_at, invocation_id, operation_id, dispatch_idempotency_key, origin_actor, origin_kind, origin_causation_ref, execution_format) VALUES (?, ?, ?, ?, ?, ?, ?, 'accepted', ?, ?, ?, ?, ?, ?, ?, ?, 'format1')",
-                    params![o.run_id, session["hostSessionId"].as_str(), rt.runtime_id, session["scopeRef"].as_str(), session["laneRef"].as_str().map(hrc_store::storage_lane), session["generation"].as_i64(), transport, now, now, invocation, rt.active_operation_id, o.idempotency_key, o.origin.and_then(|x| x["actor"].as_str()), o.origin.and_then(|x| x["kind"].as_str()), o.origin.and_then(|x| x["causationRef"].as_str())],
+                    "INSERT INTO runs (run_id, host_session_id, runtime_id, scope_ref, lane_ref, generation, transport, status, accepted_at, updated_at, invocation_id, operation_id, dispatch_idempotency_key, origin_actor, origin_kind, origin_causation_ref, execution_format, envelope_id) VALUES (?, ?, ?, ?, ?, ?, ?, 'accepted', ?, ?, ?, ?, ?, ?, ?, ?, 'format1', ?)",
+                    params![o.run_id, session["hostSessionId"].as_str(), rt.runtime_id, session["scopeRef"].as_str(), session["laneRef"].as_str().map(hrc_store::storage_lane), session["generation"].as_i64(), transport, now, now, invocation, rt.active_operation_id, o.idempotency_key, o.origin.and_then(|x| x["actor"].as_str()), o.origin.and_then(|x| x["kind"].as_str()), o.origin.and_then(|x| x["causationRef"].as_str()), envelope(o)],
                 ).map_err(anyhow::Error::from)?;
             }
         }
@@ -310,14 +317,24 @@ async fn input_turn(
                 ("updated_at", db::text(now.as_str())),
             ],
         )?;
+        let requested = plan.door_report["requestedDoor"].as_str().unwrap_or(door);
         db.sqlite.execute(
-            "INSERT INTO submission_admissions (submission_id, run_id, runtime_id, invocation_id, door, envelope_id, admitted_at) VALUES (?, ?, ?, ?, ?, ?, ?) ON CONFLICT(submission_id) DO UPDATE SET run_id = excluded.run_id, runtime_id = excluded.runtime_id, invocation_id = excluded.invocation_id, door = COALESCE(excluded.door, submission_admissions.door), envelope_id = COALESCE(excluded.envelope_id, submission_admissions.envelope_id), admitted_at = excluded.admitted_at",
-            params![submission, o.run_id, rt.runtime_id, invocation, door, origin["envelopeId"].as_str(), now],
+            "INSERT INTO submission_admissions (submission_id, run_id, runtime_id, invocation_id, door, envelope_id, admitted_at, requested_door) VALUES (?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT(submission_id) DO UPDATE SET run_id = excluded.run_id, runtime_id = excluded.runtime_id, invocation_id = excluded.invocation_id, door = COALESCE(excluded.door, submission_admissions.door), envelope_id = COALESCE(excluded.envelope_id, submission_admissions.envelope_id), admitted_at = excluded.admitted_at, requested_door = excluded.requested_door",
+            params![submission, o.run_id, rt.runtime_id, invocation, door, origin["envelopeId"].as_str(), now, requested],
         ).map_err(anyhow::Error::from)?;
         if response["admission"] == "rejected" {
             let reason = response["reason"]
                 .as_str()
                 .unwrap_or("broker rejected submission");
+            // The broker (or HRC, for a preempt the seat cannot take) refused
+            // the submission at admission: nothing was handed to the harness.
+            crate::server::submission_record::refused_at_admission(
+                &db.sqlite,
+                &submission,
+                Some(reason),
+                &now,
+            )
+            .map_err(anyhow::Error::from)?;
             db::mark_run_completed(
                 &db.sqlite,
                 o.run_id,
@@ -647,6 +664,12 @@ pub async fn execute(server: &Shared, plan: &Plan, o: &Options<'_>) -> Result<Va
             if let (Some(a), Some(i)) = (o.repair, intent.as_object_mut()) {
                 let _ = (a, i);
             }
+            // The run row a birth writes carries the submission's envelope.
+            let birth_origin = envelope(o).map(|e| {
+                let mut origin = o.origin.cloned().unwrap_or_else(|| json!({}));
+                origin["envelopeId"] = e.into();
+                origin
+            });
             let born = broker::birth(
                 server,
                 broker::Birth {
@@ -655,7 +678,7 @@ pub async fn execute(server: &Shared, plan: &Plan, o: &Options<'_>) -> Result<Va
                     prompt: o.prompt,
                     run_id: o.run_id,
                     idempotency: o.idempotency_key.map(Value::from).as_ref(),
-                    origin: o.origin,
+                    origin: birth_origin.as_ref().or(o.origin),
                     response_format: o.response_format,
                     first_turn_timeout_ms: o.first_turn_timeout_ms,
                     attach: o.attach.and_then(|g| g.lock().unwrap().take()),

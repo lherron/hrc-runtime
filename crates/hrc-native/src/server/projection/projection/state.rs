@@ -95,13 +95,16 @@ pub fn project_retained(
     let dispose = |disposition: &str| -> Result<()> {
         if let Some(sub) = owners::payload_submission_id(p) {
             db.execute(
-                "INSERT INTO submission_admissions (submission_id, disposition, disposed_at) VALUES (?, ?, ?) ON CONFLICT(submission_id) DO UPDATE SET disposition = excluded.disposition, disposed_at = excluded.disposed_at WHERE submission_admissions.disposition IS NULL",
-                rusqlite::params![sub, disposition, at],
+                "INSERT INTO submission_admissions (submission_id, disposition, disposed_at, turn_id, reason) VALUES (?, ?, ?, ?, ?) ON CONFLICT(submission_id) DO UPDATE SET disposition = excluded.disposition, disposed_at = excluded.disposed_at, turn_id = COALESCE(excluded.turn_id, submission_admissions.turn_id), reason = COALESCE(excluded.reason, submission_admissions.reason) WHERE submission_admissions.disposition IS NULL",
+                rusqlite::params![sub, disposition, at, p["turnId"].as_str(), p["reason"].as_str()],
             )?;
         }
         Ok(())
     };
     match kind {
+        "input.accepted" | "input.rejected" | "queue.withdrawn" | "admission.rejected" => {
+            crate::server::submission_record::record_delivery(db, envelope)?;
+        }
         "submission.executed" | "turn.attributed" => {
             if kind == "submission.executed" {
                 dispose("executed")?;
@@ -379,6 +382,7 @@ pub fn project(
         "input.accepted"
         | "input.rejected"
         | "input.queued"
+        | "admission.rejected"
         | "queue.withdrawn"
         | "submission.executed"
         | "submission.absorbed"

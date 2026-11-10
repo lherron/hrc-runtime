@@ -91,6 +91,8 @@ mod seat_work;
 mod sessions;
 #[path = "server/projection/streams.rs"]
 mod streams;
+#[path = "server/projection/submission_record.rs"]
+mod submission_record;
 #[path = "server/projection/subscribers.rs"]
 mod subscribers;
 #[path = "server/projection/surfaces.rs"]
@@ -824,6 +826,8 @@ fn implemented(method: &Method, path: &str) -> bool {
             ]
             .contains(&path)
                 || path.starts_with("/v1/sessions/by-host/")
+                || path == "/v1/submissions"
+                || submission_record::submission_id(path).is_some()
                 || runtime_seat_id(path).is_some()))
         || (*method == Method::POST
             && [
@@ -936,6 +940,11 @@ async fn handle(
     }
     if *method == Method::GET && path == "/v1/broker-events/query" {
         return evidence::query(server, query);
+    }
+    if *method == Method::GET
+        && (path == "/v1/submissions" || submission_record::submission_id(path).is_some())
+    {
+        return submission_record::handle(server, path, query);
     }
     if path == "/v1/server/subscribers" || path == "/v1/server/subscribers/ack" {
         let mut registry = server.subscribers.lock().unwrap();
