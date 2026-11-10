@@ -541,3 +541,69 @@ pub async fn attach(server: &super::Shared, body: Value) -> Result<Response, Api
 }
 
 pub use establishment::resume;
+
+/// All held-address refusal points pass here. The knock is a best-effort
+/// courtesy; even a failed lookup/append must preserve the caller's refusal.
+pub fn host_refusal_detail(
+    server: &Server,
+    scope: &str,
+    lane: &str,
+    door: &str,
+    detail: &str,
+    knock: bool,
+) -> String {
+    let mut parked = false;
+    let result = (|| -> anyhow::Result<bool> {
+        let store = server.store.lock().unwrap();
+        let Some(reservation) = store.participant_reservation(scope, lane)? else {
+            return Ok(false);
+        };
+        parked = reservation["disposition"] == "parked";
+        if !knock || !store.participant_host_not_serving(scope, lane)? {
+            return Ok(false);
+        }
+        let id = reservation["reservation_id"].as_str().unwrap_or("");
+        let now = std::time::Instant::now();
+        let mut requests = server.participant_host_requests.lock().unwrap();
+        // Bound memory by the reservations requested in the last thirty seconds.
+        requests.retain(|_, at| now.duration_since(*at) < std::time::Duration::from_secs(30));
+        if requests.contains_key(id) {
+            return Ok(false);
+        }
+        let requested_at = hrc_store::timestamp();
+        let payload = json!({"scopeRef":scope,"laneRef":hrc_store::storage_lane(lane),"reservationId":id,"door":door,"requestedAt":requested_at}).to_string();
+        let tx = store.sqlite.unchecked_transaction()?;
+        hrc_store::append_event(
+            &tx,
+            &hrc_store::EventWrite {
+                ts: &requested_at,
+                host_session_id: Some("hrc-participant"),
+                generation: Some(0),
+                scope_ref: Some(scope),
+                lane_ref: Some(hrc_store::storage_lane(lane)),
+                category: "participant",
+                event_kind: "participant.host_requested",
+                payload_json: &payload,
+                ..Default::default()
+            },
+        )?;
+        tx.commit()?;
+        requests.insert(id.to_owned(), now);
+        Ok(true)
+    })();
+    match result {
+        Ok(true) => server.ledger_committed(),
+        Ok(false) => {}
+        Err(error) => super::stderr_json(
+            "warn",
+            "participant",
+            "participant.host_requested_failed",
+            json!({"scopeRef":scope,"laneRef":lane,"door":door,"error":error.to_string()}),
+        ),
+    }
+    if parked {
+        format!("{detail}; the participant host is parked")
+    } else {
+        detail.to_owned()
+    }
+}

@@ -84,3 +84,35 @@ a `cursor_invalid` response surfaces as an `HrcDomainError` with
 
 Callers that omit both new fields are unchanged in request bytes and response
 shape.
+
+## Participant host demand
+
+A host follows `GET /v1/events/bounded-stream` with
+`eventKind=participant.host_requested`, retaining `afterSeq` and
+`ledgerIncarnationId` for reconnects. These category `participant` rows have
+sentinel host session `hrc-participant`, generation 0, and no runtime or run
+attribution, following the store’s convention for an event that belongs to no
+session. The knock does not count as session activity. An existing refused-turn
+`submission.admission` audit can independently advance the retained session’s
+activity; parking does not change that audit. The payload contains `scopeRef`,
+`laneRef`, `reservationId`,
+`door` (`turn`, `turn-lazy`, `ensure`, `resume`) and `requestedAt`.
+
+The event reports an addressed refusal at a held reservation whose latest
+registration attempt cannot serve work (missing, absorbing, or non-ACTIVE
+with establishment exhausted). A retained BOUND binding does not suppress it.
+ACTIVE and still-establishing hosts produce no knock. HRC emits at most one
+per reservation per 30 seconds in one daemon lifetime; restart can admit an
+extra. Append failures are logged and preserve the refusal. HRC never calls
+or starts the host; observing a knock promises neither hosting nor delivery.
+
+`POST /v1/terminate` accepts optional `disposition: "parked"` only for an
+external lifecycle owner. Other owners and other disposition values return
+400 before termination. The reservation records nullable `disposition` and
+`disposition_at`; target reads expose `disposition` and `dispositionAt`, and
+participant refusal messages identify a parked host. Repeating eviction
+preserves the recorded time. Admitting a new registration attempt clears both
+fields; retrying an existing registration does not. Parking changes no
+reservation, binding, continuation, refusal or retry policy. Migration
+`0133_participant_parked_disposition` adds these nullable columns to the
+exported reservation table.

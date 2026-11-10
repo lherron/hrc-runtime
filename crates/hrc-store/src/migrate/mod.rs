@@ -31,11 +31,18 @@ pub struct Forward {
 
 /// The forward registry, in order. No TypeScript opener admits a store
 /// that holds any of these (T-12840 r3 section 6).
-pub const FORWARD: &[Forward] = &[Forward {
-    id: "0132_reconcile_live_stores",
-    rebuild: false,
-    apply: forward::m0132_reconcile_live_stores,
-}];
+pub const FORWARD: &[Forward] = &[
+    Forward {
+        id: "0132_reconcile_live_stores",
+        rebuild: false,
+        apply: forward::m0132_reconcile_live_stores,
+    },
+    Forward {
+        id: "0133_participant_parked_disposition",
+        rebuild: false,
+        apply: forward::m0133_participant_parked_disposition,
+    },
+];
 
 /// Who moved the store, recorded in the `store.migrated` row of an upgrade.
 pub struct Actor {

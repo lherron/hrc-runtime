@@ -326,18 +326,21 @@ pub fn assert_reserved_address_allows_birth(
     server: &Server,
     scope: &str,
     lane: &str,
+    door: &str,
 ) -> Result<(), ApiError> {
-    match server
+    let refusal = server
         .store
         .lock()
         .unwrap()
-        .target_birth_refusal(scope, lane)?
-    {
+        .target_birth_refusal(scope, lane)?;
+    match refusal {
         None => Ok(()),
         Some(message) => Err(ApiError::domain(
             StatusCode::CONFLICT,
             "stale_context",
-            message,
+            crate::server::participants::host_refusal_detail(
+                server, scope, lane, door, &message, true,
+            ),
             Some(json!({"scopeRef":scope,"laneRef":lane,"reason":"host_absent","retryable":true})),
         )),
     }

@@ -53,3 +53,12 @@ CREATE TABLE IF NOT EXISTS placement_ledger (
     }
     Ok(())
 }
+
+/// Display-only host disposition. Nullable additions preserve exported rows.
+pub fn m0133_participant_parked_disposition(conn: &Connection) -> anyhow::Result<()> {
+    conn.execute_batch(
+        "ALTER TABLE participant_address_reservations ADD COLUMN disposition TEXT CHECK (disposition IS NULL OR disposition='parked');
+         ALTER TABLE participant_address_reservations ADD COLUMN disposition_at TEXT;",
+    )?;
+    Ok(())
+}

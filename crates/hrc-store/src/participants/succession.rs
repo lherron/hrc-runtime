@@ -400,6 +400,7 @@ impl Store {
                 binding["binding_id"].as_str().unwrap_or("").to_owned(),
             )
         };
+        tx.execute("UPDATE participant_address_reservations SET disposition=NULL,disposition_at=NULL WHERE reservation_id=?",[binding["reservation_id"].as_str()])?;
         tx.execute("INSERT INTO participant_registration_attempts(attempt_id,registration_id,attach_epoch,request_id,operation_id,invocation_id,runtime_id,host_binding_id,state,recovery_disposition,establishment_work_state,establishment_attempt_count,continuation_carried,continuation_reason,continuation_selected_json,continuation_resume_state,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,'IDENTITY_MINTED','unresolved','pending',0,?,?,?,'not_requested',?,?)",params![attempt,reg["registration_id"].as_str(),a["attach_epoch"].as_i64().unwrap_or(1)+1,request,operation,invocation,runtime,binding_id,carried,selection_reason,selected,now,now])?;
         intent["allocatedAttemptId"] = attempt.clone().into();
         tx.execute("UPDATE participant_registration_attempts SET replacement_intent_json=?,establishment_work_state='completed',establishment_next_attempt_at=NULL,establishment_last_error=NULL,updated_at=? WHERE attempt_id=?",params![intent.to_string(),now,a["attempt_id"].as_str()])?;

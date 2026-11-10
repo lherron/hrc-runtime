@@ -31,6 +31,7 @@ const FORWARD_TIMEOUT: Duration = Duration::from_secs(30);
 #[derive(Default)]
 struct Terminate {
     drop_continuation: Option<bool>,
+    disposition: Option<String>,
     reason: Option<String>,
     source: Option<String>,
     actor: Option<String>,
@@ -96,8 +97,13 @@ fn terminate_options(body: &Value) -> Result<Terminate, ApiError> {
             ));
         }
     };
+    let disposition = raw("disposition")?;
+    if disposition.as_deref().is_some_and(|v| v != "parked") {
+        return Err(bad("disposition must be parked".into(), "disposition"));
+    }
     Ok(Terminate {
         drop_continuation,
+        disposition,
         reason: raw("reason")?,
         source: raw("source")?,
         actor: raw("actor")?,
@@ -436,6 +442,12 @@ pub async fn terminate(server: &Shared, body: Value) -> Result<Response, ApiErro
     let options = terminate_options(&body)?;
     let known = known(server, &action.runtime_id)?;
     let external = controller::is_external_lifecycle_owner(&known);
+    if options.disposition.is_some() && !external {
+        return Err(bad(
+            "disposition is only accepted for an external lifecycle owner".into(),
+            "disposition",
+        ));
+    }
     let rt = if external { known } else { available(known)? };
     if let Some(owner) = action.owner_run_id.as_deref().filter(|_| !external) {
         let protected = {
@@ -490,6 +502,7 @@ pub(crate) async fn retire(
 ) -> Result<bool, ApiError> {
     let options = Terminate {
         drop_continuation: Some(false),
+        disposition: None,
         reason: Some(reason.into()),
         source: Some(source.into()),
         actor: None,
@@ -532,7 +545,7 @@ async fn terminate_runtime(
     o: Terminate,
 ) -> Result<Response, ApiError> {
     if controller::is_external_lifecycle_owner(rt) {
-        evict_external(server, rt)?;
+        evict_external(server, rt, o.disposition.as_deref())?;
         let mut response = action_response(rt);
         response["droppedContinuation"] = false.into();
         return Ok(Json(response).into_response());
@@ -645,10 +658,18 @@ async fn terminate_runtime(
 /// Contract §8.5: detach only HRC's observation. The participant retains its
 /// process, presentation, continuation and held address. Repeated calls finish
 /// token cleanup after a crash without appending a second audit.
-pub(super) fn evict_external(server: &Shared, snapshot: &db::Rt) -> Result<(), ApiError> {
+pub(super) fn evict_external(
+    server: &Shared,
+    snapshot: &db::Rt,
+    disposition: Option<&str>,
+) -> Result<(), ApiError> {
     let now = hrc_store::timestamp();
     commit(server, |db| {
         let rt = db::runtime(db, &snapshot.runtime_id)?.unwrap_or_else(|| snapshot.clone());
+        if let Some(disposition) = disposition {
+            db.execute("UPDATE participant_address_reservations SET disposition=?,disposition_at=COALESCE(disposition_at,?),updated_at=CASE WHEN disposition IS NULL THEN ? ELSE updated_at END WHERE reservation_id IN (SELECT reservation_id FROM participant_host_bindings WHERE runtime_id=?)",
+                params![disposition,now,now,rt.runtime_id])?;
+        }
         if rt.status == "terminated" && rt.state_object()["terminalReason"] == "operator_evict" {
             return Ok(());
         }

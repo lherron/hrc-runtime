@@ -405,8 +405,16 @@ async fn steps(
         };
         if registered {
             trace.push("refused");
-            return Err(unavailable(
+            let detail = crate::server::participants::host_refusal_detail(
+                server,
+                session["scopeRef"].as_str().unwrap_or(""),
+                session["laneRef"].as_str().unwrap_or("main"),
+                "turn-lazy",
                 "participant addresses cannot be substituted by a birth",
+                true,
+            );
+            return Err(unavailable(
+                &detail,
                 json!({"reason":"participant_substitution"}),
             ));
         }
@@ -429,7 +437,15 @@ async fn steps(
             detail,
         }) => {
             trace.push("refused");
-            return Err(delivery::refusal(&session, kind, reason, detail));
+            let detail = crate::server::participants::host_refusal_detail(
+                server,
+                session["scopeRef"].as_str().unwrap_or(""),
+                session["laneRef"].as_str().unwrap_or("main"),
+                "turn",
+                detail,
+                *kind == "unavailable",
+            );
+            return Err(delivery::refusal(&session, kind, reason, &detail));
         }
         // A reconnect is route work, joined where the turn is delivered.
         Some(_) => trace.push("passed"),
@@ -778,6 +794,7 @@ pub(crate) mod tests {
             accounting: accounting::Accounting::new(),
             brokers: Default::default(),
             participant_work: Default::default(),
+            participant_host_requests: Default::default(),
             seat_gates: Default::default(),
             projection: Default::default(),
             subscribers: Default::default(),

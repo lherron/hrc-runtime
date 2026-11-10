@@ -130,7 +130,7 @@ async fn invalidate(server: &Shared, host: &str, reason: &str) -> Result<(i64, i
     let mut terminated = 0;
     for rt in runtimes.iter().filter(|r| !lease::unavailable(&r.status)) {
         if controller::is_external_lifecycle_owner(rt) {
-            control::evict_external(server, rt)?;
+            control::evict_external(server, rt, None)?;
             terminated += 1;
             continue;
         }

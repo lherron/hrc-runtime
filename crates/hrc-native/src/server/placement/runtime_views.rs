@@ -620,6 +620,18 @@ pub async fn target_session_view(
     }
     out.insert("laneRef".into(), hrc_store::canonical_lane(&lane).into());
     out.insert("state".into(), state.into());
+    if let Some(reservation) = server
+        .store
+        .lock()
+        .unwrap()
+        .participant_reservation(scope, &lane)?
+    {
+        out.insert("disposition".into(), reservation["disposition"].clone());
+        out.insert(
+            "dispositionAt".into(),
+            reservation["disposition_at"].clone(),
+        );
+    }
     for key in ["lastAppliedIntentJson", "continuation"] {
         if let Some(v) = session.get(key) {
             out.insert(key.into(), v.clone());
