@@ -1,4 +1,4 @@
-"""N3 scratch guard on the shared scratch helper (native by default, see n2_scratch).
+"""N3 scratch guard on the shared native-only scratch helper (see n2_scratch).
 
 Broker hook addresses are daemon-process identity too. A headless broker must
 never inherit this task seat's live observer/callback socket from the shell.

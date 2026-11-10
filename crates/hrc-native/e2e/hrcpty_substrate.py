@@ -995,7 +995,7 @@ def main():
         # Recorded child PIDs can be reaped and reused before this finalizer.
         # The shared reaper selects current argv under this fresh root and
         # excludes this driver and its ancestors; never signal a stale PID.
-        reap_root(root, args.artifacts)
+        cleanup = reap_root(root, args.artifacts)
         aspd.close()
         for log in r.logs:
             log.close()
@@ -1011,7 +1011,7 @@ def main():
             dump = {t: r.rows(f'SELECT * FROM {t}') for t in ('runtimes', 'runs', 'broker_invocations')}
             dump['hrc_events'] = r.rows('SELECT hrc_seq,ts,event_kind,runtime_id,run_id,transport,payload_json FROM hrc_events ORDER BY hrc_seq')
             (args.artifacts / 'rows.json').write_text(json.dumps(dump, indent=1, default=str) + '\n')
-        remaining = [l for _, l in descendants_of([str(root.resolve()) + "/"])]
+        remaining = cleanup['remaining']
         r.check('cleanup.no-leftover-processes', not remaining, remaining=remaining)
         if not args.keep:
             shutil.rmtree(root, ignore_errors=True)

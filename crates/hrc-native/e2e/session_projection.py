@@ -82,8 +82,8 @@ def main():
     def up(label):
         nonlocal proc, log
         log = (a.artifacts / (label + '.log')).open('w')
-        # Third argument False: the daemon PATH gains no JS runtime directory.
-        proc = subprocess.Popen([str(a.binary.resolve()), 'server'], env=daemon_env(env, (), False), cwd=root, stdout=log, stderr=log)
+        # Preserve the caller PATH without adding a runtime directory.
+        proc = subprocess.Popen([str(a.binary.resolve()), 'server'], env=daemon_env(env), cwd=root, stdout=log, stderr=log)
         for _ in range(300):
             assert proc.poll() is None, label + ' exited'
             try:

@@ -101,8 +101,8 @@ def index_phase_a(dbpath, env):
     binary = binary.parse_known_args()[0].binary.resolve()
     root = Path(env['HRC_STATE_DIR']).parent
     log = (root/'phase-a.log').open('w')
-    # Third argument False: the daemon PATH gains no JS runtime directory.
-    owner = subprocess.Popen([str(binary), 'server', 'serve'], env=daemon_env(env, (), False), cwd=root, stdout=log, stderr=log)
+    # Preserve the caller PATH without adding a runtime directory.
+    owner = subprocess.Popen([str(binary), 'server', 'serve'], env=daemon_env(env), cwd=root, stdout=log, stderr=log)
     try:
         deadline = time.time() + 30
         while time.time() < deadline:

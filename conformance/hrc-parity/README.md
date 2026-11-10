@@ -1,24 +1,9 @@
-# Retained parity comparison dependencies
+# Native bounded-stream checker
 
-The Bun baseline provisioner and source-capture entry points have been retired.
-No new baseline or golden is produced here.
+`owner_relative.py` supplies `bounded_ready` to the cargo gate through
+`crates/hrc-native/e2e/foundation.py`. It checks the raw ready frame against
+that owner’s sampled ledger page, including incarnation and replay head.
 
-`run.py` and its comparator modules remain pending the later native-driver
-sweep. Current callers include native routes, accounting, session_index,
-session_projection, owner_relative_controls, participant succession and the
-listed n2 participant / n3 messages drivers. They still consume explicit paired
-captures; this is listed compatibility machinery, not no-Bun native evidence.
-The T-13069 disposition table records this dependency group under Mable's ruling.
-
-`owner_relative.py` is different: `bounded_ready` validates the raw bounded
-stream ready frame against that owner's sampled ledger page. The cargo leg's
-`foundation.py` imports it and asserts the predicate. Keep this checker.
-
-Run retained checker controls with:
-
-```sh
-python3 conformance/hrc-parity/run.py controls --out /tmp/parity-controls
-```
-
-`n4_release.mjs` and `n4_telemetry.py` need separately scoped native qualification;
-keep them listed until their callers and release-tooling boundaries are resolved.
+The paired capture suites, comparators, capture helpers and their case catalog
+were retired under T-13156. Native behavior is asserted by the e2e drivers in
+`crates/hrc-native/e2e` and `crates/hrc-cli/e2e`.

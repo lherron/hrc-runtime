@@ -37,13 +37,13 @@ import json
 import os
 from pathlib import Path
 import shutil
-import signal
 import subprocess
 import sys
 import time
 import uuid
 
-from hrcpty_substrate import AGENT, LEAK, PROJECT, FakeAspd, Run, alive, descendants_of, ops
+from n2_scratch import reap_root
+from hrcpty_substrate import AGENT, LEAK, PROJECT, FakeAspd, Run, alive, ops
 
 HERE = Path(__file__).resolve().parent
 REPO = HERE.parents[2]
@@ -101,7 +101,6 @@ def main():
     intent = {'placement': {'agentRoot': str(root / PROJECT), 'projectRoot': str(root / PROJECT), 'cwd': str(root / PROJECT),
                             'runMode': 'task', 'bundle': {'kind': 'compose', 'compose': []}, 'dryRun': False},
               'harness': {'provider': 'openai', 'interactive': True}}
-    pids = []
     failure = None
     timings = {}
     try:
@@ -147,7 +146,6 @@ def main():
         cont = r.rows('SELECT continuation_json,continuation_reuse_disabled FROM sessions WHERE host_session_id=?', (host1,))[0]
         r.check('S.continuation-recorded', cont['continuation_json'] and cont['continuation_reuse_disabled'] == 0, session=cont)
         seat1 = seat(s1)
-        pids += [seat1['supervisor'], seat1['broker']]
         status, held = turn(host1, 'HOLD the seat turn-active')
         assert status in (200, 202), ('hold', status, held)
         r.wait(lambda: r.runtime(s1)['active_run_id'] == held['runId'], 30, 'held turn active')
@@ -224,7 +222,6 @@ def main():
         status, b2 = turn(host2, 'CONT S2 first turn')
         assert status in (200, 202), ('S2 birth', status, b2)
         r.wait(lambda: r.rows("SELECT 1 FROM runs WHERE run_id=? AND status='completed'", (b2['runId'],)), 60, 'S2 first turn')
-        pids += [seat(b2['runtimeId'])['supervisor'], seat(b2['runtimeId'])['broker']]
         status, t2 = r.http('POST', '/v1/terminate', {'runtimeId': b2['runtimeId'], 'dropContinuation': False})
         r.wait(lambda: r.runtime(b2['runtimeId'])['status'] == 'terminated', 20, 'S2 terminated')
         kept2 = r.rows('SELECT continuation_json,continuation_reuse_disabled FROM sessions WHERE host_session_id=?', (host2,))[0]
@@ -232,7 +229,6 @@ def main():
         r.check('T.never-launched-born', status in (200, 202) and b3.get('runtimeId') != b2['runtimeId'], status=status, response=b3)
         time.sleep(1)
         never = r.rows('SELECT run_id,status,started_at FROM runs WHERE run_id=?', (b3.get('runId'),))
-        pids += [seat(b3['runtimeId'])['supervisor'], seat(b3['runtimeId'])['broker']]
         status, t3 = r.http('POST', '/v1/terminate', {'runtimeId': b3['runtimeId']})
         after2 = r.rows('SELECT continuation_json,continuation_reuse_disabled FROM sessions WHERE host_session_id=?', (host2,))[0]
         r.check('T.continuation-unchanged', status == 200 and t3.get('droppedContinuation') is False
@@ -252,15 +248,7 @@ def main():
                     proc.wait(timeout=20)
                 except subprocess.TimeoutExpired:
                     proc.kill()
-        for pid in pids:
-            if pid and alive(pid):
-                os.kill(pid, signal.SIGKILL)
-        for pid, _ in descendants_of([str(root), root.name]):
-            if pid != os.getpid():
-                try:
-                    os.kill(pid, signal.SIGKILL)
-                except ProcessLookupError:
-                    pass
+        cleanup = reap_root(root, args.artifacts)
         aspd.close()
         for log in r.logs:
             log.close()
@@ -270,7 +258,7 @@ def main():
             dump = {t: r.rows(f'SELECT * FROM {t}') for t in ('runtimes', 'runs', 'broker_invocations', 'sessions')}
             dump['hrc_events'] = r.rows('SELECT hrc_seq,ts,event_kind,runtime_id,run_id,generation,payload_json FROM hrc_events ORDER BY hrc_seq')
             (args.artifacts / 'rows.json').write_text(json.dumps(dump, indent=1, default=str) + '\n')
-        remaining = [l for _, l in descendants_of([str(root), root.name])]
+        remaining = cleanup['remaining']
         r.check('cleanup.no-leftover-processes', not remaining, remaining=remaining)
         if not args.keep:
             shutil.rmtree(root, ignore_errors=True)

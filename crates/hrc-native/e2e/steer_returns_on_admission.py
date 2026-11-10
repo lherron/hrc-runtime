@@ -26,14 +26,14 @@ import json
 import os
 from pathlib import Path
 import shutil
-import signal
 import socket
 import subprocess
 import sys
 import time
 import uuid
 
-from hrcpty_substrate import AGENT, LEAK, PROJECT, FakeAspd, Run, alive, descendants_of
+from n2_scratch import reap_root
+from hrcpty_substrate import AGENT, LEAK, PROJECT, FakeAspd, Run
 
 HERE = Path(__file__).resolve().parent
 REPO = HERE.parents[2]
@@ -148,12 +148,7 @@ def main():
                     proc.wait(timeout=20)
                 except subprocess.TimeoutExpired:
                     proc.kill()
-        for pid, _ in descendants_of([str(root), root.name]):
-            if pid != os.getpid() and alive(pid):
-                try:
-                    os.kill(pid, signal.SIGKILL)
-                except ProcessLookupError:
-                    pass
+        cleanup = reap_root(root, args.artifacts)
         aspd.close()
         for log in r.logs:
             log.close()
@@ -162,7 +157,7 @@ def main():
         if r.db_path.exists():
             dump = {t: r.rows(f'SELECT * FROM {t}') for t in ('runtimes', 'runs', 'sessions')}
             (args.artifacts / 'rows.json').write_text(json.dumps(dump, indent=1, default=str) + '\n')
-        remaining = [l for _, l in descendants_of([str(root), root.name])]
+        remaining = cleanup['remaining']
         r.check('cleanup.no-leftover-processes', not remaining, remaining=remaining)
         if not args.keep:
             shutil.rmtree(root, ignore_errors=True)

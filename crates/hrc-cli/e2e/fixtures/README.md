@@ -36,9 +36,7 @@ old route/store/job/file/export discovery only assigned qualification labels;
 it did not execute native assertions. Those source labels and their UNSUPPORTED
 agreement are removed. Native route declarations/behavior remain asserted by
 `crates/hrc-native/src/server/front/accounting.rs` and native route suites.
-`conformance/hrc-parity/run.py` remains for the hand-run
-comparison commands, checker controls and listed native parity drivers. They
-stay until their last caller is retired in the later driver sweep.
+The unused paired comparator runner was retired under T-13156.
 
 `status.json`, `metrics.json`, and `client_errors.json` freeze the default gate
 vectors at `ac3fa617` (T-13065). Unmodified drivers ran against Bun before any

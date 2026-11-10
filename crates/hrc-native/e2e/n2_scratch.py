@@ -1,22 +1,4 @@
-"""Isolated scratch subject for N2 broker-turn workflows.
-
-One fresh /tmp root holds the runtime/state dirs, wrkq ledger, project and
-federation config. Native is the default: the `hrc` CLI is the rusthrc binary
-under test, its provenance comes from `rusthrc --version`, and the store schema
-from `rusthrc store migrate`; no Bun runs.
-
-Bun mode is entered only when the caller asks for it (`up('bun')`, `.release`,
-`.release_provenance`); it then copies the named Bun release, runs the Bun
-unmanaged preflight and rebinds `hrc` to the copied Bun CLI, as before. It is
-never entered because a `bun` happens to be on PATH.
-
-Failure modes this guards: a scratch daemon reaching a live root (every root
-is passed explicitly and each native daemon's open files are read back), a
-scratch Bun daemon running from the atomic release tree (its startup prune
-deletes the production release), env leaking this seat's HRC/ASP identity into
-the scratch daemon or its brokers, production usage metrics, and a broker
-escaping the scratch runtime root.
-"""
+"""Isolated native scratch owner, CLI, store and process cleanup."""
 from foundation import daemon_env
 from http.client import HTTPConnection, HTTPException
 import json
@@ -44,37 +26,8 @@ class UnixHTTP(HTTPConnection):
         self.sock.connect(self.path)
 
 
-def copy_release(installed, destination):
-    installed = Path(installed).resolve()
-    destination = Path(destination)
-    assert (installed / 'praesidium-release.json').is_file(), installed
-    assert 'hrc-runtime-releases' not in destination.absolute().parts
-    if not destination.exists():
-        subprocess.run(['/bin/cp', '-R', str(installed), str(destination)], check=True,
-                       env={k:v for k,v in os.environ.items() if not k.startswith(LEAK_PREFIXES)})
-    assert (destination / 'praesidium-release.json').read_bytes() == (installed / 'praesidium-release.json').read_bytes()
-    return destination.resolve()
-
-
-def preflight_unmanaged(release, env):
-    """The daemon's own provenance function must say unmanaged before any start."""
-    package = release / 'packages/hrc-server'
-    out = subprocess.run(['bun', '-e', 'const {captureServerRelease}=await import(process.argv[1]); '
-                          'console.log(JSON.stringify(captureServerRelease(process.argv[2],new Date().toISOString())))',
-                          str(package / 'src/release-provenance.ts'), str(package)],
-                         env=env, cwd=release, capture_output=True, text=True, check=True)
-    value = json.loads(out.stdout)
-    assert value['mode'] == 'unmanaged' and 'hrc-runtime-releases' not in Path(value['packagePath']).parts, value
-    return value
-
-
 def native_provenance(binary):
-    """The binary's own identity: `rusthrc --version` names releaseId and sourceCommit.
-
-    No Bun preflight: rusthrc has no startup release prune, so the atomic-mode
-    refusal that protected production releases from a scratch Bun daemon has
-    nothing to protect here (T-13064 F4).
-    """
+    """Read releaseId and sourceCommit from `rusthrc --version`."""
     binary = Path(binary).resolve()
     out = subprocess.run([str(binary), '--version'], capture_output=True, text=True, check=True,
                          # HRC_METRICS=0: the bare env still names HOME, and the CLI would
@@ -167,9 +120,6 @@ class Scratch:
         self.artifacts.mkdir(parents=True, exist_ok=True)
         self.binary = Path(binary).resolve()
         self.project_id = project_id
-        # Only Bun mode reads it; native callers may still pass one.
-        self.installed_release = installed_release
-        self.mode, self._release, self._bun_provenance = 'native', None, None
         self.steps, self.owners, self.logs = [], [], []
         self.native_provenance = native_provenance(self.binary)
         self.steps.append({'name': 'mode', 'mode': 'native', 'provenance': self.native_provenance})
@@ -199,33 +149,9 @@ class Scratch:
         self.db_path = self.root / 'state/state.sqlite'
         self.socket = self.root / 'run/hrc.sock'
 
-    # -- mode -------------------------------------------------------------
     @property
     def cli(self):
-        return self._release / 'packages/hrc-cli/bin/hrc.js' if self._release else self.binary
-
-    @property
-    def release(self):
-        return self.enter_bun('release')
-
-    @property
-    def release_provenance(self):
-        self.enter_bun('release_provenance')
-        return self._bun_provenance
-
-    def enter_bun(self, why):
-        """Bun mode, on the caller's request only: copied release, preflight, Bun CLI as `hrc`."""
-        if self._release is None:
-            assert self.installed_release, 'Bun mode needs --installed-release'
-            self._release = copy_release(self.installed_release, self.root / 'bun-release')
-            link = self.root / 'bin/hrc'
-            link.unlink()
-            link.symlink_to(self.cli)
-            assert Path(shutil.which('hrc', path=self.env['PATH'])).resolve() == self.cli.resolve()
-            self._bun_provenance = preflight_unmanaged(self._release, self.env)
-            self.mode = 'bun'
-            self.steps.append({'name': 'mode', 'mode': 'bun', 'enteredBy': why})
-        return self._release
+        return self.binary
 
     # -- subprocesses -----------------------------------------------------
     def command(self, name, argv, timeout=300, check=True, stdin=None):
@@ -252,13 +178,11 @@ class Scratch:
         self.command('schema-create', [self.binary, 'store', 'migrate', self.db_path])
 
     def up(self, kind, tag):
-        if kind == 'bun':
-            self.enter_bun('up')
+        assert kind == 'native', kind
         log = (self.artifacts / f'{kind}-{tag}.log').open('w')
         self.logs.append(log)
-        argv = [self.binary, 'server'] if kind == 'native' else [
-            'bun', self.release / 'packages/hrc-cli/src/cli.ts', 'server', 'serve']
-        env = daemon_env(self.env, (self.root / 'bin',), bun=self.mode == 'bun')
+        argv = [self.binary, 'server']
+        env = daemon_env(self.env, (self.root / 'bin',))
         proc = subprocess.Popen([str(a) for a in argv], env=env, cwd=self.project, stdout=log, stderr=log)
         self.owners.append(proc)
         for _ in range(300):
@@ -267,14 +191,10 @@ class Scratch:
                 status, value = self.http('GET', '/v1/status')
                 if status == 200:
                     step = {'name': f'{kind}-up', 'pid': proc.pid}
-                    if kind == 'native':
-                        check_native_status(value, self.native_provenance)
-                        opened = opened_files(proc.pid, self.root, (self.aspd_socket,))
-                        (self.artifacts / f'opened-{kind}-{tag}.json').write_text(json.dumps(opened, indent=1) + '\n')
-                        step['stateStore'] = opened['stateStore']
-                    else:
-                        assert Path(value['packagePath']).resolve().is_relative_to(self.release)
-                        assert value['release']['mode'] == 'unmanaged', value['release']
+                    check_native_status(value, self.native_provenance)
+                    opened = opened_files(proc.pid, self.root, (self.aspd_socket,))
+                    (self.artifacts / f'opened-{kind}-{tag}.json').write_text(json.dumps(opened, indent=1) + '\n')
+                    step['stateStore'] = opened['stateStore']
                     self.steps.append(step)
                     return proc
             except (OSError, HTTPException, ValueError):

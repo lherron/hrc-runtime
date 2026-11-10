@@ -438,8 +438,11 @@ source:
   - commit:7aa89563
   - wrkq:T-11816
   - wrkc:EN-35271
-  - conformance/hrc-parity/run.py
-  - contract/hrc-parity/cases.json
+  - conformance/hrc-parity/owner_relative.py
+  - crates/hrc-native/e2e/foundation.py
+  - crates/hrc-native/e2e/runtime_reads.py
+  - crates/hrc-native/e2e/routes.py
+  - crates/hrc-cli/e2e/differential.py
   - commit:d5f9c555
   - wrkq:T-11527
   - wrkc:EN-33680

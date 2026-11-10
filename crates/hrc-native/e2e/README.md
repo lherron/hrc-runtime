@@ -5,8 +5,8 @@
 `lifecycle_publication.py` and `command_runs.py`, plus the CLI differential.
 Rust tests create stores through the library migrator; Python drivers use
 `rusthrc store migrate`. These native drivers need no Bun for store creation.
-The CLI differential still needs its Bun oracle, as do the manual comparisons
-and drivers exercising Bun repositories, SDKs or a Bun backend.
+The CLI differential uses frozen literals. SDK and production mail-injector
+qualification retain their explicit client prerequisites.
 
 The native-only owner/route/lifecycle drivers run individually with
 `--binary <rusthrc> --artifacts <directory>`; `routes.py`, `target_list.py`,
@@ -33,13 +33,13 @@ The triage was posted before deletion as T-11945 comment C-32046; the complete
 task-body/comment reference snapshot is in that task's artifacts. The gate
 signature history was checked through 178a9474; `evaluate` was unchanged.
 
-Reusable modules: `lifecycle_fixture.py`, `no_intent_fixture.py`, `seat_capture.py`
-(the pre-T-13125 runtime_reads capture harness, still Bun-baselined, kept for
-`target_placement.py` and `runtime_surfaces.py`),
+Reusable modules: `lifecycle_fixture.py`, `no_intent_fixture.py`,
 `hrc-cli/e2e/native_seat.py`, `n2_scratch.py`, `n3_scratch.py`, `n2_aspd_proxy.py`, and
-`n4_federation.Node`. The scratch helpers are native by default and run no Bun;
-`--installed-release` is read only when a caller asks for a Bun owner, release or
-store fixture (T-13064).
+`n4_federation.Node`. The scratch helpers support native owners only;
+`--installed-release` remains accepted for command compatibility and is ignored.
+T-13156 retired the paired capture harness `seat_capture.py` and its
+`target_placement.py` and `runtime_surfaces.py` importers under R1, along with
+the unproduced comparator suites in `conformance/hrc-parity`.
 `peer_caller.py` checks original caller attribution across two private native
 nodes (locate, JSON read/write, stream, registry, concurrent/absent/invalid callers;
 T-12661). It takes the standard binary/release/socket/scratch/artifacts arguments;
@@ -134,7 +134,7 @@ Deleted entries stay listed to explain their removal; their source remains in gi
 | `routes.py` | Native HTTP route literals and metadata event invariants; shared scenario callback runner. | keep-manual |
 | `runtime_key_order.py` | none — completed T-11880 capture analysis; promoted maintenance and existing conformance key-order comparisons retain wire checks | delete |
 | `runtime_reads.py` | Runtime, inspect and probe reads on a native deterministic hrcpty seat plus a historical SQL fixture, each case a literal; model qualification is separate (T-13125). | keep-manual |
-| `runtime_surfaces.py` | Real ready-seat attachment and durable surface fences on isolated state. (requires explicit scratch/capture inputs; retained qualification) | keep-manual |
+| `runtime_surfaces.py` | Paired capture only, retired under R1 in T-13156 | delete |
 | `runtimes_start.py` | Exact/suffix claims, independent canonical SHA-256 hashes, replay/conflict/refusal/reuse and pinned initial-message delivery. | keep-manual |
 | `schema_refusal.py` | Gate3: schema refusal preserves canonical DB and control files. | promote |
 | `server_owner.py` | Native owner recovery and malformed/live/dead/replaced lock controls. | keep-manual |
@@ -143,7 +143,7 @@ Deleted entries stay listed to explain their removal; their source remains in gi
 | `steer_no_intent.py` | No-intent 422 with zero runtimes; direct and CLI stored-intent revival, completed messages and distinct runtime instances on the same host. Real harness qualification requires explicit config. | keep-manual |
 | `steer_returns_on_admission.py` | T-12243: a steer to a codex-hrcpty stub seat answers at admission, both when it starts a long turn on an idle seat and when it lands in that open turn (the pre-fix binary held the response until the run ended). Self-contained (stub broker, fake aspd); `--artifacts` required. | keep-manual |
 | `steer_timeout.py` | T-12228: a steer past the 20 s RPC bound into a live codex-hrcpty stub seat fails that submission only (binding kept, runtime not stale, next delivery on the same runtime); the orphan sweep preserves a stale row whose broker answers and delivery then fails closed instead of minting; terminating a never-launched runtime keeps the continuation. Self-contained (stub broker, fake aspd); `--artifacts` required. | keep-manual |
-| `target_placement.py` | Real target-session intent and placement reads, on an existing ready scratch seat. (requires explicit scratch/capture inputs; retained qualification) | keep-manual |
+| `target_placement.py` | Paired capture only, retired under R1 in T-13156 | delete |
 | `transcript_index.py` | Transcript search over HTTP and the native follower: phase A indexed natively, then resume-sentinel, late-prose and terminal-inversion cursors; every hit judged against its segment table (T-13125). | keep-manual |
 | `turn_no_intent.py` | No-intent steer refusal control; native CLI missing-intent fallback births the same host session, completes and persists placement. | keep-manual |
 

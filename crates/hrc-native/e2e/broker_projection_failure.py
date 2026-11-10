@@ -50,6 +50,10 @@ def main():
         # Real broker wire first: the fixture's emitted shape is observed before fault injection.
         broker_call(endpoint, 'stub.usage', {'turnId': 'baseline', 'usedTokens': 11, 'windowTokens': 200000})
         r.wait(lambda: r.rows("SELECT 1 FROM hrc_events WHERE runtime_id=? AND event_kind='runtime.context.updated' AND json_extract(payload_json,'$.turnId')='baseline'", (rid,)), what='baseline wire projected')
+        # In-turn context samples are throttled for 30 s (context.rs).
+        # The retry must exercise a second eligible reading, not a sample that
+        # the product correctly persists but suppresses as too recent.
+        time.sleep(31)
         credential = root / 'run/lifecycle' / f'{rid}.credential'
         r.wait(credential.exists, what='lifecycle credential')
         credentials = credential.read_bytes()
@@ -96,13 +100,17 @@ def main():
         assert code in (200, 202), born2
         live = born2['runtimeId']
         b2 = r.runtime(live)['state']['broker']
+        live_credential = root / 'run/lifecycle' / f'{live}.credential'
+        r.wait(live_credential.exists, what='second lifecycle credential before close')
+        live_credentials = live_credential.read_bytes()
+        assert live_credentials
         broker_call(b2['endpoint']['socketPath'], 'stub.closeController')
         r.wait(lambda: any(e.get('event') == 'runtime.condemnation_averted'
                           and e.get('data', {}).get('runtimeId') == live
                           for e in r.daemon_log('projection')), 15, 'hrcpty live close averted')
         assert not r.events(live, 'runtime.crashed')
         assert r.runtime(live)['status'] != 'crashed'
-        assert (root / 'run/lifecycle' / f'{live}.credential').exists()
+        assert live_credential.read_bytes() == live_credentials
         print('PASS hrc-pty running broker averts condemnation on transport-only close', flush=True)
         (args.artifacts / 'result.json').write_text(json.dumps({'pass': True, 'runtimeId': rid, 'events': r.events(rid)}, indent=2) + '\n')
     finally:

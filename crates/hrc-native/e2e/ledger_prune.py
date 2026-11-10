@@ -153,7 +153,7 @@ class Owner:
 
     def up(self):
         log = self.log_path.open('w')
-        bins = [str(Path.home() / '.local/bin'), str(Path.home() / '.bun/bin')]
+        bins = [str(Path.home() / '.local/bin')]
         env = {**self.env, 'PATH': os.pathsep.join([*bins, self.env.get('PATH', os.defpath)])}
         self.proc = subprocess.Popen([str(self.binary), 'server'], cwd=self.root, env=env, stdout=log, stderr=log)
         for _ in range(1200):
