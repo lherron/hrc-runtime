@@ -1,6 +1,7 @@
 import type { Command } from 'commander'
 // Build-time data only: rusthrc never invokes Bun or the legacy CLI.
-import { buildProgram } from '../../packages/hrc-cli/src/cli/build-program'
+import { addGlobalOptions, buildProgram } from '../../packages/hrc-cli/src/cli/build-program'
+import { annotateCommand, commandMetadata } from '../../packages/hrc-cli/src/cli/command-metadata'
 import { cmdAttach } from '../../packages/hrc-cli/src/cli/handlers-scope-attach'
 import { printManagedScopeUsage } from '../../packages/hrc-cli/src/cli/handlers-scope-managed'
 import { cmdResumeContinuation } from '../../packages/hrc-cli/src/cli/handlers-scope-start'
@@ -23,6 +24,58 @@ for (const name of ['start', 'run', 'attach', 'resume'] as const) {
   actionUsage[name] = text
 }
 const root = buildProgram()
+// Commands ported to rusthrc whose Bun registrations were deleted (T-13049),
+// declared here without actions where Bun registered them, so every parent's
+// help (the root help and `hrc info` included) renders as it did. rusthrc
+// executes them; Bun has no such command. surface-native.json grafts are for
+// commands Bun never had.
+function declarePorted(program: Command): Set<Command> {
+  const child = (parent: Command, name: string): Command => {
+    const found = parent.commands.find((c) => c.name() === name)
+    if (!found) throw new Error(`ported declaration: no ${name} under ${parent.name()}`)
+    return found
+  }
+  const declare = (parent: Command, name: string, before?: string): Command => {
+    const command = parent.command(name)
+    if (before !== undefined) {
+      const siblings = parent.commands as Command[]
+      siblings.pop()
+      siblings.splice(siblings.indexOf(child(parent, before)), 0, command)
+    }
+    return command
+  }
+  const session = child(program, 'session')
+  const meta = child(session, 'meta')
+  const federation = declare(program, 'federation', 'target').description(
+    'inspect and operate federation'
+  )
+  const declared = [
+    declare(meta, 'set').argument('<target>').argument('<key>').argument('<value>'),
+    declare(meta, 'clear').argument('<target>').argument('<keys...>'),
+    declare(session, 'retitle', 'drop-continuation')
+      .description('deprecated alias for session meta set/clear title')
+      .argument('<hostSessionId>', 'host session ID')
+      .option('--title <title>', 'set a manual session title')
+      .option('--force', 'replace an existing manual title')
+      .option('--regenerate', 'clear the title so it can be regenerated'),
+    federation,
+    federation
+      .command('retire')
+      .argument('<scope>', 'scope ref or target handle')
+      .description('permanently fence a scope on its old home and delete its binding')
+      .requiredOption('--reason <text>', 'operator reason recorded with the local fence')
+      .option('--json', 'output the complete result as JSON'),
+  ]
+  for (const command of declared) {
+    const parent = command.parent ?? program
+    annotateCommand(command, {
+      audience: command === federation ? 'human' : commandMetadata(parent).audience,
+    })
+    addGlobalOptions(program, command)
+  }
+  return new Set(declared)
+}
+const ported = declarePorted(root)
 function completeHelp(command: Command): string {
   let output = ''
   command.configureOutput({
@@ -63,6 +116,7 @@ function surface(command: Command, path: string[]): unknown {
       choices: o.argChoices,
     })),
     children: command.commands.map((c) => surface(c, [...path, c.name()])),
+    ...(ported.has(command) ? { nativeOnly: true } : {}),
   }
 }
 // `hrc info` text per view without the node block; rusthrc renders THIS NODE.

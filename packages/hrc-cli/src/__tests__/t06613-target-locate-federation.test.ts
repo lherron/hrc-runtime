@@ -1,9 +1,9 @@
 import { afterAll, afterEach, beforeEach, describe, expect, test } from 'bun:test'
 
-import type { FederationRetirementResult, LocateBindingsReport, ScopeLocation } from 'hrc-core'
+import type { LocateBindingsReport, ScopeLocation } from 'hrc-core'
 import { HrcClient } from 'hrc-sdk'
 
-import { cmdDoctor, cmdFederationRetire } from '../cli/handlers-federation.js'
+import { cmdDoctor } from '../cli/handlers-federation.js'
 import { CliStatusExit } from '../cli/shared.js'
 
 import { installOldEngineDaemon } from './old-engine-daemon.js'
@@ -42,81 +42,6 @@ function captureStdout(): () => string {
   })
   return () => chunks.join('')
 }
-
-function stubRetirement(result: FederationRetirementResult): string[] {
-  const original = HrcClient.prototype.retireFederationScope
-  const calls: string[] = []
-  HrcClient.prototype.retireFederationScope = async (request) => {
-    calls.push(`${request.scopeRef}:${request.reason}`)
-    return { ...result, request }
-  }
-  restores.push(() => {
-    HrcClient.prototype.retireFederationScope = original
-  })
-  return calls
-}
-
-function retirementResult(
-  overrides: Partial<FederationRetirementResult> = {}
-): FederationRetirementResult {
-  return {
-    request: { scopeRef: SCOPE, reason: 'operator retirement' },
-    ok: true,
-    outcome: 'retired',
-    state: 'retired',
-    retryable: false,
-    detail: 'old home is permanently fenced and the registry binding is absent',
-    ...overrides,
-  }
-}
-
-describe('hrc federation retire', () => {
-  test('calls the single ordered-retirement SDK operation', async () => {
-    const calls = stubRetirement(retirementResult())
-    const read = captureStdout()
-
-    await cmdFederationRetire([SCOPE, '--reason', 'operator retirement'])
-
-    expect(calls).toEqual([`${SCOPE}:operator retirement`])
-    expect(read()).toContain('OK RETIRE retired: retired')
-    expect(read()).toContain('permanently fenced')
-  })
-
-  test('prints a visible retryable mid-write failure before returning exit 1', async () => {
-    stubRetirement(
-      retirementResult({
-        ok: false,
-        outcome: 'registry-unavailable',
-        state: 'fenced-registry-pending',
-        retryable: true,
-        detail: 'old home is fenced; retry retirement to delete the registry binding',
-      })
-    )
-    const read = captureStdout()
-
-    await expect(
-      cmdFederationRetire([SCOPE, '--reason', 'operator retirement'])
-    ).rejects.toBeInstanceOf(CliStatusExit)
-    expect(read()).toContain('REFUSED RETIRE registry-unavailable: fenced-registry-pending')
-  })
-
-  test('requires an operator reason', async () => {
-    await expect(cmdFederationRetire([SCOPE])).rejects.toThrow('requires --reason')
-  })
-
-  test('commander preserves scope and reason', async () => {
-    const calls = stubRetirement(retirementResult())
-    captureStdout()
-    const { buildProgram } = await import('../cli/build-program.js')
-
-    await buildProgram().parseAsync(
-      ['federation', 'retire', SCOPE, '--reason', 'operator retirement'],
-      { from: 'user' }
-    )
-
-    expect(calls).toEqual([`${SCOPE}:operator retirement`])
-  })
-})
 
 function baseLocation(overrides: Partial<ScopeLocation> = {}): ScopeLocation {
   return {

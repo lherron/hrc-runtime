@@ -34,8 +34,29 @@ fn session(value: &str) -> std::result::Result<(String, String), String> {
     crate::monitor::selector::split_session_ref(value)
 }
 fn parse(raw: &str, client: Option<&Daemon>) -> Result<Selector> {
+    parse_profile_aware(raw, client).map_err(|failure| match failure {
+        Failure::Grammar(e) => e,
+        Failure::Placement(e) => invalid(raw, e.message),
+    })
+}
+/// Why a selector did not parse: its grammar, or the daemon's placement answer
+/// for a bare handle's profile role. Bun's runtime and host resolution wrap the
+/// latter as an invalid selector; its continuity resolver lets it through.
+enum Failure {
+    Grammar(Error),
+    Placement(Error),
+}
+impl From<Error> for Failure {
+    fn from(e: Error) -> Self {
+        Self::Grammar(e)
+    }
+}
+fn parse_profile_aware(
+    raw: &str,
+    client: Option<&Daemon>,
+) -> std::result::Result<Selector, Failure> {
     if raw.is_empty() {
-        return Err(invalid(raw, "selector must not be empty"));
+        return Err(invalid(raw, "selector must not be empty").into());
     }
     let source = if raw.starts_with("agent:") {
         format!("scope:{raw}")
@@ -51,10 +72,7 @@ fn parse(raw: &str, client: Option<&Daemon>) -> Result<Selector> {
             other => other,
         };
         if value.is_empty() {
-            return Err(invalid(
-                raw,
-                format!("{label} selector value must not be empty"),
-            ));
+            return Err(invalid(raw, format!("{label} selector value must not be empty")).into());
         }
         return match prefix {
             "runtime" => Ok(Selector::Runtime(value.into())),
@@ -62,7 +80,7 @@ fn parse(raw: &str, client: Option<&Daemon>) -> Result<Selector> {
             "msg" => Ok(Selector::Message(value.into())),
             "seq" => {
                 if !value.bytes().all(|b| b.is_ascii_digit()) {
-                    return Err(invalid(raw, "message sequence must be an integer"));
+                    return Err(invalid(raw, "message sequence must be an integer").into());
                 }
                 let n = value
                     .parse::<u64>()
@@ -79,10 +97,7 @@ fn parse(raw: &str, client: Option<&Daemon>) -> Result<Selector> {
                 let (scope, lane) = session(value).map_err(|e| invalid(raw, e))?;
                 Ok(Selector::Scope(scope, Some(lane)))
             }
-            _ => Err(invalid(
-                raw,
-                format!("unknown selector prefix \"{prefix}\""),
-            )),
+            _ => Err(invalid(raw, format!("unknown selector prefix \"{prefix}\"")).into()),
         };
     }
     // A bare target is an agent-scope session handle (directives and bad
@@ -104,7 +119,7 @@ fn parse(raw: &str, client: Option<&Daemon>) -> Result<Selector> {
             .qualify(raw, &opts)
             .map_err(|e| invalid(raw, e))?;
         observed_role = placement_role(&r.agent, r.project.as_deref(), r.task.as_deref(), client)
-            .map_err(|e| invalid(raw, e.message))?;
+            .map_err(Failure::Placement)?;
     }
     let opts = scope::ResolveOptions {
         default_role_name: observed_role.as_deref(),
@@ -358,7 +373,11 @@ pub(crate) fn continuity(raw: &str, client: &Daemon) -> Result<(String, String)>
     } else {
         raw.into()
     };
-    let selector = parse(&source, Some(client)).map_err(|e| {
+    let selector = parse_profile_aware(&source, Some(client)).map_err(|failure| {
+        let e = match failure {
+            Failure::Placement(e) => return e,
+            Failure::Grammar(e) => e,
+        };
         // These handlers use the profile-aware parser directly, while runtime
         // and host resolution wrap parser failures as CliUsageError.
         let prefix = format!("invalid selector \"{source}\": ");

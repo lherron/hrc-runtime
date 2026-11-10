@@ -11,27 +11,9 @@ import type { Command } from 'commander'
 
 import { toLegacyArgv } from './argv.js'
 import { annotateCommand } from './command-metadata.js'
-import {
-  cmdDoctor,
-  cmdFederationRetire,
-  cmdTargetBindings,
-  cmdTargetLocate,
-} from './handlers-federation.js'
+import { cmdDoctor, cmdTargetBindings, cmdTargetLocate } from './handlers-federation.js'
 
 export function registerFederationCommands(program: Command): void {
-  const federation = program.command('federation').description('inspect and operate federation')
-  federation
-    .command('retire')
-    .argument('<scope>', 'scope ref or target handle')
-    .description('permanently fence a scope on its old home and delete its binding')
-    .requiredOption('--reason <text>', 'operator reason recorded with the local fence')
-    .option('--json', 'output the complete result as JSON')
-    .action(async (scope: string, _opts, cmd: Command) => {
-      await cmdFederationRetire(
-        toLegacyArgv([scope], cmd.opts(), { strings: ['reason'], booleans: ['json'] })
-      )
-    })
-
   const target = program.command('target').description('inspect where scopes live (placement)')
 
   const locate = target
@@ -115,7 +97,6 @@ export function registerFederationCommands(program: Command): void {
       )
     })
 
-  annotateCommand(federation, { audience: 'human' })
   annotateCommand(target, { audience: 'human' })
   annotateCommand(locate, {
     audience: 'agent',

@@ -11,6 +11,31 @@ import { registerTopLevelCommands } from './register-top.js'
 
 // -- Commander dispatch -------------------------------------------------------
 
+/**
+ * Commander stops each parent's option scan at its subcommand. Register the
+ * globals at every node, giving an existing local spelling (notably the
+ * runtime --agent <agent> filter) precedence. Forward only these fallback
+ * options to the root so help, output aliases and error rendering share state.
+ */
+export function addGlobalOptions(program: Command, command: Command): void {
+  for (const option of [
+    new Option('--output <format>', 'output format alias for --json').choices(['json']),
+    new Option('--agent', 'render the agent-oriented help projection'),
+    new Option('--human', 'render the human-oriented help projection'),
+  ]) {
+    if (command.options.some((local) => local.long === option.long)) continue
+    if (command !== program) option.hideHelp()
+    command.addOption(option)
+    if (command !== program) {
+      command.on(`option:${option.name()}`, (value) => {
+        program.setOptionValueWithSource(option.attributeName(), value ?? true, 'cli')
+        // These are root options, not inputs to the command's legacy handler.
+        command.setOptionValueWithSource(option.attributeName(), undefined, 'cli')
+      })
+    }
+  }
+}
+
 export function buildProgram(): Command {
   const program = new Command()
     .name('hrc')
@@ -55,28 +80,7 @@ export function buildProgram(): Command {
   registerFederationCommands(program)
   finalizeCommandMetadata(program)
 
-  // Commander stops each parent's option scan at its subcommand. Register the
-  // globals at every node, giving an existing local spelling (notably the
-  // runtime --agent <agent> filter) precedence. Forward only these fallback
-  // options to the root so help, output aliases and error rendering share state.
-  for (const command of allCommandNodes(program)) {
-    for (const option of [
-      new Option('--output <format>', 'output format alias for --json').choices(['json']),
-      new Option('--agent', 'render the agent-oriented help projection'),
-      new Option('--human', 'render the human-oriented help projection'),
-    ]) {
-      if (command.options.some((local) => local.long === option.long)) continue
-      if (command !== program) option.hideHelp()
-      command.addOption(option)
-      if (command !== program) {
-        command.on(`option:${option.name()}`, (value) => {
-          program.setOptionValueWithSource(option.attributeName(), value ?? true, 'cli')
-          // These are root options, not inputs to the command's legacy handler.
-          command.setOptionValueWithSource(option.attributeName(), undefined, 'cli')
-        })
-      }
-    }
-  }
+  for (const command of allCommandNodes(program)) addGlobalOptions(program, command)
   program.on('beforeAllHelp', ({ command }: { command: Command }) => {
     validateCommandBeforeHelp(command)
   })

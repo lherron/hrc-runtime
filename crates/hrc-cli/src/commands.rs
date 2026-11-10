@@ -3,7 +3,7 @@ mod messaging;
 mod seat_work;
 mod sessions;
 use messaging::{restart, send, summon};
-use sessions::{session_get, session_list};
+use sessions::{session_get, session_list, session_meta_write};
 
 use crate::{Error, Result, client::Daemon, parse::Parsed, print_json};
 use serde_json::{Value, json};
@@ -56,18 +56,11 @@ pub(crate) fn execute(args: &Parsed<'_>) -> Result<()> {
         "monitor wait" => crate::monitor::wait::command(args),
         "monitor watch" => crate::monitor::watch::command(args),
         "monitor session-report" => crate::monitor::session_report::command(args),
+        "federation retire" => federation_retire(args),
         "target locate" => {
-            let raw = &args.positionals[0];
-            let qualified = crate::scope::Qualified::parse(raw, false).map_err(|e| {
-                Error::usage(format!(
-                    "could not resolve \"{raw}\" to a scope: {}",
-                    e.message
-                ))
-            })?;
-            let location = Daemon::connect()?.get(
-                "/v1/federation/locate",
-                &[("scopeRef".into(), qualified.scope)],
-            )?;
+            let scope = federation_scope(&args.positionals[0])?;
+            let location =
+                Daemon::connect()?.get("/v1/federation/locate", &[("scopeRef".into(), scope)])?;
             if args.flag("json") {
                 print_json(&location);
             } else {
@@ -156,6 +149,7 @@ pub(crate) fn execute(args: &Parsed<'_>) -> Result<()> {
         },
         "session list" => session_list(args),
         "session get" => session_get(args),
+        "session meta set" | "session meta clear" | "session retitle" => session_meta_write(args),
         "session meta get" => {
             let client = Daemon::connect()?;
             let (scope, lane) = crate::selectors::continuity(&args.positionals[0], &client)?;
@@ -232,6 +226,62 @@ pub(crate) fn execute(args: &Parsed<'_>) -> Result<()> {
             "N5 command implementation pending: hrc {path}"
         ))),
     }
+}
+
+/// Bun's federation handlers' scope argument: agent-scope qualification with
+/// the ambient project; a refusal is a usage error naming the input.
+fn federation_scope(raw: &str) -> Result<String> {
+    crate::scope::Qualified::parse(raw, false)
+        .map(|q| q.scope)
+        .map_err(|e| {
+            Error::usage(format!(
+                "could not resolve \"{raw}\" to a scope: {}",
+                e.message
+            ))
+        })
+}
+
+/// `federation retire`: the daemon's result, human or JSON, exit 1 unless ok.
+fn federation_retire(args: &Parsed<'_>) -> Result<()> {
+    let reason = args.value("reason").unwrap_or_default();
+    if crate::js::trim(reason).is_empty() {
+        return Err(Error::usage("federation retire requires --reason <text>"));
+    }
+    let scope = federation_scope(&args.positionals[0])?;
+    let result = Daemon::connect()?.post(
+        "/v1/federation/retire",
+        json!({"scopeRef": scope, "reason": reason}),
+    )?;
+    if args.flag("json") {
+        print_json(&result);
+    } else {
+        let mut lines = vec![
+            format!(
+                "{} RETIRE {}: {}",
+                if result["ok"] == true {
+                    "OK"
+                } else {
+                    "REFUSED"
+                },
+                text(&result["outcome"]),
+                text(&result["state"])
+            ),
+            format!("scope: {}", text(&result["request"]["scopeRef"])),
+            format!("reason: {}", text(&result["request"]["reason"])),
+            text(&result["detail"]).to_owned(),
+        ];
+        for id in result["liveRuntimeIds"].as_array().into_iter().flatten() {
+            lines.push(format!("live runtime: {}", text(id)));
+        }
+        crate::cli_println!("{}", lines.join("\n"));
+    }
+    if result["ok"] != true {
+        return Err(Error {
+            reported: true,
+            ..Error::failure("federation retirement refused")
+        });
+    }
+    Ok(())
 }
 
 fn text(value: &Value) -> &str {

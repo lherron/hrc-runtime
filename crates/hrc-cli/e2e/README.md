@@ -23,6 +23,7 @@ T-11945 comment C-32046 records the pre-deletion triage and its evidence.
 | `launch.py` | Managed launch grammar and previews against an explicit scratch daemon. (requires explicit scratch/capture inputs; retained qualification) | keep-manual |
 | `n5b_admin.py` | admin runs/broker-verify/events-drain/worktrees-audit: Bun oracle vs rusthrc. (requires explicit scratch/capture inputs; retained qualification) | keep-manual |
 | `metrics_report.py` | admin metrics report/routes: native vs the frozen Bun-verified golden (`fixtures/metrics-golden.json`; `--record` re-verifies against Bun), and every writer's day files read once. | keep-manual |
+| `session_meta_retire.py` | session meta set/clear, session retitle, federation retire: native vs the frozen Bun-verified golden (`fixtures/meta-retire-golden.json`; `--oracle <hrc.js> --record` re-verifies against Bun), output and the stored metadata/retirement ledger after each call, on one scratch rusthrc with an enforced gate and local registry. | keep-manual |
 | `n5b_local.py` | server subscribers, server tmux status, runtime diagnostics/sweep/prune, (requires explicit scratch/capture inputs; retained qualification) | keep-manual |
 | `n5b_monitor_pty.py` | monitor output under a real PTY: TTY format defaults, chalk color, width. (requires explicit scratch/capture inputs; retained qualification) | keep-manual |
 | `n5b_monitor_reads.py` | monitor events/transcript/stats/show/session-report against a real owned seat. (requires explicit scratch/capture inputs; retained qualification) | keep-manual |

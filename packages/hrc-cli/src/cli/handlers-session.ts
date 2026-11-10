@@ -191,46 +191,9 @@ async function sessionMetadataTarget(target: string, client: ReturnType<typeof c
   return { scopeRef: session.scopeRef, laneRef: session.laneRef }
 }
 
-export async function cmdSessionMeta(args: string[]): Promise<void> {
-  const operation = requireArg(args, 0, '<set|clear|get>')
-  const target = requireArg(args, 1, '<target>')
+export async function cmdSessionMetaGet(target: string): Promise<void> {
   const client = createClient()
-  const continuity = await sessionMetadataTarget(target, client)
-  if (operation === 'get') {
-    printJson(await client.getSessionMetadata(continuity))
-    return
-  }
-  const key = requireArg(args, 2, '<key>')
-  if (operation === 'clear') {
-    printJson(await client.clearSessionMetadata(continuity, args.slice(2)))
-    return
-  }
-  if (operation !== 'set') fatal(`unknown session meta operation: ${operation}`)
-  const raw = requireArg(args, 3, '<value>')
-  let value: unknown = raw
-  try {
-    value = JSON.parse(raw)
-  } catch {
-    /* Plain strings are valid metadata. */
-  }
-  printJson(await client.setSessionMetadata(continuity, { [key]: value }))
-}
-
-export async function cmdSessionRetitle(args: string[]): Promise<void> {
-  const target = requireArg(args, 0, '<target>')
-  const title = parseFlag(args, '--title')
-  const regenerate = hasFlag(args, '--regenerate')
-  if (title === undefined && !regenerate)
-    fatal('session retitle requires exactly one of --title or --regenerate')
-  if (title !== undefined && regenerate) fatal('--title and --regenerate are mutually exclusive')
-  process.stderr.write('hrc: session retitle is deprecated; use session meta set/clear title\n')
-  const client = createClient()
-  const continuity = await sessionMetadataTarget(target, client)
-  printJson(
-    regenerate
-      ? await client.clearSessionMetadata(continuity, ['title'])
-      : await client.setSessionMetadata(continuity, { title })
-  )
+  printJson(await client.getSessionMetadata(await sessionMetadataTarget(target, client)))
 }
 
 export async function cmdSessionDropContinuation(args: string[]): Promise<void> {

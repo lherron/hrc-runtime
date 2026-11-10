@@ -66,6 +66,13 @@ def main():
             cases.append((f"help:{' '.join(node['path'])}:{view}", [f'--{view}', *node['path'], '--help']))
         if any(a['required'] for a in node['arguments']):
             cases.append((f"missing:{' '.join(node['path'])}", node['path']))
+    # Ported commands (generate-surface.ts declarePorted, T-13049) are
+    # native-only nodes Bun no longer registers, declared at their old place,
+    # so their parents' help (column widths and sections included) is the
+    # declared text, not Bun's.
+    grafted = [' '.join(g['parent'] + [g['node']['name']]) for g in grafts]
+    ported_parents = {' '.join(node['path'][:-1]) for path, node in native_only.items()
+                      if not any(path == g or path.startswith(g + ' ') for g in grafted)}
     for argv in ([], ['runtime'], ['wat'], ['runtime', 'nonsense'], ['runtime', 'list', 'extra'], ['runtime', 'status', 'a', 'b'], ['server', 'status', 'extra', '--json'], ['runtime', 'list', '--output', 'xml'], ['--output', 'json', 'wat']):
         cases.append(('grammar:' + ' '.join(argv), argv))
     if args.runtime_root:
@@ -78,6 +85,13 @@ def main():
     rust_server_help = (ROOT / 'crates/hrc-cli/server-help.txt').read_text()
     for name, argv in cases:
         kind, path = name.split(':')[0], name.split(':')[1] if ':' in name else ''
+        if path in ported_parents and kind == 'help' and path not in native_only:
+            node = next(n for n in nodes(surface) if ' '.join(n['path']) == path)
+            child = subprocess.run([str(args.binary.resolve())] + argv, cwd=ROOT, env=env, text=True, capture_output=True, timeout=20)
+            subject = {'exit': child.returncode, 'stdout': child.stdout, 'stderr': child.stderr}
+            expected = {'exit': 0, 'stdout': node['humanHelp' if name.endswith(':human') else 'help'], 'stderr': ''}
+            results.append({'case': name, 'argv': argv, 'pass': subject == expected, 'portedParent': expected, 'subject': subject})
+            continue
         if path in native_only and kind in ('help', 'missing'):
             node = native_only[path]
             child = subprocess.run([str(args.binary.resolve())] + argv, cwd=ROOT, env=env, text=True, capture_output=True, timeout=20)
@@ -144,13 +158,14 @@ def main():
         'controls.py': 'runtime capture|runtime interrupt|runtime terminate|capture status|session drop-continuation|session rotate|admin surface bind',
         'server_lifecycle.py': 'server stop|server restart',
         'server_start.py': 'server start', 'daemon_entrypoints.py': 'server|server serve',
-        'differential.py': 'admin|admin broker-verify|admin events|admin runs|admin surface|capture|runtime|server tmux|target',
+        'differential.py': 'admin|admin broker-verify|admin events|admin runs|admin surface|capture|federation|runtime|server tmux|session|session meta|target',
         'status.py': 'server status', 'turn_protocol.py': 'turn',
         'n5b_monitor_reads.py': 'monitor events|monitor transcript|monitor stats|monitor show|monitor session-report',
         'n5b_monitor_wait.py': 'monitor wait', 'n5b_monitor_watch.py': 'monitor watch',
         'n5b_local.py': 'info|doctor|runtime diagnostics|runtime prune|runtime sweep|server subscribers|server tmux status',
         'n5b_admin.py': 'admin broker-verify candidates|admin events drain|admin runs reconcile-active|admin runs sweep-zombies|admin worktrees|admin worktrees audit|admin worktrees prune',
         'metrics_report.py': 'admin metrics|admin metrics report|admin metrics routes',
+        'session_meta_retire.py': 'session meta set|session meta clear|session retitle|federation retire',
     }
     suites = {command: suite for suite, commands in families.items() for command in commands.split('|')}
     decisions = {item['command']: item for item in scope['commands']}

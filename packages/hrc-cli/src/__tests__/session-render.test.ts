@@ -379,24 +379,3 @@ describe('session list --dormant CLI plumbing', () => {
     )
   })
 })
-
-describe('session retitle CLI plumbing', () => {
-  it('registers every flag and preserves their values for the legacy handler', () => {
-    const program = buildProgram()
-    const session = program.commands.find((cmd) => cmd.name() === 'session')
-    const retitle = session?.commands.find((cmd) => cmd.name() === 'retitle')
-
-    // --force reaches the server guard that protects an existing manual title.
-    // Without it registered here the overwrite path is unreachable from the CLI.
-    expect(
-      retitle?.options.filter((option) => !option.hidden).map((option) => option.long)
-    ).toEqual(['--title', '--force', '--regenerate'])
-    expect(
-      toLegacyArgv(
-        ['hsid-test'],
-        { title: 'A title', force: true, regenerate: true },
-        { strings: ['title'], booleans: ['regenerate', 'force'] }
-      )
-    ).toEqual(['hsid-test', '--title', 'A title', '--regenerate', '--force'])
-  })
-})

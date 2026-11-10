@@ -114,13 +114,13 @@
     },
     {
       "command": "federation",
-      "disposition": "POSTPONED",
-      "implementation": "bun"
+      "disposition": "IMPLEMENT",
+      "implementation": "native"
     },
     {
       "command": "federation retire",
-      "disposition": "POSTPONED",
-      "implementation": "bun"
+      "disposition": "IMPLEMENT",
+      "implementation": "native"
     },
     {
       "command": "info",
@@ -324,8 +324,8 @@
     },
     {
       "command": "session",
-      "disposition": "POSTPONED",
-      "implementation": "bun"
+      "disposition": "IMPLEMENT",
+      "implementation": "native"
     },
     {
       "command": "session annotation",
@@ -369,13 +369,13 @@
     },
     {
       "command": "session meta",
-      "disposition": "POSTPONED",
-      "implementation": "bun"
+      "disposition": "IMPLEMENT",
+      "implementation": "native"
     },
     {
       "command": "session meta clear",
-      "disposition": "POSTPONED",
-      "implementation": "bun"
+      "disposition": "IMPLEMENT",
+      "implementation": "native"
     },
     {
       "command": "session meta get",
@@ -384,8 +384,8 @@
     },
     {
       "command": "session meta set",
-      "disposition": "POSTPONED",
-      "implementation": "bun"
+      "disposition": "IMPLEMENT",
+      "implementation": "native"
     },
     {
       "command": "session resolve",
@@ -394,8 +394,8 @@
     },
     {
       "command": "session retitle",
-      "disposition": "POSTPONED",
-      "implementation": "bun"
+      "disposition": "IMPLEMENT",
+      "implementation": "native"
     },
     {
       "command": "session rotate",

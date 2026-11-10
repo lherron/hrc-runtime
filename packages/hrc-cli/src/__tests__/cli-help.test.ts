@@ -135,11 +135,6 @@ describe('nested group commander help', () => {
       child: 'status',
     },
     {
-      args: ['federation', '--help'],
-      usage: 'Usage: hrc federation',
-      child: 'retire',
-    },
-    {
       args: ['admin', 'broker-verify', '--help'],
       usage: 'Usage: hrc admin broker-verify',
       child: 'candidates',

@@ -1,5 +1,6 @@
-//! Session reads and presentation.
+//! Session reads, presentation and metadata writes.
 use super::*;
+use serde_json::Map;
 
 pub(super) fn session_get(args: &Parsed<'_>) -> Result<()> {
     let client = Daemon::connect()?;
@@ -137,5 +138,52 @@ pub(super) fn session_list(args: &Parsed<'_>) -> Result<()> {
         return Ok(());
     }
     print_json(&sessions);
+    Ok(())
+}
+
+/// `session meta set|clear` and the deprecated `session retitle`: one PATCH of
+/// `/v1/sessions/metadata` on the continuity the target names.
+pub(super) fn session_meta_write(args: &Parsed<'_>) -> Result<()> {
+    let path = args.path();
+    let mut patch = Map::new();
+    if path == "session retitle" {
+        let title = args.value("title");
+        let regenerate = args.flag("regenerate");
+        match (title, regenerate) {
+            (None, false) => {
+                return Err(Error::usage(
+                    "session retitle requires exactly one of --title or --regenerate",
+                ));
+            }
+            (Some(_), true) => {
+                return Err(Error::usage(
+                    "--title and --regenerate are mutually exclusive",
+                ));
+            }
+            _ => {}
+        }
+        eprintln!("hrc: session retitle is deprecated; use session meta set/clear title");
+        match title {
+            Some(title) => patch.insert("set".into(), json!({ "title": title })),
+            None => patch.insert("clear".into(), json!(["title"])),
+        };
+    } else if path == "session meta clear" {
+        patch.insert("clear".into(), json!(args.positionals[1..]));
+    } else {
+        // Bun stored `JSON.parse(value)` when it parsed, else the plain string.
+        let raw = &args.positionals[2];
+        let value = serde_json::from_str(raw)
+            .map(crate::js::json_roundtrip)
+            .unwrap_or_else(|_| Value::from(raw.as_str()));
+        let mut set = Map::new();
+        set.insert(args.positionals[1].clone(), value);
+        patch.insert("set".into(), Value::Object(set));
+    }
+    let client = Daemon::connect()?;
+    let (scope, lane) = crate::selectors::continuity(&args.positionals[0], &client)?;
+    let mut body = json!({"scopeRef": scope, "laneRef": lane});
+    body.as_object_mut().unwrap().extend(patch);
+    let (result, _) = client.request("PATCH", "/v1/sessions/metadata", &[], Some(body))?;
+    print_json(&result);
     Ok(())
 }

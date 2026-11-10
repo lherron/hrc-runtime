@@ -1,0 +1,4644 @@
+{
+ "recordedFrom": "native, verified identical to the Bun CLI at 1f41c66d",
+ "cases": {
+  "meta 00 [scope] session meta set {t} title plain words": {
+   "cli": {
+    "exit": 0,
+    "stdout": "{\n  \"metadata\": {\n    \"title\": \"plain words\"\n  },\n  \"metadataSources\": {\n    \"title\": {\n      \"source\": \"api\",\n      \"updatedBy\": \"unknown\",\n      \"updatedAt\": \"<ts>\"\n    }\n  }\n}\n",
+    "stderr": ""
+   },
+   "stored": {
+    "status": 200,
+    "body": {
+     "metadata": {
+      "title": "plain words"
+     },
+     "metadataSources": {
+      "title": {
+       "source": "api",
+       "updatedBy": "unknown",
+       "updatedAt": "<ts>"
+      }
+     }
+    }
+   }
+  },
+  "meta 01 [session] session meta set {t} n 42": {
+   "cli": {
+    "exit": 0,
+    "stdout": "{\n  \"metadata\": {\n    \"n\": 42,\n    \"title\": \"plain words\"\n  },\n  \"metadataSources\": {\n    \"n\": {\n      \"source\": \"api\",\n      \"updatedBy\": \"unknown\",\n      \"updatedAt\": \"<ts>\",\n      \"registered\": false\n    },\n    \"title\": {\n      \"source\": \"api\",\n      \"updatedBy\": \"unknown\",\n      \"updatedAt\": \"<ts>\"\n    }\n  }\n}\n",
+    "stderr": ""
+   },
+   "stored": {
+    "status": 200,
+    "body": {
+     "metadata": {
+      "n": 42,
+      "title": "plain words"
+     },
+     "metadataSources": {
+      "n": {
+       "source": "api",
+       "updatedBy": "unknown",
+       "updatedAt": "<ts>",
+       "registered": false
+      },
+      "title": {
+       "source": "api",
+       "updatedBy": "unknown",
+       "updatedAt": "<ts>"
+      }
+     }
+    }
+   }
+  },
+  "meta 02 [handle] session meta set {t} f 1.0": {
+   "cli": {
+    "exit": 0,
+    "stdout": "{\n  \"metadata\": {\n    \"f\": 1,\n    \"n\": 42,\n    \"title\": \"plain words\"\n  },\n  \"metadataSources\": {\n    \"f\": {\n      \"source\": \"api\",\n      \"updatedBy\": \"unknown\",\n      \"updatedAt\": \"<ts>\",\n      \"registered\": false\n    },\n    \"n\": {\n      \"source\": \"api\",\n      \"updatedBy\": \"unknown\",\n      \"updatedAt\": \"<ts>\",\n      \"registered\": false\n    },\n    \"title\": {\n      \"source\": \"api\",\n      \"updatedBy\": \"unknown\",\n      \"updatedAt\": \"<ts>\"\n    }\n  }\n}\n",
+    "stderr": ""
+   },
+   "stored": {
+    "status": 200,
+    "body": {
+     "metadata": {
+      "f": 1,
+      "n": 42,
+      "title": "plain words"
+     },
+     "metadataSources": {
+      "f": {
+       "source": "api",
+       "updatedBy": "unknown",
+       "updatedAt": "<ts>",
+       "registered": false
+      },
+      "n": {
+       "source": "api",
+       "updatedBy": "unknown",
+       "updatedAt": "<ts>",
+       "registered": false
+      },
+      "title": {
+       "source": "api",
+       "updatedBy": "unknown",
+       "updatedAt": "<ts>"
+      }
+     }
+    }
+   }
+  },
+  "meta 03 [prefixed] session meta set {t} big 12345678901234567890": {
+   "cli": {
+    "exit": 0,
+    "stdout": "{\n  \"metadata\": {\n    \"big\": 12345678901234567000,\n    \"f\": 1,\n    \"n\": 42,\n    \"title\": \"plain words\"\n  },\n  \"metadataSources\": {\n    \"big\": {\n      \"source\": \"api\",\n      \"updatedBy\": \"unknown\",\n      \"updatedAt\": \"<ts>\",\n      \"registered\": false\n    },\n    \"f\": {\n      \"source\": \"api\",\n      \"updatedBy\": \"unknown\",\n      \"updatedAt\": \"<ts>\",\n      \"registered\": false\n    },\n    \"n\": {\n      \"source\": \"api\",\n      \"updatedBy\": \"unknown\",\n      \"updatedAt\": \"<ts>\",\n      \"registered\": false\n    },\n    \"title\": {\n      \"source\": \"api\",\n      \"updatedBy\": \"unknown\",\n      \"updatedAt\": \"<ts>\"\n    }\n  }\n}\n",
+    "stderr": ""
+   },
+   "stored": {
+    "status": 200,
+    "body": {
+     "metadata": {
+      "big": 12345678901234567000,
+      "f": 1,
+      "n": 42,
+      "title": "plain words"
+     },
+     "metadataSources": {
+      "big": {
+       "source": "api",
+       "updatedBy": "unknown",
+       "updatedAt": "<ts>",
+       "registered": false
+      },
+      "f": {
+       "source": "api",
+       "updatedBy": "unknown",
+       "updatedAt": "<ts>",
+       "registered": false
+      },
+      "n": {
+       "source": "api",
+       "updatedBy": "unknown",
+       "updatedAt": "<ts>",
+       "registered": false
+      },
+      "title": {
+       "source": "api",
+       "updatedBy": "unknown",
+       "updatedAt": "<ts>"
+      }
+     }
+    }
+   }
+  },
+  "meta 04 [hsid] session meta set {t} obj {\"b\":1,\"k\":[true,null,-0,1e2,1.50,1e21,0.1],\"a\":{\"x\":\"y\"}}": {
+   "cli": {
+    "exit": 0,
+    "stdout": "{\n  \"metadata\": {\n    \"big\": 12345678901234567000,\n    \"f\": 1,\n    \"n\": 42,\n    \"obj\": {\n      \"a\": {\n        \"x\": \"y\"\n      },\n      \"b\": 1,\n      \"k\": [\n        true,\n        null,\n        0,\n        100,\n        1.5,\n        1e+21,\n        0.1\n      ]\n    },\n    \"title\": \"plain words\"\n  },\n  \"metadataSources\": {\n    \"big\": {\n      \"source\": \"api\",\n      \"updatedBy\": \"unknown\",\n      \"updatedAt\": \"<ts>\",\n      \"registered\": false\n    },\n    \"f\": {\n      \"source\": \"api\",\n      \"updatedBy\": \"unknown\",\n      \"updatedAt\": \"<ts>\",\n      \"registered\": false\n    },\n    \"n\": {\n      \"source\": \"api\",\n      \"updatedBy\": \"unknown\",\n      \"updatedAt\": \"<ts>\",\n      \"registered\": false\n    },\n    \"obj.a.x\": {\n      \"source\": \"api\",\n      \"updatedBy\": \"unknown\",\n      \"updatedAt\": \"<ts>\",\n      \"registered\": false\n    },\n    \"obj.b\": {\n      \"source\": \"api\",\n      \"updatedBy\": \"unknown\",\n      \"updatedAt\": \"<ts>\",\n      \"registered\": false\n    },\n    \"obj.k\": {\n      \"source\": \"api\",\n      \"updatedBy\": \"unknown\",\n      \"updatedAt\": \"<ts>\",\n      \"registered\": false\n    },\n    \"title\": {\n      \"source\": \"api\",\n      \"updatedBy\": \"unknown\",\n      \"updatedAt\": \"<ts>\"\n    }\n  }\n}\n",
+    "stderr": ""
+   },
+   "stored": {
+    "status": 200,
+    "body": {
+     "metadata": {
+      "big": 12345678901234567000,
+      "f": 1,
+      "n": 42,
+      "obj": {
+       "a": {
+        "x": "y"
+       },
+       "b": 1,
+       "k": [
+        true,
+        null,
+        0,
+        100,
+        1.5,
+        1e+21,
+        0.1
+       ]
+      },
+      "title": "plain words"
+     },
+     "metadataSources": {
+      "big": {
+       "source": "api",
+       "updatedBy": "unknown",
+       "updatedAt": "<ts>",
+       "registered": false
+      },
+      "f": {
+       "source": "api",
+       "updatedBy": "unknown",
+       "updatedAt": "<ts>",
+       "registered": false
+      },
+      "n": {
+       "source": "api",
+       "updatedBy": "unknown",
+       "updatedAt": "<ts>",
+       "registered": false
+      },
+      "obj.a.x": {
+       "source": "api",
+       "updatedBy": "unknown",
+       "updatedAt": "<ts>",
+       "registered": false
+      },
+      "obj.b": {
+       "source": "api",
+       "updatedBy": "unknown",
+       "updatedAt": "<ts>",
+       "registered": false
+      },
+      "obj.k": {
+       "source": "api",
+       "updatedBy": "unknown",
+       "updatedAt": "<ts>",
+       "registered": false
+      },
+      "title": {
+       "source": "api",
+       "updatedBy": "unknown",
+       "updatedAt": "<ts>"
+      }
+     }
+    }
+   }
+  },
+  "meta 05 [hsid] session meta set {t} idx {\"b\":1,\"2\":0}": {
+   "cli": {
+    "exit": 2,
+    "stdout": "",
+    "stderr": "hrc: [malformed_request] invalid session metadata\ndetail: {\"rejected\":[{\"key\":\"idx.2\",\"reason\":\"key must have 1–4 valid segments (at most 64 characters each) and at most 128 bytes\"}]}\n"
+   },
+   "stored": {
+    "status": 200,
+    "body": {
+     "metadata": {
+      "big": 12345678901234567000,
+      "f": 1,
+      "n": 42,
+      "obj": {
+       "a": {
+        "x": "y"
+       },
+       "b": 1,
+       "k": [
+        true,
+        null,
+        0,
+        100,
+        1.5,
+        1e+21,
+        0.1
+       ]
+      },
+      "title": "plain words"
+     },
+     "metadataSources": {
+      "big": {
+       "source": "api",
+       "updatedBy": "unknown",
+       "updatedAt": "<ts>",
+       "registered": false
+      },
+      "f": {
+       "source": "api",
+       "updatedBy": "unknown",
+       "updatedAt": "<ts>",
+       "registered": false
+      },
+      "n": {
+       "source": "api",
+       "updatedBy": "unknown",
+       "updatedAt": "<ts>",
+       "registered": false
+      },
+      "obj.a.x": {
+       "source": "api",
+       "updatedBy": "unknown",
+       "updatedAt": "<ts>",
+       "registered": false
+      },
+      "obj.b": {
+       "source": "api",
+       "updatedBy": "unknown",
+       "updatedAt": "<ts>",
+       "registered": false
+      },
+      "obj.k": {
+       "source": "api",
+       "updatedBy": "unknown",
+       "updatedAt": "<ts>",
+       "registered": false
+      },
+      "title": {
+       "source": "api",
+       "updatedBy": "unknown",
+       "updatedAt": "<ts>"
+      }
+     }
+    }
+   }
+  },
+  "meta 06 [host] session meta set {t} quoted \"x\"": {
+   "cli": {
+    "exit": 0,
+    "stdout": "{\n  \"metadata\": {\n    \"big\": 12345678901234567000,\n    \"f\": 1,\n    \"n\": 42,\n    \"obj\": {\n      \"a\": {\n        \"x\": \"y\"\n      },\n      \"b\": 1,\n      \"k\": [\n        true,\n        null,\n        0,\n        100,\n        1.5,\n        1e+21,\n        0.1\n      ]\n    },\n    \"quoted\": \"x\",\n    \"title\": \"plain words\"\n  },\n  \"metadataSources\": {\n    \"big\": {\n      \"source\": \"api\",\n      \"updatedBy\": \"unknown\",\n      \"updatedAt\": \"<ts>\",\n      \"registered\": false\n    },\n    \"f\": {\n      \"source\": \"api\",\n      \"updatedBy\": \"unknown\",\n      \"updatedAt\": \"<ts>\",\n      \"registered\": false\n    },\n    \"n\": {\n      \"source\": \"api\",\n      \"updatedBy\": \"unknown\",\n      \"updatedAt\": \"<ts>\",\n      \"registered\": false\n    },\n    \"obj.a.x\": {\n      \"source\": \"api\",\n      \"updatedBy\": \"unknown\",\n      \"updatedAt\": \"<ts>\",\n      \"registered\": false\n    },\n    \"obj.b\": {\n      \"source\": \"api\",\n      \"updatedBy\": \"unknown\",\n      \"updatedAt\": \"<ts>\",\n      \"registered\": false\n    },\n    \"obj.k\": {\n      \"source\": \"api\",\n      \"updatedBy\": \"unknown\",\n      \"updatedAt\": \"<ts>\",\n      \"registered\": false\n    },\n    \"quoted\": {\n      \"source\": \"api\",\n      \"updatedBy\": \"unknown\",\n      \"updatedAt\": \"<ts>\",\n      \"registered\": false\n    },\n    \"title\": {\n      \"source\": \"api\",\n      \"updatedBy\": \"unknown\",\n      \"updatedAt\": \"<ts>\"\n    }\n  }\n}\n",
+    "stderr": ""
+   },
+   "stored": {
+    "status": 200,
+    "body": {
+     "metadata": {
+      "big": 12345678901234567000,
+      "f": 1,
+      "n": 42,
+      "obj": {
+       "a": {
+        "x": "y"
+       },
+       "b": 1,
+       "k": [
+        true,
+        null,
+        0,
+        100,
+        1.5,
+        1e+21,
+        0.1
+       ]
+      },
+      "quoted": "x",
+      "title": "plain words"
+     },
+     "metadataSources": {
+      "big": {
+       "source": "api",
+       "updatedBy": "unknown",
+       "updatedAt": "<ts>",
+       "registered": false
+      },
+      "f": {
+       "source": "api",
+       "updatedBy": "unknown",
+       "updatedAt": "<ts>",
+       "registered": false
+      },
+      "n": {
+       "source": "api",
+       "updatedBy": "unknown",
+       "updatedAt": "<ts>",
+       "registered": false
+      },
+      "obj.a.x": {
+       "source": "api",
+       "updatedBy": "unknown",
+       "updatedAt": "<ts>",
+       "registered": false
+      },
+      "obj.b": {
+       "source": "api",
+       "updatedBy": "unknown",
+       "updatedAt": "<ts>",
+       "registered": false
+      },
+      "obj.k": {
+       "source": "api",
+       "updatedBy": "unknown",
+       "updatedAt": "<ts>",
+       "registered": false
+      },
+      "quoted": {
+       "source": "api",
+       "updatedBy": "unknown",
+       "updatedAt": "<ts>",
+       "registered": false
+      },
+      "title": {
+       "source": "api",
+       "updatedBy": "unknown",
+       "updatedAt": "<ts>"
+      }
+     }
+    }
+   }
+  },
+  "meta 07 [scope-prefixed] session meta set {t} nul null": {
+   "cli": {
+    "exit": 0,
+    "stdout": "{\n  \"metadata\": {\n    \"big\": 12345678901234567000,\n    \"f\": 1,\n    \"n\": 42,\n    \"nul\": null,\n    \"obj\": {\n      \"a\": {\n        \"x\": \"y\"\n      },\n      \"b\": 1,\n      \"k\": [\n        true,\n        null,\n        0,\n        100,\n        1.5,\n        1e+21,\n        0.1\n      ]\n    },\n    \"quoted\": \"x\",\n    \"title\": \"plain words\"\n  },\n  \"metadataSources\": {\n    \"big\": {\n      \"source\": \"api\",\n      \"updatedBy\": \"unknown\",\n      \"updatedAt\": \"<ts>\",\n      \"registered\": false\n    },\n    \"f\": {\n      \"source\": \"api\",\n      \"updatedBy\": \"unknown\",\n      \"updatedAt\": \"<ts>\",\n      \"registered\": false\n    },\n    \"n\": {\n      \"source\": \"api\",\n      \"updatedBy\": \"unknown\",\n      \"updatedAt\": \"<ts>\",\n      \"registered\": false\n    },\n    \"nul\": {\n      \"source\": \"api\",\n      \"updatedBy\": \"unknown\",\n      \"updatedAt\": \"<ts>\",\n      \"registered\": false\n    },\n    \"obj.a.x\": {\n      \"source\": \"api\",\n      \"updatedBy\": \"unknown\",\n      \"updatedAt\": \"<ts>\",\n      \"registered\": false\n    },\n    \"obj.b\": {\n      \"source\": \"api\",\n      \"updatedBy\": \"unknown\",\n      \"updatedAt\": \"<ts>\",\n      \"registered\": false\n    },\n    \"obj.k\": {\n      \"source\": \"api\",\n      \"updatedBy\": \"unknown\",\n      \"updatedAt\": \"<ts>\",\n      \"registered\": false\n    },\n    \"quoted\": {\n      \"source\": \"api\",\n      \"updatedBy\": \"unknown\",\n      \"updatedAt\": \"<ts>\",\n      \"registered\": false\n    },\n    \"title\": {\n      \"source\": \"api\",\n      \"updatedBy\": \"unknown\",\n      \"updatedAt\": \"<ts>\"\n    }\n  }\n}\n",
+    "stderr": ""
+   },
+   "stored": {
+    "status": 200,
+    "body": {
+     "metadata": {
+      "big": 12345678901234567000,
+      "f": 1,
+      "n": 42,
+      "nul": null,
+      "obj": {
+       "a": {
+        "x": "y"
+       },
+       "b": 1,
+       "k": [
+        true,
+        null,
+        0,
+        100,
+        1.5,
+        1e+21,
+        0.1
+       ]
+      },
+      "quoted": "x",
+      "title": "plain words"
+     },
+     "metadataSources": {
+      "big": {
+       "source": "api",
+       "updatedBy": "unknown",
+       "updatedAt": "<ts>",
+       "registered": false
+      },
+      "f": {
+       "source": "api",
+       "updatedBy": "unknown",
+       "updatedAt": "<ts>",
+       "registered": false
+      },
+      "n": {
+       "source": "api",
+       "updatedBy": "unknown",
+       "updatedAt": "<ts>",
+       "registered": false
+      },
+      "nul": {
+       "source": "api",
+       "updatedBy": "unknown",
+       "updatedAt": "<ts>",
+       "registered": false
+      },
+      "obj.a.x": {
+       "source": "api",
+       "updatedBy": "unknown",
+       "updatedAt": "<ts>",
+       "registered": false
+      },
+      "obj.b": {
+       "source": "api",
+       "updatedBy": "unknown",
+       "updatedAt": "<ts>",
+       "registered": false
+      },
+      "obj.k": {
+       "source": "api",
+       "updatedBy": "unknown",
+       "updatedAt": "<ts>",
+       "registered": false
+      },
+      "quoted": {
+       "source": "api",
+       "updatedBy": "unknown",
+       "updatedAt": "<ts>",
+       "registered": false
+      },
+      "title": {
+       "source": "api",
+       "updatedBy": "unknown",
+       "updatedAt": "<ts>"
+      }
+     }
+    }
+   }
+  },
+  "meta 08 [scope] session meta set {t} broken {\"a\":": {
+   "cli": {
+    "exit": 0,
+    "stdout": "{\n  \"metadata\": {\n    \"big\": 12345678901234567000,\n    \"broken\": \"{\\\"a\\\":\",\n    \"f\": 1,\n    \"n\": 42,\n    \"nul\": null,\n    \"obj\": {\n      \"a\": {\n        \"x\": \"y\"\n      },\n      \"b\": 1,\n      \"k\": [\n        true,\n        null,\n        0,\n        100,\n        1.5,\n        1e+21,\n        0.1\n      ]\n    },\n    \"quoted\": \"x\",\n    \"title\": \"plain words\"\n  },\n  \"metadataSources\": {\n    \"big\": {\n      \"source\": \"api\",\n      \"updatedBy\": \"unknown\",\n      \"updatedAt\": \"<ts>\",\n      \"registered\": false\n    },\n    \"broken\": {\n      \"source\": \"api\",\n      \"updatedBy\": \"unknown\",\n      \"updatedAt\": \"<ts>\",\n      \"registered\": false\n    },\n    \"f\": {\n      \"source\": \"api\",\n      \"updatedBy\": \"unknown\",\n      \"updatedAt\": \"<ts>\",\n      \"registered\": false\n    },\n    \"n\": {\n      \"source\": \"api\",\n      \"updatedBy\": \"unknown\",\n      \"updatedAt\": \"<ts>\",\n      \"registered\": false\n    },\n    \"nul\": {\n      \"source\": \"api\",\n      \"updatedBy\": \"unknown\",\n      \"updatedAt\": \"<ts>\",\n      \"registered\": false\n    },\n    \"obj.a.x\": {\n      \"source\": \"api\",\n      \"updatedBy\": \"unknown\",\n      \"updatedAt\": \"<ts>\",\n      \"registered\": false\n    },\n    \"obj.b\": {\n      \"source\": \"api\",\n      \"updatedBy\": \"unknown\",\n      \"updatedAt\": \"<ts>\",\n      \"registered\": false\n    },\n    \"obj.k\": {\n      \"source\": \"api\",\n      \"updatedBy\": \"unknown\",\n      \"updatedAt\": \"<ts>\",\n      \"registered\": false\n    },\n    \"quoted\": {\n      \"source\": \"api\",\n      \"updatedBy\": \"unknown\",\n      \"updatedAt\": \"<ts>\",\n      \"registered\": false\n    },\n    \"title\": {\n      \"source\": \"api\",\n      \"updatedBy\": \"unknown\",\n      \"updatedAt\": \"<ts>\"\n    }\n  }\n}\n",
+    "stderr": ""
+   },
+   "stored": {
+    "status": 200,
+    "body": {
+     "metadata": {
+      "big": 12345678901234567000,
+      "broken": "{\"a\":",
+      "f": 1,
+      "n": 42,
+      "nul": null,
+      "obj": {
+       "a": {
+        "x": "y"
+       },
+       "b": 1,
+       "k": [
+        true,
+        null,
+        0,
+        100,
+        1.5,
+        1e+21,
+        0.1
+       ]
+      },
+      "quoted": "x",
+      "title": "plain words"
+     },
+     "metadataSources": {
+      "big": {
+       "source": "api",
+       "updatedBy": "unknown",
+       "updatedAt": "<ts>",
+       "registered": false
+      },
+      "broken": {
+       "source": "api",
+       "updatedBy": "unknown",
+       "updatedAt": "<ts>",
+       "registered": false
+      },
+      "f": {
+       "source": "api",
+       "updatedBy": "unknown",
+       "updatedAt": "<ts>",
+       "registered": false
+      },
+      "n": {
+       "source": "api",
+       "updatedBy": "unknown",
+       "updatedAt": "<ts>",
+       "registered": false
+      },
+      "nul": {
+       "source": "api",
+       "updatedBy": "unknown",
+       "updatedAt": "<ts>",
+       "registered": false
+      },
+      "obj.a.x": {
+       "source": "api",
+       "updatedBy": "unknown",
+       "updatedAt": "<ts>",
+       "registered": false
+      },
+      "obj.b": {
+       "source": "api",
+       "updatedBy": "unknown",
+       "updatedAt": "<ts>",
+       "registered": false
+      },
+      "obj.k": {
+       "source": "api",
+       "updatedBy": "unknown",
+       "updatedAt": "<ts>",
+       "registered": false
+      },
+      "quoted": {
+       "source": "api",
+       "updatedBy": "unknown",
+       "updatedAt": "<ts>",
+       "registered": false
+      },
+      "title": {
+       "source": "api",
+       "updatedBy": "unknown",
+       "updatedAt": "<ts>"
+      }
+     }
+    }
+   }
+  },
+  "meta 09 [scope] session meta set {t} empty ": {
+   "cli": {
+    "exit": 0,
+    "stdout": "{\n  \"metadata\": {\n    \"big\": 12345678901234567000,\n    \"broken\": \"{\\\"a\\\":\",\n    \"empty\": \"\",\n    \"f\": 1,\n    \"n\": 42,\n    \"nul\": null,\n    \"obj\": {\n      \"a\": {\n        \"x\": \"y\"\n      },\n      \"b\": 1,\n      \"k\": [\n        true,\n        null,\n        0,\n        100,\n        1.5,\n        1e+21,\n        0.1\n      ]\n    },\n    \"quoted\": \"x\",\n    \"title\": \"plain words\"\n  },\n  \"metadataSources\": {\n    \"big\": {\n      \"source\": \"api\",\n      \"updatedBy\": \"unknown\",\n      \"updatedAt\": \"<ts>\",\n      \"registered\": false\n    },\n    \"broken\": {\n      \"source\": \"api\",\n      \"updatedBy\": \"unknown\",\n      \"updatedAt\": \"<ts>\",\n      \"registered\": false\n    },\n    \"empty\": {\n      \"source\": \"api\",\n      \"updatedBy\": \"unknown\",\n      \"updatedAt\": \"<ts>\",\n      \"registered\": false\n    },\n    \"f\": {\n      \"source\": \"api\",\n      \"updatedBy\": \"unknown\",\n      \"updatedAt\": \"<ts>\",\n      \"registered\": false\n    },\n    \"n\": {\n      \"source\": \"api\",\n      \"updatedBy\": \"unknown\",\n      \"updatedAt\": \"<ts>\",\n      \"registered\": false\n    },\n    \"nul\": {\n      \"source\": \"api\",\n      \"updatedBy\": \"unknown\",\n      \"updatedAt\": \"<ts>\",\n      \"registered\": false\n    },\n    \"obj.a.x\": {\n      \"source\": \"api\",\n      \"updatedBy\": \"unknown\",\n      \"updatedAt\": \"<ts>\",\n      \"registered\": false\n    },\n    \"obj.b\": {\n      \"source\": \"api\",\n      \"updatedBy\": \"unknown\",\n      \"updatedAt\": \"<ts>\",\n      \"registered\": false\n    },\n    \"obj.k\": {\n      \"source\": \"api\",\n      \"updatedBy\": \"unknown\",\n      \"updatedAt\": \"<ts>\",\n      \"registered\": false\n    },\n    \"quoted\": {\n      \"source\": \"api\",\n      \"updatedBy\": \"unknown\",\n      \"updatedAt\": \"<ts>\",\n      \"registered\": false\n    },\n    \"title\": {\n      \"source\": \"api\",\n      \"updatedBy\": \"unknown\",\n      \"updatedAt\": \"<ts>\"\n    }\n  }\n}\n",
+    "stderr": ""
+   },
+   "stored": {
+    "status": 200,
+    "body": {
+     "metadata": {
+      "big": 12345678901234567000,
+      "broken": "{\"a\":",
+      "empty": "",
+      "f": 1,
+      "n": 42,
+      "nul": null,
+      "obj": {
+       "a": {
+        "x": "y"
+       },
+       "b": 1,
+       "k": [
+        true,
+        null,
+        0,
+        100,
+        1.5,
+        1e+21,
+        0.1
+       ]
+      },
+      "quoted": "x",
+      "title": "plain words"
+     },
+     "metadataSources": {
+      "big": {
+       "source": "api",
+       "updatedBy": "unknown",
+       "updatedAt": "<ts>",
+       "registered": false
+      },
+      "broken": {
+       "source": "api",
+       "updatedBy": "unknown",
+       "updatedAt": "<ts>",
+       "registered": false
+      },
+      "empty": {
+       "source": "api",
+       "updatedBy": "unknown",
+       "updatedAt": "<ts>",
+       "registered": false
+      },
+      "f": {
+       "source": "api",
+       "updatedBy": "unknown",
+       "updatedAt": "<ts>",
+       "registered": false
+      },
+      "n": {
+       "source": "api",
+       "updatedBy": "unknown",
+       "updatedAt": "<ts>",
+       "registered": false
+      },
+      "nul": {
+       "source": "api",
+       "updatedBy": "unknown",
+       "updatedAt": "<ts>",
+       "registered": false
+      },
+      "obj.a.x": {
+       "source": "api",
+       "updatedBy": "unknown",
+       "updatedAt": "<ts>",
+       "registered": false
+      },
+      "obj.b": {
+       "source": "api",
+       "updatedBy": "unknown",
+       "updatedAt": "<ts>",
+       "registered": false
+      },
+      "obj.k": {
+       "source": "api",
+       "updatedBy": "unknown",
+       "updatedAt": "<ts>",
+       "registered": false
+      },
+      "quoted": {
+       "source": "api",
+       "updatedBy": "unknown",
+       "updatedAt": "<ts>",
+       "registered": false
+      },
+      "title": {
+       "source": "api",
+       "updatedBy": "unknown",
+       "updatedAt": "<ts>"
+      }
+     }
+    }
+   }
+  },
+  "meta 10 [scope] session meta set {t} spaced  [1, 2] ": {
+   "cli": {
+    "exit": 0,
+    "stdout": "{\n  \"metadata\": {\n    \"big\": 12345678901234567000,\n    \"broken\": \"{\\\"a\\\":\",\n    \"empty\": \"\",\n    \"f\": 1,\n    \"n\": 42,\n    \"nul\": null,\n    \"obj\": {\n      \"a\": {\n        \"x\": \"y\"\n      },\n      \"b\": 1,\n      \"k\": [\n        true,\n        null,\n        0,\n        100,\n        1.5,\n        1e+21,\n        0.1\n      ]\n    },\n    \"quoted\": \"x\",\n    \"spaced\": [\n      1,\n      2\n    ],\n    \"title\": \"plain words\"\n  },\n  \"metadataSources\": {\n    \"big\": {\n      \"source\": \"api\",\n      \"updatedBy\": \"unknown\",\n      \"updatedAt\": \"<ts>\",\n      \"registered\": false\n    },\n    \"broken\": {\n      \"source\": \"api\",\n      \"updatedBy\": \"unknown\",\n      \"updatedAt\": \"<ts>\",\n      \"registered\": false\n    },\n    \"empty\": {\n      \"source\": \"api\",\n      \"updatedBy\": \"unknown\",\n      \"updatedAt\": \"<ts>\",\n      \"registered\": false\n    },\n    \"f\": {\n      \"source\": \"api\",\n      \"updatedBy\": \"unknown\",\n      \"updatedAt\": \"<ts>\",\n      \"registered\": false\n    },\n    \"n\": {\n      \"source\": \"api\",\n      \"updatedBy\": \"unknown\",\n      \"updatedAt\": \"<ts>\",\n      \"registered\": false\n    },\n    \"nul\": {\n      \"source\": \"api\",\n      \"updatedBy\": \"unknown\",\n      \"updatedAt\": \"<ts>\",\n      \"registered\": false\n    },\n    \"obj.a.x\": {\n      \"source\": \"api\",\n      \"updatedBy\": \"unknown\",\n      \"updatedAt\": \"<ts>\",\n      \"registered\": false\n    },\n    \"obj.b\": {\n      \"source\": \"api\",\n      \"updatedBy\": \"unknown\",\n      \"updatedAt\": \"<ts>\",\n      \"registered\": false\n    },\n    \"obj.k\": {\n      \"source\": \"api\",\n      \"updatedBy\": \"unknown\",\n      \"updatedAt\": \"<ts>\",\n      \"registered\": false\n    },\n    \"quoted\": {\n      \"source\": \"api\",\n      \"updatedBy\": \"unknown\",\n      \"updatedAt\": \"<ts>\",\n      \"registered\": false\n    },\n    \"spaced\": {\n      \"source\": \"api\",\n      \"updatedBy\": \"unknown\",\n      \"updatedAt\": \"<ts>\",\n      \"registered\": false\n    },\n    \"title\": {\n      \"source\": \"api\",\n      \"updatedBy\": \"unknown\",\n      \"updatedAt\": \"<ts>\"\n    }\n  }\n}\n",
+    "stderr": ""
+   },
+   "stored": {
+    "status": 200,
+    "body": {
+     "metadata": {
+      "big": 12345678901234567000,
+      "broken": "{\"a\":",
+      "empty": "",
+      "f": 1,
+      "n": 42,
+      "nul": null,
+      "obj": {
+       "a": {
+        "x": "y"
+       },
+       "b": 1,
+       "k": [
+        true,
+        null,
+        0,
+        100,
+        1.5,
+        1e+21,
+        0.1
+       ]
+      },
+      "quoted": "x",
+      "spaced": [
+       1,
+       2
+      ],
+      "title": "plain words"
+     },
+     "metadataSources": {
+      "big": {
+       "source": "api",
+       "updatedBy": "unknown",
+       "updatedAt": "<ts>",
+       "registered": false
+      },
+      "broken": {
+       "source": "api",
+       "updatedBy": "unknown",
+       "updatedAt": "<ts>",
+       "registered": false
+      },
+      "empty": {
+       "source": "api",
+       "updatedBy": "unknown",
+       "updatedAt": "<ts>",
+       "registered": false
+      },
+      "f": {
+       "source": "api",
+       "updatedBy": "unknown",
+       "updatedAt": "<ts>",
+       "registered": false
+      },
+      "n": {
+       "source": "api",
+       "updatedBy": "unknown",
+       "updatedAt": "<ts>",
+       "registered": false
+      },
+      "nul": {
+       "source": "api",
+       "updatedBy": "unknown",
+       "updatedAt": "<ts>",
+       "registered": false
+      },
+      "obj.a.x": {
+       "source": "api",
+       "updatedBy": "unknown",
+       "updatedAt": "<ts>",
+       "registered": false
+      },
+      "obj.b": {
+       "source": "api",
+       "updatedBy": "unknown",
+       "updatedAt": "<ts>",
+       "registered": false
+      },
+      "obj.k": {
+       "source": "api",
+       "updatedBy": "unknown",
+       "updatedAt": "<ts>",
+       "registered": false
+      },
+      "quoted": {
+       "source": "api",
+       "updatedBy": "unknown",
+       "updatedAt": "<ts>",
+       "registered": false
+      },
+      "spaced": {
+       "source": "api",
+       "updatedBy": "unknown",
+       "updatedAt": "<ts>",
+       "registered": false
+      },
+      "title": {
+       "source": "api",
+       "updatedBy": "unknown",
+       "updatedAt": "<ts>"
+      }
+     }
+    }
+   }
+  },
+  "meta 11 [scope] session meta set {t} dash -- -1": {
+   "cli": {
+    "exit": 0,
+    "stdout": "{\n  \"metadata\": {\n    \"big\": 12345678901234567000,\n    \"broken\": \"{\\\"a\\\":\",\n    \"dash\": -1,\n    \"empty\": \"\",\n    \"f\": 1,\n    \"n\": 42,\n    \"nul\": null,\n    \"obj\": {\n      \"a\": {\n        \"x\": \"y\"\n      },\n      \"b\": 1,\n      \"k\": [\n        true,\n        null,\n        0,\n        100,\n        1.5,\n        1e+21,\n        0.1\n      ]\n    },\n    \"quoted\": \"x\",\n    \"spaced\": [\n      1,\n      2\n    ],\n    \"title\": \"plain words\"\n  },\n  \"metadataSources\": {\n    \"big\": {\n      \"source\": \"api\",\n      \"updatedBy\": \"unknown\",\n      \"updatedAt\": \"<ts>\",\n      \"registered\": false\n    },\n    \"broken\": {\n      \"source\": \"api\",\n      \"updatedBy\": \"unknown\",\n      \"updatedAt\": \"<ts>\",\n      \"registered\": false\n    },\n    \"dash\": {\n      \"source\": \"api\",\n      \"updatedBy\": \"unknown\",\n      \"updatedAt\": \"<ts>\",\n      \"registered\": false\n    },\n    \"empty\": {\n      \"source\": \"api\",\n      \"updatedBy\": \"unknown\",\n      \"updatedAt\": \"<ts>\",\n      \"registered\": false\n    },\n    \"f\": {\n      \"source\": \"api\",\n      \"updatedBy\": \"unknown\",\n      \"updatedAt\": \"<ts>\",\n      \"registered\": false\n    },\n    \"n\": {\n      \"source\": \"api\",\n      \"updatedBy\": \"unknown\",\n      \"updatedAt\": \"<ts>\",\n      \"registered\": false\n    },\n    \"nul\": {\n      \"source\": \"api\",\n      \"updatedBy\": \"unknown\",\n      \"updatedAt\": \"<ts>\",\n      \"registered\": false\n    },\n    \"obj.a.x\": {\n      \"source\": \"api\",\n      \"updatedBy\": \"unknown\",\n      \"updatedAt\": \"<ts>\",\n      \"registered\": false\n    },\n    \"obj.b\": {\n      \"source\": \"api\",\n      \"updatedBy\": \"unknown\",\n      \"updatedAt\": \"<ts>\",\n      \"registered\": false\n    },\n    \"obj.k\": {\n      \"source\": \"api\",\n      \"updatedBy\": \"unknown\",\n      \"updatedAt\": \"<ts>\",\n      \"registered\": false\n    },\n    \"quoted\": {\n      \"source\": \"api\",\n      \"updatedBy\": \"unknown\",\n      \"updatedAt\": \"<ts>\",\n      \"registered\": false\n    },\n    \"spaced\": {\n      \"source\": \"api\",\n      \"updatedBy\": \"unknown\",\n      \"updatedAt\": \"<ts>\",\n      \"registered\": false\n    },\n    \"title\": {\n      \"source\": \"api\",\n      \"updatedBy\": \"unknown\",\n      \"updatedAt\": \"<ts>\"\n    }\n  }\n}\n",
+    "stderr": ""
+   },
+   "stored": {
+    "status": 200,
+    "body": {
+     "metadata": {
+      "big": 12345678901234567000,
+      "broken": "{\"a\":",
+      "dash": -1,
+      "empty": "",
+      "f": 1,
+      "n": 42,
+      "nul": null,
+      "obj": {
+       "a": {
+        "x": "y"
+       },
+       "b": 1,
+       "k": [
+        true,
+        null,
+        0,
+        100,
+        1.5,
+        1e+21,
+        0.1
+       ]
+      },
+      "quoted": "x",
+      "spaced": [
+       1,
+       2
+      ],
+      "title": "plain words"
+     },
+     "metadataSources": {
+      "big": {
+       "source": "api",
+       "updatedBy": "unknown",
+       "updatedAt": "<ts>",
+       "registered": false
+      },
+      "broken": {
+       "source": "api",
+       "updatedBy": "unknown",
+       "updatedAt": "<ts>",
+       "registered": false
+      },
+      "dash": {
+       "source": "api",
+       "updatedBy": "unknown",
+       "updatedAt": "<ts>",
+       "registered": false
+      },
+      "empty": {
+       "source": "api",
+       "updatedBy": "unknown",
+       "updatedAt": "<ts>",
+       "registered": false
+      },
+      "f": {
+       "source": "api",
+       "updatedBy": "unknown",
+       "updatedAt": "<ts>",
+       "registered": false
+      },
+      "n": {
+       "source": "api",
+       "updatedBy": "unknown",
+       "updatedAt": "<ts>",
+       "registered": false
+      },
+      "nul": {
+       "source": "api",
+       "updatedBy": "unknown",
+       "updatedAt": "<ts>",
+       "registered": false
+      },
+      "obj.a.x": {
+       "source": "api",
+       "updatedBy": "unknown",
+       "updatedAt": "<ts>",
+       "registered": false
+      },
+      "obj.b": {
+       "source": "api",
+       "updatedBy": "unknown",
+       "updatedAt": "<ts>",
+       "registered": false
+      },
+      "obj.k": {
+       "source": "api",
+       "updatedBy": "unknown",
+       "updatedAt": "<ts>",
+       "registered": false
+      },
+      "quoted": {
+       "source": "api",
+       "updatedBy": "unknown",
+       "updatedAt": "<ts>",
+       "registered": false
+      },
+      "spaced": {
+       "source": "api",
+       "updatedBy": "unknown",
+       "updatedAt": "<ts>",
+       "registered": false
+      },
+      "title": {
+       "source": "api",
+       "updatedBy": "unknown",
+       "updatedAt": "<ts>"
+      }
+     }
+    }
+   }
+  },
+  "meta 12 [scope] session meta set {t} k": {
+   "cli": {
+    "exit": 2,
+    "stdout": "",
+    "stderr": "hrc: error: missing required argument 'value'\ncommand: hrc session meta set\nusage: [options] <target> <key> <value>\n"
+   },
+   "stored": {
+    "status": 200,
+    "body": {
+     "metadata": {
+      "big": 12345678901234567000,
+      "broken": "{\"a\":",
+      "dash": -1,
+      "empty": "",
+      "f": 1,
+      "n": 42,
+      "nul": null,
+      "obj": {
+       "a": {
+        "x": "y"
+       },
+       "b": 1,
+       "k": [
+        true,
+        null,
+        0,
+        100,
+        1.5,
+        1e+21,
+        0.1
+       ]
+      },
+      "quoted": "x",
+      "spaced": [
+       1,
+       2
+      ],
+      "title": "plain words"
+     },
+     "metadataSources": {
+      "big": {
+       "source": "api",
+       "updatedBy": "unknown",
+       "updatedAt": "<ts>",
+       "registered": false
+      },
+      "broken": {
+       "source": "api",
+       "updatedBy": "unknown",
+       "updatedAt": "<ts>",
+       "registered": false
+      },
+      "dash": {
+       "source": "api",
+       "updatedBy": "unknown",
+       "updatedAt": "<ts>",
+       "registered": false
+      },
+      "empty": {
+       "source": "api",
+       "updatedBy": "unknown",
+       "updatedAt": "<ts>",
+       "registered": false
+      },
+      "f": {
+       "source": "api",
+       "updatedBy": "unknown",
+       "updatedAt": "<ts>",
+       "registered": false
+      },
+      "n": {
+       "source": "api",
+       "updatedBy": "unknown",
+       "updatedAt": "<ts>",
+       "registered": false
+      },
+      "nul": {
+       "source": "api",
+       "updatedBy": "unknown",
+       "updatedAt": "<ts>",
+       "registered": false
+      },
+      "obj.a.x": {
+       "source": "api",
+       "updatedBy": "unknown",
+       "updatedAt": "<ts>",
+       "registered": false
+      },
+      "obj.b": {
+       "source": "api",
+       "updatedBy": "unknown",
+       "updatedAt": "<ts>",
+       "registered": false
+      },
+      "obj.k": {
+       "source": "api",
+       "updatedBy": "unknown",
+       "updatedAt": "<ts>",
+       "registered": false
+      },
+      "quoted": {
+       "source": "api",
+       "updatedBy": "unknown",
+       "updatedAt": "<ts>",
+       "registered": false
+      },
+      "spaced": {
+       "source": "api",
+       "updatedBy": "unknown",
+       "updatedAt": "<ts>",
+       "registered": false
+      },
+      "title": {
+       "source": "api",
+       "updatedBy": "unknown",
+       "updatedAt": "<ts>"
+      }
+     }
+    }
+   }
+  },
+  "meta 13 [scope] session meta set {t}": {
+   "cli": {
+    "exit": 2,
+    "stdout": "",
+    "stderr": "hrc: error: missing required argument 'key'\ncommand: hrc session meta set\nusage: [options] <target> <key> <value>\n"
+   },
+   "stored": {
+    "status": 200,
+    "body": {
+     "metadata": {
+      "big": 12345678901234567000,
+      "broken": "{\"a\":",
+      "dash": -1,
+      "empty": "",
+      "f": 1,
+      "n": 42,
+      "nul": null,
+      "obj": {
+       "a": {
+        "x": "y"
+       },
+       "b": 1,
+       "k": [
+        true,
+        null,
+        0,
+        100,
+        1.5,
+        1e+21,
+        0.1
+       ]
+      },
+      "quoted": "x",
+      "spaced": [
+       1,
+       2
+      ],
+      "title": "plain words"
+     },
+     "metadataSources": {
+      "big": {
+       "source": "api",
+       "updatedBy": "unknown",
+       "updatedAt": "<ts>",
+       "registered": false
+      },
+      "broken": {
+       "source": "api",
+       "updatedBy": "unknown",
+       "updatedAt": "<ts>",
+       "registered": false
+      },
+      "dash": {
+       "source": "api",
+       "updatedBy": "unknown",
+       "updatedAt": "<ts>",
+       "registered": false
+      },
+      "empty": {
+       "source": "api",
+       "updatedBy": "unknown",
+       "updatedAt": "<ts>",
+       "registered": false
+      },
+      "f": {
+       "source": "api",
+       "updatedBy": "unknown",
+       "updatedAt": "<ts>",
+       "registered": false
+      },
+      "n": {
+       "source": "api",
+       "updatedBy": "unknown",
+       "updatedAt": "<ts>",
+       "registered": false
+      },
+      "nul": {
+       "source": "api",
+       "updatedBy": "unknown",
+       "updatedAt": "<ts>",
+       "registered": false
+      },
+      "obj.a.x": {
+       "source": "api",
+       "updatedBy": "unknown",
+       "updatedAt": "<ts>",
+       "registered": false
+      },
+      "obj.b": {
+       "source": "api",
+       "updatedBy": "unknown",
+       "updatedAt": "<ts>",
+       "registered": false
+      },
+      "obj.k": {
+       "source": "api",
+       "updatedBy": "unknown",
+       "updatedAt": "<ts>",
+       "registered": false
+      },
+      "quoted": {
+       "source": "api",
+       "updatedBy": "unknown",
+       "updatedAt": "<ts>",
+       "registered": false
+      },
+      "spaced": {
+       "source": "api",
+       "updatedBy": "unknown",
+       "updatedAt": "<ts>",
+       "registered": false
+      },
+      "title": {
+       "source": "api",
+       "updatedBy": "unknown",
+       "updatedAt": "<ts>"
+      }
+     }
+    }
+   }
+  },
+  "meta 14 [scope] session meta set {t} a b extra": {
+   "cli": {
+    "exit": 2,
+    "stdout": "",
+    "stderr": "hrc: error: too many arguments for 'set'. Expected 3 arguments but got 4.\ncommand: hrc session meta set\nusage: [options] <target> <key> <value>\n"
+   },
+   "stored": {
+    "status": 200,
+    "body": {
+     "metadata": {
+      "big": 12345678901234567000,
+      "broken": "{\"a\":",
+      "dash": -1,
+      "empty": "",
+      "f": 1,
+      "n": 42,
+      "nul": null,
+      "obj": {
+       "a": {
+        "x": "y"
+       },
+       "b": 1,
+       "k": [
+        true,
+        null,
+        0,
+        100,
+        1.5,
+        1e+21,
+        0.1
+       ]
+      },
+      "quoted": "x",
+      "spaced": [
+       1,
+       2
+      ],
+      "title": "plain words"
+     },
+     "metadataSources": {
+      "big": {
+       "source": "api",
+       "updatedBy": "unknown",
+       "updatedAt": "<ts>",
+       "registered": false
+      },
+      "broken": {
+       "source": "api",
+       "updatedBy": "unknown",
+       "updatedAt": "<ts>",
+       "registered": false
+      },
+      "dash": {
+       "source": "api",
+       "updatedBy": "unknown",
+       "updatedAt": "<ts>",
+       "registered": false
+      },
+      "empty": {
+       "source": "api",
+       "updatedBy": "unknown",
+       "updatedAt": "<ts>",
+       "registered": false
+      },
+      "f": {
+       "source": "api",
+       "updatedBy": "unknown",
+       "updatedAt": "<ts>",
+       "registered": false
+      },
+      "n": {
+       "source": "api",
+       "updatedBy": "unknown",
+       "updatedAt": "<ts>",
+       "registered": false
+      },
+      "nul": {
+       "source": "api",
+       "updatedBy": "unknown",
+       "updatedAt": "<ts>",
+       "registered": false
+      },
+      "obj.a.x": {
+       "source": "api",
+       "updatedBy": "unknown",
+       "updatedAt": "<ts>",
+       "registered": false
+      },
+      "obj.b": {
+       "source": "api",
+       "updatedBy": "unknown",
+       "updatedAt": "<ts>",
+       "registered": false
+      },
+      "obj.k": {
+       "source": "api",
+       "updatedBy": "unknown",
+       "updatedAt": "<ts>",
+       "registered": false
+      },
+      "quoted": {
+       "source": "api",
+       "updatedBy": "unknown",
+       "updatedAt": "<ts>",
+       "registered": false
+      },
+      "spaced": {
+       "source": "api",
+       "updatedBy": "unknown",
+       "updatedAt": "<ts>",
+       "registered": false
+      },
+      "title": {
+       "source": "api",
+       "updatedBy": "unknown",
+       "updatedAt": "<ts>"
+      }
+     }
+    }
+   }
+  },
+  "meta 15 [scope] session meta set {t} a b --json": {
+   "cli": {
+    "exit": 2,
+    "stdout": "",
+    "stderr": "hrc: unknown option: --json\n"
+   },
+   "stored": {
+    "status": 200,
+    "body": {
+     "metadata": {
+      "big": 12345678901234567000,
+      "broken": "{\"a\":",
+      "dash": -1,
+      "empty": "",
+      "f": 1,
+      "n": 42,
+      "nul": null,
+      "obj": {
+       "a": {
+        "x": "y"
+       },
+       "b": 1,
+       "k": [
+        true,
+        null,
+        0,
+        100,
+        1.5,
+        1e+21,
+        0.1
+       ]
+      },
+      "quoted": "x",
+      "spaced": [
+       1,
+       2
+      ],
+      "title": "plain words"
+     },
+     "metadataSources": {
+      "big": {
+       "source": "api",
+       "updatedBy": "unknown",
+       "updatedAt": "<ts>",
+       "registered": false
+      },
+      "broken": {
+       "source": "api",
+       "updatedBy": "unknown",
+       "updatedAt": "<ts>",
+       "registered": false
+      },
+      "dash": {
+       "source": "api",
+       "updatedBy": "unknown",
+       "updatedAt": "<ts>",
+       "registered": false
+      },
+      "empty": {
+       "source": "api",
+       "updatedBy": "unknown",
+       "updatedAt": "<ts>",
+       "registered": false
+      },
+      "f": {
+       "source": "api",
+       "updatedBy": "unknown",
+       "updatedAt": "<ts>",
+       "registered": false
+      },
+      "n": {
+       "source": "api",
+       "updatedBy": "unknown",
+       "updatedAt": "<ts>",
+       "registered": false
+      },
+      "nul": {
+       "source": "api",
+       "updatedBy": "unknown",
+       "updatedAt": "<ts>",
+       "registered": false
+      },
+      "obj.a.x": {
+       "source": "api",
+       "updatedBy": "unknown",
+       "updatedAt": "<ts>",
+       "registered": false
+      },
+      "obj.b": {
+       "source": "api",
+       "updatedBy": "unknown",
+       "updatedAt": "<ts>",
+       "registered": false
+      },
+      "obj.k": {
+       "source": "api",
+       "updatedBy": "unknown",
+       "updatedAt": "<ts>",
+       "registered": false
+      },
+      "quoted": {
+       "source": "api",
+       "updatedBy": "unknown",
+       "updatedAt": "<ts>",
+       "registered": false
+      },
+      "spaced": {
+       "source": "api",
+       "updatedBy": "unknown",
+       "updatedAt": "<ts>",
+       "registered": false
+      },
+      "title": {
+       "source": "api",
+       "updatedBy": "unknown",
+       "updatedAt": "<ts>"
+      }
+     }
+    }
+   }
+  },
+  "meta 16 [scope] --output json session meta set {t} a b": {
+   "cli": {
+    "exit": 2,
+    "stdout": "",
+    "stderr": "{\"error\":{\"message\":\"--output json is not supported by 'set'\",\"usage\":true}}\n"
+   },
+   "stored": {
+    "status": 200,
+    "body": {
+     "metadata": {
+      "big": 12345678901234567000,
+      "broken": "{\"a\":",
+      "dash": -1,
+      "empty": "",
+      "f": 1,
+      "n": 42,
+      "nul": null,
+      "obj": {
+       "a": {
+        "x": "y"
+       },
+       "b": 1,
+       "k": [
+        true,
+        null,
+        0,
+        100,
+        1.5,
+        1e+21,
+        0.1
+       ]
+      },
+      "quoted": "x",
+      "spaced": [
+       1,
+       2
+      ],
+      "title": "plain words"
+     },
+     "metadataSources": {
+      "big": {
+       "source": "api",
+       "updatedBy": "unknown",
+       "updatedAt": "<ts>",
+       "registered": false
+      },
+      "broken": {
+       "source": "api",
+       "updatedBy": "unknown",
+       "updatedAt": "<ts>",
+       "registered": false
+      },
+      "dash": {
+       "source": "api",
+       "updatedBy": "unknown",
+       "updatedAt": "<ts>",
+       "registered": false
+      },
+      "empty": {
+       "source": "api",
+       "updatedBy": "unknown",
+       "updatedAt": "<ts>",
+       "registered": false
+      },
+      "f": {
+       "source": "api",
+       "updatedBy": "unknown",
+       "updatedAt": "<ts>",
+       "registered": false
+      },
+      "n": {
+       "source": "api",
+       "updatedBy": "unknown",
+       "updatedAt": "<ts>",
+       "registered": false
+      },
+      "nul": {
+       "source": "api",
+       "updatedBy": "unknown",
+       "updatedAt": "<ts>",
+       "registered": false
+      },
+      "obj.a.x": {
+       "source": "api",
+       "updatedBy": "unknown",
+       "updatedAt": "<ts>",
+       "registered": false
+      },
+      "obj.b": {
+       "source": "api",
+       "updatedBy": "unknown",
+       "updatedAt": "<ts>",
+       "registered": false
+      },
+      "obj.k": {
+       "source": "api",
+       "updatedBy": "unknown",
+       "updatedAt": "<ts>",
+       "registered": false
+      },
+      "quoted": {
+       "source": "api",
+       "updatedBy": "unknown",
+       "updatedAt": "<ts>",
+       "registered": false
+      },
+      "spaced": {
+       "source": "api",
+       "updatedBy": "unknown",
+       "updatedAt": "<ts>",
+       "registered": false
+      },
+      "title": {
+       "source": "api",
+       "updatedBy": "unknown",
+       "updatedAt": "<ts>"
+      }
+     }
+    }
+   }
+  },
+  "meta 17 [scope] session meta clear {t} n": {
+   "cli": {
+    "exit": 0,
+    "stdout": "{\n  \"metadata\": {\n    \"big\": 12345678901234567000,\n    \"broken\": \"{\\\"a\\\":\",\n    \"dash\": -1,\n    \"empty\": \"\",\n    \"f\": 1,\n    \"nul\": null,\n    \"obj\": {\n      \"a\": {\n        \"x\": \"y\"\n      },\n      \"b\": 1,\n      \"k\": [\n        true,\n        null,\n        0,\n        100,\n        1.5,\n        1e+21,\n        0.1\n      ]\n    },\n    \"quoted\": \"x\",\n    \"spaced\": [\n      1,\n      2\n    ],\n    \"title\": \"plain words\"\n  },\n  \"metadataSources\": {\n    \"big\": {\n      \"source\": \"api\",\n      \"updatedBy\": \"unknown\",\n      \"updatedAt\": \"<ts>\",\n      \"registered\": false\n    },\n    \"broken\": {\n      \"source\": \"api\",\n      \"updatedBy\": \"unknown\",\n      \"updatedAt\": \"<ts>\",\n      \"registered\": false\n    },\n    \"dash\": {\n      \"source\": \"api\",\n      \"updatedBy\": \"unknown\",\n      \"updatedAt\": \"<ts>\",\n      \"registered\": false\n    },\n    \"empty\": {\n      \"source\": \"api\",\n      \"updatedBy\": \"unknown\",\n      \"updatedAt\": \"<ts>\",\n      \"registered\": false\n    },\n    \"f\": {\n      \"source\": \"api\",\n      \"updatedBy\": \"unknown\",\n      \"updatedAt\": \"<ts>\",\n      \"registered\": false\n    },\n    \"nul\": {\n      \"source\": \"api\",\n      \"updatedBy\": \"unknown\",\n      \"updatedAt\": \"<ts>\",\n      \"registered\": false\n    },\n    \"obj.a.x\": {\n      \"source\": \"api\",\n      \"updatedBy\": \"unknown\",\n      \"updatedAt\": \"<ts>\",\n      \"registered\": false\n    },\n    \"obj.b\": {\n      \"source\": \"api\",\n      \"updatedBy\": \"unknown\",\n      \"updatedAt\": \"<ts>\",\n      \"registered\": false\n    },\n    \"obj.k\": {\n      \"source\": \"api\",\n      \"updatedBy\": \"unknown\",\n      \"updatedAt\": \"<ts>\",\n      \"registered\": false\n    },\n    \"quoted\": {\n      \"source\": \"api\",\n      \"updatedBy\": \"unknown\",\n      \"updatedAt\": \"<ts>\",\n      \"registered\": false\n    },\n    \"spaced\": {\n      \"source\": \"api\",\n      \"updatedBy\": \"unknown\",\n      \"updatedAt\": \"<ts>\",\n      \"registered\": false\n    },\n    \"title\": {\n      \"source\": \"api\",\n      \"updatedBy\": \"unknown\",\n      \"updatedAt\": \"<ts>\"\n    }\n  }\n}\n",
+    "stderr": ""
+   },
+   "stored": {
+    "status": 200,
+    "body": {
+     "metadata": {
+      "big": 12345678901234567000,
+      "broken": "{\"a\":",
+      "dash": -1,
+      "empty": "",
+      "f": 1,
+      "nul": null,
+      "obj": {
+       "a": {
+        "x": "y"
+       },
+       "b": 1,
+       "k": [
+        true,
+        null,
+        0,
+        100,
+        1.5,
+        1e+21,
+        0.1
+       ]
+      },
+      "quoted": "x",
+      "spaced": [
+       1,
+       2
+      ],
+      "title": "plain words"
+     },
+     "metadataSources": {
+      "big": {
+       "source": "api",
+       "updatedBy": "unknown",
+       "updatedAt": "<ts>",
+       "registered": false
+      },
+      "broken": {
+       "source": "api",
+       "updatedBy": "unknown",
+       "updatedAt": "<ts>",
+       "registered": false
+      },
+      "dash": {
+       "source": "api",
+       "updatedBy": "unknown",
+       "updatedAt": "<ts>",
+       "registered": false
+      },
+      "empty": {
+       "source": "api",
+       "updatedBy": "unknown",
+       "updatedAt": "<ts>",
+       "registered": false
+      },
+      "f": {
+       "source": "api",
+       "updatedBy": "unknown",
+       "updatedAt": "<ts>",
+       "registered": false
+      },
+      "nul": {
+       "source": "api",
+       "updatedBy": "unknown",
+       "updatedAt": "<ts>",
+       "registered": false
+      },
+      "obj.a.x": {
+       "source": "api",
+       "updatedBy": "unknown",
+       "updatedAt": "<ts>",
+       "registered": false
+      },
+      "obj.b": {
+       "source": "api",
+       "updatedBy": "unknown",
+       "updatedAt": "<ts>",
+       "registered": false
+      },
+      "obj.k": {
+       "source": "api",
+       "updatedBy": "unknown",
+       "updatedAt": "<ts>",
+       "registered": false
+      },
+      "quoted": {
+       "source": "api",
+       "updatedBy": "unknown",
+       "updatedAt": "<ts>",
+       "registered": false
+      },
+      "spaced": {
+       "source": "api",
+       "updatedBy": "unknown",
+       "updatedAt": "<ts>",
+       "registered": false
+      },
+      "title": {
+       "source": "api",
+       "updatedBy": "unknown",
+       "updatedAt": "<ts>"
+      }
+     }
+    }
+   }
+  },
+  "meta 18 [session] session meta clear {t} f big never-set": {
+   "cli": {
+    "exit": 2,
+    "stdout": "",
+    "stderr": "hrc: [malformed_request] invalid session metadata\ndetail: {\"rejected\":[{\"key\":\"never-set\",\"reason\":\"key must have 1–4 valid segments (at most 64 characters each) and at most 128 bytes\"}]}\n"
+   },
+   "stored": {
+    "status": 200,
+    "body": {
+     "metadata": {
+      "big": 12345678901234567000,
+      "broken": "{\"a\":",
+      "dash": -1,
+      "empty": "",
+      "f": 1,
+      "nul": null,
+      "obj": {
+       "a": {
+        "x": "y"
+       },
+       "b": 1,
+       "k": [
+        true,
+        null,
+        0,
+        100,
+        1.5,
+        1e+21,
+        0.1
+       ]
+      },
+      "quoted": "x",
+      "spaced": [
+       1,
+       2
+      ],
+      "title": "plain words"
+     },
+     "metadataSources": {
+      "big": {
+       "source": "api",
+       "updatedBy": "unknown",
+       "updatedAt": "<ts>",
+       "registered": false
+      },
+      "broken": {
+       "source": "api",
+       "updatedBy": "unknown",
+       "updatedAt": "<ts>",
+       "registered": false
+      },
+      "dash": {
+       "source": "api",
+       "updatedBy": "unknown",
+       "updatedAt": "<ts>",
+       "registered": false
+      },
+      "empty": {
+       "source": "api",
+       "updatedBy": "unknown",
+       "updatedAt": "<ts>",
+       "registered": false
+      },
+      "f": {
+       "source": "api",
+       "updatedBy": "unknown",
+       "updatedAt": "<ts>",
+       "registered": false
+      },
+      "nul": {
+       "source": "api",
+       "updatedBy": "unknown",
+       "updatedAt": "<ts>",
+       "registered": false
+      },
+      "obj.a.x": {
+       "source": "api",
+       "updatedBy": "unknown",
+       "updatedAt": "<ts>",
+       "registered": false
+      },
+      "obj.b": {
+       "source": "api",
+       "updatedBy": "unknown",
+       "updatedAt": "<ts>",
+       "registered": false
+      },
+      "obj.k": {
+       "source": "api",
+       "updatedBy": "unknown",
+       "updatedAt": "<ts>",
+       "registered": false
+      },
+      "quoted": {
+       "source": "api",
+       "updatedBy": "unknown",
+       "updatedAt": "<ts>",
+       "registered": false
+      },
+      "spaced": {
+       "source": "api",
+       "updatedBy": "unknown",
+       "updatedAt": "<ts>",
+       "registered": false
+      },
+      "title": {
+       "source": "api",
+       "updatedBy": "unknown",
+       "updatedAt": "<ts>"
+      }
+     }
+    }
+   }
+  },
+  "meta 19 [hsid] session meta clear {t} nul": {
+   "cli": {
+    "exit": 0,
+    "stdout": "{\n  \"metadata\": {\n    \"big\": 12345678901234567000,\n    \"broken\": \"{\\\"a\\\":\",\n    \"dash\": -1,\n    \"empty\": \"\",\n    \"f\": 1,\n    \"obj\": {\n      \"a\": {\n        \"x\": \"y\"\n      },\n      \"b\": 1,\n      \"k\": [\n        true,\n        null,\n        0,\n        100,\n        1.5,\n        1e+21,\n        0.1\n      ]\n    },\n    \"quoted\": \"x\",\n    \"spaced\": [\n      1,\n      2\n    ],\n    \"title\": \"plain words\"\n  },\n  \"metadataSources\": {\n    \"big\": {\n      \"source\": \"api\",\n      \"updatedBy\": \"unknown\",\n      \"updatedAt\": \"<ts>\",\n      \"registered\": false\n    },\n    \"broken\": {\n      \"source\": \"api\",\n      \"updatedBy\": \"unknown\",\n      \"updatedAt\": \"<ts>\",\n      \"registered\": false\n    },\n    \"dash\": {\n      \"source\": \"api\",\n      \"updatedBy\": \"unknown\",\n      \"updatedAt\": \"<ts>\",\n      \"registered\": false\n    },\n    \"empty\": {\n      \"source\": \"api\",\n      \"updatedBy\": \"unknown\",\n      \"updatedAt\": \"<ts>\",\n      \"registered\": false\n    },\n    \"f\": {\n      \"source\": \"api\",\n      \"updatedBy\": \"unknown\",\n      \"updatedAt\": \"<ts>\",\n      \"registered\": false\n    },\n    \"obj.a.x\": {\n      \"source\": \"api\",\n      \"updatedBy\": \"unknown\",\n      \"updatedAt\": \"<ts>\",\n      \"registered\": false\n    },\n    \"obj.b\": {\n      \"source\": \"api\",\n      \"updatedBy\": \"unknown\",\n      \"updatedAt\": \"<ts>\",\n      \"registered\": false\n    },\n    \"obj.k\": {\n      \"source\": \"api\",\n      \"updatedBy\": \"unknown\",\n      \"updatedAt\": \"<ts>\",\n      \"registered\": false\n    },\n    \"quoted\": {\n      \"source\": \"api\",\n      \"updatedBy\": \"unknown\",\n      \"updatedAt\": \"<ts>\",\n      \"registered\": false\n    },\n    \"spaced\": {\n      \"source\": \"api\",\n      \"updatedBy\": \"unknown\",\n      \"updatedAt\": \"<ts>\",\n      \"registered\": false\n    },\n    \"title\": {\n      \"source\": \"api\",\n      \"updatedBy\": \"unknown\",\n      \"updatedAt\": \"<ts>\"\n    }\n  }\n}\n",
+    "stderr": ""
+   },
+   "stored": {
+    "status": 200,
+    "body": {
+     "metadata": {
+      "big": 12345678901234567000,
+      "broken": "{\"a\":",
+      "dash": -1,
+      "empty": "",
+      "f": 1,
+      "obj": {
+       "a": {
+        "x": "y"
+       },
+       "b": 1,
+       "k": [
+        true,
+        null,
+        0,
+        100,
+        1.5,
+        1e+21,
+        0.1
+       ]
+      },
+      "quoted": "x",
+      "spaced": [
+       1,
+       2
+      ],
+      "title": "plain words"
+     },
+     "metadataSources": {
+      "big": {
+       "source": "api",
+       "updatedBy": "unknown",
+       "updatedAt": "<ts>",
+       "registered": false
+      },
+      "broken": {
+       "source": "api",
+       "updatedBy": "unknown",
+       "updatedAt": "<ts>",
+       "registered": false
+      },
+      "dash": {
+       "source": "api",
+       "updatedBy": "unknown",
+       "updatedAt": "<ts>",
+       "registered": false
+      },
+      "empty": {
+       "source": "api",
+       "updatedBy": "unknown",
+       "updatedAt": "<ts>",
+       "registered": false
+      },
+      "f": {
+       "source": "api",
+       "updatedBy": "unknown",
+       "updatedAt": "<ts>",
+       "registered": false
+      },
+      "obj.a.x": {
+       "source": "api",
+       "updatedBy": "unknown",
+       "updatedAt": "<ts>",
+       "registered": false
+      },
+      "obj.b": {
+       "source": "api",
+       "updatedBy": "unknown",
+       "updatedAt": "<ts>",
+       "registered": false
+      },
+      "obj.k": {
+       "source": "api",
+       "updatedBy": "unknown",
+       "updatedAt": "<ts>",
+       "registered": false
+      },
+      "quoted": {
+       "source": "api",
+       "updatedBy": "unknown",
+       "updatedAt": "<ts>",
+       "registered": false
+      },
+      "spaced": {
+       "source": "api",
+       "updatedBy": "unknown",
+       "updatedAt": "<ts>",
+       "registered": false
+      },
+      "title": {
+       "source": "api",
+       "updatedBy": "unknown",
+       "updatedAt": "<ts>"
+      }
+     }
+    }
+   }
+  },
+  "meta 20 [scope] session meta clear {t}": {
+   "cli": {
+    "exit": 2,
+    "stdout": "",
+    "stderr": "hrc: error: missing required argument 'keys'\ncommand: hrc session meta clear\nusage: [options] <target> <keys...>\n"
+   },
+   "stored": {
+    "status": 200,
+    "body": {
+     "metadata": {
+      "big": 12345678901234567000,
+      "broken": "{\"a\":",
+      "dash": -1,
+      "empty": "",
+      "f": 1,
+      "obj": {
+       "a": {
+        "x": "y"
+       },
+       "b": 1,
+       "k": [
+        true,
+        null,
+        0,
+        100,
+        1.5,
+        1e+21,
+        0.1
+       ]
+      },
+      "quoted": "x",
+      "spaced": [
+       1,
+       2
+      ],
+      "title": "plain words"
+     },
+     "metadataSources": {
+      "big": {
+       "source": "api",
+       "updatedBy": "unknown",
+       "updatedAt": "<ts>",
+       "registered": false
+      },
+      "broken": {
+       "source": "api",
+       "updatedBy": "unknown",
+       "updatedAt": "<ts>",
+       "registered": false
+      },
+      "dash": {
+       "source": "api",
+       "updatedBy": "unknown",
+       "updatedAt": "<ts>",
+       "registered": false
+      },
+      "empty": {
+       "source": "api",
+       "updatedBy": "unknown",
+       "updatedAt": "<ts>",
+       "registered": false
+      },
+      "f": {
+       "source": "api",
+       "updatedBy": "unknown",
+       "updatedAt": "<ts>",
+       "registered": false
+      },
+      "obj.a.x": {
+       "source": "api",
+       "updatedBy": "unknown",
+       "updatedAt": "<ts>",
+       "registered": false
+      },
+      "obj.b": {
+       "source": "api",
+       "updatedBy": "unknown",
+       "updatedAt": "<ts>",
+       "registered": false
+      },
+      "obj.k": {
+       "source": "api",
+       "updatedBy": "unknown",
+       "updatedAt": "<ts>",
+       "registered": false
+      },
+      "quoted": {
+       "source": "api",
+       "updatedBy": "unknown",
+       "updatedAt": "<ts>",
+       "registered": false
+      },
+      "spaced": {
+       "source": "api",
+       "updatedBy": "unknown",
+       "updatedAt": "<ts>",
+       "registered": false
+      },
+      "title": {
+       "source": "api",
+       "updatedBy": "unknown",
+       "updatedAt": "<ts>"
+      }
+     }
+    }
+   }
+  },
+  "meta 21 [scope] session meta clear {t} x --json": {
+   "cli": {
+    "exit": 2,
+    "stdout": "",
+    "stderr": "hrc: unknown option: --json\n"
+   },
+   "stored": {
+    "status": 200,
+    "body": {
+     "metadata": {
+      "big": 12345678901234567000,
+      "broken": "{\"a\":",
+      "dash": -1,
+      "empty": "",
+      "f": 1,
+      "obj": {
+       "a": {
+        "x": "y"
+       },
+       "b": 1,
+       "k": [
+        true,
+        null,
+        0,
+        100,
+        1.5,
+        1e+21,
+        0.1
+       ]
+      },
+      "quoted": "x",
+      "spaced": [
+       1,
+       2
+      ],
+      "title": "plain words"
+     },
+     "metadataSources": {
+      "big": {
+       "source": "api",
+       "updatedBy": "unknown",
+       "updatedAt": "<ts>",
+       "registered": false
+      },
+      "broken": {
+       "source": "api",
+       "updatedBy": "unknown",
+       "updatedAt": "<ts>",
+       "registered": false
+      },
+      "dash": {
+       "source": "api",
+       "updatedBy": "unknown",
+       "updatedAt": "<ts>",
+       "registered": false
+      },
+      "empty": {
+       "source": "api",
+       "updatedBy": "unknown",
+       "updatedAt": "<ts>",
+       "registered": false
+      },
+      "f": {
+       "source": "api",
+       "updatedBy": "unknown",
+       "updatedAt": "<ts>",
+       "registered": false
+      },
+      "obj.a.x": {
+       "source": "api",
+       "updatedBy": "unknown",
+       "updatedAt": "<ts>",
+       "registered": false
+      },
+      "obj.b": {
+       "source": "api",
+       "updatedBy": "unknown",
+       "updatedAt": "<ts>",
+       "registered": false
+      },
+      "obj.k": {
+       "source": "api",
+       "updatedBy": "unknown",
+       "updatedAt": "<ts>",
+       "registered": false
+      },
+      "quoted": {
+       "source": "api",
+       "updatedBy": "unknown",
+       "updatedAt": "<ts>",
+       "registered": false
+      },
+      "spaced": {
+       "source": "api",
+       "updatedBy": "unknown",
+       "updatedAt": "<ts>",
+       "registered": false
+      },
+      "title": {
+       "source": "api",
+       "updatedBy": "unknown",
+       "updatedAt": "<ts>"
+      }
+     }
+    }
+   }
+  },
+  "meta 22 [scope] session retitle {t} --title Retitled": {
+   "cli": {
+    "exit": 0,
+    "stdout": "{\n  \"metadata\": {\n    \"big\": 12345678901234567000,\n    \"broken\": \"{\\\"a\\\":\",\n    \"dash\": -1,\n    \"empty\": \"\",\n    \"f\": 1,\n    \"obj\": {\n      \"a\": {\n        \"x\": \"y\"\n      },\n      \"b\": 1,\n      \"k\": [\n        true,\n        null,\n        0,\n        100,\n        1.5,\n        1e+21,\n        0.1\n      ]\n    },\n    \"quoted\": \"x\",\n    \"spaced\": [\n      1,\n      2\n    ],\n    \"title\": \"Retitled\"\n  },\n  \"metadataSources\": {\n    \"big\": {\n      \"source\": \"api\",\n      \"updatedBy\": \"unknown\",\n      \"updatedAt\": \"<ts>\",\n      \"registered\": false\n    },\n    \"broken\": {\n      \"source\": \"api\",\n      \"updatedBy\": \"unknown\",\n      \"updatedAt\": \"<ts>\",\n      \"registered\": false\n    },\n    \"dash\": {\n      \"source\": \"api\",\n      \"updatedBy\": \"unknown\",\n      \"updatedAt\": \"<ts>\",\n      \"registered\": false\n    },\n    \"empty\": {\n      \"source\": \"api\",\n      \"updatedBy\": \"unknown\",\n      \"updatedAt\": \"<ts>\",\n      \"registered\": false\n    },\n    \"f\": {\n      \"source\": \"api\",\n      \"updatedBy\": \"unknown\",\n      \"updatedAt\": \"<ts>\",\n      \"registered\": false\n    },\n    \"obj.a.x\": {\n      \"source\": \"api\",\n      \"updatedBy\": \"unknown\",\n      \"updatedAt\": \"<ts>\",\n      \"registered\": false\n    },\n    \"obj.b\": {\n      \"source\": \"api\",\n      \"updatedBy\": \"unknown\",\n      \"updatedAt\": \"<ts>\",\n      \"registered\": false\n    },\n    \"obj.k\": {\n      \"source\": \"api\",\n      \"updatedBy\": \"unknown\",\n      \"updatedAt\": \"<ts>\",\n      \"registered\": false\n    },\n    \"quoted\": {\n      \"source\": \"api\",\n      \"updatedBy\": \"unknown\",\n      \"updatedAt\": \"<ts>\",\n      \"registered\": false\n    },\n    \"spaced\": {\n      \"source\": \"api\",\n      \"updatedBy\": \"unknown\",\n      \"updatedAt\": \"<ts>\",\n      \"registered\": false\n    },\n    \"title\": {\n      \"source\": \"api\",\n      \"updatedBy\": \"unknown\",\n      \"updatedAt\": \"<ts>\"\n    }\n  }\n}\n",
+    "stderr": "hrc: session retitle is deprecated; use session meta set/clear title\n"
+   },
+   "stored": {
+    "status": 200,
+    "body": {
+     "metadata": {
+      "big": 12345678901234567000,
+      "broken": "{\"a\":",
+      "dash": -1,
+      "empty": "",
+      "f": 1,
+      "obj": {
+       "a": {
+        "x": "y"
+       },
+       "b": 1,
+       "k": [
+        true,
+        null,
+        0,
+        100,
+        1.5,
+        1e+21,
+        0.1
+       ]
+      },
+      "quoted": "x",
+      "spaced": [
+       1,
+       2
+      ],
+      "title": "Retitled"
+     },
+     "metadataSources": {
+      "big": {
+       "source": "api",
+       "updatedBy": "unknown",
+       "updatedAt": "<ts>",
+       "registered": false
+      },
+      "broken": {
+       "source": "api",
+       "updatedBy": "unknown",
+       "updatedAt": "<ts>",
+       "registered": false
+      },
+      "dash": {
+       "source": "api",
+       "updatedBy": "unknown",
+       "updatedAt": "<ts>",
+       "registered": false
+      },
+      "empty": {
+       "source": "api",
+       "updatedBy": "unknown",
+       "updatedAt": "<ts>",
+       "registered": false
+      },
+      "f": {
+       "source": "api",
+       "updatedBy": "unknown",
+       "updatedAt": "<ts>",
+       "registered": false
+      },
+      "obj.a.x": {
+       "source": "api",
+       "updatedBy": "unknown",
+       "updatedAt": "<ts>",
+       "registered": false
+      },
+      "obj.b": {
+       "source": "api",
+       "updatedBy": "unknown",
+       "updatedAt": "<ts>",
+       "registered": false
+      },
+      "obj.k": {
+       "source": "api",
+       "updatedBy": "unknown",
+       "updatedAt": "<ts>",
+       "registered": false
+      },
+      "quoted": {
+       "source": "api",
+       "updatedBy": "unknown",
+       "updatedAt": "<ts>",
+       "registered": false
+      },
+      "spaced": {
+       "source": "api",
+       "updatedBy": "unknown",
+       "updatedAt": "<ts>",
+       "registered": false
+      },
+      "title": {
+       "source": "api",
+       "updatedBy": "unknown",
+       "updatedAt": "<ts>"
+      }
+     }
+    }
+   }
+  },
+  "meta 23 [session] session retitle {t} --title Forced --force": {
+   "cli": {
+    "exit": 0,
+    "stdout": "{\n  \"metadata\": {\n    \"big\": 12345678901234567000,\n    \"broken\": \"{\\\"a\\\":\",\n    \"dash\": -1,\n    \"empty\": \"\",\n    \"f\": 1,\n    \"obj\": {\n      \"a\": {\n        \"x\": \"y\"\n      },\n      \"b\": 1,\n      \"k\": [\n        true,\n        null,\n        0,\n        100,\n        1.5,\n        1e+21,\n        0.1\n      ]\n    },\n    \"quoted\": \"x\",\n    \"spaced\": [\n      1,\n      2\n    ],\n    \"title\": \"Forced\"\n  },\n  \"metadataSources\": {\n    \"big\": {\n      \"source\": \"api\",\n      \"updatedBy\": \"unknown\",\n      \"updatedAt\": \"<ts>\",\n      \"registered\": false\n    },\n    \"broken\": {\n      \"source\": \"api\",\n      \"updatedBy\": \"unknown\",\n      \"updatedAt\": \"<ts>\",\n      \"registered\": false\n    },\n    \"dash\": {\n      \"source\": \"api\",\n      \"updatedBy\": \"unknown\",\n      \"updatedAt\": \"<ts>\",\n      \"registered\": false\n    },\n    \"empty\": {\n      \"source\": \"api\",\n      \"updatedBy\": \"unknown\",\n      \"updatedAt\": \"<ts>\",\n      \"registered\": false\n    },\n    \"f\": {\n      \"source\": \"api\",\n      \"updatedBy\": \"unknown\",\n      \"updatedAt\": \"<ts>\",\n      \"registered\": false\n    },\n    \"obj.a.x\": {\n      \"source\": \"api\",\n      \"updatedBy\": \"unknown\",\n      \"updatedAt\": \"<ts>\",\n      \"registered\": false\n    },\n    \"obj.b\": {\n      \"source\": \"api\",\n      \"updatedBy\": \"unknown\",\n      \"updatedAt\": \"<ts>\",\n      \"registered\": false\n    },\n    \"obj.k\": {\n      \"source\": \"api\",\n      \"updatedBy\": \"unknown\",\n      \"updatedAt\": \"<ts>\",\n      \"registered\": false\n    },\n    \"quoted\": {\n      \"source\": \"api\",\n      \"updatedBy\": \"unknown\",\n      \"updatedAt\": \"<ts>\",\n      \"registered\": false\n    },\n    \"spaced\": {\n      \"source\": \"api\",\n      \"updatedBy\": \"unknown\",\n      \"updatedAt\": \"<ts>\",\n      \"registered\": false\n    },\n    \"title\": {\n      \"source\": \"api\",\n      \"updatedBy\": \"unknown\",\n      \"updatedAt\": \"<ts>\"\n    }\n  }\n}\n",
+    "stderr": "hrc: session retitle is deprecated; use session meta set/clear title\n"
+   },
+   "stored": {
+    "status": 200,
+    "body": {
+     "metadata": {
+      "big": 12345678901234567000,
+      "broken": "{\"a\":",
+      "dash": -1,
+      "empty": "",
+      "f": 1,
+      "obj": {
+       "a": {
+        "x": "y"
+       },
+       "b": 1,
+       "k": [
+        true,
+        null,
+        0,
+        100,
+        1.5,
+        1e+21,
+        0.1
+       ]
+      },
+      "quoted": "x",
+      "spaced": [
+       1,
+       2
+      ],
+      "title": "Forced"
+     },
+     "metadataSources": {
+      "big": {
+       "source": "api",
+       "updatedBy": "unknown",
+       "updatedAt": "<ts>",
+       "registered": false
+      },
+      "broken": {
+       "source": "api",
+       "updatedBy": "unknown",
+       "updatedAt": "<ts>",
+       "registered": false
+      },
+      "dash": {
+       "source": "api",
+       "updatedBy": "unknown",
+       "updatedAt": "<ts>",
+       "registered": false
+      },
+      "empty": {
+       "source": "api",
+       "updatedBy": "unknown",
+       "updatedAt": "<ts>",
+       "registered": false
+      },
+      "f": {
+       "source": "api",
+       "updatedBy": "unknown",
+       "updatedAt": "<ts>",
+       "registered": false
+      },
+      "obj.a.x": {
+       "source": "api",
+       "updatedBy": "unknown",
+       "updatedAt": "<ts>",
+       "registered": false
+      },
+      "obj.b": {
+       "source": "api",
+       "updatedBy": "unknown",
+       "updatedAt": "<ts>",
+       "registered": false
+      },
+      "obj.k": {
+       "source": "api",
+       "updatedBy": "unknown",
+       "updatedAt": "<ts>",
+       "registered": false
+      },
+      "quoted": {
+       "source": "api",
+       "updatedBy": "unknown",
+       "updatedAt": "<ts>",
+       "registered": false
+      },
+      "spaced": {
+       "source": "api",
+       "updatedBy": "unknown",
+       "updatedAt": "<ts>",
+       "registered": false
+      },
+      "title": {
+       "source": "api",
+       "updatedBy": "unknown",
+       "updatedAt": "<ts>"
+      }
+     }
+    }
+   }
+  },
+  "meta 24 [hsid] session retitle {t} --title=": {
+   "cli": {
+    "exit": 2,
+    "stdout": "",
+    "stderr": "hrc: session retitle is deprecated; use session meta set/clear title\nhrc: [malformed_request] invalid session metadata\ndetail: {\"rejected\":[{\"key\":\"title\",\"reason\":\"must be non-empty\"}]}\n"
+   },
+   "stored": {
+    "status": 200,
+    "body": {
+     "metadata": {
+      "big": 12345678901234567000,
+      "broken": "{\"a\":",
+      "dash": -1,
+      "empty": "",
+      "f": 1,
+      "obj": {
+       "a": {
+        "x": "y"
+       },
+       "b": 1,
+       "k": [
+        true,
+        null,
+        0,
+        100,
+        1.5,
+        1e+21,
+        0.1
+       ]
+      },
+      "quoted": "x",
+      "spaced": [
+       1,
+       2
+      ],
+      "title": "Forced"
+     },
+     "metadataSources": {
+      "big": {
+       "source": "api",
+       "updatedBy": "unknown",
+       "updatedAt": "<ts>",
+       "registered": false
+      },
+      "broken": {
+       "source": "api",
+       "updatedBy": "unknown",
+       "updatedAt": "<ts>",
+       "registered": false
+      },
+      "dash": {
+       "source": "api",
+       "updatedBy": "unknown",
+       "updatedAt": "<ts>",
+       "registered": false
+      },
+      "empty": {
+       "source": "api",
+       "updatedBy": "unknown",
+       "updatedAt": "<ts>",
+       "registered": false
+      },
+      "f": {
+       "source": "api",
+       "updatedBy": "unknown",
+       "updatedAt": "<ts>",
+       "registered": false
+      },
+      "obj.a.x": {
+       "source": "api",
+       "updatedBy": "unknown",
+       "updatedAt": "<ts>",
+       "registered": false
+      },
+      "obj.b": {
+       "source": "api",
+       "updatedBy": "unknown",
+       "updatedAt": "<ts>",
+       "registered": false
+      },
+      "obj.k": {
+       "source": "api",
+       "updatedBy": "unknown",
+       "updatedAt": "<ts>",
+       "registered": false
+      },
+      "quoted": {
+       "source": "api",
+       "updatedBy": "unknown",
+       "updatedAt": "<ts>",
+       "registered": false
+      },
+      "spaced": {
+       "source": "api",
+       "updatedBy": "unknown",
+       "updatedAt": "<ts>",
+       "registered": false
+      },
+      "title": {
+       "source": "api",
+       "updatedBy": "unknown",
+       "updatedAt": "<ts>"
+      }
+     }
+    }
+   }
+  },
+  "meta 25 [handle] session retitle {t} --regenerate": {
+   "cli": {
+    "exit": 0,
+    "stdout": "{\n  \"metadata\": {\n    \"big\": 12345678901234567000,\n    \"broken\": \"{\\\"a\\\":\",\n    \"dash\": -1,\n    \"empty\": \"\",\n    \"f\": 1,\n    \"obj\": {\n      \"a\": {\n        \"x\": \"y\"\n      },\n      \"b\": 1,\n      \"k\": [\n        true,\n        null,\n        0,\n        100,\n        1.5,\n        1e+21,\n        0.1\n      ]\n    },\n    \"quoted\": \"x\",\n    \"spaced\": [\n      1,\n      2\n    ]\n  },\n  \"metadataSources\": {\n    \"big\": {\n      \"source\": \"api\",\n      \"updatedBy\": \"unknown\",\n      \"updatedAt\": \"<ts>\",\n      \"registered\": false\n    },\n    \"broken\": {\n      \"source\": \"api\",\n      \"updatedBy\": \"unknown\",\n      \"updatedAt\": \"<ts>\",\n      \"registered\": false\n    },\n    \"dash\": {\n      \"source\": \"api\",\n      \"updatedBy\": \"unknown\",\n      \"updatedAt\": \"<ts>\",\n      \"registered\": false\n    },\n    \"empty\": {\n      \"source\": \"api\",\n      \"updatedBy\": \"unknown\",\n      \"updatedAt\": \"<ts>\",\n      \"registered\": false\n    },\n    \"f\": {\n      \"source\": \"api\",\n      \"updatedBy\": \"unknown\",\n      \"updatedAt\": \"<ts>\",\n      \"registered\": false\n    },\n    \"obj.a.x\": {\n      \"source\": \"api\",\n      \"updatedBy\": \"unknown\",\n      \"updatedAt\": \"<ts>\",\n      \"registered\": false\n    },\n    \"obj.b\": {\n      \"source\": \"api\",\n      \"updatedBy\": \"unknown\",\n      \"updatedAt\": \"<ts>\",\n      \"registered\": false\n    },\n    \"obj.k\": {\n      \"source\": \"api\",\n      \"updatedBy\": \"unknown\",\n      \"updatedAt\": \"<ts>\",\n      \"registered\": false\n    },\n    \"quoted\": {\n      \"source\": \"api\",\n      \"updatedBy\": \"unknown\",\n      \"updatedAt\": \"<ts>\",\n      \"registered\": false\n    },\n    \"spaced\": {\n      \"source\": \"api\",\n      \"updatedBy\": \"unknown\",\n      \"updatedAt\": \"<ts>\",\n      \"registered\": false\n    }\n  }\n}\n",
+    "stderr": "hrc: session retitle is deprecated; use session meta set/clear title\n"
+   },
+   "stored": {
+    "status": 200,
+    "body": {
+     "metadata": {
+      "big": 12345678901234567000,
+      "broken": "{\"a\":",
+      "dash": -1,
+      "empty": "",
+      "f": 1,
+      "obj": {
+       "a": {
+        "x": "y"
+       },
+       "b": 1,
+       "k": [
+        true,
+        null,
+        0,
+        100,
+        1.5,
+        1e+21,
+        0.1
+       ]
+      },
+      "quoted": "x",
+      "spaced": [
+       1,
+       2
+      ]
+     },
+     "metadataSources": {
+      "big": {
+       "source": "api",
+       "updatedBy": "unknown",
+       "updatedAt": "<ts>",
+       "registered": false
+      },
+      "broken": {
+       "source": "api",
+       "updatedBy": "unknown",
+       "updatedAt": "<ts>",
+       "registered": false
+      },
+      "dash": {
+       "source": "api",
+       "updatedBy": "unknown",
+       "updatedAt": "<ts>",
+       "registered": false
+      },
+      "empty": {
+       "source": "api",
+       "updatedBy": "unknown",
+       "updatedAt": "<ts>",
+       "registered": false
+      },
+      "f": {
+       "source": "api",
+       "updatedBy": "unknown",
+       "updatedAt": "<ts>",
+       "registered": false
+      },
+      "obj.a.x": {
+       "source": "api",
+       "updatedBy": "unknown",
+       "updatedAt": "<ts>",
+       "registered": false
+      },
+      "obj.b": {
+       "source": "api",
+       "updatedBy": "unknown",
+       "updatedAt": "<ts>",
+       "registered": false
+      },
+      "obj.k": {
+       "source": "api",
+       "updatedBy": "unknown",
+       "updatedAt": "<ts>",
+       "registered": false
+      },
+      "quoted": {
+       "source": "api",
+       "updatedBy": "unknown",
+       "updatedAt": "<ts>",
+       "registered": false
+      },
+      "spaced": {
+       "source": "api",
+       "updatedBy": "unknown",
+       "updatedAt": "<ts>",
+       "registered": false
+      }
+     }
+    }
+   }
+  },
+  "meta 26 [scope] session retitle {t} --regenerate --force": {
+   "cli": {
+    "exit": 0,
+    "stdout": "{\n  \"metadata\": {\n    \"big\": 12345678901234567000,\n    \"broken\": \"{\\\"a\\\":\",\n    \"dash\": -1,\n    \"empty\": \"\",\n    \"f\": 1,\n    \"obj\": {\n      \"a\": {\n        \"x\": \"y\"\n      },\n      \"b\": 1,\n      \"k\": [\n        true,\n        null,\n        0,\n        100,\n        1.5,\n        1e+21,\n        0.1\n      ]\n    },\n    \"quoted\": \"x\",\n    \"spaced\": [\n      1,\n      2\n    ]\n  },\n  \"metadataSources\": {\n    \"big\": {\n      \"source\": \"api\",\n      \"updatedBy\": \"unknown\",\n      \"updatedAt\": \"<ts>\",\n      \"registered\": false\n    },\n    \"broken\": {\n      \"source\": \"api\",\n      \"updatedBy\": \"unknown\",\n      \"updatedAt\": \"<ts>\",\n      \"registered\": false\n    },\n    \"dash\": {\n      \"source\": \"api\",\n      \"updatedBy\": \"unknown\",\n      \"updatedAt\": \"<ts>\",\n      \"registered\": false\n    },\n    \"empty\": {\n      \"source\": \"api\",\n      \"updatedBy\": \"unknown\",\n      \"updatedAt\": \"<ts>\",\n      \"registered\": false\n    },\n    \"f\": {\n      \"source\": \"api\",\n      \"updatedBy\": \"unknown\",\n      \"updatedAt\": \"<ts>\",\n      \"registered\": false\n    },\n    \"obj.a.x\": {\n      \"source\": \"api\",\n      \"updatedBy\": \"unknown\",\n      \"updatedAt\": \"<ts>\",\n      \"registered\": false\n    },\n    \"obj.b\": {\n      \"source\": \"api\",\n      \"updatedBy\": \"unknown\",\n      \"updatedAt\": \"<ts>\",\n      \"registered\": false\n    },\n    \"obj.k\": {\n      \"source\": \"api\",\n      \"updatedBy\": \"unknown\",\n      \"updatedAt\": \"<ts>\",\n      \"registered\": false\n    },\n    \"quoted\": {\n      \"source\": \"api\",\n      \"updatedBy\": \"unknown\",\n      \"updatedAt\": \"<ts>\",\n      \"registered\": false\n    },\n    \"spaced\": {\n      \"source\": \"api\",\n      \"updatedBy\": \"unknown\",\n      \"updatedAt\": \"<ts>\",\n      \"registered\": false\n    }\n  }\n}\n",
+    "stderr": "hrc: session retitle is deprecated; use session meta set/clear title\n"
+   },
+   "stored": {
+    "status": 200,
+    "body": {
+     "metadata": {
+      "big": 12345678901234567000,
+      "broken": "{\"a\":",
+      "dash": -1,
+      "empty": "",
+      "f": 1,
+      "obj": {
+       "a": {
+        "x": "y"
+       },
+       "b": 1,
+       "k": [
+        true,
+        null,
+        0,
+        100,
+        1.5,
+        1e+21,
+        0.1
+       ]
+      },
+      "quoted": "x",
+      "spaced": [
+       1,
+       2
+      ]
+     },
+     "metadataSources": {
+      "big": {
+       "source": "api",
+       "updatedBy": "unknown",
+       "updatedAt": "<ts>",
+       "registered": false
+      },
+      "broken": {
+       "source": "api",
+       "updatedBy": "unknown",
+       "updatedAt": "<ts>",
+       "registered": false
+      },
+      "dash": {
+       "source": "api",
+       "updatedBy": "unknown",
+       "updatedAt": "<ts>",
+       "registered": false
+      },
+      "empty": {
+       "source": "api",
+       "updatedBy": "unknown",
+       "updatedAt": "<ts>",
+       "registered": false
+      },
+      "f": {
+       "source": "api",
+       "updatedBy": "unknown",
+       "updatedAt": "<ts>",
+       "registered": false
+      },
+      "obj.a.x": {
+       "source": "api",
+       "updatedBy": "unknown",
+       "updatedAt": "<ts>",
+       "registered": false
+      },
+      "obj.b": {
+       "source": "api",
+       "updatedBy": "unknown",
+       "updatedAt": "<ts>",
+       "registered": false
+      },
+      "obj.k": {
+       "source": "api",
+       "updatedBy": "unknown",
+       "updatedAt": "<ts>",
+       "registered": false
+      },
+      "quoted": {
+       "source": "api",
+       "updatedBy": "unknown",
+       "updatedAt": "<ts>",
+       "registered": false
+      },
+      "spaced": {
+       "source": "api",
+       "updatedBy": "unknown",
+       "updatedAt": "<ts>",
+       "registered": false
+      }
+     }
+    }
+   }
+  },
+  "meta 27 [scope] session retitle {t} --title 1": {
+   "cli": {
+    "exit": 0,
+    "stdout": "{\n  \"metadata\": {\n    \"big\": 12345678901234567000,\n    \"broken\": \"{\\\"a\\\":\",\n    \"dash\": -1,\n    \"empty\": \"\",\n    \"f\": 1,\n    \"obj\": {\n      \"a\": {\n        \"x\": \"y\"\n      },\n      \"b\": 1,\n      \"k\": [\n        true,\n        null,\n        0,\n        100,\n        1.5,\n        1e+21,\n        0.1\n      ]\n    },\n    \"quoted\": \"x\",\n    \"spaced\": [\n      1,\n      2\n    ],\n    \"title\": \"1\"\n  },\n  \"metadataSources\": {\n    \"big\": {\n      \"source\": \"api\",\n      \"updatedBy\": \"unknown\",\n      \"updatedAt\": \"<ts>\",\n      \"registered\": false\n    },\n    \"broken\": {\n      \"source\": \"api\",\n      \"updatedBy\": \"unknown\",\n      \"updatedAt\": \"<ts>\",\n      \"registered\": false\n    },\n    \"dash\": {\n      \"source\": \"api\",\n      \"updatedBy\": \"unknown\",\n      \"updatedAt\": \"<ts>\",\n      \"registered\": false\n    },\n    \"empty\": {\n      \"source\": \"api\",\n      \"updatedBy\": \"unknown\",\n      \"updatedAt\": \"<ts>\",\n      \"registered\": false\n    },\n    \"f\": {\n      \"source\": \"api\",\n      \"updatedBy\": \"unknown\",\n      \"updatedAt\": \"<ts>\",\n      \"registered\": false\n    },\n    \"obj.a.x\": {\n      \"source\": \"api\",\n      \"updatedBy\": \"unknown\",\n      \"updatedAt\": \"<ts>\",\n      \"registered\": false\n    },\n    \"obj.b\": {\n      \"source\": \"api\",\n      \"updatedBy\": \"unknown\",\n      \"updatedAt\": \"<ts>\",\n      \"registered\": false\n    },\n    \"obj.k\": {\n      \"source\": \"api\",\n      \"updatedBy\": \"unknown\",\n      \"updatedAt\": \"<ts>\",\n      \"registered\": false\n    },\n    \"quoted\": {\n      \"source\": \"api\",\n      \"updatedBy\": \"unknown\",\n      \"updatedAt\": \"<ts>\",\n      \"registered\": false\n    },\n    \"spaced\": {\n      \"source\": \"api\",\n      \"updatedBy\": \"unknown\",\n      \"updatedAt\": \"<ts>\",\n      \"registered\": false\n    },\n    \"title\": {\n      \"source\": \"api\",\n      \"updatedBy\": \"unknown\",\n      \"updatedAt\": \"<ts>\"\n    }\n  }\n}\n",
+    "stderr": "hrc: session retitle is deprecated; use session meta set/clear title\n"
+   },
+   "stored": {
+    "status": 200,
+    "body": {
+     "metadata": {
+      "big": 12345678901234567000,
+      "broken": "{\"a\":",
+      "dash": -1,
+      "empty": "",
+      "f": 1,
+      "obj": {
+       "a": {
+        "x": "y"
+       },
+       "b": 1,
+       "k": [
+        true,
+        null,
+        0,
+        100,
+        1.5,
+        1e+21,
+        0.1
+       ]
+      },
+      "quoted": "x",
+      "spaced": [
+       1,
+       2
+      ],
+      "title": "1"
+     },
+     "metadataSources": {
+      "big": {
+       "source": "api",
+       "updatedBy": "unknown",
+       "updatedAt": "<ts>",
+       "registered": false
+      },
+      "broken": {
+       "source": "api",
+       "updatedBy": "unknown",
+       "updatedAt": "<ts>",
+       "registered": false
+      },
+      "dash": {
+       "source": "api",
+       "updatedBy": "unknown",
+       "updatedAt": "<ts>",
+       "registered": false
+      },
+      "empty": {
+       "source": "api",
+       "updatedBy": "unknown",
+       "updatedAt": "<ts>",
+       "registered": false
+      },
+      "f": {
+       "source": "api",
+       "updatedBy": "unknown",
+       "updatedAt": "<ts>",
+       "registered": false
+      },
+      "obj.a.x": {
+       "source": "api",
+       "updatedBy": "unknown",
+       "updatedAt": "<ts>",
+       "registered": false
+      },
+      "obj.b": {
+       "source": "api",
+       "updatedBy": "unknown",
+       "updatedAt": "<ts>",
+       "registered": false
+      },
+      "obj.k": {
+       "source": "api",
+       "updatedBy": "unknown",
+       "updatedAt": "<ts>",
+       "registered": false
+      },
+      "quoted": {
+       "source": "api",
+       "updatedBy": "unknown",
+       "updatedAt": "<ts>",
+       "registered": false
+      },
+      "spaced": {
+       "source": "api",
+       "updatedBy": "unknown",
+       "updatedAt": "<ts>",
+       "registered": false
+      },
+      "title": {
+       "source": "api",
+       "updatedBy": "unknown",
+       "updatedAt": "<ts>"
+      }
+     }
+    }
+   }
+  },
+  "meta 28 [scope] session retitle {t} --title xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx": {
+   "cli": {
+    "exit": 0,
+    "stdout": "{\n  \"metadata\": {\n    \"big\": 12345678901234567000,\n    \"broken\": \"{\\\"a\\\":\",\n    \"dash\": -1,\n    \"empty\": \"\",\n    \"f\": 1,\n    \"obj\": {\n      \"a\": {\n        \"x\": \"y\"\n      },\n      \"b\": 1,\n      \"k\": [\n        true,\n        null,\n        0,\n        100,\n        1.5,\n        1e+21,\n        0.1\n      ]\n    },\n    \"quoted\": \"x\",\n    \"spaced\": [\n      1,\n      2\n    ],\n    \"title\": \"xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx\"\n  },\n  \"metadataSources\": {\n    \"big\": {\n      \"source\": \"api\",\n      \"updatedBy\": \"unknown\",\n      \"updatedAt\": \"<ts>\",\n      \"registered\": false\n    },\n    \"broken\": {\n      \"source\": \"api\",\n      \"updatedBy\": \"unknown\",\n      \"updatedAt\": \"<ts>\",\n      \"registered\": false\n    },\n    \"dash\": {\n      \"source\": \"api\",\n      \"updatedBy\": \"unknown\",\n      \"updatedAt\": \"<ts>\",\n      \"registered\": false\n    },\n    \"empty\": {\n      \"source\": \"api\",\n      \"updatedBy\": \"unknown\",\n      \"updatedAt\": \"<ts>\",\n      \"registered\": false\n    },\n    \"f\": {\n      \"source\": \"api\",\n      \"updatedBy\": \"unknown\",\n      \"updatedAt\": \"<ts>\",\n      \"registered\": false\n    },\n    \"obj.a.x\": {\n      \"source\": \"api\",\n      \"updatedBy\": \"unknown\",\n      \"updatedAt\": \"<ts>\",\n      \"registered\": false\n    },\n    \"obj.b\": {\n      \"source\": \"api\",\n      \"updatedBy\": \"unknown\",\n      \"updatedAt\": \"<ts>\",\n      \"registered\": false\n    },\n    \"obj.k\": {\n      \"source\": \"api\",\n      \"updatedBy\": \"unknown\",\n      \"updatedAt\": \"<ts>\",\n      \"registered\": false\n    },\n    \"quoted\": {\n      \"source\": \"api\",\n      \"updatedBy\": \"unknown\",\n      \"updatedAt\": \"<ts>\",\n      \"registered\": false\n    },\n    \"spaced\": {\n      \"source\": \"api\",\n      \"updatedBy\": \"unknown\",\n      \"updatedAt\": \"<ts>\",\n      \"registered\": false\n    },\n    \"title\": {\n      \"source\": \"api\",\n      \"updatedBy\": \"unknown\",\n      \"updatedAt\": \"<ts>\"\n    }\n  }\n}\n",
+    "stderr": "hrc: session retitle is deprecated; use session meta set/clear title\n"
+   },
+   "stored": {
+    "status": 200,
+    "body": {
+     "metadata": {
+      "big": 12345678901234567000,
+      "broken": "{\"a\":",
+      "dash": -1,
+      "empty": "",
+      "f": 1,
+      "obj": {
+       "a": {
+        "x": "y"
+       },
+       "b": 1,
+       "k": [
+        true,
+        null,
+        0,
+        100,
+        1.5,
+        1e+21,
+        0.1
+       ]
+      },
+      "quoted": "x",
+      "spaced": [
+       1,
+       2
+      ],
+      "title": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+     },
+     "metadataSources": {
+      "big": {
+       "source": "api",
+       "updatedBy": "unknown",
+       "updatedAt": "<ts>",
+       "registered": false
+      },
+      "broken": {
+       "source": "api",
+       "updatedBy": "unknown",
+       "updatedAt": "<ts>",
+       "registered": false
+      },
+      "dash": {
+       "source": "api",
+       "updatedBy": "unknown",
+       "updatedAt": "<ts>",
+       "registered": false
+      },
+      "empty": {
+       "source": "api",
+       "updatedBy": "unknown",
+       "updatedAt": "<ts>",
+       "registered": false
+      },
+      "f": {
+       "source": "api",
+       "updatedBy": "unknown",
+       "updatedAt": "<ts>",
+       "registered": false
+      },
+      "obj.a.x": {
+       "source": "api",
+       "updatedBy": "unknown",
+       "updatedAt": "<ts>",
+       "registered": false
+      },
+      "obj.b": {
+       "source": "api",
+       "updatedBy": "unknown",
+       "updatedAt": "<ts>",
+       "registered": false
+      },
+      "obj.k": {
+       "source": "api",
+       "updatedBy": "unknown",
+       "updatedAt": "<ts>",
+       "registered": false
+      },
+      "quoted": {
+       "source": "api",
+       "updatedBy": "unknown",
+       "updatedAt": "<ts>",
+       "registered": false
+      },
+      "spaced": {
+       "source": "api",
+       "updatedBy": "unknown",
+       "updatedAt": "<ts>",
+       "registered": false
+      },
+      "title": {
+       "source": "api",
+       "updatedBy": "unknown",
+       "updatedAt": "<ts>"
+      }
+     }
+    }
+   }
+  },
+  "meta 29 [scope] session retitle {t} --title xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx": {
+   "cli": {
+    "exit": 2,
+    "stdout": "",
+    "stderr": "hrc: session retitle is deprecated; use session meta set/clear title\nhrc: [malformed_request] invalid session metadata\ndetail: {\"rejected\":[{\"key\":\"title\",\"reason\":\"must be at most 200 characters\"}]}\n"
+   },
+   "stored": {
+    "status": 200,
+    "body": {
+     "metadata": {
+      "big": 12345678901234567000,
+      "broken": "{\"a\":",
+      "dash": -1,
+      "empty": "",
+      "f": 1,
+      "obj": {
+       "a": {
+        "x": "y"
+       },
+       "b": 1,
+       "k": [
+        true,
+        null,
+        0,
+        100,
+        1.5,
+        1e+21,
+        0.1
+       ]
+      },
+      "quoted": "x",
+      "spaced": [
+       1,
+       2
+      ],
+      "title": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+     },
+     "metadataSources": {
+      "big": {
+       "source": "api",
+       "updatedBy": "unknown",
+       "updatedAt": "<ts>",
+       "registered": false
+      },
+      "broken": {
+       "source": "api",
+       "updatedBy": "unknown",
+       "updatedAt": "<ts>",
+       "registered": false
+      },
+      "dash": {
+       "source": "api",
+       "updatedBy": "unknown",
+       "updatedAt": "<ts>",
+       "registered": false
+      },
+      "empty": {
+       "source": "api",
+       "updatedBy": "unknown",
+       "updatedAt": "<ts>",
+       "registered": false
+      },
+      "f": {
+       "source": "api",
+       "updatedBy": "unknown",
+       "updatedAt": "<ts>",
+       "registered": false
+      },
+      "obj.a.x": {
+       "source": "api",
+       "updatedBy": "unknown",
+       "updatedAt": "<ts>",
+       "registered": false
+      },
+      "obj.b": {
+       "source": "api",
+       "updatedBy": "unknown",
+       "updatedAt": "<ts>",
+       "registered": false
+      },
+      "obj.k": {
+       "source": "api",
+       "updatedBy": "unknown",
+       "updatedAt": "<ts>",
+       "registered": false
+      },
+      "quoted": {
+       "source": "api",
+       "updatedBy": "unknown",
+       "updatedAt": "<ts>",
+       "registered": false
+      },
+      "spaced": {
+       "source": "api",
+       "updatedBy": "unknown",
+       "updatedAt": "<ts>",
+       "registered": false
+      },
+      "title": {
+       "source": "api",
+       "updatedBy": "unknown",
+       "updatedAt": "<ts>"
+      }
+     }
+    }
+   }
+  },
+  "meta 30 [scope] session retitle {t} --title break\u001b[2Jrow": {
+   "cli": {
+    "exit": 2,
+    "stdout": "",
+    "stderr": "hrc: session retitle is deprecated; use session meta set/clear title\nhrc: [malformed_request] invalid session metadata\ndetail: {\"rejected\":[{\"key\":\"title\",\"reason\":\"must not contain control characters\"}]}\n"
+   },
+   "stored": {
+    "status": 200,
+    "body": {
+     "metadata": {
+      "big": 12345678901234567000,
+      "broken": "{\"a\":",
+      "dash": -1,
+      "empty": "",
+      "f": 1,
+      "obj": {
+       "a": {
+        "x": "y"
+       },
+       "b": 1,
+       "k": [
+        true,
+        null,
+        0,
+        100,
+        1.5,
+        1e+21,
+        0.1
+       ]
+      },
+      "quoted": "x",
+      "spaced": [
+       1,
+       2
+      ],
+      "title": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+     },
+     "metadataSources": {
+      "big": {
+       "source": "api",
+       "updatedBy": "unknown",
+       "updatedAt": "<ts>",
+       "registered": false
+      },
+      "broken": {
+       "source": "api",
+       "updatedBy": "unknown",
+       "updatedAt": "<ts>",
+       "registered": false
+      },
+      "dash": {
+       "source": "api",
+       "updatedBy": "unknown",
+       "updatedAt": "<ts>",
+       "registered": false
+      },
+      "empty": {
+       "source": "api",
+       "updatedBy": "unknown",
+       "updatedAt": "<ts>",
+       "registered": false
+      },
+      "f": {
+       "source": "api",
+       "updatedBy": "unknown",
+       "updatedAt": "<ts>",
+       "registered": false
+      },
+      "obj.a.x": {
+       "source": "api",
+       "updatedBy": "unknown",
+       "updatedAt": "<ts>",
+       "registered": false
+      },
+      "obj.b": {
+       "source": "api",
+       "updatedBy": "unknown",
+       "updatedAt": "<ts>",
+       "registered": false
+      },
+      "obj.k": {
+       "source": "api",
+       "updatedBy": "unknown",
+       "updatedAt": "<ts>",
+       "registered": false
+      },
+      "quoted": {
+       "source": "api",
+       "updatedBy": "unknown",
+       "updatedAt": "<ts>",
+       "registered": false
+      },
+      "spaced": {
+       "source": "api",
+       "updatedBy": "unknown",
+       "updatedAt": "<ts>",
+       "registered": false
+      },
+      "title": {
+       "source": "api",
+       "updatedBy": "unknown",
+       "updatedAt": "<ts>"
+      }
+     }
+    }
+   }
+  },
+  "meta 31 [scope] session retitle {t} --title   Padded title  ": {
+   "cli": {
+    "exit": 0,
+    "stdout": "{\n  \"metadata\": {\n    \"big\": 12345678901234567000,\n    \"broken\": \"{\\\"a\\\":\",\n    \"dash\": -1,\n    \"empty\": \"\",\n    \"f\": 1,\n    \"obj\": {\n      \"a\": {\n        \"x\": \"y\"\n      },\n      \"b\": 1,\n      \"k\": [\n        true,\n        null,\n        0,\n        100,\n        1.5,\n        1e+21,\n        0.1\n      ]\n    },\n    \"quoted\": \"x\",\n    \"spaced\": [\n      1,\n      2\n    ],\n    \"title\": \"Padded title\"\n  },\n  \"metadataSources\": {\n    \"big\": {\n      \"source\": \"api\",\n      \"updatedBy\": \"unknown\",\n      \"updatedAt\": \"<ts>\",\n      \"registered\": false\n    },\n    \"broken\": {\n      \"source\": \"api\",\n      \"updatedBy\": \"unknown\",\n      \"updatedAt\": \"<ts>\",\n      \"registered\": false\n    },\n    \"dash\": {\n      \"source\": \"api\",\n      \"updatedBy\": \"unknown\",\n      \"updatedAt\": \"<ts>\",\n      \"registered\": false\n    },\n    \"empty\": {\n      \"source\": \"api\",\n      \"updatedBy\": \"unknown\",\n      \"updatedAt\": \"<ts>\",\n      \"registered\": false\n    },\n    \"f\": {\n      \"source\": \"api\",\n      \"updatedBy\": \"unknown\",\n      \"updatedAt\": \"<ts>\",\n      \"registered\": false\n    },\n    \"obj.a.x\": {\n      \"source\": \"api\",\n      \"updatedBy\": \"unknown\",\n      \"updatedAt\": \"<ts>\",\n      \"registered\": false\n    },\n    \"obj.b\": {\n      \"source\": \"api\",\n      \"updatedBy\": \"unknown\",\n      \"updatedAt\": \"<ts>\",\n      \"registered\": false\n    },\n    \"obj.k\": {\n      \"source\": \"api\",\n      \"updatedBy\": \"unknown\",\n      \"updatedAt\": \"<ts>\",\n      \"registered\": false\n    },\n    \"quoted\": {\n      \"source\": \"api\",\n      \"updatedBy\": \"unknown\",\n      \"updatedAt\": \"<ts>\",\n      \"registered\": false\n    },\n    \"spaced\": {\n      \"source\": \"api\",\n      \"updatedBy\": \"unknown\",\n      \"updatedAt\": \"<ts>\",\n      \"registered\": false\n    },\n    \"title\": {\n      \"source\": \"api\",\n      \"updatedBy\": \"unknown\",\n      \"updatedAt\": \"<ts>\"\n    }\n  }\n}\n",
+    "stderr": "hrc: session retitle is deprecated; use session meta set/clear title\n"
+   },
+   "stored": {
+    "status": 200,
+    "body": {
+     "metadata": {
+      "big": 12345678901234567000,
+      "broken": "{\"a\":",
+      "dash": -1,
+      "empty": "",
+      "f": 1,
+      "obj": {
+       "a": {
+        "x": "y"
+       },
+       "b": 1,
+       "k": [
+        true,
+        null,
+        0,
+        100,
+        1.5,
+        1e+21,
+        0.1
+       ]
+      },
+      "quoted": "x",
+      "spaced": [
+       1,
+       2
+      ],
+      "title": "Padded title"
+     },
+     "metadataSources": {
+      "big": {
+       "source": "api",
+       "updatedBy": "unknown",
+       "updatedAt": "<ts>",
+       "registered": false
+      },
+      "broken": {
+       "source": "api",
+       "updatedBy": "unknown",
+       "updatedAt": "<ts>",
+       "registered": false
+      },
+      "dash": {
+       "source": "api",
+       "updatedBy": "unknown",
+       "updatedAt": "<ts>",
+       "registered": false
+      },
+      "empty": {
+       "source": "api",
+       "updatedBy": "unknown",
+       "updatedAt": "<ts>",
+       "registered": false
+      },
+      "f": {
+       "source": "api",
+       "updatedBy": "unknown",
+       "updatedAt": "<ts>",
+       "registered": false
+      },
+      "obj.a.x": {
+       "source": "api",
+       "updatedBy": "unknown",
+       "updatedAt": "<ts>",
+       "registered": false
+      },
+      "obj.b": {
+       "source": "api",
+       "updatedBy": "unknown",
+       "updatedAt": "<ts>",
+       "registered": false
+      },
+      "obj.k": {
+       "source": "api",
+       "updatedBy": "unknown",
+       "updatedAt": "<ts>",
+       "registered": false
+      },
+      "quoted": {
+       "source": "api",
+       "updatedBy": "unknown",
+       "updatedAt": "<ts>",
+       "registered": false
+      },
+      "spaced": {
+       "source": "api",
+       "updatedBy": "unknown",
+       "updatedAt": "<ts>",
+       "registered": false
+      },
+      "title": {
+       "source": "api",
+       "updatedBy": "unknown",
+       "updatedAt": "<ts>"
+      }
+     }
+    }
+   }
+  },
+  "meta 32 [scope] session retitle {t} --title é😀 wide": {
+   "cli": {
+    "exit": 0,
+    "stdout": "{\n  \"metadata\": {\n    \"big\": 12345678901234567000,\n    \"broken\": \"{\\\"a\\\":\",\n    \"dash\": -1,\n    \"empty\": \"\",\n    \"f\": 1,\n    \"obj\": {\n      \"a\": {\n        \"x\": \"y\"\n      },\n      \"b\": 1,\n      \"k\": [\n        true,\n        null,\n        0,\n        100,\n        1.5,\n        1e+21,\n        0.1\n      ]\n    },\n    \"quoted\": \"x\",\n    \"spaced\": [\n      1,\n      2\n    ],\n    \"title\": \"é😀 wide\"\n  },\n  \"metadataSources\": {\n    \"big\": {\n      \"source\": \"api\",\n      \"updatedBy\": \"unknown\",\n      \"updatedAt\": \"<ts>\",\n      \"registered\": false\n    },\n    \"broken\": {\n      \"source\": \"api\",\n      \"updatedBy\": \"unknown\",\n      \"updatedAt\": \"<ts>\",\n      \"registered\": false\n    },\n    \"dash\": {\n      \"source\": \"api\",\n      \"updatedBy\": \"unknown\",\n      \"updatedAt\": \"<ts>\",\n      \"registered\": false\n    },\n    \"empty\": {\n      \"source\": \"api\",\n      \"updatedBy\": \"unknown\",\n      \"updatedAt\": \"<ts>\",\n      \"registered\": false\n    },\n    \"f\": {\n      \"source\": \"api\",\n      \"updatedBy\": \"unknown\",\n      \"updatedAt\": \"<ts>\",\n      \"registered\": false\n    },\n    \"obj.a.x\": {\n      \"source\": \"api\",\n      \"updatedBy\": \"unknown\",\n      \"updatedAt\": \"<ts>\",\n      \"registered\": false\n    },\n    \"obj.b\": {\n      \"source\": \"api\",\n      \"updatedBy\": \"unknown\",\n      \"updatedAt\": \"<ts>\",\n      \"registered\": false\n    },\n    \"obj.k\": {\n      \"source\": \"api\",\n      \"updatedBy\": \"unknown\",\n      \"updatedAt\": \"<ts>\",\n      \"registered\": false\n    },\n    \"quoted\": {\n      \"source\": \"api\",\n      \"updatedBy\": \"unknown\",\n      \"updatedAt\": \"<ts>\",\n      \"registered\": false\n    },\n    \"spaced\": {\n      \"source\": \"api\",\n      \"updatedBy\": \"unknown\",\n      \"updatedAt\": \"<ts>\",\n      \"registered\": false\n    },\n    \"title\": {\n      \"source\": \"api\",\n      \"updatedBy\": \"unknown\",\n      \"updatedAt\": \"<ts>\"\n    }\n  }\n}\n",
+    "stderr": "hrc: session retitle is deprecated; use session meta set/clear title\n"
+   },
+   "stored": {
+    "status": 200,
+    "body": {
+     "metadata": {
+      "big": 12345678901234567000,
+      "broken": "{\"a\":",
+      "dash": -1,
+      "empty": "",
+      "f": 1,
+      "obj": {
+       "a": {
+        "x": "y"
+       },
+       "b": 1,
+       "k": [
+        true,
+        null,
+        0,
+        100,
+        1.5,
+        1e+21,
+        0.1
+       ]
+      },
+      "quoted": "x",
+      "spaced": [
+       1,
+       2
+      ],
+      "title": "é😀 wide"
+     },
+     "metadataSources": {
+      "big": {
+       "source": "api",
+       "updatedBy": "unknown",
+       "updatedAt": "<ts>",
+       "registered": false
+      },
+      "broken": {
+       "source": "api",
+       "updatedBy": "unknown",
+       "updatedAt": "<ts>",
+       "registered": false
+      },
+      "dash": {
+       "source": "api",
+       "updatedBy": "unknown",
+       "updatedAt": "<ts>",
+       "registered": false
+      },
+      "empty": {
+       "source": "api",
+       "updatedBy": "unknown",
+       "updatedAt": "<ts>",
+       "registered": false
+      },
+      "f": {
+       "source": "api",
+       "updatedBy": "unknown",
+       "updatedAt": "<ts>",
+       "registered": false
+      },
+      "obj.a.x": {
+       "source": "api",
+       "updatedBy": "unknown",
+       "updatedAt": "<ts>",
+       "registered": false
+      },
+      "obj.b": {
+       "source": "api",
+       "updatedBy": "unknown",
+       "updatedAt": "<ts>",
+       "registered": false
+      },
+      "obj.k": {
+       "source": "api",
+       "updatedBy": "unknown",
+       "updatedAt": "<ts>",
+       "registered": false
+      },
+      "quoted": {
+       "source": "api",
+       "updatedBy": "unknown",
+       "updatedAt": "<ts>",
+       "registered": false
+      },
+      "spaced": {
+       "source": "api",
+       "updatedBy": "unknown",
+       "updatedAt": "<ts>",
+       "registered": false
+      },
+      "title": {
+       "source": "api",
+       "updatedBy": "unknown",
+       "updatedAt": "<ts>"
+      }
+     }
+    }
+   }
+  },
+  "meta 33 [scope] session retitle {t}": {
+   "cli": {
+    "exit": 2,
+    "stdout": "",
+    "stderr": "hrc: session retitle requires exactly one of --title or --regenerate\n"
+   },
+   "stored": {
+    "status": 200,
+    "body": {
+     "metadata": {
+      "big": 12345678901234567000,
+      "broken": "{\"a\":",
+      "dash": -1,
+      "empty": "",
+      "f": 1,
+      "obj": {
+       "a": {
+        "x": "y"
+       },
+       "b": 1,
+       "k": [
+        true,
+        null,
+        0,
+        100,
+        1.5,
+        1e+21,
+        0.1
+       ]
+      },
+      "quoted": "x",
+      "spaced": [
+       1,
+       2
+      ],
+      "title": "é😀 wide"
+     },
+     "metadataSources": {
+      "big": {
+       "source": "api",
+       "updatedBy": "unknown",
+       "updatedAt": "<ts>",
+       "registered": false
+      },
+      "broken": {
+       "source": "api",
+       "updatedBy": "unknown",
+       "updatedAt": "<ts>",
+       "registered": false
+      },
+      "dash": {
+       "source": "api",
+       "updatedBy": "unknown",
+       "updatedAt": "<ts>",
+       "registered": false
+      },
+      "empty": {
+       "source": "api",
+       "updatedBy": "unknown",
+       "updatedAt": "<ts>",
+       "registered": false
+      },
+      "f": {
+       "source": "api",
+       "updatedBy": "unknown",
+       "updatedAt": "<ts>",
+       "registered": false
+      },
+      "obj.a.x": {
+       "source": "api",
+       "updatedBy": "unknown",
+       "updatedAt": "<ts>",
+       "registered": false
+      },
+      "obj.b": {
+       "source": "api",
+       "updatedBy": "unknown",
+       "updatedAt": "<ts>",
+       "registered": false
+      },
+      "obj.k": {
+       "source": "api",
+       "updatedBy": "unknown",
+       "updatedAt": "<ts>",
+       "registered": false
+      },
+      "quoted": {
+       "source": "api",
+       "updatedBy": "unknown",
+       "updatedAt": "<ts>",
+       "registered": false
+      },
+      "spaced": {
+       "source": "api",
+       "updatedBy": "unknown",
+       "updatedAt": "<ts>",
+       "registered": false
+      },
+      "title": {
+       "source": "api",
+       "updatedBy": "unknown",
+       "updatedAt": "<ts>"
+      }
+     }
+    }
+   }
+  },
+  "meta 34 [scope] session retitle {t} --force": {
+   "cli": {
+    "exit": 2,
+    "stdout": "",
+    "stderr": "hrc: session retitle requires exactly one of --title or --regenerate\n"
+   },
+   "stored": {
+    "status": 200,
+    "body": {
+     "metadata": {
+      "big": 12345678901234567000,
+      "broken": "{\"a\":",
+      "dash": -1,
+      "empty": "",
+      "f": 1,
+      "obj": {
+       "a": {
+        "x": "y"
+       },
+       "b": 1,
+       "k": [
+        true,
+        null,
+        0,
+        100,
+        1.5,
+        1e+21,
+        0.1
+       ]
+      },
+      "quoted": "x",
+      "spaced": [
+       1,
+       2
+      ],
+      "title": "é😀 wide"
+     },
+     "metadataSources": {
+      "big": {
+       "source": "api",
+       "updatedBy": "unknown",
+       "updatedAt": "<ts>",
+       "registered": false
+      },
+      "broken": {
+       "source": "api",
+       "updatedBy": "unknown",
+       "updatedAt": "<ts>",
+       "registered": false
+      },
+      "dash": {
+       "source": "api",
+       "updatedBy": "unknown",
+       "updatedAt": "<ts>",
+       "registered": false
+      },
+      "empty": {
+       "source": "api",
+       "updatedBy": "unknown",
+       "updatedAt": "<ts>",
+       "registered": false
+      },
+      "f": {
+       "source": "api",
+       "updatedBy": "unknown",
+       "updatedAt": "<ts>",
+       "registered": false
+      },
+      "obj.a.x": {
+       "source": "api",
+       "updatedBy": "unknown",
+       "updatedAt": "<ts>",
+       "registered": false
+      },
+      "obj.b": {
+       "source": "api",
+       "updatedBy": "unknown",
+       "updatedAt": "<ts>",
+       "registered": false
+      },
+      "obj.k": {
+       "source": "api",
+       "updatedBy": "unknown",
+       "updatedAt": "<ts>",
+       "registered": false
+      },
+      "quoted": {
+       "source": "api",
+       "updatedBy": "unknown",
+       "updatedAt": "<ts>",
+       "registered": false
+      },
+      "spaced": {
+       "source": "api",
+       "updatedBy": "unknown",
+       "updatedAt": "<ts>",
+       "registered": false
+      },
+      "title": {
+       "source": "api",
+       "updatedBy": "unknown",
+       "updatedAt": "<ts>"
+      }
+     }
+    }
+   }
+  },
+  "meta 35 [scope] session retitle {t} --title x --regenerate": {
+   "cli": {
+    "exit": 2,
+    "stdout": "",
+    "stderr": "hrc: --title and --regenerate are mutually exclusive\n"
+   },
+   "stored": {
+    "status": 200,
+    "body": {
+     "metadata": {
+      "big": 12345678901234567000,
+      "broken": "{\"a\":",
+      "dash": -1,
+      "empty": "",
+      "f": 1,
+      "obj": {
+       "a": {
+        "x": "y"
+       },
+       "b": 1,
+       "k": [
+        true,
+        null,
+        0,
+        100,
+        1.5,
+        1e+21,
+        0.1
+       ]
+      },
+      "quoted": "x",
+      "spaced": [
+       1,
+       2
+      ],
+      "title": "é😀 wide"
+     },
+     "metadataSources": {
+      "big": {
+       "source": "api",
+       "updatedBy": "unknown",
+       "updatedAt": "<ts>",
+       "registered": false
+      },
+      "broken": {
+       "source": "api",
+       "updatedBy": "unknown",
+       "updatedAt": "<ts>",
+       "registered": false
+      },
+      "dash": {
+       "source": "api",
+       "updatedBy": "unknown",
+       "updatedAt": "<ts>",
+       "registered": false
+      },
+      "empty": {
+       "source": "api",
+       "updatedBy": "unknown",
+       "updatedAt": "<ts>",
+       "registered": false
+      },
+      "f": {
+       "source": "api",
+       "updatedBy": "unknown",
+       "updatedAt": "<ts>",
+       "registered": false
+      },
+      "obj.a.x": {
+       "source": "api",
+       "updatedBy": "unknown",
+       "updatedAt": "<ts>",
+       "registered": false
+      },
+      "obj.b": {
+       "source": "api",
+       "updatedBy": "unknown",
+       "updatedAt": "<ts>",
+       "registered": false
+      },
+      "obj.k": {
+       "source": "api",
+       "updatedBy": "unknown",
+       "updatedAt": "<ts>",
+       "registered": false
+      },
+      "quoted": {
+       "source": "api",
+       "updatedBy": "unknown",
+       "updatedAt": "<ts>",
+       "registered": false
+      },
+      "spaced": {
+       "source": "api",
+       "updatedBy": "unknown",
+       "updatedAt": "<ts>",
+       "registered": false
+      },
+      "title": {
+       "source": "api",
+       "updatedBy": "unknown",
+       "updatedAt": "<ts>"
+      }
+     }
+    }
+   }
+  },
+  "meta 36 [scope] session retitle {t} --title": {
+   "cli": {
+    "exit": 2,
+    "stdout": "",
+    "stderr": "hrc: error: option '--title <title>' argument missing\ncommand: hrc session retitle\nusage: [options] <hostSessionId>\n"
+   },
+   "stored": {
+    "status": 200,
+    "body": {
+     "metadata": {
+      "big": 12345678901234567000,
+      "broken": "{\"a\":",
+      "dash": -1,
+      "empty": "",
+      "f": 1,
+      "obj": {
+       "a": {
+        "x": "y"
+       },
+       "b": 1,
+       "k": [
+        true,
+        null,
+        0,
+        100,
+        1.5,
+        1e+21,
+        0.1
+       ]
+      },
+      "quoted": "x",
+      "spaced": [
+       1,
+       2
+      ],
+      "title": "é😀 wide"
+     },
+     "metadataSources": {
+      "big": {
+       "source": "api",
+       "updatedBy": "unknown",
+       "updatedAt": "<ts>",
+       "registered": false
+      },
+      "broken": {
+       "source": "api",
+       "updatedBy": "unknown",
+       "updatedAt": "<ts>",
+       "registered": false
+      },
+      "dash": {
+       "source": "api",
+       "updatedBy": "unknown",
+       "updatedAt": "<ts>",
+       "registered": false
+      },
+      "empty": {
+       "source": "api",
+       "updatedBy": "unknown",
+       "updatedAt": "<ts>",
+       "registered": false
+      },
+      "f": {
+       "source": "api",
+       "updatedBy": "unknown",
+       "updatedAt": "<ts>",
+       "registered": false
+      },
+      "obj.a.x": {
+       "source": "api",
+       "updatedBy": "unknown",
+       "updatedAt": "<ts>",
+       "registered": false
+      },
+      "obj.b": {
+       "source": "api",
+       "updatedBy": "unknown",
+       "updatedAt": "<ts>",
+       "registered": false
+      },
+      "obj.k": {
+       "source": "api",
+       "updatedBy": "unknown",
+       "updatedAt": "<ts>",
+       "registered": false
+      },
+      "quoted": {
+       "source": "api",
+       "updatedBy": "unknown",
+       "updatedAt": "<ts>",
+       "registered": false
+      },
+      "spaced": {
+       "source": "api",
+       "updatedBy": "unknown",
+       "updatedAt": "<ts>",
+       "registered": false
+      },
+      "title": {
+       "source": "api",
+       "updatedBy": "unknown",
+       "updatedAt": "<ts>"
+      }
+     }
+    }
+   }
+  },
+  "meta 37 [scope] session retitle": {
+   "cli": {
+    "exit": 2,
+    "stdout": "",
+    "stderr": "hrc: error: missing required argument 'hostSessionId'\ncommand: hrc session retitle\nusage: [options] <hostSessionId>\n"
+   },
+   "stored": {
+    "status": 200,
+    "body": {
+     "metadata": {
+      "big": 12345678901234567000,
+      "broken": "{\"a\":",
+      "dash": -1,
+      "empty": "",
+      "f": 1,
+      "obj": {
+       "a": {
+        "x": "y"
+       },
+       "b": 1,
+       "k": [
+        true,
+        null,
+        0,
+        100,
+        1.5,
+        1e+21,
+        0.1
+       ]
+      },
+      "quoted": "x",
+      "spaced": [
+       1,
+       2
+      ],
+      "title": "é😀 wide"
+     },
+     "metadataSources": {
+      "big": {
+       "source": "api",
+       "updatedBy": "unknown",
+       "updatedAt": "<ts>",
+       "registered": false
+      },
+      "broken": {
+       "source": "api",
+       "updatedBy": "unknown",
+       "updatedAt": "<ts>",
+       "registered": false
+      },
+      "dash": {
+       "source": "api",
+       "updatedBy": "unknown",
+       "updatedAt": "<ts>",
+       "registered": false
+      },
+      "empty": {
+       "source": "api",
+       "updatedBy": "unknown",
+       "updatedAt": "<ts>",
+       "registered": false
+      },
+      "f": {
+       "source": "api",
+       "updatedBy": "unknown",
+       "updatedAt": "<ts>",
+       "registered": false
+      },
+      "obj.a.x": {
+       "source": "api",
+       "updatedBy": "unknown",
+       "updatedAt": "<ts>",
+       "registered": false
+      },
+      "obj.b": {
+       "source": "api",
+       "updatedBy": "unknown",
+       "updatedAt": "<ts>",
+       "registered": false
+      },
+      "obj.k": {
+       "source": "api",
+       "updatedBy": "unknown",
+       "updatedAt": "<ts>",
+       "registered": false
+      },
+      "quoted": {
+       "source": "api",
+       "updatedBy": "unknown",
+       "updatedAt": "<ts>",
+       "registered": false
+      },
+      "spaced": {
+       "source": "api",
+       "updatedBy": "unknown",
+       "updatedAt": "<ts>",
+       "registered": false
+      },
+      "title": {
+       "source": "api",
+       "updatedBy": "unknown",
+       "updatedAt": "<ts>"
+      }
+     }
+    }
+   }
+  },
+  "meta 38 [scope] --output json session retitle {t} --title x": {
+   "cli": {
+    "exit": 2,
+    "stdout": "",
+    "stderr": "{\"error\":{\"message\":\"--output json is not supported by 'retitle'\",\"usage\":true}}\n"
+   },
+   "stored": {
+    "status": 200,
+    "body": {
+     "metadata": {
+      "big": 12345678901234567000,
+      "broken": "{\"a\":",
+      "dash": -1,
+      "empty": "",
+      "f": 1,
+      "obj": {
+       "a": {
+        "x": "y"
+       },
+       "b": 1,
+       "k": [
+        true,
+        null,
+        0,
+        100,
+        1.5,
+        1e+21,
+        0.1
+       ]
+      },
+      "quoted": "x",
+      "spaced": [
+       1,
+       2
+      ],
+      "title": "é😀 wide"
+     },
+     "metadataSources": {
+      "big": {
+       "source": "api",
+       "updatedBy": "unknown",
+       "updatedAt": "<ts>",
+       "registered": false
+      },
+      "broken": {
+       "source": "api",
+       "updatedBy": "unknown",
+       "updatedAt": "<ts>",
+       "registered": false
+      },
+      "dash": {
+       "source": "api",
+       "updatedBy": "unknown",
+       "updatedAt": "<ts>",
+       "registered": false
+      },
+      "empty": {
+       "source": "api",
+       "updatedBy": "unknown",
+       "updatedAt": "<ts>",
+       "registered": false
+      },
+      "f": {
+       "source": "api",
+       "updatedBy": "unknown",
+       "updatedAt": "<ts>",
+       "registered": false
+      },
+      "obj.a.x": {
+       "source": "api",
+       "updatedBy": "unknown",
+       "updatedAt": "<ts>",
+       "registered": false
+      },
+      "obj.b": {
+       "source": "api",
+       "updatedBy": "unknown",
+       "updatedAt": "<ts>",
+       "registered": false
+      },
+      "obj.k": {
+       "source": "api",
+       "updatedBy": "unknown",
+       "updatedAt": "<ts>",
+       "registered": false
+      },
+      "quoted": {
+       "source": "api",
+       "updatedBy": "unknown",
+       "updatedAt": "<ts>",
+       "registered": false
+      },
+      "spaced": {
+       "source": "api",
+       "updatedBy": "unknown",
+       "updatedAt": "<ts>",
+       "registered": false
+      },
+      "title": {
+       "source": "api",
+       "updatedBy": "unknown",
+       "updatedAt": "<ts>"
+      }
+     }
+    }
+   }
+  },
+  "meta 39 [scope] session meta set --help": {
+   "cli": {
+    "exit": 0,
+    "stdout": "Usage: hrc session meta set [options] <target> <key> <value>\n\nOptions:\n  -h, --help  display help for command\n",
+    "stderr": ""
+   },
+   "stored": {
+    "status": 200,
+    "body": {
+     "metadata": {
+      "big": 12345678901234567000,
+      "broken": "{\"a\":",
+      "dash": -1,
+      "empty": "",
+      "f": 1,
+      "obj": {
+       "a": {
+        "x": "y"
+       },
+       "b": 1,
+       "k": [
+        true,
+        null,
+        0,
+        100,
+        1.5,
+        1e+21,
+        0.1
+       ]
+      },
+      "quoted": "x",
+      "spaced": [
+       1,
+       2
+      ],
+      "title": "é😀 wide"
+     },
+     "metadataSources": {
+      "big": {
+       "source": "api",
+       "updatedBy": "unknown",
+       "updatedAt": "<ts>",
+       "registered": false
+      },
+      "broken": {
+       "source": "api",
+       "updatedBy": "unknown",
+       "updatedAt": "<ts>",
+       "registered": false
+      },
+      "dash": {
+       "source": "api",
+       "updatedBy": "unknown",
+       "updatedAt": "<ts>",
+       "registered": false
+      },
+      "empty": {
+       "source": "api",
+       "updatedBy": "unknown",
+       "updatedAt": "<ts>",
+       "registered": false
+      },
+      "f": {
+       "source": "api",
+       "updatedBy": "unknown",
+       "updatedAt": "<ts>",
+       "registered": false
+      },
+      "obj.a.x": {
+       "source": "api",
+       "updatedBy": "unknown",
+       "updatedAt": "<ts>",
+       "registered": false
+      },
+      "obj.b": {
+       "source": "api",
+       "updatedBy": "unknown",
+       "updatedAt": "<ts>",
+       "registered": false
+      },
+      "obj.k": {
+       "source": "api",
+       "updatedBy": "unknown",
+       "updatedAt": "<ts>",
+       "registered": false
+      },
+      "quoted": {
+       "source": "api",
+       "updatedBy": "unknown",
+       "updatedAt": "<ts>",
+       "registered": false
+      },
+      "spaced": {
+       "source": "api",
+       "updatedBy": "unknown",
+       "updatedAt": "<ts>",
+       "registered": false
+      },
+      "title": {
+       "source": "api",
+       "updatedBy": "unknown",
+       "updatedAt": "<ts>"
+      }
+     }
+    }
+   }
+  },
+  "meta 40 [scope] session meta clear --help": {
+   "cli": {
+    "exit": 0,
+    "stdout": "Usage: hrc session meta clear [options] <target> <keys...>\n\nOptions:\n  -h, --help  display help for command\n",
+    "stderr": ""
+   },
+   "stored": {
+    "status": 200,
+    "body": {
+     "metadata": {
+      "big": 12345678901234567000,
+      "broken": "{\"a\":",
+      "dash": -1,
+      "empty": "",
+      "f": 1,
+      "obj": {
+       "a": {
+        "x": "y"
+       },
+       "b": 1,
+       "k": [
+        true,
+        null,
+        0,
+        100,
+        1.5,
+        1e+21,
+        0.1
+       ]
+      },
+      "quoted": "x",
+      "spaced": [
+       1,
+       2
+      ],
+      "title": "é😀 wide"
+     },
+     "metadataSources": {
+      "big": {
+       "source": "api",
+       "updatedBy": "unknown",
+       "updatedAt": "<ts>",
+       "registered": false
+      },
+      "broken": {
+       "source": "api",
+       "updatedBy": "unknown",
+       "updatedAt": "<ts>",
+       "registered": false
+      },
+      "dash": {
+       "source": "api",
+       "updatedBy": "unknown",
+       "updatedAt": "<ts>",
+       "registered": false
+      },
+      "empty": {
+       "source": "api",
+       "updatedBy": "unknown",
+       "updatedAt": "<ts>",
+       "registered": false
+      },
+      "f": {
+       "source": "api",
+       "updatedBy": "unknown",
+       "updatedAt": "<ts>",
+       "registered": false
+      },
+      "obj.a.x": {
+       "source": "api",
+       "updatedBy": "unknown",
+       "updatedAt": "<ts>",
+       "registered": false
+      },
+      "obj.b": {
+       "source": "api",
+       "updatedBy": "unknown",
+       "updatedAt": "<ts>",
+       "registered": false
+      },
+      "obj.k": {
+       "source": "api",
+       "updatedBy": "unknown",
+       "updatedAt": "<ts>",
+       "registered": false
+      },
+      "quoted": {
+       "source": "api",
+       "updatedBy": "unknown",
+       "updatedAt": "<ts>",
+       "registered": false
+      },
+      "spaced": {
+       "source": "api",
+       "updatedBy": "unknown",
+       "updatedAt": "<ts>",
+       "registered": false
+      },
+      "title": {
+       "source": "api",
+       "updatedBy": "unknown",
+       "updatedAt": "<ts>"
+      }
+     }
+    }
+   }
+  },
+  "meta 41 [scope] session retitle --help": {
+   "cli": {
+    "exit": 0,
+    "stdout": "Usage: hrc session retitle [options] <hostSessionId>\n\ndeprecated alias for session meta set/clear title\n\nArguments:\n  hostSessionId    host session ID\n\nOptions:\n  --title <title>  set a manual session title\n  --force          replace an existing manual title\n  --regenerate     clear the title so it can be regenerated\n  -h, --help       display help for command\n",
+    "stderr": ""
+   },
+   "stored": {
+    "status": 200,
+    "body": {
+     "metadata": {
+      "big": 12345678901234567000,
+      "broken": "{\"a\":",
+      "dash": -1,
+      "empty": "",
+      "f": 1,
+      "obj": {
+       "a": {
+        "x": "y"
+       },
+       "b": 1,
+       "k": [
+        true,
+        null,
+        0,
+        100,
+        1.5,
+        1e+21,
+        0.1
+       ]
+      },
+      "quoted": "x",
+      "spaced": [
+       1,
+       2
+      ],
+      "title": "é😀 wide"
+     },
+     "metadataSources": {
+      "big": {
+       "source": "api",
+       "updatedBy": "unknown",
+       "updatedAt": "<ts>",
+       "registered": false
+      },
+      "broken": {
+       "source": "api",
+       "updatedBy": "unknown",
+       "updatedAt": "<ts>",
+       "registered": false
+      },
+      "dash": {
+       "source": "api",
+       "updatedBy": "unknown",
+       "updatedAt": "<ts>",
+       "registered": false
+      },
+      "empty": {
+       "source": "api",
+       "updatedBy": "unknown",
+       "updatedAt": "<ts>",
+       "registered": false
+      },
+      "f": {
+       "source": "api",
+       "updatedBy": "unknown",
+       "updatedAt": "<ts>",
+       "registered": false
+      },
+      "obj.a.x": {
+       "source": "api",
+       "updatedBy": "unknown",
+       "updatedAt": "<ts>",
+       "registered": false
+      },
+      "obj.b": {
+       "source": "api",
+       "updatedBy": "unknown",
+       "updatedAt": "<ts>",
+       "registered": false
+      },
+      "obj.k": {
+       "source": "api",
+       "updatedBy": "unknown",
+       "updatedAt": "<ts>",
+       "registered": false
+      },
+      "quoted": {
+       "source": "api",
+       "updatedBy": "unknown",
+       "updatedAt": "<ts>",
+       "registered": false
+      },
+      "spaced": {
+       "source": "api",
+       "updatedBy": "unknown",
+       "updatedAt": "<ts>",
+       "registered": false
+      },
+      "title": {
+       "source": "api",
+       "updatedBy": "unknown",
+       "updatedAt": "<ts>"
+      }
+     }
+    }
+   }
+  },
+  "unknown 00 session meta set hsid-{s}-missing k v": {
+   "cli": {
+    "exit": 1,
+    "stdout": "",
+    "stderr": "hrc: [unknown_host_session] unknown host session \"hsid-<twin>-missing\"\ndetail: {\"hostSessionId\":\"hsid-<twin>-missing\"}\n"
+   }
+  },
+  "unknown 01 session meta clear host:hsid_{s}_missing k": {
+   "cli": {
+    "exit": 1,
+    "stdout": "",
+    "stderr": "hrc: [unknown_host_session] unknown host session \"hsid_<twin>_missing\"\ndetail: {\"hostSessionId\":\"hsid_<twin>_missing\"}\n"
+   }
+  },
+  "unknown 02 session retitle hsid-{s}-missing --title x": {
+   "cli": {
+    "exit": 1,
+    "stdout": "",
+    "stderr": "hrc: session retitle is deprecated; use session meta set/clear title\nhrc: [unknown_host_session] unknown host session \"hsid-<twin>-missing\"\ndetail: {\"hostSessionId\":\"hsid-<twin>-missing\"}\n"
+   }
+  },
+  "unknown 03 session retitle hsid-{s}-missing --regenerate": {
+   "cli": {
+    "exit": 1,
+    "stdout": "",
+    "stderr": "hrc: session retitle is deprecated; use session meta set/clear title\nhrc: [unknown_host_session] unknown host session \"hsid-<twin>-missing\"\ndetail: {\"hostSessionId\":\"hsid-<twin>-missing\"}\n"
+   }
+  },
+  "unknown 04 session meta set agent:ghost{s}:project:t12049:task:none k v": {
+   "cli": {
+    "exit": 1,
+    "stdout": "",
+    "stderr": "hrc: [unknown_host_session] unknown continuity\ndetail: {\"scopeRef\":\"agent:ghost<twin>:project:t12049:task:none\",\"laneRef\":\"main\"}\n"
+   }
+  },
+  "unknown 05 session meta set runtime:rt-{s}-missing k v": {
+   "cli": {
+    "exit": 2,
+    "stdout": "",
+    "stderr": "hrc: selector \"runtime:rt-<twin>-missing\" resolved as runtime; expected host-session. Accepted host-session selectors: raw hostSessionId, host:<hostSessionId>, session:<sessionRef>, scope:<scopeRef>, or bare target handle\n"
+   }
+  },
+  "unknown 06 session meta set not a selector {s} k v": {
+   "cli": {
+    "exit": 2,
+    "stdout": "",
+    "stderr": "hrc: [invalid_selector] Invalid ScopeHandle \"not a selector <twin>\": agentId contains invalid characters: must match [A-Za-z0-9._-]+\ndetail: {\"kind\":\"target\",\"position\":0,\"reason\":\"Invalid ScopeHandle \\\"not a selector <twin>\\\": agentId contains invalid characters: must match [A-Za-z0-9._-]+\"}\n"
+   }
+  },
+  "unknown 07 session meta set scope: k v": {
+   "cli": {
+    "exit": 2,
+    "stdout": "",
+    "stderr": "hrc: [invalid_selector] scope selector value must not be empty\ndetail: {\"kind\":\"scope\",\"position\":6,\"reason\":\"scope selector value must not be empty\"}\n"
+   }
+  },
+  "unknown 08 session retitle nobody{s}@ --title x": {
+   "cli": {
+    "exit": 2,
+    "stdout": "",
+    "stderr": "hrc: session retitle is deprecated; use session meta set/clear title\nhrc: [invalid_selector] Invalid ScopeHandle \"nobody<twin>@\": projectId must be 1..64 characters, got 0\ndetail: {\"kind\":\"target\",\"position\":0,\"reason\":\"Invalid ScopeHandle \\\"nobody<twin>@\\\": projectId must be 1..64 characters, got 0\"}\n"
+   }
+  },
+  "unknown 09 session meta set agent:hrcptye2e:project:t12049:task:{s}/lane:other k v": {
+   "cli": {
+    "exit": 1,
+    "stdout": "",
+    "stderr": "hrc: [unknown_host_session] unknown continuity\ndetail: {\"scopeRef\":\"agent:hrcptye2e:project:t12049:task:<twin>\",\"laneRef\":\"other\"}\n"
+   }
+  },
+  "retire 00 [placed/scope] federation retire {t}": {
+   "cli": {
+    "exit": 2,
+    "stdout": "",
+    "stderr": "hrc: error: required option '--reason <text>' not specified\ncommand: hrc federation retire\nusage: [options] <scope>\n"
+   },
+   "stored": {
+    "ledger": [
+     {
+      "state": "active",
+      "homed": 1,
+      "retired": 0,
+      "retirement_reason": null
+     }
+    ],
+    "continuities": 1,
+    "reuseDisabled": [
+     0
+    ]
+   }
+  },
+  "retire 01 [placed/scope] federation retire {t} --reason    ": {
+   "cli": {
+    "exit": 2,
+    "stdout": "",
+    "stderr": "hrc: federation retire requires --reason <text>\n"
+   },
+   "stored": {
+    "ledger": [
+     {
+      "state": "active",
+      "homed": 1,
+      "retired": 0,
+      "retirement_reason": null
+     }
+    ],
+    "continuities": 1,
+    "reuseDisabled": [
+     0
+    ]
+   }
+  },
+  "retire 02 [placed/scope] federation retire {t} --reason": {
+   "cli": {
+    "exit": 2,
+    "stdout": "",
+    "stderr": "hrc: error: option '--reason <text>' argument missing\ncommand: hrc federation retire\nusage: [options] <scope>\n"
+   },
+   "stored": {
+    "ledger": [
+     {
+      "state": "active",
+      "homed": 1,
+      "retired": 0,
+      "retirement_reason": null
+     }
+    ],
+    "continuities": 1,
+    "reuseDisabled": [
+     0
+    ]
+   }
+  },
+  "retire 03 [placed/scope] federation retire --reason r": {
+   "cli": {
+    "exit": 2,
+    "stdout": "",
+    "stderr": "hrc: error: missing required argument 'scope'\ncommand: hrc federation retire\nusage: [options] <scope>\n"
+   },
+   "stored": {
+    "ledger": [
+     {
+      "state": "active",
+      "homed": 1,
+      "retired": 0,
+      "retirement_reason": null
+     }
+    ],
+    "continuities": 1,
+    "reuseDisabled": [
+     0
+    ]
+   }
+  },
+  "retire 04 [placed/scope] --output json federation retire {t}": {
+   "cli": {
+    "exit": 2,
+    "stdout": "",
+    "stderr": "{\"error\":{\"message\":\"error: required option '--reason <text>' not specified\\ncommand: hrc federation retire\\nusage: [options] <scope>\",\"usage\":true}}\n"
+   },
+   "stored": {
+    "ledger": [
+     {
+      "state": "active",
+      "homed": 1,
+      "retired": 0,
+      "retirement_reason": null
+     }
+    ],
+    "continuities": 1,
+    "reuseDisabled": [
+     0
+    ]
+   }
+  },
+  "retire 05 [unplaced/scope] federation retire {t} --reason never here": {
+   "cli": {
+    "exit": 1,
+    "stdout": "REFUSED RETIRE refused: unchanged\nscope: agent:hrcptye2e:project:t12049:task:<twin>\nreason: never here\nretirement must be performed by the scope old home\n",
+    "stderr": ""
+   },
+   "stored": {
+    "ledger": [],
+    "continuities": 0,
+    "reuseDisabled": []
+   }
+  },
+  "retire 06 [unplaced/scope] federation retire {t} --reason never here --json": {
+   "cli": {
+    "exit": 1,
+    "stdout": "{\n  \"request\": {\n    \"scopeRef\": \"agent:hrcptye2e:project:t12049:task:<twin>\",\n    \"reason\": \"never here\"\n  },\n  \"ok\": false,\n  \"outcome\": \"refused\",\n  \"state\": \"unchanged\",\n  \"retryable\": false,\n  \"detail\": \"retirement must be performed by the scope old home\"\n}\n",
+    "stderr": ""
+   },
+   "stored": {
+    "ledger": [],
+    "continuities": 0,
+    "reuseDisabled": []
+   }
+  },
+  "retire 07 [live/scope] federation retire {t} --reason still running": {
+   "cli": {
+    "exit": 1,
+    "stdout": "REFUSED RETIRE live-runtime-present: old-home-live\nscope: agent:hrcptye2e:project:t12049:task:<twin>\nreason: still running\nold-home runtimes must terminate before retirement\nlive runtime: <runtime>\n",
+    "stderr": ""
+   },
+   "stored": {
+    "ledger": [
+     {
+      "state": "active",
+      "homed": 1,
+      "retired": 0,
+      "retirement_reason": null
+     }
+    ],
+    "continuities": 1,
+    "reuseDisabled": [
+     0
+    ]
+   }
+  },
+  "retire 08 [again/scope] federation retire {t} --reason still running --json": {
+   "cli": {
+    "exit": 1,
+    "stdout": "{\n  \"request\": {\n    \"scopeRef\": \"agent:hrcptye2e:project:t12049:task:<twin>\",\n    \"reason\": \"still running\"\n  },\n  \"ok\": false,\n  \"outcome\": \"live-runtime-present\",\n  \"state\": \"old-home-live\",\n  \"retryable\": true,\n  \"detail\": \"old-home runtimes must terminate before retirement\",\n  \"ledger\": {\n    \"state\": \"active\",\n    \"record\": {\n      \"homeNodeId\": \"hkf\",\n      \"createdAt\": \"<ts>\",\n      \"updatedAt\": \"<ts>\"\n    }\n  },\n  \"liveRuntimeIds\": [\n    \"<runtime>\"\n  ]\n}\n",
+    "stderr": ""
+   },
+   "stored": {
+    "ledger": [
+     {
+      "state": "active",
+      "homed": 1,
+      "retired": 0,
+      "retirement_reason": null
+     }
+    ],
+    "continuities": 1,
+    "reuseDisabled": [
+     0
+    ]
+   }
+  },
+  "retire 09 [placed/scope] federation retire {t} --reason   operator retirement  ": {
+   "cli": {
+    "exit": 0,
+    "stdout": "OK RETIRE retired: retired\nscope: agent:hrcptye2e:project:t12049:task:<twin>\nreason: operator retirement\nold home is permanently fenced and the registry binding is absent\n",
+    "stderr": ""
+   },
+   "stored": {
+    "ledger": [
+     {
+      "state": "retired",
+      "homed": 1,
+      "retired": 1,
+      "retirement_reason": "operator retirement"
+     }
+    ],
+    "continuities": 0,
+    "reuseDisabled": [
+     1
+    ]
+   }
+  },
+  "retire 10 [again/scope] federation retire {t} --reason again": {
+   "cli": {
+    "exit": 0,
+    "stdout": "OK RETIRE idempotent: retired\nscope: agent:hrcptye2e:project:t12049:task:<twin>\nreason: again\nold home is permanently fenced and the registry binding is absent\n",
+    "stderr": ""
+   },
+   "stored": {
+    "ledger": [
+     {
+      "state": "retired",
+      "homed": 1,
+      "retired": 1,
+      "retirement_reason": "operator retirement"
+     }
+    ],
+    "continuities": 0,
+    "reuseDisabled": [
+     1
+    ]
+   }
+  },
+  "retire 11 [placed/handle] federation retire {t} --reason=handle form --json": {
+   "cli": {
+    "exit": 0,
+    "stdout": "{\n  \"request\": {\n    \"scopeRef\": \"agent:hrcptye2e:project:t12049:task:<twin>\",\n    \"reason\": \"handle form\"\n  },\n  \"ok\": true,\n  \"outcome\": \"retired\",\n  \"state\": \"retired\",\n  \"retryable\": false,\n  \"detail\": \"old home is permanently fenced and the registry binding is absent\",\n  \"ledger\": {\n    \"state\": \"retired\",\n    \"record\": {\n      \"homeNodeId\": \"hkf\",\n      \"createdAt\": \"<ts>\",\n      \"updatedAt\": \"<ts>\"\n    }\n  }\n}\n",
+    "stderr": ""
+   },
+   "stored": {
+    "ledger": [
+     {
+      "state": "retired",
+      "homed": 1,
+      "retired": 1,
+      "retirement_reason": "handle form"
+     }
+    ],
+    "continuities": 0,
+    "reuseDisabled": [
+     1
+    ]
+   }
+  },
+  "retire 12 [again/handle] --output json federation retire {t} --reason idem": {
+   "cli": {
+    "exit": 0,
+    "stdout": "{\n  \"request\": {\n    \"scopeRef\": \"agent:hrcptye2e:project:t12049:task:<twin>\",\n    \"reason\": \"idem\"\n  },\n  \"ok\": true,\n  \"outcome\": \"idempotent\",\n  \"state\": \"retired\",\n  \"retryable\": false,\n  \"detail\": \"old home is permanently fenced and the registry binding is absent\",\n  \"ledger\": {\n    \"state\": \"retired\",\n    \"record\": {\n      \"homeNodeId\": \"hkf\",\n      \"createdAt\": \"<ts>\",\n      \"updatedAt\": \"<ts>\"\n    }\n  }\n}\n",
+    "stderr": ""
+   },
+   "stored": {
+    "ledger": [
+     {
+      "state": "retired",
+      "homed": 1,
+      "retired": 1,
+      "retirement_reason": "handle form"
+     }
+    ],
+    "continuities": 0,
+    "reuseDisabled": [
+     1
+    ]
+   }
+  },
+  "retire 13 [placed/bare-task] federation retire {t} --reason qualified from cwd": {
+   "cli": {
+    "exit": 0,
+    "stdout": "OK RETIRE retired: retired\nscope: agent:hrcptye2e:project:t12049:task:<twin>\nreason: qualified from cwd\nold home is permanently fenced and the registry binding is absent\n",
+    "stderr": ""
+   },
+   "stored": {
+    "ledger": [
+     {
+      "state": "retired",
+      "homed": 1,
+      "retired": 1,
+      "retirement_reason": "qualified from cwd"
+     }
+    ],
+    "continuities": 0,
+    "reuseDisabled": [
+     1
+    ]
+   }
+  },
+  "retire 14 [placed/session] federation retire {t} --reason session handle": {
+   "cli": {
+    "exit": 0,
+    "stdout": "OK RETIRE retired: retired\nscope: agent:hrcptye2e:project:t12049:task:<twin>\nreason: session handle\nold home is permanently fenced and the registry binding is absent\n",
+    "stderr": ""
+   },
+   "stored": {
+    "ledger": [
+     {
+      "state": "retired",
+      "homed": 1,
+      "retired": 1,
+      "retirement_reason": "session handle"
+     }
+    ],
+    "continuities": 0,
+    "reuseDisabled": [
+     1
+    ]
+   }
+  },
+  "retire 15 [placed/scope] federation retire {t} --reason x --wat": {
+   "cli": {
+    "exit": 2,
+    "stdout": "",
+    "stderr": "hrc: unknown option: --wat\n"
+   },
+   "stored": {
+    "ledger": [
+     {
+      "state": "active",
+      "homed": 1,
+      "retired": 0,
+      "retirement_reason": null
+     }
+    ],
+    "continuities": 1,
+    "reuseDisabled": [
+     0
+    ]
+   }
+  },
+  "retire 16 [unplaced/scope] federation retire not a scope! --reason bad": {
+   "cli": {
+    "exit": 2,
+    "stdout": "",
+    "stderr": "hrc: could not resolve \"not a scope!\" to a scope: Invalid scope input \"not a scope!\": expected a ScopeHandle, SessionHandle, or ScopeRef\n"
+   },
+   "stored": {
+    "ledger": [],
+    "continuities": 0,
+    "reuseDisabled": []
+   }
+  },
+  "retire 17 [unplaced/scope] federation retire agent: --reason bad": {
+   "cli": {
+    "exit": 2,
+    "stdout": "",
+    "stderr": "hrc: could not resolve \"agent:\" to a scope: Invalid scope input \"agent:\": expected a ScopeHandle, SessionHandle, or ScopeRef\n"
+   },
+   "stored": {
+    "ledger": [],
+    "continuities": 0,
+    "reuseDisabled": []
+   }
+  },
+  "retire 18 [unplaced/scope] federation retire clod:T-1 --reason task without project": {
+   "cli": {
+    "exit": 1,
+    "stdout": "REFUSED RETIRE refused: unchanged\nscope: agent:clod:project:t12049:task:T-1\nreason: task without project\nretirement must be performed by the scope old home\n",
+    "stderr": ""
+   },
+   "stored": {
+    "ledger": [],
+    "continuities": 0,
+    "reuseDisabled": []
+   }
+  },
+  "retire 19 [placed/scope] federation retire --help": {
+   "cli": {
+    "exit": 0,
+    "stdout": "Usage: hrc federation retire [options] <scope>\n\npermanently fence a scope on its old home and delete its binding\n\nArguments:\n  scope            scope ref or target handle\n\nOptions:\n  --reason <text>  operator reason recorded with the local fence\n  --json           output the complete result as JSON\n  -h, --help       display help for command\n",
+    "stderr": ""
+   },
+   "stored": {
+    "ledger": [
+     {
+      "state": "active",
+      "homed": 1,
+      "retired": 0,
+      "retirement_reason": null
+     }
+    ],
+    "continuities": 1,
+    "reuseDisabled": [
+     0
+    ]
+   }
+  },
+  "retire 20 [placed/scope] federation --help": {
+   "cli": {
+    "exit": 0,
+    "stdout": "Usage: hrc federation [options] [command]\n\ninspect and operate federation\n\nOptions:\n  -h, --help                display help for command\n\nCommands:\n  retire [options] <scope>  permanently fence a scope on its old home and delete\n                            its binding\n  help [command]            display help for command\n",
+    "stderr": ""
+   },
+   "stored": {
+    "ledger": [
+     {
+      "state": "active",
+      "homed": 1,
+      "retired": 0,
+      "retirement_reason": null
+     }
+    ],
+    "continuities": 1,
+    "reuseDisabled": [
+     0
+    ]
+   }
+  }
+ }
+}

@@ -20,9 +20,8 @@ import {
   cmdSessionDropContinuation,
   cmdSessionGet,
   cmdSessionList,
-  cmdSessionMeta,
+  cmdSessionMetaGet,
   cmdSessionResolve,
-  cmdSessionRetitle,
 } from './handlers-session.js'
 import { cmdSessionReport } from './runtime-select.js'
 import { fatal } from './shared.js'
@@ -275,33 +274,7 @@ Exit codes:
     .command('get')
     .argument('<target>')
     .option('--json', 'output as JSON')
-    .action(async (target) => cmdSessionMeta(['get', target]))
-  meta
-    .command('set')
-    .argument('<target>')
-    .argument('<key>')
-    .argument('<value>')
-    .action(async (target, key, value) => cmdSessionMeta(['set', target, key, value]))
-  meta
-    .command('clear')
-    .argument('<target>')
-    .argument('<keys...>')
-    .action(async (target, keys: string[]) => cmdSessionMeta(['clear', target, ...keys]))
-
-  session
-    .command('retitle')
-    .description('deprecated alias for session meta set/clear title')
-    .argument('<hostSessionId>', 'host session ID')
-    .option('--title <title>', 'set a manual session title')
-    .option('--force', 'replace an existing manual title')
-    .option('--regenerate', 'clear the title so it can be regenerated')
-    .action(async (hostSessionId, _opts, cmd: Command) => {
-      const args = toLegacyArgv([hostSessionId], cmd.opts(), {
-        strings: ['title'],
-        booleans: ['regenerate', 'force'],
-      })
-      await cmdSessionRetitle(args)
-    })
+    .action(async (target) => cmdSessionMetaGet(target))
 
   session
     .command('drop-continuation')

@@ -38,8 +38,6 @@
 import { resolveQualifiedScopeInput } from 'agent-scope'
 import type {
   FederationPeerHealthObservation,
-  FederationRetirementRequest,
-  FederationRetirementResult,
   LocateBindingsReport,
   LocateDeclaredPolicy,
   LocateNote,
@@ -51,7 +49,7 @@ import type { HrcClient } from 'hrc-sdk'
 
 import { printJson } from '../print.js'
 import { targetDoctorChecks } from '../target/live-commands.js'
-import { hasFlag, parseFlag } from './argv.js'
+import { hasFlag } from './argv.js'
 import { CliStatusExit, createClient, fatal } from './shared.js'
 
 function resolveScopeArg(input: string): string {
@@ -251,37 +249,6 @@ const STATUS_GLYPH: Record<DoctorCheck['status'], string> = {
   ok: '+',
   warn: '~',
   fail: 'x',
-}
-
-function parseRetirementRequest(args: string[]): FederationRetirementRequest {
-  const scopeArg = args.find((arg) => !arg.startsWith('-'))
-  if (scopeArg === undefined) fatal('federation retire requires a scope or target handle')
-  const reason = parseFlag(args, '--reason')
-  if (reason === undefined || reason.trim().length === 0)
-    fatal('federation retire requires --reason <text>')
-  return { scopeRef: resolveScopeArg(scopeArg), reason }
-}
-
-function formatRetirementHuman(result: FederationRetirementResult): string {
-  const marker = result.ok ? 'OK' : 'REFUSED'
-  const lines = [
-    `${marker} RETIRE ${result.outcome}: ${result.state}`,
-    `scope: ${result.request.scopeRef}`,
-    `reason: ${result.request.reason}`,
-    result.detail,
-  ]
-  if (result.liveRuntimeIds !== undefined) {
-    for (const runtimeId of result.liveRuntimeIds) lines.push(`live runtime: ${runtimeId}`)
-  }
-  return `${lines.join('\n')}\n`
-}
-
-export async function cmdFederationRetire(args: string[]): Promise<void> {
-  const request = parseRetirementRequest(args)
-  const result = await createClient().retireFederationScope(request)
-  if (hasFlag(args, '--json')) printJson(result)
-  else process.stdout.write(formatRetirementHuman(result))
-  if (!result.ok) throw new CliStatusExit(1)
 }
 
 async function checkDaemon(client: HrcClient): Promise<{
