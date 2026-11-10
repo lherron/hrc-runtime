@@ -1,0 +1,371 @@
+{
+  "sourceCommit": "ac3fa617",
+  "driverSha256": "bc7a133b459480995a05f6717fc463c7534345ba96fee35f81c620b6334086c5",
+  "rawSha256": "9d5d5048bf0c6e2286f5fcbd2af17f72aa4b7c6a3da2128279d11ddb3bb9609f",
+  "cases": [
+    {
+      "case": "stale-socket:0",
+      "argv": [
+        "runtime",
+        "list"
+      ],
+      "expected": {
+        "exit": 1,
+        "stdout": "",
+        "stderr": "hrc: Was there a typo in the url or port?\n"
+      }
+    },
+    {
+      "case": "stale-socket:1",
+      "argv": [
+        "runtime",
+        "list",
+        "--output",
+        "json"
+      ],
+      "expected": {
+        "exit": 1,
+        "stdout": "",
+        "stderr": "{\"error\":{\"message\":\"Was there a typo in the url or port?\",\"usage\":false}}\n"
+      }
+    },
+    {
+      "case": "stale-socket:2",
+      "argv": [
+        "runtime",
+        "capture",
+        "rt-missing"
+      ],
+      "expected": {
+        "exit": 1,
+        "stdout": "",
+        "stderr": "hrc: [FailedToOpenSocket] Was there a typo in the url or port?\n"
+      }
+    },
+    {
+      "case": "stale-socket:3",
+      "argv": [
+        "start",
+        "tabularasa@hrc-runtime:never-born",
+        "--json"
+      ],
+      "expected": {
+        "exit": 1,
+        "stdout": "{\n  \"error\": {\n    \"code\": \"runtime_unavailable\",\n    \"message\": \"HRC daemon unreachable at <runtime-root>/hrc.sock\",\n    \"detail\": {\n      \"code\": \"hrc_daemon_unreachable\",\n      \"socketPath\": \"<runtime-root>/hrc.sock\",\n      \"cause\": \"Was there a typo in the url or port?\"\n    },\n    \"command\": \"start\",\n    \"scope\": \"tabularasa@hrc-runtime:never-born\"\n  },\n  \"diagnostics\": {\n    \"releases\": {},\n    \"ids\": {},\n    \"phases\": []\n  }\n}\n",
+        "stderr": ""
+      }
+    },
+    {
+      "case": "empty:0",
+      "argv": [
+        "runtime",
+        "list"
+      ],
+      "expected": {
+        "exit": 1,
+        "stdout": "",
+        "stderr": "hrc: HRC request failed with status 502\n"
+      }
+    },
+    {
+      "case": "empty:1",
+      "argv": [
+        "runtime",
+        "list",
+        "--output",
+        "json"
+      ],
+      "expected": {
+        "exit": 1,
+        "stdout": "",
+        "stderr": "{\"error\":{\"message\":\"HRC request failed with status 502\",\"usage\":false}}\n"
+      }
+    },
+    {
+      "case": "empty:2",
+      "argv": [
+        "runtime",
+        "capture",
+        "rt-missing"
+      ],
+      "expected": {
+        "exit": 1,
+        "stdout": "",
+        "stderr": "hrc: HRC request failed with status 502\n"
+      }
+    },
+    {
+      "case": "empty:3",
+      "argv": [
+        "start",
+        "tabularasa@hrc-runtime:never-born",
+        "--json"
+      ],
+      "expected": {
+        "exit": 1,
+        "stdout": "{\n  \"error\": {\n    \"code\": \"internal\",\n    \"message\": \"HRC request failed with status 502\",\n    \"detail\": {},\n    \"command\": \"start\",\n    \"scope\": \"tabularasa@hrc-runtime:never-born\"\n  },\n  \"diagnostics\": {\n    \"releases\": {},\n    \"ids\": {},\n    \"phases\": []\n  }\n}\n",
+        "stderr": ""
+      }
+    },
+    {
+      "case": "short:0",
+      "argv": [
+        "runtime",
+        "list"
+      ],
+      "expected": {
+        "exit": 1,
+        "stdout": "",
+        "stderr": "hrc: HRC request failed with status 502: gateway unavailable\n"
+      }
+    },
+    {
+      "case": "short:1",
+      "argv": [
+        "runtime",
+        "list",
+        "--output",
+        "json"
+      ],
+      "expected": {
+        "exit": 1,
+        "stdout": "",
+        "stderr": "{\"error\":{\"message\":\"HRC request failed with status 502: gateway unavailable\",\"usage\":false}}\n"
+      }
+    },
+    {
+      "case": "short:2",
+      "argv": [
+        "runtime",
+        "capture",
+        "rt-missing"
+      ],
+      "expected": {
+        "exit": 1,
+        "stdout": "",
+        "stderr": "hrc: HRC request failed with status 502: gateway unavailable\n"
+      }
+    },
+    {
+      "case": "short:3",
+      "argv": [
+        "start",
+        "tabularasa@hrc-runtime:never-born",
+        "--json"
+      ],
+      "expected": {
+        "exit": 1,
+        "stdout": "{\n  \"error\": {\n    \"code\": \"internal\",\n    \"message\": \"HRC request failed with status 502: gateway unavailable\",\n    \"detail\": {},\n    \"command\": \"start\",\n    \"scope\": \"tabularasa@hrc-runtime:never-born\"\n  },\n  \"diagnostics\": {\n    \"releases\": {},\n    \"ids\": {},\n    \"phases\": []\n  }\n}\n",
+        "stderr": ""
+      }
+    },
+    {
+      "case": "long:0",
+      "argv": [
+        "runtime",
+        "list"
+      ],
+      "expected": {
+        "exit": 1,
+        "stdout": "",
+        "stderr": "hrc: HRC request failed with status 502: xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx\u2026\n"
+      }
+    },
+    {
+      "case": "long:1",
+      "argv": [
+        "runtime",
+        "list",
+        "--output",
+        "json"
+      ],
+      "expected": {
+        "exit": 1,
+        "stdout": "",
+        "stderr": "{\"error\":{\"message\":\"HRC request failed with status 502: xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx\u2026\",\"usage\":false}}\n"
+      }
+    },
+    {
+      "case": "long:2",
+      "argv": [
+        "runtime",
+        "capture",
+        "rt-missing"
+      ],
+      "expected": {
+        "exit": 1,
+        "stdout": "",
+        "stderr": "hrc: HRC request failed with status 502: xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx\u2026\n"
+      }
+    },
+    {
+      "case": "long:3",
+      "argv": [
+        "start",
+        "tabularasa@hrc-runtime:never-born",
+        "--json"
+      ],
+      "expected": {
+        "exit": 1,
+        "stdout": "{\n  \"error\": {\n    \"code\": \"internal\",\n    \"message\": \"HRC request failed with status 502: xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx\u2026\",\n    \"detail\": {},\n    \"command\": \"start\",\n    \"scope\": \"tabularasa@hrc-runtime:never-born\"\n  },\n  \"diagnostics\": {\n    \"releases\": {},\n    \"ids\": {},\n    \"phases\": []\n  }\n}\n",
+        "stderr": ""
+      }
+    },
+    {
+      "case": "unicode-boundary:0",
+      "argv": [
+        "runtime",
+        "list"
+      ],
+      "expected": {
+        "exit": 1,
+        "stdout": "",
+        "stderr": "hrc: HRC request failed with status 502: xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx\ufffd\u2026\n"
+      }
+    },
+    {
+      "case": "unicode-boundary:1",
+      "argv": [
+        "runtime",
+        "list",
+        "--output",
+        "json"
+      ],
+      "expected": {
+        "exit": 1,
+        "stdout": "",
+        "stderr": "{\"error\":{\"message\":\"HRC request failed with status 502: xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx\\ud83d\u2026\",\"usage\":false}}\n"
+      }
+    },
+    {
+      "case": "unicode-boundary:2",
+      "argv": [
+        "runtime",
+        "capture",
+        "rt-missing"
+      ],
+      "expected": {
+        "exit": 1,
+        "stdout": "",
+        "stderr": "hrc: HRC request failed with status 502: xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx\ufffd\u2026\n"
+      }
+    },
+    {
+      "case": "unicode-boundary:3",
+      "argv": [
+        "start",
+        "tabularasa@hrc-runtime:never-born",
+        "--json"
+      ],
+      "expected": {
+        "exit": 1,
+        "stdout": "{\n  \"error\": {\n    \"code\": \"internal\",\n    \"message\": \"HRC request failed with status 502: xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx\\ud83d\u2026\",\n    \"detail\": {},\n    \"command\": \"start\",\n    \"scope\": \"tabularasa@hrc-runtime:never-born\"\n  },\n  \"diagnostics\": {\n    \"releases\": {},\n    \"ids\": {},\n    \"phases\": []\n  }\n}\n",
+        "stderr": ""
+      }
+    },
+    {
+      "case": "json-no-error:0",
+      "argv": [
+        "runtime",
+        "list"
+      ],
+      "expected": {
+        "exit": 1,
+        "stdout": "",
+        "stderr": "hrc: HRC request failed with status 502\n"
+      }
+    },
+    {
+      "case": "json-no-error:1",
+      "argv": [
+        "runtime",
+        "list",
+        "--output",
+        "json"
+      ],
+      "expected": {
+        "exit": 1,
+        "stdout": "",
+        "stderr": "{\"error\":{\"message\":\"HRC request failed with status 502\",\"usage\":false}}\n"
+      }
+    },
+    {
+      "case": "json-no-error:2",
+      "argv": [
+        "runtime",
+        "capture",
+        "rt-missing"
+      ],
+      "expected": {
+        "exit": 1,
+        "stdout": "",
+        "stderr": "hrc: HRC request failed with status 502\n"
+      }
+    },
+    {
+      "case": "json-no-error:3",
+      "argv": [
+        "start",
+        "tabularasa@hrc-runtime:never-born",
+        "--json"
+      ],
+      "expected": {
+        "exit": 1,
+        "stdout": "{\n  \"error\": {\n    \"code\": \"internal\",\n    \"message\": \"HRC request failed with status 502\",\n    \"detail\": {},\n    \"command\": \"start\",\n    \"scope\": \"tabularasa@hrc-runtime:never-born\"\n  },\n  \"diagnostics\": {\n    \"releases\": {},\n    \"ids\": {},\n    \"phases\": []\n  }\n}\n",
+        "stderr": ""
+      }
+    },
+    {
+      "case": "missing-route:0",
+      "argv": [
+        "runtime",
+        "list"
+      ],
+      "expected": {
+        "exit": 1,
+        "stdout": "",
+        "stderr": "hrc: HRC request failed with status 404: not found\n"
+      }
+    },
+    {
+      "case": "missing-route:1",
+      "argv": [
+        "runtime",
+        "list",
+        "--output",
+        "json"
+      ],
+      "expected": {
+        "exit": 1,
+        "stdout": "",
+        "stderr": "{\"error\":{\"message\":\"HRC request failed with status 404: not found\",\"usage\":false}}\n"
+      }
+    },
+    {
+      "case": "missing-route:2",
+      "argv": [
+        "runtime",
+        "capture",
+        "rt-missing"
+      ],
+      "expected": {
+        "exit": 1,
+        "stdout": "",
+        "stderr": "hrc: HRC request failed with status 404: not found\n"
+      }
+    },
+    {
+      "case": "missing-route:3",
+      "argv": [
+        "start",
+        "tabularasa@hrc-runtime:never-born",
+        "--json"
+      ],
+      "expected": {
+        "exit": 1,
+        "stdout": "{\n  \"error\": {\n    \"code\": \"unsupported_capability\",\n    \"message\": \"HRC daemon does not serve placement resolution\",\n    \"detail\": {\n      \"capability\": \"placements.resolve\",\n      \"route\": \"/v1/placements/resolve\"\n    },\n    \"command\": \"start\",\n    \"scope\": \"tabularasa@hrc-runtime:never-born\"\n  },\n  \"diagnostics\": {\n    \"releases\": {},\n    \"ids\": {},\n    \"phases\": []\n  }\n}\n",
+        "stderr": ""
+      }
+    }
+  ]
+}

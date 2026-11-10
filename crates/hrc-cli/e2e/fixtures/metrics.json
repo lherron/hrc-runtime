@@ -1,0 +1,96 @@
+{
+  "sourceCommit": "ac3fa617",
+  "driverSha256": "4e9220213fbd0a2ceefc1a17afd2bbea71279149a66f789058e461d87913e99b",
+  "rawSha256": "5aab64090cb5a8be447feb538c4b4bd02ccc997e1ce0b71468a0b4002aee9b9a",
+  "cases": [
+    {
+      "case": "help",
+      "argv": [
+        "runtime",
+        "list",
+        "--help"
+      ],
+      "expected": {
+        "exit": 0,
+        "stdout": "Usage: hrc runtime list [options]\n\nlist runtimes (use `hrc show <scope>` or `runtime inspect <id>` for one target)\n\nOptions:\n  --host-session-id <id>   filter by host session\n  --session <id>           filter by host session (post-mortem discovery alias)\n  --transport <transport>  filter by transport (tmux|headless|sdk)\n  --status <status>        filter by status\n                           (busy|dead|ready|stale|terminated|detached)\n  --scope <scope>          filter by scope ref or target handle\n  --agent <agent>          filter by exact agent ID\n  --task <task>            filter by exact task ID\n  --older-than <duration>  filter by age\n  --json                   output as JSON\n  --stale                  show only stale runtimes\n  --all                    include terminal runtime history\n  --all-nodes              best-effort node-labeled inventory across configured\n                           peers\n  -h, --help               display help for command\n\nSingle-target queries:\n  hrc show <scope>\n  hrc runtime inspect <runtimeId>\n\n",
+        "stderr": ""
+      },
+      "record": {
+        "v": 1,
+        "kind": "cli",
+        "cmd": "runtime list",
+        "flags": [
+          "--help"
+        ],
+        "exitCode": 0,
+        "stdoutBytes": 1042,
+        "tty": false,
+        "agent": "metric-agent",
+        "project": "metric-project",
+        "rpc": []
+      }
+    },
+    {
+      "case": "failure",
+      "argv": [
+        "runtime",
+        "list",
+        "extra"
+      ],
+      "expected": {
+        "exit": 2,
+        "stdout": "",
+        "stderr": "hrc: error: too many arguments for 'list'. Expected 0 arguments but got 1.\ncommand: hrc runtime list\nusage: [options]\n"
+      },
+      "record": {
+        "v": 1,
+        "kind": "cli",
+        "cmd": "runtime list",
+        "flags": [],
+        "exitCode": 2,
+        "stdoutBytes": 0,
+        "tty": false,
+        "agent": "metric-agent",
+        "project": "metric-project",
+        "rpc": []
+      }
+    }
+  ],
+  "contracts": {
+    "native search usage record": {
+      "exit": 0,
+      "stderr": "",
+      "count": 1,
+      "bin": "rusthrc",
+      "cmd": "monitor search",
+      "flags": [
+        "--help"
+      ],
+      "exitCode": 0,
+      "stdoutMatches": true,
+      "rpc": []
+    },
+    "prune old CLI files only by mtime": {
+      "exit": 0,
+      "oldExists": false,
+      "recentExists": true,
+      "unrelatedExists": true
+    },
+    "metrics opt-out writes and prunes nothing": {
+      "exit": 0,
+      "unchanged": true
+    },
+    "bounded record removes oversized context": {
+      "exit": 0,
+      "count": 1,
+      "below4096": true,
+      "agentAbsent": true,
+      "projectAbsent": true
+    },
+    "observational storage failure preserves command success": {
+      "exit": 0,
+      "contents": "conflicting file",
+      "stderr": ""
+    }
+  }
+}

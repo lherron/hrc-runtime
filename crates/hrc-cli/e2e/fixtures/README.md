@@ -39,3 +39,48 @@ agreement are removed. Native route declarations/behavior remain asserted by
 `conformance/hrc-parity/run.py` and `inventory.ts` remain for the hand-run
 conformance `run`/`inventory` commands, checker controls, native parity drivers,
 and the server attribution test. Their retirement belongs to the driver sweep.
+
+`status.json`, `metrics.json`, and `client_errors.json` freeze the default gate
+vectors at `ac3fa617` (T-13065). Unmodified drivers ran against Bun before any
+implementation edits: status 49 PASS + 2 declared checkpointed-WAL divergences,
+metrics 7 PASS, client errors 28 PASS. Raw Bun responses, original drivers,
+ordered before/after results, capture/acceptance scripts and negative controls
+are in `/Users/lherron/praesidium/var/wrkq-artifacts/T-13065/`. Each fixture names
+its source revision, driver hash and raw capture hash. Expected bytes never come
+from running the native subject.
+
+Status retains all 17 states, both output modes and all 17 store-effects checks.
+Suite runtime/state roots are replaced by placeholders; PATH supplies no ambient
+tmux. The noisy and stalled tmux cases still supply their own executable. The
+migration ids are the captured Bun empty-ledger pending list; they construct
+missing/partial/unknown ledgers without reading TypeScript. WAL cases create a
+real store with `rusthrc store migrate`, remove forward ids from its ledger, and
+hold a writer open for live-WAL reads. They check that the live WAL has frames
+and that status does not mutate store/control files. Invalid ledger fixtures
+are deliberately made with Python sqlite3: native migration would repair or
+refuse those states. `frozen_oracle.py` remains the only forward-id projection.
+
+Status has three named native contracts. A checkpointed WAL without sidecars
+must read the same schema as live-WAL, rather than Bun's unreadable verdict. A
+tmux timeout reports unknown availability/running under the declared 750ms idle
+and 5000ms total budgets. Large tmux output must contain all 12000 named sessions
+and the empty lease diagnostics declared by `server_status.rs`; Bun's captured
+JSON was truncated, so it cannot supply that literal. `bunCapture` retains the
+original observations next to these declared expected results. Every status
+vector now compares the complete exit/stdout/stderr, including these contracts;
+the two previously unsupported checkpointed-WAL vectors are now PASS obligations.
+
+Metrics preserves its five native contracts as explicit expected observations:
+search record fields/byte count, CLI-only retention, opt-out, the 4096-byte bound
+and oversized context removal, and nonfatal storage failure. The two Bun vectors
+compare complete command responses and normalized usage records, with native bin,
+byte/exit accounting and finite nonnegative RPC durations checked separately.
+Metrics isolation continues to attribute production growth to spawned suite PIDs.
+Client errors retain all seven socket/body states and four command spellings.
+Only explicit private roots are normalized in their error messages.
+
+No default case was dropped. As with `differential.py`, optional external-daemon
+vectors require an explicit expanded `--fixtures` corpus; the default corpus
+refuses an expanded manifest. The default gate never assumes an external daemon
+or captures machine-dependent counts, PIDs, release ids or paths. Fixture writes
+are offline, deliberate changes; the runners have no capture/update mode.

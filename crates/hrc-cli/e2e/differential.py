@@ -34,7 +34,6 @@ def nodes(node):
 def main():
     p = argparse.ArgumentParser()
     p.add_argument('--binary', type=Path, required=True)
-    p.add_argument('--oracle', type=Path, default=ROOT / 'packages/hrc-cli/bin/hrc.js')
     p.add_argument('--runtime-root', type=Path)
     p.add_argument('--state-root', type=Path)
     p.add_argument('--fixtures', type=Path, default=FIXTURES)
@@ -150,17 +149,17 @@ def main():
             print(r.get('diff', ''))
     if args.only_differential:
         return int(bool(report['fail']))
-    status_args = ['python3', str(ROOT / 'crates/hrc-cli/e2e/status.py'), '--binary', str(args.binary.resolve()), '--oracle', str(args.oracle.resolve()), '--artifacts', str(args.artifacts / 'status')]
+    status_args = ['python3', str(ROOT / 'crates/hrc-cli/e2e/status.py'), '--binary', str(args.binary.resolve()), '--artifacts', str(args.artifacts / 'status')]
     if args.runtime_root:
         status_args += ['--runtime-root', str(args.runtime_root.resolve()), '--state-root', str(args.state_root.resolve())]
     status = subprocess.run(status_args, cwd=ROOT)
     native = subprocess.run(['python3', str(ROOT / 'crates/hrc-cli/e2e/native_surface.py'), '--binary', str(args.binary.resolve()), '--artifacts', str(args.artifacts / 'native-surface')], cwd=ROOT)
-    metric_args = ['python3', str(ROOT / 'crates/hrc-cli/e2e/metrics.py'), '--binary', str(args.binary.resolve()), '--oracle', str(args.oracle.resolve()), '--artifacts', str(args.artifacts / 'metrics')]
+    metric_args = ['python3', str(ROOT / 'crates/hrc-cli/e2e/metrics.py'), '--binary', str(args.binary.resolve()), '--artifacts', str(args.artifacts / 'metrics')]
     if args.runtime_root:
         metric_args += ['--runtime-root', str(args.runtime_root.resolve())]
     metrics = subprocess.run(metric_args, cwd=ROOT)
     daemon = subprocess.run(['python3', str(ROOT / 'crates/hrc-cli/e2e/daemon_entrypoints.py'), '--binary', str(args.binary.resolve()), '--artifacts', str(args.artifacts / 'daemon-entrypoints')], cwd=ROOT)
-    transport = subprocess.run(['python3', str(ROOT / 'crates/hrc-cli/e2e/client_errors.py'), '--binary', str(args.binary.resolve()), '--oracle', str(args.oracle.resolve()), '--artifacts', str(args.artifacts / 'client-errors')], cwd=ROOT)
+    transport = subprocess.run(['python3', str(ROOT / 'crates/hrc-cli/e2e/client_errors.py'), '--binary', str(args.binary.resolve()), '--artifacts', str(args.artifacts / 'client-errors')], cwd=ROOT)
     caller = subprocess.run(['python3', str(ROOT / 'crates/hrc-cli/e2e/caller.py'), '--binary', str(args.binary.resolve()), '--artifacts', str(args.artifacts / 'caller')], cwd=ROOT)
     return int(bool(report['fail']) or any(p.returncode != 0 for p in (status, native, metrics, daemon, transport, caller)))
 

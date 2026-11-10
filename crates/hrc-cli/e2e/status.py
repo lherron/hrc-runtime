@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Real CLI differential status probes. All writable roots belong to this run.
+"""Native status probes against frozen Bun literals. All writable roots belong to this run.
 
 Failure matrix: absent daemon/store, stale PID, malformed PID, conflicting root
 files, missing migration ledger, partial/unknown schema, missing/stalled/noisy
@@ -12,7 +12,6 @@ import json
 import os
 from pathlib import Path
 import re
-import shutil
 import sqlite3
 import subprocess
 import tempfile
@@ -21,9 +20,10 @@ import threading
 
 from metrics_isolation import isolated_suite
 import frozen_oracle
+from frozen_cases import load, compare, observation, roots
 
 ROOT = Path(__file__).resolve().parents[3]
-# Only clock observations can vary between the two sequential diagnostic calls.
+# Clock observations in optional daemon probes are normalized.
 NORMALIZATION = {
     'timestamps': r'\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d\.\d{3}Z',
     'uptime_json': r'("uptime": )\d+',
@@ -63,25 +63,30 @@ class FaultHandler(socketserver.StreamRequestHandler):
 def main():
     p = argparse.ArgumentParser()
     p.add_argument('--binary', type=Path, required=True)
-    p.add_argument('--oracle', type=Path, required=True)
+    p.add_argument('--fixtures', type=Path, default=Path(__file__).with_name('fixtures') / 'status.json')
     p.add_argument('--artifacts', type=Path, required=True)
     p.add_argument('--runtime-root', type=Path)
     p.add_argument('--state-root', type=Path)
     args = p.parse_args()
     args.artifacts.mkdir(parents=True, exist_ok=True)
-    bun = shutil.which('bun')
+    scenarios = ('api-health-failed', 'api-status-failed', 'api-html-failed', 'absent', 'stale-pid', 'partial-pid', 'runtime-file', 'state-file', 'no-ledger', 'empty-ledger', 'partial-schema', 'unknown-schema', 'checkpointed-wal', 'live-wal', 'tmux-missing', 'tmux-stalled', 'tmux-large')
+    if args.runtime_root:
+        scenarios += ('healthy',)
+    frozen, literals = load(args.fixtures, [(scenario + (':json' if flags else ':human'), ['server', 'status'] + flags)
+                                           for scenario in scenarios for flags in ([], ['--json'])])
     results = []
-    with tempfile.TemporaryDirectory(prefix='n5-status-') as temp:
+    with tempfile.TemporaryDirectory(prefix='n5-status-', dir='/tmp') as temp:
         scratch = Path(temp)
-        migrations = sorted(set(re.findall(r"\bid:\s*['\"]([0-9]{4}_[^'\"]+)['\"]", '\n'.join(p.read_text() for p in (ROOT / 'packages/hrc-store-sqlite/src').rglob('*.ts') if '__tests__' not in p.parts))))
-        for scenario in ('api-health-failed', 'api-status-failed', 'api-html-failed', 'absent', 'stale-pid', 'partial-pid', 'runtime-file', 'state-file', 'no-ledger', 'empty-ledger', 'partial-schema', 'unknown-schema', 'checkpointed-wal', 'live-wal', 'tmux-missing', 'tmux-stalled', 'tmux-large', 'healthy'):
-            if scenario == 'healthy' and not args.runtime_root:
-                continue
+        # Frozen Bun ids create baseline/partial/ahead states, independently
+        # of the native registry. Forward projection remains frozen_oracle's job.
+        migrations = sorted(frozen['migrationIds'])
+        assert migrations and migrations[-1] == frozen_oracle.BASELINE_HEAD
+        for scenario in scenarios:
             base = scratch / scenario
             runtime, state = base / 'run', base / 'state'
             runtime.mkdir(parents=True)
             state.mkdir()
-            env = dict(os.environ, HRC_RUNTIME_DIR=str(runtime), HRC_STATE_DIR=str(state), NO_COLOR='1', FORCE_COLOR='0')
+            env = dict(os.environ, HRC_RUNTIME_DIR=str(runtime), HRC_STATE_DIR=str(state), NO_COLOR='1', FORCE_COLOR='0', PATH='/nonexistent')
             if scenario == 'healthy':
                 assert args.state_root and args.runtime_root.joinpath('hrc.sock').exists()
                 assert not str(args.runtime_root.resolve()).startswith(str(Path.home() / 'praesidium/var'))
@@ -105,10 +110,15 @@ def main():
                             db.executemany('INSERT INTO hrc_migrations VALUES (?)', [(i,) for i in ids])
             wal_writer = None
             if scenario in ('checkpointed-wal', 'live-wal'):
+                # A real native store, projected back to the frozen legacy
+                # ledger so forward ids remain frozen_oracle's only concern.
+                migrated = subprocess.run([str(args.binary.resolve()), 'store', 'migrate', str(db_path)],
+                                          env=env, text=True, capture_output=True, timeout=20)
+                assert migrated.returncode == 0, migrated.stderr
                 wal_writer = sqlite3.connect(db_path)
                 wal_writer.execute('PRAGMA journal_mode=WAL')
-                wal_writer.execute('CREATE TABLE hrc_migrations (id TEXT PRIMARY KEY)')
-                wal_writer.executemany('INSERT INTO hrc_migrations VALUES (?)', [(i,) for i in migrations])
+                wal_writer.execute('DELETE FROM hrc_migrations WHERE id NOT IN (' + ','.join('?' for _ in migrations) + ')', migrations)
+                assert sorted(r[0] for r in wal_writer.execute('SELECT id FROM hrc_migrations')) == migrations
                 wal_writer.commit()
                 if scenario == 'checkpointed-wal':
                     wal_writer.close()
@@ -138,6 +148,8 @@ def main():
                 thread.start()
             before = snapshot(db_path)
             wal_before, shm_before = snapshot(wal_path), snapshot(shm_path)
+            if scenario == 'live-wal':
+                assert wal_before and wal_before['bytes'] > 0, 'live WAL state was not built'
             control_before = {str(p): (p.stat().st_mtime_ns if p.exists() else None) for p in controls}
             for flags in ([], ['--json']):
                 if scenario == 'checkpointed-wal':
@@ -145,40 +157,17 @@ def main():
                     # owners are gone; these are suite-owned empty sidecars.
                     wal_path.unlink(missing_ok=True)
                     shm_path.unlink(missing_ok=True)
-                observed = []
-                for command in ([bun, str(args.oracle.resolve())], [str(args.binary.resolve())]):
-                    child = subprocess.run(command + ['server', 'status'] + flags, cwd=ROOT, env=env, text=True, capture_output=True, timeout=8)
-                    observed.append(dict(exit=child.returncode, stdout=child.stdout, stderr=child.stderr))
-                if scenario in ('tmux-large', 'tmux-stalled'):
-                    # Native deliberately fixes Bun's wall-timeout verdict.
-                    # Assert the contract directly, retaining both observations.
-                    subject = observed[1]
-                    assert subject['exit'] == 1 and not subject['stderr']
-                    if flags:
-                        tmux = json.loads(subject['stdout'])['tmux']
-                        if scenario == 'tmux-large':
-                            assert tmux['running'] is True and tmux['sessionCount'] == 12000
-                            assert tmux['sessions'] == [f'session-{i}' for i in range(12000)]
-                        else:
-                            assert tmux['running'] is None and tmux['available'] is None
-                            assert 'timed out' in tmux['error']
-                    elif scenario == 'tmux-large':
-                        assert 'tmux:         running (12000 session(s))' in subject['stdout']
-                    else:
-                        assert 'tmux:         unknown (tmux -V probe timed out' in subject['stdout']
-                    results.append(dict(case=scenario + (':json' if flags else ':human'),
-                        comparison='native contract: complete progressing output; unknown on timeout',
-                        oracle=observed[0], subject=subject, **{'pass': True}))
-                    continue
+                child = subprocess.run([str(args.binary.resolve()), 'server', 'status'] + flags,
+                                       cwd=ROOT, env=env, text=True, capture_output=True, timeout=8)
+                subject = observation(child)
+                case = scenario + (':json' if flags else ':human')
+                literal = literals[case]
                 if scenario in ('checkpointed-wal', 'live-wal') and flags:
-                    schema = json.loads(observed[1]['stdout'])['schema']
+                    schema = json.loads(subject['stdout'])['schema']
                     assert schema['readable'] and schema['storeVersion'] == migrations[-1] and schema['pending'] == frozen_oracle.FORWARD_IDS, 'Rust must read live-WAL migration records'
-                if scenario == 'checkpointed-wal':
-                    if not flags:
-                        assert observed[1]['exit'] == 1 and f'store schema: {migrations[-1]} (matches this release)' in frozen_oracle.text(observed[1]['stdout']), 'Rust must read the complete checkpointed schema'
-                    results.append(dict(case='checkpointed-wal:' + ('json' if flags else 'human'), status='UNSUPPORTED', reason='Bun server status reports schema unreadable on a checkpointed WAL-header store with no -wal/-shm sidecars; Rust reads the schema and creates the SQLite coordination files.', oracle=observed[0], subject=observed[1]))
-                    continue
-                results.append(dict(case=scenario + (':json' if flags else ':human'), oracle=observed[0], subject=observed[1], **{'pass': normalized(observed[0]) == normalized(observed[1])}))
+                expected = literal['expected']
+                good, diff = compare(normalized(expected), normalized(roots(subject, env['HRC_RUNTIME_DIR'], env['HRC_STATE_DIR'])))
+                results.append(dict(case=case, expected=expected, subject=subject, diff=diff, **{'pass': good}))
             if scenario == 'healthy':
                 continue  # A live daemon may write; effects are proved on isolated stores above.
             after = snapshot(db_path)
@@ -202,7 +191,7 @@ def main():
     print(json.dumps({k: report[k] for k in ('pass', 'fail')}))
     for result in results:
         if result.get('pass') is False:
-            print('FAIL', result['case'])
+            print('FAIL', result['case'], result.get('diff', ''))
     return int(bool(report['fail']))
 
 

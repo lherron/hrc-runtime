@@ -7,7 +7,6 @@ import argparse
 import json
 import os
 from pathlib import Path
-import shutil
 import socketserver
 import subprocess
 import tempfile
@@ -15,6 +14,7 @@ import threading
 
 from metrics_isolation import isolated_suite
 from status import FaultServer
+from frozen_cases import load, compare, observation, roots
 
 
 class BodyHandler(socketserver.StreamRequestHandler):
@@ -37,15 +37,18 @@ class BodyHandler(socketserver.StreamRequestHandler):
 @isolated_suite
 def main():
     p = argparse.ArgumentParser()
-    for key in ('binary', 'oracle', 'artifacts'):
+    for key in ('binary', 'artifacts'):
         p.add_argument('--' + key, type=Path, required=True)
+    p.add_argument('--fixtures', type=Path, default=Path(__file__).with_name('fixtures') / 'client_errors.json')
     args = p.parse_args()
     args.artifacts.mkdir(parents=True, exist_ok=True)
-    bun = shutil.which('bun')
+    vectors = [('stale-socket', None), ('empty', b''), ('short', b'gateway unavailable'), ('long', b'x' * 250), ('unicode-boundary', ('x' * 199 + '😀' + 'z').encode()), ('json-no-error', b'{"message":"down"}'), ('missing-route', b'not found')]
+    commands = (['runtime', 'list'], ['runtime', 'list', '--output', 'json'], ['runtime', 'capture', 'rt-missing'], ['start', 'tabularasa@hrc-runtime:never-born', '--json'])
+    frozen, literals = load(args.fixtures, [(name + ':' + str(i), argv) for name, _ in vectors for i, argv in enumerate(commands)])
     results = []
     with tempfile.TemporaryDirectory(prefix='n5-client-', dir='/tmp') as temp:
         root = Path(temp)
-        for name, body in [('stale-socket', None), ('empty', b''), ('short', b'gateway unavailable'), ('long', b'x' * 250), ('unicode-boundary', ('x' * 199 + '😀' + 'z').encode()), ('json-no-error', b'{"message":"down"}'), ('missing-route', b'not found')]:
+        for name, body in vectors:
             run = root / name / 'run'
             run.mkdir(parents=True)
             env = {k: v for k, v in os.environ.items() if not k.startswith(('HRC_', 'ASP_', 'WRKQ'))}
@@ -59,12 +62,15 @@ def main():
                 server.status = b'404 Not Found' if name == 'missing-route' else b'502 Bad Gateway'
                 threading.Thread(target=server.serve_forever, daemon=True).start()
             try:
-                for argv in (['runtime', 'list'], ['runtime', 'list', '--output', 'json'], ['runtime', 'capture', 'rt-missing'], ['start', 'tabularasa@hrc-runtime:never-born', '--json']):
-                    records = []
-                    for oracle, command in ((True, [bun, str(args.oracle.resolve())]), (False, [str(args.binary.resolve())])):
-                        c = subprocess.run(command + argv, env=env if oracle else dict(env, PATH=str(root / 'no-bun')), capture_output=True, text=True, timeout=10)
-                        records.append(dict(exit=c.returncode, stdout=c.stdout, stderr=c.stderr))
-                    results.append(dict(case=name, argv=argv, oracle=records[0], subject=records[1], **{'pass': records[0] == records[1]}))
+                for i, argv in enumerate(commands):
+                    child = subprocess.run([str(args.binary.resolve()), *argv], env=env,
+                                           capture_output=True, text=True, timeout=10)
+                    subject = observation(child)
+                    case = name + ':' + str(i)
+                    expected = literals[case]['expected']
+                    good, diff = compare(expected, roots(subject, run, env['HRC_STATE_DIR']))
+                    results.append(dict(case=name, argv=argv, expected=expected,
+                                        subject=subject, diff=diff, **{'pass': good}))
             finally:
                 if server:
                     server.shutdown()
@@ -72,6 +78,9 @@ def main():
     report = dict(cases=results, **{'pass': sum(r['pass'] for r in results), 'fail': sum(not r['pass'] for r in results)})
     (args.artifacts / 'results.json').write_text(json.dumps(report, indent=2) + '\n')
     print(json.dumps({k: report[k] for k in ('pass', 'fail')}))
+    for row in results:
+        if not row['pass']:
+            print('FAIL', row['case'], row['argv'], row['diff'])
     return int(bool(report['fail']))
 
 
