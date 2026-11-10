@@ -13,46 +13,11 @@ pub(crate) struct Qualified {
     explicit_role: bool,
     project_origin: &'static str,
 }
-fn agents_root() -> Option<std::path::PathBuf> {
-    let home = std::env::var_os("HOME").map(std::path::PathBuf::from)?;
-    let expand = |value: String| {
-        if value == "~" {
-            home.clone()
-        } else if let Some(path) = value.strip_prefix("~/") {
-            home.join(path)
-        } else {
-            value.into()
-        }
-    };
-    if let Ok(root) = std::env::var("ASP_AGENTS_ROOT")
-        && !root.is_empty()
-    {
-        return Some(expand(root));
-    }
-    let asp = std::env::var_os("ASP_HOME")
-        .map(std::path::PathBuf::from)
-        .unwrap_or_else(|| home.join(".asp"));
-    if let Some(root) = std::fs::read_to_string(asp.join("config.toml"))
-        .ok()
-        .and_then(|s| s.parse::<toml::Value>().ok())
-        .and_then(|v| {
-            v.get("agents-root")
-                .and_then(toml::Value::as_str)
-                .map(str::to_owned)
-        })
-    {
-        return Some(expand(root));
-    }
-    let root = home.join("praesidium/var/agents");
-    root.exists().then_some(root)
-}
 fn cwd_project() -> Option<String> {
+    // The agents root is not a boundary (T-13111): it is itself a repository
+    // and wrkq project, and ASP infers the same project for this cwd.
     let mut dir = std::env::current_dir().ok()?;
-    let agents = agents_root();
     loop {
-        if agents.as_ref().is_some_and(|root| dir.starts_with(root)) {
-            return None;
-        }
         if dir.join("asp-targets.toml").exists() || dir.join(".git").exists() {
             return dir.file_name().map(|n| n.to_string_lossy().into_owned());
         }
@@ -98,9 +63,6 @@ fn managed_project(input: &str, args: &crate::parse::Parsed<'_>) -> Option<Strin
         return None;
     }
     let cwd = std::env::current_dir().ok()?;
-    if agents_root().is_some_and(|a| cwd.starts_with(a)) {
-        return None;
-    }
     let id = cwd.file_name()?.to_string_lossy().into_owned();
     eprint!(
         "\nNo project marker found for {}.\nRegister as project '{id}' (writes asp-targets.toml here)? [Y/n] ",

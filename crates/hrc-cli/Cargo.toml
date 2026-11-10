@@ -14,7 +14,6 @@ hrc-store = { path = "../hrc-store" }
 chrono.workspace = true
 uuid.workspace = true
 regex.workspace = true
-toml.workspace = true
 tokio.workspace = true
 
 [lints]
