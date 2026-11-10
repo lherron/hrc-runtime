@@ -1,7 +1,7 @@
 """Real ready-seat attachment and durable surface fences on isolated state."""
 import json
 import sqlite3
-from runtime_reads import main
+from seat_capture import main
 
 
 def cases(runtime,host,scope,root):

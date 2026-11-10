@@ -3,7 +3,7 @@ import json
 import socket
 import sqlite3
 from pathlib import Path
-from runtime_reads import main
+from seat_capture import main
 
 
 def cases(runtime,host,scope,root):

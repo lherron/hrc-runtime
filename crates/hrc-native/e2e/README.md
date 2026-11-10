@@ -17,8 +17,9 @@ invariants and clean their scratch roots. `lifecycle_credentials.py` uses the
 shared deterministic real-hrcpty seat fixture. None of these needs a model.
 The retired front proxy and full comparison orchestrator are deleted.
 
-T-13074 follow-on List (retained, not native-qualified): runtime_reads,
-maintenance, session_index, session_projection. T-13117 qualified lifecycle_actions,
+T-13125 converted the T-13074/T-13073 follow-ons runtime_reads, maintenance,
+session_index, session_projection, transcript_index, n4_history and
+n4_svc_authority to native seeds and literal judges. T-13117 qualified lifecycle_actions,
 lifecycle_peer, runtimes_start, turn_no_intent and steer_no_intent with private
 native actors and deterministic broker turns. `error_wire.py` retains its
 422 capability assertion and is product-blocked on native cold schema admission;
@@ -32,7 +33,9 @@ The triage was posted before deletion as T-11945 comment C-32046; the complete
 task-body/comment reference snapshot is in that task's artifacts. The gate
 signature history was checked through 178a9474; `evaluate` was unchanged.
 
-Reusable modules: `lifecycle_fixture.py`, `no_intent_fixture.py`,
+Reusable modules: `lifecycle_fixture.py`, `no_intent_fixture.py`, `seat_capture.py`
+(the pre-T-13125 runtime_reads capture harness, still Bun-baselined, kept for
+`target_placement.py` and `runtime_surfaces.py`),
 `hrc-cli/e2e/native_seat.py`, `n2_scratch.py`, `n3_scratch.py`, `n2_aspd_proxy.py`, and
 `n4_federation.Node`. The scratch helpers are native by default and run no Bun;
 `--installed-release` is read only when a caller asks for a Bun owner, release or
@@ -90,7 +93,7 @@ Deleted entries stay listed to explain their removal; their source remains in gi
 | `nightly_retention.py` | C1b three-table, backup and first-turn bundle checks against a frozen Bun-verified survivor golden on APFS clones of its SHA256-pinned offline store; schedule with no window/no mark, bounded holds and vacuum. Takes `--source <offline backup> --binary <rusthrc> --out <evidence>`. | keep-manual |
 | `ledger_prune.py` | Mark-gated runtime prune on copies of a real ledger: every refusal deletes nothing, only runtimes behind the mark go, the scheduled task (TZ-shifted to 04:00) reports `no_window` or deletes, and the deadline stops it (T-12855). Takes `--source <state.sqlite backup>`. | keep-manual |
 | `ledger_prune_resume.py` | A seat whose every runtime was pruned through the mark-gated task is started again with its stored continuation, handoff and session intact (T-12855, contract gate 5). Live model turns. | keep-manual |
-| `maintenance.py` | T-13074 List: follow-on conversion; not native-qualified.  | list |
+| `maintenance.py` | Maintenance sweeps and reservation reads on the native deterministic seat over a native reservation seed, each case a literal (T-13125). | keep-manual |
 | `n2_attached.py` | `hrc run` attached-run door on an hrcpty seat in a real pty: parked promptless birth, gate after the committed start, warm run on the same seat, refusals. Live model turns. | keep-manual |
 | `n2_continuation_harness.py` | A respawn after the profile drifts (codex-hrcpty to claude-hrcpty) keeps the session's applied harness and resumes the Codex thread. An explicit cross-provider harness on that continuation is refused `continuation_harness_mismatch` before any operation is recorded (T-12419). Needs live codex credentials; scratch root under /tmp (socket path length). | keep-manual |
 | `n2_inspect_crash.py` | Broker SIGKILL mid-turn settles the runtime terminal and the run failed; inspect with recoverFinalSummary answers terminal-fenced. Live model turns. | keep-manual |
@@ -118,29 +121,30 @@ Deleted entries stay listed to explain their removal; their source remains in gi
 | `n3_subscribers.py` | Subscriber declare/follow/ACK doors on a private DB: undeclared and wrong-token refusals, retained refused for delivery, inclusive retry, stale ACK. Live model turns. | keep-manual |
 | `n4_federation.py` | N4 federation reads on two scratch nodes, recorded for a per-case compare. (protected by T-11872) | keep-manual |
 | `n4_gate.py` | N4 summon gate on a native owner over native-seeded ledger/registry rows, each case a literal. (requires explicit scratch/capture inputs; retained qualification) | keep-manual |
-| `n4_history.py` | N4 collective history on two scratch nodes: origin n4a and authority svc. (requires explicit scratch/capture inputs; retained qualification) | keep-manual |
+| `n4_history.py` | N4 collective history, origin n4a and authority svc both native, over ~100 messages from the native insert: restart keeps delivered rows, re-enqueues a tampered fingerprint, backfills and tails; reads judged as literals (T-13125). | keep-manual |
 | `n4_listener_stop.py` | Native federation listeners drain on owner shutdown (N5's stop seam). (requires explicit scratch/capture inputs; retained qualification) | keep-manual |
 | `n4_mail.py` | N4 gate 1: mail and a reply in both directions between two native scratch nodes (the injector is the production `bunx hrc-mail-injector`). (protected by T-11899) | keep-manual |
 | `n4_ops.py` | N4 operations reads on one frozen store, each case a literal. (requires explicit scratch/capture inputs; retained qualification) | keep-manual |
 | `n4_placement.py` | N4 project-root placement on a native owner; hrcpty births land in the resolved root. (requires explicit scratch/capture inputs; retained qualification) | keep-manual |
-| `n4_svc_authority.py` | svc as registry host and collective-history authority, on svc's own data (T-11931). (protected by T-11933) | keep-manual |
+| `n4_svc_authority.py` | svc as registry host and collective-history authority on a generated svc-sized seed (2k designations by registry statements, 12k records replicated through the peer route): literals per case, nothing unaddressed moves, peer stop ends the owner (T-13125). | keep-manual |
 | `n4_watchdog.py` | N4 first-turn watchdog: a native owner trips the armed rows, judged from first_turn.rs. (requires explicit scratch/capture inputs; retained qualification) | keep-manual |
 | `participant_live.py` | Actual participant-owned bootstrap broker, real ASP compile, blank claude profile. (requires explicit scratch/capture inputs; retained qualification) | keep-manual |
 | `participants.py` | Direct join/attach HTTPs against one native owner of empty scratch state, each case a literal. (requires explicit scratch/capture inputs; retained qualification) | keep-manual |
 | `preparation.py` | Real ASP declaration workflow; no broker or model starts. (requires explicit scratch/capture inputs; retained qualification) | keep-manual |
 | `routes.py` | Native HTTP route literals and metadata event invariants; shared scenario callback runner. | keep-manual |
 | `runtime_key_order.py` | none — completed T-11880 capture analysis; promoted maintenance and existing conformance key-order comparisons retain wire checks | delete |
-| `runtime_reads.py` | T-13074 List: follow-on conversion; not native-qualified.  | list |
+| `runtime_reads.py` | Runtime, inspect and probe reads on a native deterministic hrcpty seat plus a historical SQL fixture, each case a literal; model qualification is separate (T-13125). | keep-manual |
 | `runtime_surfaces.py` | Real ready-seat attachment and durable surface fences on isolated state. (requires explicit scratch/capture inputs; retained qualification) | keep-manual |
 | `runtimes_start.py` | Exact/suffix claims, independent canonical SHA-256 hashes, replay/conflict/refusal/reuse and pinned initial-message delivery. | keep-manual |
 | `schema_refusal.py` | Gate3: schema refusal preserves canonical DB and control files. | promote |
 | `server_owner.py` | Native owner recovery and malformed/live/dead/replaced lock controls. | keep-manual |
-| `session_index.py` | T-13074 List: follow-on conversion; not native-qualified.  | list |
-| `session_projection.py` | T-13074 List: follow-on conversion; not native-qualified.  | list |
+| `session_index.py` | Session index filters over sessions born by the resolve route and native ledger rows, each filter its own literal (T-13125). | keep-manual |
+| `session_projection.py` | Session projection visibility and config cases over a native SQL seed on one owner, each a literal predicate (T-13125). | keep-manual |
 | `steer_no_intent.py` | No-intent 422 with zero runtimes; direct and CLI stored-intent revival, completed messages and distinct runtime instances on the same host. Real harness qualification requires explicit config. | keep-manual |
 | `steer_returns_on_admission.py` | T-12243: a steer to a codex-hrcpty stub seat answers at admission, both when it starts a long turn on an idle seat and when it lands in that open turn (the pre-fix binary held the response until the run ended). Self-contained (stub broker, fake aspd); `--artifacts` required. | keep-manual |
 | `steer_timeout.py` | T-12228: a steer past the 20 s RPC bound into a live codex-hrcpty stub seat fails that submission only (binding kept, runtime not stale, next delivery on the same runtime); the orphan sweep preserves a stale row whose broker answers and delivery then fails closed instead of minting; terminating a never-launched runtime keeps the continuation. Self-contained (stub broker, fake aspd); `--artifacts` required. | keep-manual |
 | `target_placement.py` | Real target-session intent and placement reads, on an existing ready scratch seat. (requires explicit scratch/capture inputs; retained qualification) | keep-manual |
+| `transcript_index.py` | Transcript search over HTTP and the native follower: phase A indexed natively, then resume-sentinel, late-prose and terminal-inversion cursors; every hit judged against its segment table (T-13125). | keep-manual |
 | `turn_no_intent.py` | No-intent steer refusal control; native CLI missing-intent fallback births the same host session, completes and persists placement. | keep-manual |
 
 ## Embedded kernel history (T-12141)
