@@ -71,6 +71,21 @@ def start(binary, env, log):
     raise AssertionError('no socket: ' + Path(log.name).read_text())
 
 
+def boot_lines(path):
+    """The boot log once it holds `server.listening`.
+
+    `start` returns when the socket file exists, and the daemon logs
+    `server.listening` just after binding, so a read straight after `start`
+    can miss the line (seen as an IndexError in the push gate, 2026-11-10).
+    """
+    for _ in range(200):
+        boot = lines(path.read_text())
+        if any(l.get('event') == 'server.listening' for l in boot):
+            return boot
+        time.sleep(.05)
+    raise AssertionError('no server.listening line: ' + path.read_text())
+
+
 def stop(proc):
     proc.send_signal(signal.SIGTERM)
     proc.wait(timeout=30)
@@ -96,7 +111,7 @@ def main():
         a_log = (args.artifacts / 'a-serve.log').open('w')
         a = start(binary, a_env, a_log)
         try:
-            boot = lines((args.artifacts / 'a-serve.log').read_text())
+            boot = boot_lines(args.artifacts / 'a-serve.log')
             created = [l for l in boot if l.get('event') == 'store.created']
             assert len(created) == 1, boot
             listening = [l for l in boot if l.get('event') == 'server.listening']
