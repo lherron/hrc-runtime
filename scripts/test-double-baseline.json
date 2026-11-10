@@ -41,7 +41,7 @@
     "packages/hrc-server/src/__tests__/t08865-submission-wait-start-failure.test.ts": 1,
     "packages/hrc-server/src/__tests__/t4922-broker-lease-predicates.red.test.ts": 1,
     "packages/hrc-server/src/__tests__/t4922-presentation-predicates.red.test.ts": 2,
-    "scripts/prune-hrc-event-deltas.tool-result-spill.test.ts": 1
+    "scripts/prune-hrc-event-deltas.tool-result-restub.test.ts": 1
   },
   "uncaptured": {
     "packages/hrc-server/src/__tests__/fixtures/fake-wrkq-ledger.ts": [

@@ -42,6 +42,14 @@ function run(recipe: string[], frames: Frame[]) {
     join(root, 'praesidium/var/aspd/service/config.json'),
     JSON.stringify({ supervisor: { label: 'com.praesidium.aspd' } })
   )
+  // The recipe now retires the old nightly writer after readback. This status
+  // fixture stubs that mutation; the task acceptance drives the real helper.
+  const scripts = join(root, 'praesidium/hrc-runtime/scripts')
+  mkdirSync(scripts, { recursive: true })
+  writeFileSync(
+    join(scripts, 'retire-nightly-prune.sh'),
+    '#!/bin/bash\nprintf "retire-nightly-prune\\n" >> "$HOME/actions"\n'
+  )
   writeFileSync(join(root, 'frames.json'), JSON.stringify(frames))
   const executable = (name: string, body: string) => {
     const path = join(bin, name)

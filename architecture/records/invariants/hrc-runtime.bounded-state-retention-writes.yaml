@@ -22,14 +22,17 @@ authority: daedalus@hrc-runtime:T-07200 revision 2 approval, 2026-09-01
 source:
   - wrkq:T-07200
   - packages/hrc-store-sqlite/src/database.ts
-  - scripts/prune-hrc-event-deltas.ts
+  - crates/hrc-native/src/server/broker/ledger_prune/retention.rs
+  - crates/hrc-store/src/maintenance.rs
   - docs/state-retention.md
 required_tests:
+  - T-13046 non-incremental-store bundle refusal (crates/hrc-native/e2e/retention_auto_vacuum.py; keep-manual)
+  - T-13046 keep-manual real-store differential and writer-plan evidence (crates/hrc-native/e2e/nightly_retention.py)
   - just architecture-records
   - T-07200 fresh incremental-auto-vacuum and existing-mode refusal gates
   - T-07200 indexed read-discovery and bounded primary-key writer-plan gates
   - T-07200 authority-race safety recheck and old-ineligible-prefix gates
-last_verified: 2026-09-01 design approval; implementation gates pending
+last_verified: 2026-11-09 T-13046 native schedule differential on APFS clones of hrcdev real store; three-table keys and unrelated table digests match Bun, backup and bundle keep rules match, no-window/no-mark run retention, vacuum returns exactly 20000 pages; writer EXPLAIN plans stay primary-key bounded. Prior evidence: 2026-09-01 design approval; implementation gates pending
 reopen_when: Database creation mode, retention candidate discovery, writer candidate cardinality, eligibility recheck, deadline seam, or retention deletion authority changes.
 supersedes: []
 superseded_by: []

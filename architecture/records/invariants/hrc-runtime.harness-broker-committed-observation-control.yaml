@@ -188,7 +188,8 @@ source:
   - wrkq:T-11700
   - packages/hrc-server/src/broker/event-mapper/project-envelope.ts
   - packages/hrc-store-sqlite/src/repositories/broker-invocation-event-repository.ts
-  - scripts/prune-hrc-event-deltas.ts
+  - crates/hrc-native/src/server/broker/ledger_prune/retention.rs
+  - crates/hrc-store/src/maintenance.rs
   - docs/state-retention.md
   - architecture/records/invariants/hrc-runtime.bounded-state-retention-writes.yaml
   - wrkq:T-10632
@@ -209,6 +210,7 @@ source:
   - packages/hrc-store-sqlite/src/repositories/runtime-repositories.ts
   - packages/hrc-store-sqlite/src/migrations/broker-migrations.ts
 required_tests:
+  - T-13046 keep-manual real-store differential and writer-plan evidence (crates/hrc-native/e2e/nightly_retention.py)
   - normalized broker append failure publishes nothing to HRC
   - projection commit rollback idempotent replay conflict and contiguous-cursor gates cover mirrored and intentionally non-mirrored envelopes before disposition compaction
   - T-11700 retention gates cover orphan and old-terminal eligibility, strict age boundary, invalid timestamps, nonterminal retention, above-cursor islands, bounded-key writer rechecks, and ledger-inclusive cascade counts

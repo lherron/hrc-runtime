@@ -10,14 +10,14 @@ test('documents the state retention policy and index adequacy evidence', () => {
 
   const doc = readFileSync(stateRetentionDocUrl, 'utf8')
 
-  // Non-delta observation events retain indefinitely (Lance ruling 2026-07-28);
-  // runtime_buffers is the only observation table that still ages out.
+  // Runtime-owned ledgers follow the verified lake mark; collaboration stays
+  // keep-forever, while operational metadata retains its narrower predicates.
   expect(doc).toMatch(
-    /(?=[\s\S]*events)(?=[\s\S]*hrc_events)(?=[\s\S]*broker_invocation_events)(?=[\s\S]*keep-forever)(?=[\s\S]*no TTL)(?=[\s\S]*runtime_buffers)(?=[\s\S]*default 1-day retention)/i
+    /(?=[\s\S]*events)(?=[\s\S]*hrc_events)(?=[\s\S]*broker_invocation_events)(?=[\s\S]*keep-forever)(?=[\s\S]*no TTL)(?=[\s\S]*runtime_buffers)(?=[\s\S]*1-day cutoff)(?=[\s\S]*14-day hot window)(?=[\s\S]*verified prune mark)/i
   )
-  // The policy must be enforced by the tool's own default, not just the plist.
+  // Metadata duties remain scheduled even without runtime-prune authority.
   expect(doc).toMatch(
-    /(?=[\s\S]*--tables)(?=[\s\S]*defaults to\s*`?runtime_buffers)(?=[\s\S]*skipped)/i
+    /(?=[\s\S]*04:25)(?=[\s\S]*retention.report)(?=[\s\S]*no prune window and no mark)/i
   )
   // Fail loudly if the superseded 3-day event window is ever reintroduced.
   expect(doc).not.toMatch(/default 3-day retention/i)
@@ -27,15 +27,15 @@ test('documents the state retention policy and index adequacy evidence', () => {
   expect(doc).toMatch(
     /(?=[\s\S]*collaboration state[^\n]*keep forever)(?=[\s\S]*`messages`[^\n]*canonical local message)(?=[\s\S]*collective_history_messages)(?=[\s\S]*collective_history_observations)(?=[\s\S]*collective_history_replications)(?=[\s\S]*retained `hrcmail_\*` tables)(?=[\s\S]*no TTL)(?=[\s\S]*replay-fence)/i
   )
-  // Writer-lock guards: the job shares state.sqlite with the live daemon.
+  // Writer-lock guards now belong to the owning daemon.
   expect(doc).toMatch(
-    /(?=[\s\S]*--deadline-minutes)(?=[\s\S]*--pace-millis)(?=[\s\S]*--max-write-hold-millis)(?=[\s\S]*--max-duty-cycle)(?=[\s\S]*--busy-max-retries)/i
+    /(?=[\s\S]*04:25 deadline)(?=[\s\S]*PACE)(?=[\s\S]*MAX_WRITE_HOLD)(?=[\s\S]*MAX_DUTY_CYCLE)(?=[\s\S]*VACUUM_PAGES)(?=[\s\S]*VACUUM_CHUNK)/i
   )
   expect(doc).toMatch(
     /(?=[\s\S]*full backup)(?=[\s\S]*state\.sqlite)(?=[\s\S]*disk)(?=[\s\S]*defer)(?=[\s\S]*rolling nightly increments)(?=[\s\S]*C-10736)/i
   )
   expect(doc).toMatch(
-    /(?=[\s\S]*candidate discovery and deletion are separate statements)(?=[\s\S]*read-only indexed query)(?=[\s\S]*never owns[\s\S]*SQLite[\s\S]*writer)(?=[\s\S]*adaptive-batch key set)(?=[\s\S]*primary-key lookup)(?=[\s\S]*selected-key cardinality)/i
+    /(?=[\s\S]*Discovery is a separate read)(?=[\s\S]*adaptive-batch integer key set)(?=[\s\S]*primary\s+key)(?=[\s\S]*full eligibility predicate)(?=[\s\S]*rechecks)/i
   )
   expect(doc).toMatch(
     /(?=[\s\S]*sweep)(?=[\s\S]*never deletes)(?=[\s\S]*runtime prune)(?=[\s\S]*default[^\n]*stale)(?=[\s\S]*T-05441)(?=[\s\S]*only stale-row-reaping surface)/i

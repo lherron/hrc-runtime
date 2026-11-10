@@ -56,8 +56,8 @@ release into `~/praesidium/var/hrc-owner/hrc-runtime-releases/` and repoints
   older ones, each named by ≥1 live process argv (`T-12756/06-install-release/drive.txt`).
 - `hrc-owner.sh activate` writes a `pre-activate-*.sqlite` backup that passes `quick_check` before migrating and
   deletes older ones; its `-shm`/`-wal` siblings stay behind (one 25 GB backup plus both siblings in
-  `var/state/hrc/backups/` on 2026-11-09). The prune job reports them as `.data.preActivateBackups {dir,
-  retentionDays: 7, entries[]}` (feature 7).
+  `var/state/hrc/backups/` on 2026-11-09). The daemon ages backups nightly and reports `.data.backupsRemoved` in
+  `retention.report` (feature 7, T-13046).
 - The front door (T-11822) is obsolete on owner nodes: `front-door-enable|disable` and `launchd-install`
   refuse a rusthrc owner (source-only, 2026-11-09: justfile:756, :842, :878). `just
   front-door-status` probes `hrc-bun.sock` ("no answer", 2026-11-02, T-12291) and prints `mode: direct` because

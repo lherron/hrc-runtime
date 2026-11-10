@@ -7,8 +7,9 @@ pass through) and the scheduled retention job. Native CLI: `crates/hrc-cli/src/a
 capture status). Daemon `crates/hrc-native/src/server/broker/{sweeps,reconcile,maintenance,seat_retirement,
 first_turn}.rs`, `broker/startup/sweeps.rs`, `front/accounting.rs` (request log, metrics file), `server.rs`
 (`/v1/status`). Bun only: `worktree-prune.ts`,
-`scripts/prune-hrc-event-deltas.ts` and
-`launchd/com.praesidium.hrc-prune-deltas.plist`. Docs: `docs/state-retention.md`, `docs/operations-runbook.md`.
+the historical `scripts/prune-hrc-event-deltas.ts` repair operators only. Native nightly
+retention: `broker/ledger_prune.rs`, `broker/ledger_prune/retention.rs` and
+`crates/hrc-store/src/maintenance.rs`. Docs: `docs/state-retention.md`, `docs/operations-runbook.md`.
 
 ## Sub-features
 
@@ -64,15 +65,13 @@ first_turn}.rs`, `broker/startup/sweeps.rs`, `front/accounting.rs` (request log,
   **Fails in a prae seat**, whose PATH has no `wrkq`: "wrkq projects failed: spawnSync wrkq ENOENT", rc 1; with
   `PATH=$HOME/.local/bin:$PATH` it answered `summary {matched 9, wouldPrune 1}` (2026-11-09; product gap
   T-12759). `worktrees prune` is Bun (not driven).
-- `scripts/prune-hrc-event-deltas.ts [--db P] [--apply] …` (Bun, opens the DB itself): bounded retention;
-  without `--apply` it reports eligible counts per table as one logging-standard line (`{ts, level, component,
-  event: "prune.report", data}`; a failure is `event: "prune.failed"`, level `error`, exit 1, on stdout).
-  Default tables `runtime_buffers` and `broker_projection_dispositions` (4b5d322b); the launchd job runs
-  `--apply --tables runtime_buffers,broker_projection_dispositions,hrcmail_stop_refusals` against the live,
-  now native-owned DB. The retired `events` table still reports `skipped`. Each retention run also ages out
-  `backups/pre-activate-*.sqlite` beside the DB and reports them under `.data.preActivateBackups`; rules in
-  `docs/state-retention.md` (T-12695). Shape `{dir, retentionDays: 7, entries[{name, bytes, ageDays?, action,
-  reason?}], error?}`; a scratch with no `backups/` gives `entries: []` (2026-11-09).
+- Nightly retention is native (`ledger_prune/retention.rs`): backups, three metadata
+  tables, first-turn bundles, mark-gated runtime prune, PASSIVE checkpoint and
+  incremental vacuum.
+  The 04:00–04:25 local schedule produces `retention.report` and `prune.report`.
+  The historical Bun script keeps only `--strip-envelope-payloads` and
+  `--restub-tool-results`, required by analytics integration tests; bare `--apply`
+  is refused before opening a database. Neither operation is scheduled.
 - Not the cellar but they terminate HRC runtimes: launchd `com.praesidium.reap-headless-ghostmux` (every 30 min,
   `-y`) reaps paneless ready runtimes idle more than 12 h (54535197); and native seat retirement (T-12236)
   logs `runtime.seat_retirement_complete` (the scratch's: `skippedByReason: {standing_seat: 1}`, 2026-11-02,
@@ -105,9 +104,10 @@ hv run <task> -- ~/.bun/bin/hrc runtime prune --dry-run --older-than 1s --status
 sqlite3 -readonly /tmp/hv/<task>/state/state.sqlite "select runtime_id, transport, status from runtimes where status='terminated'"   # the control
 ~/.bun/bin/hrc runtime sweep --dry-run --json | tail -1                  # live, read-only
 ~/.bun/bin/hrc admin worktrees audit --json | jq -c keys
-cd /tmp/hv/<task>/release && bun scripts/prune-hrc-event-deltas.ts --db /tmp/hv/<task>/state/state.sqlite | jq -c '{event, stop: .data.stopReason, tables: (.data.tables|map_values(.stopReason))}'
-launchctl print gui/$(id -u)/com.praesidium.hrc-prune-deltas | grep -E 'state|last exit|runs'
-grep -c '"event":"prune.failed"' ~/praesidium/var/logs/hrc-runtime/hrc-prune-deltas.log   # 0 (grep exits 1)
+# Native C1b acceptance, offline copied store only (not in verify gate):
+python3 crates/hrc-native/e2e/nightly_retention.py --binary <built-rusthrc> --source <offline-state.sqlite> --out <artifact-dir>/retention
+# After operator deployment, inspect the actual owner log for both nightly reports:
+rg '"event":"(retention|prune).report"' ~/praesidium/var/logs/hrc-runtime/rusthrc-owner.log
 ```
 
 ## Gotchas
@@ -115,14 +115,16 @@ grep -c '"event":"prune.failed"' ~/praesidium/var/logs/hrc-runtime/hrc-prune-del
 - **`runtime prune` matching 0 on a scratch proves nothing about hrcpty.** Show the control: on 2026-11-02 the
   scratch held 3 hrcpty runtimes terminated more than 1 s earlier and `--older-than 1s --status terminated`
   matched 0 (T-12291). Before native, the same drive listed the terminated runtime `pruned / dry_run`.
-- **`--runtime-buffer-retention-days 0` is refused** ("must be a positive number"), so a fresh scratch's
-  buffers are never eligible: the dry-run proves the path runs (`runtime_buffers`,
-  `broker_projection_dispositions` `complete`, the rest `skipped`), not that it deletes (2026-10-05, T-10297).
-- **Never point `prune-hrc-event-deltas.ts --apply` at the live DB by hand.** It shares the database with the
-  native daemon; launchd's paced run is the one extra writer. Look for failures as `prune.failed` lines in
-  `var/logs/hrc-runtime/hrc-prune-deltas.log` (`hrc-prune-deltas.err.log` beside it is 0 bytes since T-10854);
-  on 2026-11-02 there were 0 and the job's last exit was 0 (T-12291). The log's first line is old-format
-  (`.data` null).
+- **C1b is daemon-owned (T-13046).** At 04:00 local it ages backups, deletes eligible
+  buffers/dispositions/stop counters, ages first-turn bundles, runs the mark-gated prune,
+  then returns at most 20,000 free pages in chunks of at most 100. Every phase shares
+  the 04:25 deadline. No window/no mark skips only the ledger prune; require both
+  `retention.report` and `prune.report`, and check largest write hold (500 ms), deleted
+  counts and pages returned. A fresh store with no eligible rows proves only scheduling.
+  Use the keep-manual real-store differential for deletion evidence, with APFS clones
+  under /tmp and relocated absolute paths. The old LaunchAgent is retired only after
+  deploy readback proves the new running sourceCommit; `just install` alone does not
+  activate this change or retire a job. This skill never alters installed jobs.
 - **The native CLI panics when a pipe reader closes early.** `hrc runtime list --all-nodes --json | head -c 20`
   printed `panicked at hrc-cli/src/metrics.rs:106:10: write stdout: … Broken pipe` and exited 1 (2026-11-09;
   product gap T-12760). Write to a file and read that, or ignore the panic text after `| head`.

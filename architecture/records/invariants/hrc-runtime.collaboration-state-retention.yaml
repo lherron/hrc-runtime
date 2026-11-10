@@ -11,7 +11,8 @@ predicate: >
   status exactly terminated. The existing nightly prune may delete only those
   counters, with status and valid-date age rechecked under its bounded writer.
   Missing runtimes, invalid dates and every other runtime status stay protected.
-  The runtime row itself is retained. Other classes have no standing TTL or
+  This metadata phase retains the runtime row; the separate mark-gated runtime
+  cascade may prune it under the approved lake contract. Other classes have no standing TTL or
   scheduled deletion path.
   messages is the canonical local message and dedupe ledger and the startup
   source for collective-history observation. Collective-history message and
@@ -37,18 +38,21 @@ source:
   - wrkq:T-07200
   - wrkq:T-08092
   - wrkq:T-11710
+  - crates/hrc-native/src/server/broker/ledger_prune/retention.rs
+  - crates/hrc-store/src/maintenance.rs
   - packages/hrc-store-sqlite/src/message-repository.ts
   - packages/hrc-store-sqlite/src/collective-history-repository.ts
   - packages/hrc-server/src/federation/collective-history.ts
   - packages/hrc-store-sqlite/src/mail
   - architecture/records/invariants/hrc-runtime.collaboration-presentation-authority.yaml
 required_tests:
+  - T-13046 keep-manual real-store differential and writer-plan evidence (crates/hrc-native/e2e/nightly_retention.py)
   - just architecture-records
-  - scripts/prune-hrc-event-deltas.stop-refusals.test.ts
+  - crates/hrc-native/e2e/nightly_retention.py (keep-manual differential)
   - T-07200 collaboration-retention policy documentation gate
   - existing message dedupe, collective-history restart, and hrcmail recovery gates
   - the T-08093 retirement migration drops only retired-mechanism bookkeeping and leaves receipts, reminders and failure notices intact
-last_verified: 2026-10-23 stop-refusal exception approved by source review of the counter consumer, retention predicate and bounded-key delete path; reviewer ran no implementation gates. Prior retention implementation gates remain pending in this record.
+last_verified: 2026-11-09 T-13046 native schedule differential on APFS clones of hrcdev real store; three-table keys and unrelated table digests match Bun, backup and bundle keep rules match, no-window/no-mark run retention, vacuum returns exactly 20000 pages; writer EXPLAIN plans stay primary-key bounded. Prior evidence: 2026-10-23 stop-refusal exception approved by source review of the counter consumer, retention predicate and bounded-key delete path; reviewer ran no implementation gates. Prior retention implementation gates remain pending in this record.
 reopen_when: Collaboration state authority, replay semantics, terminality fences, any standing TTL or deletion path for the named tables, or the scope of what a retirement migration may drop changes.
 supersedes: []
 superseded_by: []

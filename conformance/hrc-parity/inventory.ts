@@ -367,7 +367,7 @@ for (const [id, path] of [
   ['server-publication-cursor', 'packages/hrc-server/src/wrkq/server-project-events.ts'],
   ['lifecycle-credentials', 'packages/hrc-server/src/index.ts'],
   ['broker-leases-raw-provider-artifacts', 'packages/hrc-server/src/broker/controller.ts'],
-  ['spilled-blobs', 'scripts/prune-hrc-event-deltas/spill-tool-results.ts'],
+  ['spilled-blobs', 'packages/hrc-store-sqlite/src/repositories/tool-result-blob-repository.ts'],
   ['transcript-index', 'packages/hrc-server/src/transcript-index-handlers.ts'],
   ['atomic-release', 'scripts/atomic-install.ts'],
   ['federation-config', 'packages/hrc-server/src/federation/federation-config.ts'],

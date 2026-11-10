@@ -22,40 +22,34 @@ transcript router to it, and lake-only reads beyond the window are accepted
 
 What stays keep-forever: `events`, `hrc_events` rows with no runtime (session,
 input, context, server and store history), and every session-level and
-collaboration table named below. The scheduled Bun job never ages out ledger
-rows (Lance ruling, 2026-07-28). Completed-run rows in
-`runtime_buffers` expire, on a default 1-day retention period. The launchd job
-runs `scripts/prune-hrc-event-deltas.ts` nightly; the filename and job label are
-retained for installation compatibility even though the script now enforces
-general state retention rather than delta-only retention.
-Each run prints one logging-standard line to `hrc-prune-deltas.log`: event
-`prune.report` with the report fields under `data`, or `prune.failed` (level
-`error`, `data.message`) with exit 1.
+collaboration table named below. The daemon's 04:00 node-local maintenance task
+(T-13046) performs, in order: backup aging, the three metadata tables,
+first-turn diagnostic bundle aging, mark-gated runtime prune, a PASSIVE WAL
+checkpoint, then incremental vacuum. All phases share the 04:25 deadline. Metadata retention and vacuum run
+with no prune window and no mark. The retired Bun LaunchAgent is removed during
+deployment only after the new daemon's sourceCommit and running release are
+verified; installation alone does not retire it.
 
-The policy is enforced by the tool, not merely by the launchd arguments. The
-script prunes `runtime_buffers` and expired `broker_projection_dispositions`
-metadata unless an operator names event tables explicitly:
+`runtime_buffers` uses a 1-day cutoff, terminal runs (`completed`, `failed`,
+`cancelled`, `zombie`) and terminal runtimes (`terminated`, `dead`, `stale`,
+`crashed`) with no active run. Dispositions retain their 14-day committed-prefix
+rule below. Stop refusals use the 14-day exactly-terminated rule below.
 
-- `--tables <a,b|all>` selects which tables to prune; it defaults to
-  `runtime_buffers,broker_projection_dispositions`. `--tables all` is available
-  for deliberate one-off maintenance.
-- Unselected tables report `stopReason: "skipped"` and delete nothing. Skipping
-  is a configuration choice, so it never downgrades the run's overall
-  `stopReason`.
-- The scheduled plist passes
-  `--tables runtime_buffers,broker_projection_dispositions` and carries no
-  `--event-retention-days`, so a stray edit to the retention window cannot start
-  deleting semantic history.
+The daemon emits one `maintenance` / `retention.report` line with rows deleted
+per table, backups removed, first-turn bundle counts/errors, pages returned,
+largest write hold, elapsed time and stop reason. The mark-gated phase retains
+its separate `prune.report` line. `ledger_prune/retention.rs` defines `PACE`
+(250 ms), `MAX_WRITE_HOLD` (500 ms), `MAX_DUTY_CYCLE` (0.25), `VACUUM_PAGES`
+(20,000), and `VACUUM_CHUNK` (100). Candidate discovery runs as a read, then a
+bounded integer key set is rechecked under the writer. SQL that exhausts its
+write budget is interrupted and rolled back before retrying smaller batches;
+SQLite commit/fsync and rollback cannot be preempted by the VM progress handler.
+Pacing releases the owner mutex between steps. Vacuum always has an explicit
+page argument and never returns more than its nightly budget.
 
-Because there is no bare `--apply` path that deletes event rows, deleting
-observation history is always an explicit, auditable operator action.
-
-The retention periods that remain are configuration, not constants:
-
-- `--runtime-buffer-retention-days` /
-  `HRC_RUNTIME_BUFFER_RETENTION_DAYS`
-- `--event-retention-days` / `HRC_EVENT_RETENTION_DAYS` applies only when event
-  tables are explicitly selected.
+The historical Bun entry point now requires `--strip-envelope-payloads` or
+`--restub-tool-results`, for hrc-analytics integration callers. It cannot perform
+nightly retention, delta backlog deletion or historical tool-result spilling.
 
 Once a node has a prune window, `hrc monitor transcript`, broker forensics,
 capture verification, `/v1/events` replay, transcript search, prior-session
@@ -77,8 +71,8 @@ The prune has SQL-level safety invariants independent of cutoff arithmetic:
   unacknowledged deliveries are not observation tables and are never touched by
   this job.
 
-There is no archive migration. The Bun job deletes aged `runtime_buffers` and
-expired disposition metadata; runtime-owned ledger history leaves HRC only
+There is no archive migration. The daemon deletes aged `runtime_buffers`,
+expired disposition metadata and stop-refusal counters; runtime-owned ledger history leaves HRC only
 through the mark-gated prune.
 
 ## Mark-gated runtime prune (14-day window)
@@ -88,8 +82,8 @@ the owning process (T-12855; contract: hrc-analytics `docs/prune-contract.md`,
 approved 2026-11-09). There is no second writer and no separate job.
 
 **Window.** `HRC_RUNTIME_PRUNE_WINDOW` in the daemon's environment, a duration
-such as `14d`. This is the node's retention setting. Unset, the task deletes
-nothing and reports `stopReason: "no_window"`; a node gets its window only after
+such as `14d`. This is the node's retention setting. Unset, the mark-gated phase deletes
+no runtimes and reports `stopReason: "no_window"`; a node gets its window only after
 its first prune has been run by hand and the lake's next reconcile has been
 read.
 
@@ -160,15 +154,12 @@ next reconcile.
 
 `hrc-owner.sh activate --expect-commit` writes a full copy of the store to
 `backups/pre-activate-<UTC stamp>-<pid>.sqlite` beside `state.sqlite` (2–25 GiB)
-and deletes older ones. The same nightly job ages out what remains, so a node
-with no activation for weeks still gets the space back (T-12695). There is no
-new plist argument: the job does this on every retention run, and without
-`--apply` it reports `would-remove` and deletes nothing.
+and deletes older ones. The daemon ages out what remains first in each nightly maintenance run, so a
+node with no activation for weeks still gets the space back (T-12695, T-13046).
 
 A backup goes when it is at least 7 days old, measured from the later of its
-filename stamp and its mtime, and the store has moved past it. Each run reports
-every backup under `preActivateBackups` in its `prune.report` line. A backup stays
-with one of these reasons:
+filename stamp and its mtime, and the store has moved past it. Each run reports the removed count as `backupsRemoved` in `retention.report`.
+The following conditions keep a backup:
 
 | reason | meaning |
 |---|---|
@@ -215,17 +206,14 @@ bound; safety for indefinitely held evidence comes from the cursor condition.
 Full-envelope divergence detection for replay against an invocation more than
 14 days terminal is explicitly unsupported for the compacted prefix.
 
-This plan uses the same read-discovery, bounded-key writer recheck, deadline,
-busy retry and duty-cycle controls as other retention. A disposition-only run
-skips diagnostic-bundle cleanup and vacuum, leaving pages for reuse; pass
-`--no-checkpoint` to avoid a checkpoint too. The first live apply is released by
-Mable after landing. Backup-free deletion is authorized for this table alone
-(T-11700); it does not relax the backup rule for observation ledgers.
+This phase uses the daemon's read-discovery, bounded-key writer recheck,
+deadline, pacing and duty-cycle controls. Backup-free deletion is authorized
+for this metadata table (T-11700); ledger deletion still requires the lake mark.
 
 ## Collaboration state — keep forever
 
 The collaboration tables are also explicit **keep-forever** state. They are not
-an accidental omission from `--tables`, and they were not the source of the
+an accidental omission from maintenance, and they were not the source of the
 prior multi-gigabyte observation-ledger growth:
 
 - `messages` is the canonical local message and deduplication ledger. Startup
@@ -274,15 +262,12 @@ Once the runtime is `terminated`, retain a 14-day diagnostic grace period on
 **the refusal's `updated_at`**, then delete it. This grace is conservative
 operational retention; terminality is what ends the live decision horizon.
 
-The existing nightly prune supports `--tables hrcmail_stop_refusals`; append
-this value to the scheduled selection alongside `runtime_buffers` and
-`broker_projection_dispositions` to activate it. The existing default and
-source plist selection remain unchanged. The strict cutoff excludes exactly
+The daemon includes this table on every node. The strict cutoff excludes exactly
 14-day-old counters, invalid dates, missing runtimes, and every status other
 than `terminated` (including `ready`, `busy`, `stale` and `crashed`).
-The runtime row itself is retained. Candidate discovery and the bounded-key
-DELETE both check status and age, using the nightly job's existing batch,
-deadline, pacing and busy-retry controls. No new periodic job is introduced.
+Candidate discovery and the bounded-key DELETE both check status and age.
+The metadata phase retains the runtime row; the separate mark-gated cascade
+may subsequently prune it under the lake contract.
 
 ## Runtime artifact directories — `first_turn_missing` bundles
 
@@ -297,21 +282,18 @@ The nightly job prunes them as a step after the table retention, so a tight
 wall-clock budget still spends itself on row retention first. Three rules, all
 keyed off durable rows rather than filesystem guesses:
 
-- keep at most `--first-turn-bundle-keep` / `HRC_FIRST_TURN_BUNDLE_KEEP`
-  (default 3) bundles per `(runtimeId, generation)`;
-- delete bundles older than `--first-turn-bundle-ttl-days` /
-  `HRC_FIRST_TURN_BUNDLE_TTL_DAYS` (default 14);
+- keep at most `BUNDLE_KEEP` (3) bundles per `(runtimeId, generation)`;
+- delete bundles older than `BUNDLE_DAYS` (14);
 - remove orphan directories: a bundle directory with no linking
   `first_turn_missing.diagnostics` event, older than the 5 s assembly budget.
   That window is exactly the write-before-link crash gap — the directory is
   written first, then the linking event publishes the pointer.
 
 Deleting a bundle removes the directory, the `runtime_artifacts` row through
-`RuntimeArtifactRepository.deleteByArtifactId` (the repository's only deletion
-path), and the `bundle_dir` pointer on the watch row. Deleting a bundle never
+a bounded owner transaction, and the `bundle_dir` pointer on the watch row. Deleting a bundle never
 deletes the trip: the durable `first_turn_missing` event and its
 `runtime_first_turn_watch` row are observation history and follow the
-keep-forever policy above. A missing bundle degrades diagnosis, never detection.
+runtime-history policy above. A missing bundle degrades diagnosis, never detection.
 
 ## Freelist control
 
@@ -320,70 +302,40 @@ files select that mode before migrations create the first table, so they are
 born with the required pointer map and their first scheduled prune can apply.
 Installing the pointer map into an existing mode-0 database still requires one
 coordinated full `VACUUM`; it cannot be retrofitted by `incremental_vacuum`
-alone. The nightly job fails before deleting anything when the effective mode is
-not `INCREMENTAL`, then runs `PRAGMA incremental_vacuum` after its batched
-deletes. The reclaim limit is configurable with `--incremental-vacuum-pages` /
-`HRC_INCREMENTAL_VACUUM_PAGES`; `0` (the default) drains the freelist.
+alone. The daemon refuses the three-table deletion and vacuum phases unless
+mode is `INCREMENTAL`. Bundle aging shares that prerequisite; backup aging
+runs first and independently.
 
-Freelist reclaim is chunked, never issued as a single unbounded
-`PRAGMA incremental_vacuum`. On 2026-07-28 that unbounded form drained a
-4,971,864-page freelist inside one write transaction: measured at about 3.9 ms
-per page it held the writer lock for over four hours, every daemon write failed
-its 5 s busy timeout, and the daemon eventually crashed. The reclaim now runs in
-`--incremental-vacuum-chunk-pages` steps, adapted at runtime toward
-`--max-write-hold-millis`, with a yield between each. `--incremental-vacuum-pages`
-still selects how much total work to attempt; the deadline decides how much of it
-fits tonight.
-
-Full `VACUUM` is deliberately not available through the nightly script. It
-requires an offline maintenance window and sufficient disk headroom.
+Freelist reclaim is chunked: `VACUUM_CHUNK` is 100 and `VACUUM_PAGES` is 20,000.
+The explicit page argument is always positive and bounded by the remaining
+nightly budget. Full `VACUUM` requires an offline operator window. On 2026-07-28
+an unbounded incremental vacuum held the writer for over four hours; neither
+form is available in the scheduled task.
 
 ## Writer-lock discipline
 
-The job writes to the same database the daemon is serving from, so it is built
-to be interruptible rather than fast. These guards are not tuning knobs of
-convenience; they are what makes the job incapable of starving the daemon as the
-database grows:
+The daemon is the sole nightly writer. Its metadata writes use `MAX_WRITE_HOLD`
+(500 ms), `PACE` (250 ms), and `MAX_DUTY_CYCLE` (0.25). SQL execution is
+interrupted at the smaller of the hold budget and remaining deadline, with
+rollback on interruption. SQLite commit/fsync and rollback cannot be preempted
+by its VM progress handler. The SQLite busy timeout is temporarily zero during
+a maintenance write; a busy writer is yielded to rather than waited on. Failed
+delete batches shrink toward one row; a failed single row ends that phase and
+is reported, leaving it for the next night. The store mutex is released before
+sleeping for at least the larger of 250 ms and three times the measured hold.
+The sleep is capped by the 04:25 deadline.
 
-- `--deadline-minutes` (default 30, `HRC_PRUNE_DEADLINE_MINUTES`, `0` disables)
-  is a hard wall-clock budget. On expiry the run finishes its current batch,
-  reports `deadlineExceeded: true` with a `stopReason` of `deadline`, and exits
-  `0`. Partial retention is the designed outcome; the next run resumes.
-- `--pace-millis` (default 250) is the minimum yield between write steps. Each
-  step actually yields for at least as long as it just held the lock, capped at
-  five seconds, so the daemon always gets a window inside its own busy timeout.
-- `--max-write-hold-millis` (default 500) is the target ceiling for one write
-  step and drives the vacuum and batch size adaptation.
-- `--max-duty-cycle` (default 0.25) bounds the share of wall-clock time the job
-  may hold the writer lock, by yielding several times longer than each hold.
-  Bounding a single hold is not sufficient on its own: the daemon has write
-  paths that surface `SQLITE_BUSY` immediately instead of waiting out their 5 s
-  busy timeout, so what those paths actually see is the probability of finding
-  the lock held. A 25% duty cycle keeps that probability low; the reported
-  `heldMillis` versus `pausedMillis` shows what a run actually achieved.
-- `--busy-max-retries` (default 8) backs off exponentially on `SQLITE_BUSY`
-  instead of spinning. Exhausting the ladder is not a failure: the phase stops
-  with `stopReason: "busy"` and the run still exits `0`.
-
-Deletes run before reclaim, so a tight budget always spends itself on retention
-first and leaves free pages for the following night.
-
-Candidate discovery and deletion are separate statements. Discovery is a
-read-only indexed query ordered by the table's retention predicate; it may scan
-an arbitrarily large old-but-ineligible prefix, but it never owns the SQLite
-writer. The DELETE receives only that read's adaptive-batch key set and
-re-evaluates the complete eligibility predicate by primary-key lookup under the
-write transaction. Thus live/nonterminal races remain fail-closed while writer
-work is bounded by selected-key cardinality rather than total table size. The
-deadline is checked again after discovery so an expensive read cannot begin a
-late write.
-
-Counting eligible rows is a full predicate scan per table. It is the point of a
-report run and pure overhead under `--apply`, so `--apply` skips it by default;
-`--count-eligible` forces it and `--no-count-eligible` suppresses it. When the
-counts are skipped, `eligibleCount` and `remainingEligibleCount` report `null`
-rather than a fabricated `0` — a paced or deadline-bounded run genuinely does not
-know what it left behind.
+Discovery is a separate read, with the night's deadline on its VM execution.
+The DELETE receives only the adaptive-batch integer key set, searches by primary
+key, and rechecks the full eligibility predicate under the writer. No write
+begins after an expensive discovery has exhausted the deadline. Deletes precede
+reclaim, so a tight night leaves free pages for reuse and the following night.
+The PASSIVE checkpoint runs outside a transaction with the same owner admission,
+hold measurement and pacing; it never waits for readers/writers. Its I/O, like
+commit/fsync, cannot be preempted by the VM progress handler. `checkpointed`
+records completion of that attempt, including a partial PASSIVE checkpoint.
+The report counts actual deleted rows; it does not perform full-table eligible
+or remaining scans.
 
 Before any bulk prune, take a full backup of `state.sqlite`. If the disk cannot
 fit a full backup, defer the prune and surface that deferral; never perform the

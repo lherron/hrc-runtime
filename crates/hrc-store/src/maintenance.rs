@@ -472,3 +472,141 @@ impl Store {
         Ok(removed)
     }
 }
+
+/// Nightly metadata retention: the predicates are the retired Bun job's SQL,
+/// including its deliberately narrower terminal-runtime set (no detached).
+pub const RETENTION_TABLES: [&str; 3] = [
+    "runtime_buffers",
+    "broker_projection_dispositions",
+    "hrcmail_stop_refusals",
+];
+fn retention_plan(table: &str) -> Result<(&'static str, &'static str)> {
+    Ok(match table {
+        "runtime_buffers" => (
+            "e.created_at < ? AND EXISTS (SELECT 1 FROM runs AS run WHERE run.run_id=e.run_id AND run.status IN ('completed','failed','cancelled','zombie')) AND EXISTS (SELECT 1 FROM runtimes AS runtime WHERE runtime.runtime_id=e.runtime_id AND runtime.status IN ('terminated','dead','stale','crashed') AND runtime.active_run_id IS NULL)",
+            "e.created_at ASC,e.rowid ASC",
+        ),
+        "broker_projection_dispositions" => (
+            "(NOT EXISTS (SELECT 1 FROM broker_invocations AS i WHERE i.invocation_id=e.invocation_id) OR EXISTS (SELECT 1 FROM broker_invocations AS i WHERE i.invocation_id=e.invocation_id AND i.invocation_state IN ('exited','failed','disposed') AND julianday(i.updated_at)<julianday(?) AND e.seq<=i.last_projected_seq))",
+            "e.rowid ASC",
+        ),
+        "hrcmail_stop_refusals" => (
+            "julianday(e.updated_at)<julianday(?) AND EXISTS (SELECT 1 FROM runtimes AS runtime WHERE runtime.runtime_id=e.runtime_id AND runtime.status='terminated')",
+            "e.rowid ASC",
+        ),
+        _ => anyhow::bail!("unknown retention table"),
+    })
+}
+impl Store {
+    /// Discovery is a read; expensive ineligible prefixes never hold the writer.
+    pub fn retention_candidates(
+        &self,
+        table: &str,
+        cutoff: &str,
+        size: usize,
+        limit: std::time::Duration,
+    ) -> Result<Vec<i64>> {
+        let (predicate, order) = retention_plan(table)?;
+        self.retention_statement(limit, |store| {
+            Ok(store
+                .sqlite
+                .prepare(&format!(
+                    "SELECT e.rowid FROM {table} AS e WHERE {predicate} ORDER BY {order} LIMIT ?"
+                ))?
+                .query_map(params![cutoff, size as i64], |r| r.get(0))?
+                .collect::<rusqlite::Result<_>>()?)
+        })
+    }
+    /// A statement deadline without a transaction, for read discovery and
+    /// PASSIVE checkpoint. Checkpoint I/O is not preemptible VM execution.
+    pub fn retention_statement<T>(
+        &self,
+        limit: std::time::Duration,
+        action: impl FnOnce(&Self) -> Result<T>,
+    ) -> Result<T> {
+        let until = std::time::Instant::now() + limit;
+        self.sqlite
+            .progress_handler(1000, Some(move || std::time::Instant::now() >= until))?;
+        let result = action(self);
+        self.sqlite.progress_handler(0, None::<fn() -> bool>)?;
+        result
+    }
+    /// Full authority recheck, restricted to the discovered integer key set.
+    pub fn retention_delete(&self, table: &str, cutoff: &str, keys: &[i64]) -> Result<usize> {
+        let (predicate, _) = retention_plan(table)?;
+        Ok(self.sqlite.execute(&format!("DELETE FROM {table} WHERE rowid IN (SELECT e.rowid FROM {table} AS e WHERE e.rowid IN (SELECT CAST(value AS INTEGER) FROM json_each(?)) AND {predicate})"), params![serde_json::to_string(keys)?,cutoff])?)
+    }
+    /// Bound SQL execution and roll back interrupted writes. The caller holds
+    /// the owner mutex; no other statement can inherit this temporary handler.
+    /// Commit/fsync and rollback are not preemptible SQLite VM work.
+    pub fn retention_step<T>(
+        &self,
+        limit: std::time::Duration,
+        action: impl FnOnce(&Self) -> Result<T>,
+    ) -> Result<T> {
+        let until = std::time::Instant::now() + limit;
+        let busy_ms: i64 = self
+            .sqlite
+            .query_row("PRAGMA busy_timeout", [], |r| r.get(0))?;
+        // Busy waiting does not execute VM opcodes and cannot be interrupted by
+        // the progress handler. Yield to the next night instead of waiting.
+        self.sqlite.busy_timeout(std::time::Duration::ZERO)?;
+        self.sqlite
+            .progress_handler(1000, Some(move || std::time::Instant::now() >= until))?;
+        let result = (|| {
+            self.sqlite.execute_batch("BEGIN IMMEDIATE")?;
+            let value = action(self)?;
+            anyhow::ensure!(std::time::Instant::now() < until, "retention write budget");
+            self.sqlite.execute_batch("COMMIT")?;
+            Ok(value)
+        })();
+        self.sqlite.progress_handler(0, None::<fn() -> bool>)?;
+        if result.is_err() && !self.sqlite.is_autocommit() {
+            self.sqlite.execute_batch("ROLLBACK")?;
+        }
+        self.sqlite
+            .busy_timeout(std::time::Duration::from_millis(busy_ms as u64))?;
+        result
+    }
+    pub fn retention_vacuum(&self, pages: usize) -> Result<usize> {
+        anyhow::ensure!((1..=100).contains(&pages), "vacuum chunk out of bounds");
+        let before: i64 = self
+            .sqlite
+            .query_row("PRAGMA freelist_count", [], |r| r.get(0))?;
+        // Drain the returned rows: SQLite incremental vacuum may return once per page.
+        let mut stmt = self
+            .sqlite
+            .prepare(&format!("PRAGMA incremental_vacuum({pages})"))?;
+        let mut rows = stmt.query([])?;
+        while rows.next()?.is_some() {}
+        let after: i64 = self
+            .sqlite
+            .query_row("PRAGMA freelist_count", [], |r| r.get(0))?;
+        Ok(before.saturating_sub(after) as usize)
+    }
+    pub fn retention_checkpoint(&self) -> Result<()> {
+        // PASSIVE never waits for readers/writers. Do not put this inside BEGIN
+        // (SQLite refuses it), or replace it with RESTART/TRUNCATE.
+        let _: (i64, i64, i64) =
+            self.sqlite
+                .query_row("PRAGMA wal_checkpoint(PASSIVE)", [], |r| {
+                    Ok((r.get(0)?, r.get(1)?, r.get(2)?))
+                })?;
+        Ok(())
+    }
+    pub fn retention_auto_vacuum(&self) -> Result<i64> {
+        Ok(self
+            .sqlite
+            .query_row("PRAGMA auto_vacuum", [], |r| r.get(0))?)
+    }
+}
+
+impl Store {
+    pub fn retention_tables() -> &'static [&'static str; 3] {
+        &RETENTION_TABLES
+    }
+    pub fn retention_bundle_trips(&self) -> Result<Vec<Value>> {
+        Ok(self.sqlite.prepare("SELECT * FROM runtime_first_turn_watch WHERE first_turn_missing_tripped_at IS NOT NULL AND bundle_dir IS NOT NULL AND trip_event_seq IS NOT NULL ORDER BY first_turn_missing_tripped_at DESC")?
+            .query_map([], raw_row)?.collect::<rusqlite::Result<_>>()?)
+    }
+}

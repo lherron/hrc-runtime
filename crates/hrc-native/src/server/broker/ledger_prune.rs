@@ -5,6 +5,9 @@
 //! Without a window, without a readable mark, or with a mark that does not
 //! describe this database, it deletes nothing and says why. It never checks
 //! the mark's age, contacts the lake or touches session-level history.
+#[path = "ledger_prune/retention.rs"]
+mod retention;
+
 use super::{ApiError, Server, Shared, maintenance, stderr_json};
 use axum::{
     Json,
@@ -415,7 +418,9 @@ pub fn start(server: &Shared) {
                     deadline,
                     trigger: "schedule",
                 };
+                let budget = retention::before(&server, deadline).await;
                 run(&server, options).await;
+                retention::after(&server, budget).await;
             }
             next = next_start(Local::now());
         }

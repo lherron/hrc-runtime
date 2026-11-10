@@ -22,7 +22,7 @@ chrono = { version = "0.4", default-features = false, features = ["clock"] }
 crossbeam-channel = "0.5"
 unicode-segmentation = "1"
 
-rusqlite = { version = "0.39", features = ["bundled"] }
+rusqlite = { version = "0.39", features = ["bundled", "hooks"] }
 anyhow = "1"
 uuid = { version = "1", features = ["v4"] }
 libc = "0.2"

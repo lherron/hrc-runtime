@@ -340,55 +340,6 @@ describe('OTLP preferred port env', () => {
   })
 })
 
-describe('hrc delta-prune LaunchAgent', () => {
-  it('schedules bounded state retention nightly without full VACUUM or KeepAlive', async () => {
-    const plistPath = join(
-      import.meta.dir,
-      '..',
-      '..',
-      '..',
-      '..',
-      'launchd',
-      'com.praesidium.hrc-prune-deltas.plist'
-    )
-    const plist = await readFile(plistPath, 'utf8')
-
-    expect(plist).toContain('<string>com.praesidium.hrc-prune-deltas</string>')
-    expect(plist).toContain('<string>/Users/lherron/.bun/bin/bun</string>')
-    expect(plist).toContain(
-      '<string>/Users/lherron/praesidium/hrc-runtime/scripts/prune-hrc-event-deltas.ts</string>'
-    )
-    expect(plist).toContain('<string>--apply</string>')
-    expect(plist).toContain('<string>--runtime-buffer-retention-days</string>')
-    // Non-delta events retain indefinitely (Lance ruling 2026-07-28): the
-    // scheduled job prunes buffers and dedupe metadata, never event rows.
-    expect(plist).toContain('<string>--tables</string>')
-    expect(plist).toContain('<string>runtime_buffers,broker_projection_dispositions</string>')
-    expect(plist).not.toContain('<string>--event-retention-days</string>')
-    expect(plist).not.toContain('<string>events</string>')
-    expect(plist).not.toContain('<string>hrc_events</string>')
-    expect(plist).not.toContain('<string>broker_invocation_events</string>')
-    expect(plist).toContain(
-      '<string>--incremental-vacuum-pages</string>\n\t\t<string>20000</string>'
-    )
-    // Writer-lock guards: the job shares state.sqlite with the live daemon.
-    expect(plist).toContain('<string>--deadline-minutes</string>')
-    expect(plist).toContain('<string>--pace-millis</string>')
-    expect(plist).toContain('<string>--max-write-hold-millis</string>')
-    expect(plist).toContain('<string>--max-duty-cycle</string>')
-    expect(plist).toContain('<string>--incremental-vacuum-chunk-pages</string>')
-    expect(plist).toContain('<key>StartCalendarInterval</key>')
-    expect(plist).toContain('<key>HRC_STATE_DIR</key>')
-    expect(plist).toContain('<string>/Users/lherron/praesidium/var/state/hrc</string>')
-    expect(plist).toContain('/Users/lherron/praesidium/var/logs/hrc-runtime/hrc-prune-deltas.log')
-    expect(plist).toContain(
-      '/Users/lherron/praesidium/var/logs/hrc-runtime/hrc-prune-deltas.err.log'
-    )
-    expect(plist).not.toContain('--vacuum')
-    expect(plist).not.toContain('<key>KeepAlive</key>')
-  })
-})
-
 describe('launchctlKickstart', () => {
   let originalPath: string | undefined
   let shim: Shim | null = null

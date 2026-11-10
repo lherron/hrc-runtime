@@ -7,7 +7,7 @@ import {
 } from '../../packages/hrc-core/src/index.ts'
 
 import { RESTUB_TOOL_RESULTS_OPERATION } from './constants.ts'
-import { type SpillBrokerRow, type SpillLifecycleRow, isRecord } from './spill-tool-results.ts'
+import { type SpillBrokerRow, type SpillLifecycleRow, isRecord } from './rows.ts'
 import type {
   PrunePhaseStop,
   PruneStateRetentionOptions,

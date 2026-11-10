@@ -3,61 +3,31 @@ import { formatServerLogLine } from '../packages/hrc-server/src/server-log.ts'
 import { parsePruneStateRetentionArgs } from './prune-hrc-event-deltas/args.ts'
 import {
   MILLISECONDS_PER_MINUTE,
-  RESTUB_TOOL_RESULTS_OPERATION,
-  SPILL_TOOL_RESULTS_OPERATION,
   STRIP_ENVELOPE_PAYLOADS_OPERATION,
 } from './prune-hrc-event-deltas/constants.ts'
-import { agePreActivateBackups } from './prune-hrc-event-deltas/pre-activate-backups.ts'
-import { pruneStateRetention } from './prune-hrc-event-deltas/prune-state-retention.ts'
 import { restubToolResults } from './prune-hrc-event-deltas/restub-tool-results.ts'
-import { spillToolResults } from './prune-hrc-event-deltas/spill-tool-results.ts'
 import { stripEnvelopePayloads } from './prune-hrc-event-deltas/strip-envelope-payloads.ts'
 
 export type {
   PruneOperation,
   PruneStateRetentionOptions,
   PrunePhaseStop,
-  PruneRetentionTableResult,
-  PruneStateRetentionResult,
   StripEnvelopePayloadsResult,
-  SpillToolResultsResult,
   RestubToolResultsResult,
-  RetentionTable,
-  PruneTablePlan,
 } from './prune-hrc-event-deltas/types.ts'
 export { parsePruneStateRetentionArgs } from './prune-hrc-event-deltas/args.ts'
-export {
-  selectEligibleBatch,
-  selectEligibleBatchSql,
-  deleteSelectedBatch,
-  deleteSelectedBatchSql,
-} from './prune-hrc-event-deltas/batching.ts'
 export { stripEnvelopePayloads } from './prune-hrc-event-deltas/strip-envelope-payloads.ts'
-export { spillToolResults } from './prune-hrc-event-deltas/spill-tool-results.ts'
 export { restubToolResults } from './prune-hrc-event-deltas/restub-tool-results.ts'
-export {
-  createRetentionPlans,
-  createPurgePlans,
-  pruneStateRetention,
-} from './prune-hrc-event-deltas/prune-state-retention.ts'
 
 const PRUNE_LOG_COMPONENT = 'hrc-prune-deltas'
 
 if (import.meta.main) {
-  // Reported on the failure line too: the files are gone by the time a later step throws.
-  let preActivateBackups: ReturnType<typeof agePreActivateBackups> | undefined
   try {
     const options = parsePruneStateRetentionArgs(Bun.argv.slice(2))
-    // First and independent of the store's own retention, which can run to its deadline.
-    if (options.operation === 'retention') preActivateBackups = agePreActivateBackups(options)
     const result =
       options.operation === STRIP_ENVELOPE_PAYLOADS_OPERATION
         ? await stripEnvelopePayloads(options)
-        : options.operation === SPILL_TOOL_RESULTS_OPERATION
-          ? await spillToolResults(options)
-          : options.operation === RESTUB_TOOL_RESULTS_OPERATION
-            ? await restubToolResults(options)
-            : await pruneStateRetention(options)
+        : await restubToolResults(options)
     // One L2 line per run (logging standard); the report is the `data` object.
     process.stdout.write(
       formatServerLogLine(
@@ -70,8 +40,6 @@ if (import.meta.main) {
           applied: options.apply,
           batchSize: options.batchSize,
           checkpoint: options.checkpoint,
-          eventRetentionDays: options.eventRetentionDays,
-          runtimeBufferRetentionDays: options.runtimeBufferRetentionDays,
           incrementalVacuumPages: options.incrementalVacuumPages,
           deadlineMinutes: options.deadlineMillis / MILLISECONDS_PER_MINUTE,
           paceMillis: options.paceMillis,
@@ -79,7 +47,6 @@ if (import.meta.main) {
           maxDutyCycle: options.maxDutyCycle,
           countedEligible: options.countEligible,
           ...result,
-          ...(preActivateBackups === undefined ? {} : { preActivateBackups }),
         },
         PRUNE_LOG_COMPONENT
       )
@@ -91,7 +58,6 @@ if (import.meta.main) {
         'prune.failed',
         {
           message: error instanceof Error ? error.message : String(error),
-          ...(preActivateBackups === undefined ? {} : { preActivateBackups }),
         },
         PRUNE_LOG_COMPONENT
       )

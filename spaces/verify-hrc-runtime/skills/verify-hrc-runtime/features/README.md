@@ -11,7 +11,7 @@ Proven when. The last lines of each file name the drive that last proved it and 
 | 4 | HTTP API on the daemon socket (`/v1/health`, `/v1/events/tail` paging and refusals, `/v1/events/head`, `/v1/events/page`, retired routes) | [04-http-api.md](04-http-api.md) | scratch |
 | 5 | Placement and federation (`target locate`, `target bindings`, doctor's node/federation/placement rows) | [05-placement-federation.md](05-placement-federation.md) | live read-only; scratch |
 | 6 | Install and release (atomic release, manifest, `runningEqualsInstalled`, the owner tree and staging, release pruning and held releases, the dirty guard; the front door is obsolete on owner nodes) | [06-install-release.md](06-install-release.md) | live read-only; install needs operator |
-| 7 | Maintenance (`admin runs`, `admin metrics`, `admin status`, `runtime diagnostics`, `runtime sweep/prune` dry-runs, `capture status`, `broker-verify candidates/run`, `worktrees audit`, the prune-deltas job) | [07-maintenance.md](07-maintenance.md) | scratch; live read-only |
+| 7 | Maintenance (`admin runs`, `admin metrics`, `admin status`, `runtime diagnostics`, `runtime sweep/prune` dry-runs, `capture status`, `broker-verify candidates/run`, `worktrees audit`, native nightly retention) | [07-maintenance.md](07-maintenance.md) | scratch; live read-only |
 | 8 | Attach (`~/.bun/bin/hrc attach` in a real TTY through ghostmux to an `hrc-pty` seat, detach, the attach descriptor) | [08-attach.md](08-attach.md) | scratch |
 
 Since 2026-10-26 the installed CLI and the live daemon are native (`rusthrc`); `hv scratch up` starts the

@@ -1277,6 +1277,14 @@ _deploy-node ssh-target expected-node target-ref="origin/main" aspd-ref="origin/
 
     just _node-readback "{{ ssh-target }}" "{{ expected-node }}" "$target_sha" "$aspd_sha" "$aspd_release" "$injector" "{{ publication }}"
 
+    # C1b: retirement is a deploy mutation, after the full running-revision proof.
+    # Standalone readback remains read-only.
+    ssh -o BatchMode=yes -o ConnectTimeout=10 '{{ ssh-target }}' bash -s <<'RETIRE'
+    set -euo pipefail
+    cd "$HOME/praesidium/hrc-runtime"
+    bash scripts/retire-nightly-prune.sh
+    RETIRE
+
 # Read a node back after a deploy or an owner switch: healthy with a live pid,
 # the expected node, release identity (sourceCommit, running == installed) for
 # its owner kind, aspd, launchd ownership with the plist environment, and
