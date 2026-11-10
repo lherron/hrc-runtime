@@ -7,11 +7,10 @@ shared tombstone and must never be imported as an active registry binding.
 
 The current native owner implements the registry in
 `crates/hrc-native/src/server/placement/federation/registry_listener.rs`.
-The rebuild command below remains a Bun maintenance tool
-(`scripts/rebuild-binding-registry.ts` and
-`packages/hrc-store-sqlite/src/federation-repositories.ts`). It reconstructs
-active bindings only; it does not recover `binding_retirement_audit` or birth
-designations. Preserve those separately from registry backups when recovery
+The offline native command `rusthrc federation rebuild-registry` shares the
+owner's registry initializer and reads node stores through read-only schema
+admission. It reconstructs active bindings only; it does not recover
+`binding_retirement_audit` or birth designations. Preserve those separately from registry backups when recovery
 requires their history or routing hints. An audit row is not an active binding
 or a retirement fence.
 
@@ -28,7 +27,7 @@ investigate it; selecting a winner would conceal split authority.
 3. Build a new registry at a fresh path:
 
    ```bash
-   bun scripts/rebuild-binding-registry.ts \
+   rusthrc federation rebuild-registry \
      /tmp/binding-registry.rebuilt.sqlite \
      /tmp/svc-state.sqlite \
      /tmp/hrcdev-state.sqlite \
@@ -48,9 +47,15 @@ investigate it; selecting a winner would conceal split authority.
    the registry host, and read every active binding back through the registry
    API before re-enabling establishment.
 
-The rebuild never overwrites its output path. Retired local rows remain in the
-node stores and continue to prevent that old home from re-establishing the
-scope after the shared row is deleted.
+The rebuild never overwrites its output path. Each source must be a current HRC
+store accepted by this build; a refused ledger is named in the error. It never
+migrates or writes a source. If a backup needs forward migrations, preserve the
+original and explicitly migrate a separate working copy with `rusthrc store
+migrate <copy>` before rebuilding. A conflict exits 1 with its scope; an existing
+target or missing ledger exits 2. Success prints one JSON line with the target,
+source ledger/row counts, inserted bindings and same-home duplicates. Retired
+local rows remain in the node stores and continue to prevent that old home from
+re-establishing the scope after the shared row is deleted.
 
 ## Refresh stale binding caches after retirement
 

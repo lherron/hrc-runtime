@@ -16,6 +16,11 @@ async fn main() -> anyhow::Result<()> {
     if args.first().is_some_and(|a| a == "store") {
         std::process::exit(store_verb(&args));
     }
+    if args.first().is_some_and(|a| a == "federation")
+        && args.get(1).is_some_and(|a| a == "rebuild-registry")
+    {
+        std::process::exit(federation_verb(&args));
+    }
     // Retired forwarding flags are refused before the CLI declaration.
     let role = if args.first().is_some_and(|a| a == "server") {
         match server::front_invocation(&args) {
@@ -54,6 +59,114 @@ async fn main() -> anyhow::Result<()> {
         exit_json(&error);
     }
     Ok(())
+}
+
+const FEDERATION_USAGE: &str = "usage: rusthrc federation rebuild-registry <new-binding-registry.sqlite> <node-state.sqlite>...";
+
+/// Offline recovery, deliberately dispatched before daemon/CLI admission.
+fn federation_verb(args: &[String]) -> i32 {
+    use std::{fs::OpenOptions, path::PathBuf};
+    if matches!(args, [_, verb, help] if verb == "rebuild-registry" && (help == "--help" || help == "-h"))
+    {
+        println!("{FEDERATION_USAGE}");
+        return 0;
+    }
+    let [_, verb, target, sources @ ..] = args else {
+        eprintln!("{FEDERATION_USAGE}");
+        return 2;
+    };
+    if verb != "rebuild-registry"
+        || sources.is_empty()
+        || target.starts_with('-')
+        || sources.iter().any(|s| s.starts_with('-'))
+    {
+        eprintln!("{FEDERATION_USAGE}");
+        return 2;
+    }
+    let absolute = |path: &str| -> std::io::Result<PathBuf> {
+        std::path::absolute(path).map(|p| {
+            let mut out = PathBuf::from("/");
+            for part in p.components() {
+                match part {
+                    std::path::Component::ParentDir => {
+                        out.pop();
+                    }
+                    std::path::Component::Normal(p) => out.push(p),
+                    _ => {}
+                }
+            }
+            out
+        })
+    };
+    let paths = std::iter::once(target)
+        .chain(sources)
+        .map(|s| absolute(s))
+        .collect::<std::io::Result<Vec<_>>>();
+    let paths = match paths {
+        Ok(paths) => paths,
+        Err(error) => {
+            eprintln!("{error}");
+            return 1;
+        }
+    };
+    let target = &paths[0];
+    if target.try_exists().unwrap_or(false) {
+        eprintln!(
+            "refusing to overwrite existing rebuild target: {}",
+            target.display()
+        );
+        return 2;
+    }
+    for path in &paths[1..] {
+        if !path.try_exists().unwrap_or(false) {
+            eprintln!("node ledger does not exist: {}", path.display());
+            return 2;
+        }
+    }
+    // Reserve atomically. SQLite's normal open would silently open an existing
+    // target if another rebuild won the race after our initial existence check.
+    let reserve = || -> std::io::Result<()> {
+        if let Some(parent) = target.parent() {
+            std::fs::create_dir_all(parent)?;
+        }
+        OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(target)?;
+        Ok(())
+    };
+    if let Err(error) = reserve() {
+        if error.kind() == std::io::ErrorKind::AlreadyExists {
+            eprintln!(
+                "refusing to overwrite existing rebuild target: {}",
+                target.display()
+            );
+            return 2;
+        }
+        eprintln!("cannot create rebuild target {}: {error}", target.display());
+        return 1;
+    }
+    match server::rebuild_registry(target, &paths[1..]) {
+        Ok((source_rows, inserted, duplicates)) => {
+            println!(
+                "{}",
+                serde_json::json!({
+                    "ok":true, "targetPath":target, "sourceLedgers":sources.len(),
+                    "sourceRows":source_rows, "inserted":inserted, "duplicates":duplicates,
+                })
+            );
+            0
+        }
+        Err(error) => {
+            // Admission/read errors occur before registry initialization. Drop
+            // that empty reservation; conflicts retain the initialized empty DB.
+            if target.metadata().is_ok_and(|m| m.len() == 0) {
+                let _ = std::fs::remove_file(target);
+            }
+            eprintln!("{error:#}");
+            1
+        }
+    }
 }
 
 const STORE_USAGE: &str = "usage: rusthrc store migrate <path> | rusthrc store state <path> | rusthrc store backup <path> <dest>";

@@ -2681,10 +2681,10 @@
     "store-op:packages/hrc-store-sqlite/src/federation-repositories.ts:BindingRegistry:designationHistory:15823": "No caller outside the repository file.",
     "store-op:packages/hrc-store-sqlite/src/federation-repositories.ts:BindingRegistry:listRecords:14432": "No caller outside the repository file.",
     "store-op:packages/hrc-store-sqlite/src/federation-repositories.ts:BindingRegistry:list:14236": "Native registry listener has no list route; no compared caller.",
-    "store-op:packages/hrc-store-sqlite/src/federation-repositories.ts:BindingRegistry:insertRebuilt:20612": "Only caller is the operator script scripts/rebuild-binding-registry.ts.",
-    "store-op:packages/hrc-store-sqlite/src/federation-repositories.ts:<module>:rebuildBindingRegistryFromLedgers:21046": "Only caller is the operator script scripts/rebuild-binding-registry.ts.",
-    "store-op:packages/hrc-store-sqlite/src/federation-repositories.ts:<module>:readPlacementLedgerRows:9932": "Only caller is the operator script scripts/rebuild-binding-registry.ts.",
+    "store-op:packages/hrc-store-sqlite/src/federation-repositories.ts:BindingRegistry:insertRebuilt:20612": "Legacy Bun recovery helper; offline recovery is now owned by rusthrc federation rebuild-registry.",
+    "store-op:packages/hrc-store-sqlite/src/federation-repositories.ts:<module>:rebuildBindingRegistryFromLedgers:21046": "Legacy Bun recovery helper; offline recovery is now owned by rusthrc federation rebuild-registry.",
+    "store-op:packages/hrc-store-sqlite/src/federation-repositories.ts:<module>:readPlacementLedgerRows:9932": "Legacy Bun recovery helper; offline recovery is now owned by rusthrc federation rebuild-registry.",
     "store-op:packages/hrc-store-sqlite/src/federation-repositories.ts:PlacementLedgerRepository:retire:7266": "Scope retirement (POST /v1/federation/retire) is not ported.",
-    "store-source:packages/hrc-store-sqlite/src/federation-repositories.ts": "The file still has unported operations: list, designationHistory, listRecords, ledger retire and the rebuild-from-ledgers path."
+    "store-source:packages/hrc-store-sqlite/src/federation-repositories.ts": "The file still has unported operations: list, designationHistory, listRecords and ledger retire."
   }
 }

@@ -127,6 +127,7 @@ mod turns;
 mod aspc;
 #[path = "server/placement/federation/mod.rs"]
 mod federation;
+pub use federation::rebuild_registry;
 #[path = "server/placement/owner.rs"]
 mod owner;
 #[path = "server/placement/placement.rs"]
