@@ -3,8 +3,11 @@
 `cargo build --manifest-path crates/Cargo.toml -p hrc-native` builds
 `crates/target/debug/rusthrc`. Run `rusthrc server` (or `server serve`) with
 `HRC_RUNTIME_DIR` and `HRC_STATE_DIR` pointing to isolated scratch roots.
-The database must already have the exact current Bun migration set. Rust
-never creates or migrates it. Production installation is not authorized by N1.
+The owner creates or migrates `state.sqlite` at boot under the store lock
+(`state.sqlite.lock` beside it), before binding any socket; an empty state
+directory needs no init step and no Bun (T-12840). `rusthrc store migrate
+<path>` does the same for fixtures and refuses `store_owned` while a daemon
+holds the store. Production installation is not authorized by N1.
 
 The first N1 landing provides schema admission, the Unix HTTP listener,
 Bun-compatible ownership files, health/status, session resolve/list/by-host,
@@ -236,8 +239,9 @@ and remaining observed-use N1 routes are still in progress; this does not claim
 N1 parity. Direct-store readers use `Store::open_readonly`; the daemon uses
 `Store::open`.
 
-Schema admission extracts migration names from the checked-out Bun migration
-source graph at build time. It checks both a read-only connection and the
+Schema admission compares the store with the build's set: today still the
+names `build.rs` extracts from the frozen TypeScript graph, which equal
+`hrc_store::migrate::LEGACY_IDS` (A3 moves admission onto the Rust lists). It checks both a read-only connection and the
 write handle before any pragma or write. Missing or extra names refuse boot.
 Shutdown closes the listener/store and removes only this owner's control
 socket and ownership files; it never kills a broker.

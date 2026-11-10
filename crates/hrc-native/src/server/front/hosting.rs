@@ -115,6 +115,51 @@ fn raise_open_file_limit() {
     }
 }
 
+/// Boot migration under the store lock. A failure leaves the store at the set
+/// it had, so the previous release still admits it; the daemon exits unbound.
+fn migrate_store(db: &std::path::Path) -> Result<hrc_store::migrate::StoreOwner> {
+    use hrc_store::migrate::{self, Actor, MigrateError, Outcome};
+    let starting = |pending: &[&str]| {
+        stderr_json(
+            "info",
+            "server",
+            "store.migrating",
+            json!({"path":db,"pending":pending}),
+        );
+    };
+    match migrate::own_and_migrate(db, migrate::FORWARD, &Actor::current(), starting) {
+        Ok((owner, outcome)) => {
+            match outcome {
+                Outcome::Created { forward } => stderr_json(
+                    "info",
+                    "server",
+                    "store.created",
+                    json!({"path":db,"baseline":migrate::BASELINE_HEAD,"forward":forward}),
+                ),
+                Outcome::Upgraded { applied } => stderr_json(
+                    "info",
+                    "server",
+                    "store.migrated",
+                    json!({"path":db,"applied":applied}),
+                ),
+                Outcome::Current => {}
+            }
+            Ok(owner)
+        }
+        Err(error) => {
+            if let Some(MigrateError::Failed { id, error }) = error.downcast_ref() {
+                stderr_json(
+                    "error",
+                    "server",
+                    "store.migration_failed",
+                    json!({"path":db,"id":id,"error":error}),
+                );
+            }
+            Err(error)
+        }
+    }
+}
+
 pub async fn serve(role: Role) -> Result<()> {
     install_panic_hook();
     raise_open_file_limit();
@@ -125,13 +170,21 @@ pub async fn serve(role: Role) -> Result<()> {
     let state = PathBuf::from(
         env::var("HRC_STATE_DIR").unwrap_or_else(|_| format!("{home}/praesidium/var/state/hrc")),
     );
-    // Schema refusal precedes all filesystem effects, including ownership files.
-    // The front never writes: a read-only handle makes that structural.
+    // The owner takes the store lock, then migrates, before any socket or
+    // runtime-dir ownership file exists (T-12840 §3). The lock is held for the
+    // process lifetime. The front never writes: a read-only handle makes that
+    // structural.
     let front = role.is_front();
-    let mut store = if front {
-        Store::open_readonly(&state.join("state.sqlite"))?
+    let db = state.join("state.sqlite");
+    let _store_owner = if front {
+        None
     } else {
-        Store::open(&state.join("state.sqlite"))?
+        Some(migrate_store(&db)?)
+    };
+    let mut store = if front {
+        Store::open_readonly(&db)?
+    } else {
+        Store::open(&db)?
     };
     // Node identity resolves before ownership: a malformed federation config
     // refuses loudly rather than letting the daemon come up as the wrong node.

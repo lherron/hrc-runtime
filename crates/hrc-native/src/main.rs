@@ -11,6 +11,11 @@ async fn main() -> anyhow::Result<()> {
         );
         return Ok(());
     }
+    // The scratch verb for fixtures that seed rows before a daemon starts. It
+    // takes the owner's store lock, so it refuses a store a daemon owns.
+    if args.first().is_some_and(|a| a == "store") {
+        std::process::exit(store_verb(&args));
+    }
     // Retired forwarding flags are refused before the CLI declaration.
     let role = if args.first().is_some_and(|a| a == "server") {
         match server::front_invocation(&args) {
@@ -49,6 +54,46 @@ async fn main() -> anyhow::Result<()> {
         exit_json(&error);
     }
     Ok(())
+}
+
+/// `rusthrc store migrate <path>`: one JSON line on stdout or stderr.
+fn store_verb(args: &[String]) -> i32 {
+    use hrc_store::migrate::{self, Actor, MigrateError, Outcome, StoreOwned};
+    let [_, verb, path] = args else {
+        eprintln!("usage: rusthrc store migrate <path>");
+        return 2;
+    };
+    if verb != "migrate" {
+        eprintln!("usage: rusthrc store migrate <path>");
+        return 2;
+    }
+    let db = std::path::Path::new(path);
+    match migrate::own_and_migrate(db, migrate::FORWARD, &Actor::current(), |_| {}) {
+        Ok((_owner, outcome)) => {
+            let (name, applied) = match outcome {
+                Outcome::Created { forward } => ("created", forward),
+                Outcome::Upgraded { applied } => ("upgraded", applied),
+                Outcome::Current => ("current", vec![]),
+            };
+            println!(
+                "{}",
+                serde_json::json!({"ok":true,"path":db,"outcome":name,"applied":applied})
+            );
+            0
+        }
+        Err(error) => {
+            let code = error
+                .downcast_ref::<MigrateError>()
+                .map(MigrateError::code)
+                .or_else(|| error.downcast_ref::<StoreOwned>().map(|_| StoreOwned::CODE))
+                .unwrap_or("store_migrate_error");
+            eprintln!(
+                "{}",
+                serde_json::json!({"ok":false,"path":db,"error":{"code":code,"message":format!("{error:#}")}})
+            );
+            1
+        }
+    }
 }
 
 /// A daemon/front failure is one JSON line on stderr, never anyhow's plain text.

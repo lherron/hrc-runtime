@@ -565,6 +565,7 @@ dependencies = [
  "anyhow",
  "chrono",
  "hrc-common",
+ "libc",
  "regex",
  "rusqlite",
  "serde_json",

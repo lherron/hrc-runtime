@@ -1,4 +1,6 @@
-//! Canonical HRC SQLite access. Bun owns migrations; native opens fail closed.
+//! Canonical HRC SQLite access. Only the owner at boot and `rusthrc store
+//! migrate` migrate (see [`migrate`]); every other open fails closed.
+pub mod migrate;
 mod schema_state;
 pub use schema_state::read_schema_state;
 
@@ -101,18 +103,23 @@ pub fn timestamp() -> String {
 }
 
 fn assert_schema(db: &Connection) -> Result<()> {
-    let mut stmt = db
-        .prepare("SELECT id FROM hrc_migrations ORDER BY id")
-        .context("schema: missing HRC migration ledger; initialize scratch stores with Bun")?;
-    let actual = stmt
-        .query_map([], |r| r.get::<_, String>(0))?
-        .collect::<rusqlite::Result<BTreeSet<_>>>()?;
     let expected = MIGRATIONS
         .iter()
         .map(|s| (*s).to_owned())
         .collect::<BTreeSet<_>>();
+    assert_migration_set(db, &expected)
+}
+
+/// Admission: the store's applied set equals `expected`, in both directions.
+pub fn assert_migration_set(db: &Connection, expected: &BTreeSet<String>) -> Result<()> {
+    let mut stmt = db
+        .prepare("SELECT id FROM hrc_migrations ORDER BY id")
+        .context("schema: missing HRC migration ledger; create scratch stores with `rusthrc store migrate`")?;
+    let actual = stmt
+        .query_map([], |r| r.get::<_, String>(0))?
+        .collect::<rusqlite::Result<BTreeSet<_>>>()?;
     let missing = expected.difference(&actual).collect::<Vec<_>>();
-    let extra = actual.difference(&expected).collect::<Vec<_>>();
+    let extra = actual.difference(expected).collect::<Vec<_>>();
     if !missing.is_empty() || !extra.is_empty() {
         bail!("schema: migration set mismatch; missing={missing:?}; unknown={extra:?}");
     }
