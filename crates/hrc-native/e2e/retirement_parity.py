@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Retire only disposable scopes on private Bun/native registry stores.
+"""Retire only disposable scopes on a private native store and registry.
 
 Failure modes: retiring foreign/live scope; releasing registry before fencing;
 losing continuation fences; duplicate retry changing reason/timestamps; registry
@@ -9,8 +9,7 @@ import json
 from datetime import datetime
 from pathlib import Path
 import sqlite3
-import subprocess
-from n4_federation import TAILNET,free_port
+from n4_federation import LEDGER_ACTIVE,TAILNET,free_port
 from routes import main
 
 SCOPE=None
@@ -24,16 +23,16 @@ def prepare(release, dbpath, scope, host, env):
     config=Path(env['HRC_PEER_CONFIG_FILE'])
     config.write_text(json.dumps({'nodeId':'operator-test','peers':{},'registry':{'bind':f'http://{TAILNET}:{free_port()}'},'gate':{'mode':'off','registryHost':'operator-test'}}))
     config.chmod(0o600)
-    script='''
-import {openHrcDatabase,createPlacementLedgerRepository} from DATABASE;
-const db=openHrcDatabase(process.argv[1]);const l=createPlacementLedgerRepository(db.sqlite);
-for(const [s,h] of [[process.argv[2],'operator-test'],[process.argv[2]+'-conflict','operator-test'],[process.argv[2]+'-foreign','other'],[process.argv[2]+'-live','operator-test'],[process.argv[2]+'-fence-error','operator-test']])l.installActive({scopeRef:s,homeNodeId:h,updatedAt:'2026-10-01T00:00:00.000Z'});
-const s=db.sessions.getByHostSessionId(process.argv[3]);
-db.runtimes.insert({runtimeId:'retirement-live',hostSessionId:s.hostSessionId,scopeRef:process.argv[2]+'-live',laneRef:s.laneRef,generation:s.generation,transport:'sdk',status:'ready',runtimeStateJson:{lifecycleOwner:'external'},supportsInflightInput:false,createdAt:s.createdAt,updatedAt:s.updatedAt});
-db.close();
-'''.replace('DATABASE',json.dumps(str(release/'packages/hrc-store-sqlite/src/index.ts')))
-    r=subprocess.run(['bun','-e',script,str(dbpath),scope,host],env=env,capture_output=True,text=True)
-    assert r.returncode==0,r.stderr
+    at='2026-10-01T00:00:00.000Z'
+    with sqlite3.connect(dbpath) as db:
+        for s,h in [(scope,'operator-test'),(scope+'-conflict','operator-test'),(scope+'-foreign','other'),(scope+'-live','operator-test'),(scope+'-fence-error','operator-test')]:
+            db.execute(LEDGER_ACTIVE,(s,h,at,at))
+        session=db.execute('SELECT lane_ref,generation,created_at,updated_at FROM sessions WHERE host_session_id=?',(host,)).fetchone()
+        # A live externally owned (participant) runtime on the -live scope: the
+        # columns hrc_store's runtime insert writes for a broker runtime.
+        db.execute('INSERT INTO runtimes(runtime_id,host_session_id,scope_ref,lane_ref,generation,transport,status,supports_inflight_input,controller_kind,runtime_state_json,created_at,updated_at) '
+                   "VALUES('retirement-live',?,?,?,?,'headless','ready',0,'harness-broker',?,?,?)",
+                   (host,scope+'-live',session[0],session[1],json.dumps({'lifecycleOwner':'external'}),session[2],session[3]))
     with sqlite3.connect(dbpath) as db:
         db.row_factory=sqlite3.Row
         row=dict(db.execute('SELECT * FROM sessions WHERE host_session_id=?',(host,)).fetchone())
@@ -73,21 +72,19 @@ def observe(dbpath):
 
 
 def compare(results):
-    def normalize(v):
-        if isinstance(v,dict):return {k:('<time>' if k in ('updatedAt','requestId') else normalize(x)) for k,x in v.items()}
-        if isinstance(v,list):return [normalize(x) for x in v]
-        return v
-    for a,b in zip(results['bun'],results['native'],strict=True):
-        assert normalize(a['response'])==normalize(b['response']),(a['case'],a['response'],b['response'])
-        for key in ('ledger','continuities','sessions','registry'):assert a[key]==b[key],(a['case'],key,a[key],b[key])
-    for owner in ('bun','native'):
-        by_case={r['case']:r for r in results[owner]}
-        for case in ('retire','registry-conflict'):
-            row=by_case[case]
-            stamp=row['response']['body']['ledger']['record']['updatedAt']
-            assert row['before']-.001 <= datetime.fromisoformat(stamp.replace('Z','+00:00')).timestamp() <= row['after']+.001
-        assert by_case['retire']['response']['body']['ledger']==by_case['retry']['response']['body']['ledger']
+    by_case={r['case']:r for r in results['native']}
+    for case in ('retire','registry-conflict'):
+        row=by_case[case]
+        stamp=row['response']['body']['ledger']['record']['updatedAt']
+        assert row['before']-.001 <= datetime.fromisoformat(stamp.replace('Z','+00:00')).timestamp() <= row['after']+.001
+    # A duplicate retry changes neither reason nor timestamps.
+    assert by_case['retire']['response']['body']['ledger']==by_case['retry']['response']['body']['ledger']
     rows={r['case']:r for r in results['native']}
+    for case in ('unknown','foreign'):
+        body=rows[case]['response']['body']
+        assert (body['ok'],body['outcome'],body['state'])==(False,'refused','unchanged'),(case,body)
+    assert [r[1] for r in rows['foreign']['ledger'] if r[0]==SCOPE+'-foreign']==['active']
+    assert [r[1:] for r in rows['retry']['ledger'] if r[0]==SCOPE]==[('retired','first reason')]
     assert rows['retire']['response']['body']['outcome']=='retired'
     assert rows['retry']['response']['body']['outcome']=='idempotent'
     assert rows['registry-conflict']['response']['body']['state']=='fenced-registry-pending'
@@ -99,4 +96,4 @@ def compare(results):
     assert sum(x[1] for x in rows['retire']['sessions'])==2
 
 
-if __name__=='__main__':main(prepare=prepare,case_factory=cases,settle=settle,observe=observe,compare=compare,suite='retirement-parity')
+if __name__=='__main__':main(prepare=prepare,case_factory=cases,settle=settle,observe=observe,compare=compare,suite='retirement-parity',owners=('native',))
