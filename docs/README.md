@@ -36,7 +36,6 @@ Current reference for the HRC runtime. Design records live in
 - [wave-b-registry.md](wave-b-registry.md) — Verdaccio single-authority contract for package publication.
 - [isolated-daemon-smoke-recipe.md](isolated-daemon-smoke-recipe.md) — when and how to smoke against an isolated HRC daemon.
 - [urgent-turn-smoke.md](urgent-turn-smoke.md) — smoke for the four broker admission classes against an installed release.
-- [runbooks/broker-tmux-ghostmux-e2e.md](runbooks/broker-tmux-ghostmux-e2e.md) — repeatable ghostmux E2E harness for the broker-tmux substrate.
 
 ## Approved designs
 
