@@ -57,7 +57,7 @@ release into `~/praesidium/var/hrc-owner/hrc-runtime-releases/` and repoints
   older ones, each named by ≥1 live process argv (`T-12756/06-install-release/drive.txt`).
 - `hrc-owner.sh stage` on a `pending` store writes a `pre-activate-*.sqlite` backup with `rusthrc store backup`
   (`VACUUM INTO`, read-only, passes `quick_check`) after a free-space check (store + WAL + 2 GiB), and deletes
-  older ones (T-13056); the daemon then migrates at boot. Backups written by the retired Bun `activate` left `-shm`/`-wal` siblings behind (one 25 GB backup plus both siblings in
+  no older backup (T-13056); the daemon then migrates at boot. Backups written by the retired Bun `activate` left `-shm`/`-wal` siblings behind (one 25 GB backup plus both siblings in
   `var/state/hrc/backups/` on 2026-11-09). The daemon ages backups nightly and reports `.data.backupsRemoved` in
   `retention.report` (feature 7, T-13046).
 - The front door (T-11822) is obsolete on owner nodes: `front-door-enable|disable` and `launchd-install`

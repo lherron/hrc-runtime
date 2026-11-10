@@ -343,7 +343,12 @@ old_backups="$(backups)"
 mark="$(stat -f %z "$LOG")"
 rc=0; deploy force publish || rc=$?
 pid_b="$(daemon_pid)"
-bk="$(backups)"
+all_bk="$(backups)"
+# The stage step deletes no older backup (T-13056): every earlier one is kept,
+# and exactly one new one is added.
+old_n="$(printf '%s\n' "$old_backups" | grep -c . || true)"
+kept_n="$(printf '%s\n' "$old_backups" | grep . | grep -cxF -f <(printf '%s\n' "$all_bk") || true)"
+bk="$(printf '%s\n' "$all_bk" | grep . | grep -vxF -f <(printf '%s\n' "$old_backups" | grep . || echo /none) || true)"
 bk_n="$(printf '%s\n' "$bk" | grep -c . || true)"
 bk_check="$( [[ -n "$bk" ]] && q "$bk" 'PRAGMA quick_check' || echo none)"
 bk_ids="$( [[ -n "$bk" ]] && ids "$bk" | wc -l | tr -d ' ' || echo 0)"
@@ -355,14 +360,14 @@ inc_after="$(count "$DB" 'SELECT ledger_incarnation_id FROM hrc_event_ledger_met
 boot_migrated="$(log_since "$mark" | jq -c 'select(.event == "store.migrated") | .data' | tail -1)"
 listen_after="$(log_since "$mark" | jq -r 'select(.event == "store.migrated" or .event == "server.listening") | .event' | paste -sd, -)"
 readback="$(owner schema-state --exe "$OWNER_EXE" 2>/dev/null)"
-record pending_backup_then_daemon_migrates_at_boot "$([[ $rc == 0 && "$bk_n" == 1 && "$bk_check" == ok && "$bk_ids" == "$base_ids" && "$bk_has_new" == 0 && "$store_has_new" == 1 &&
+record pending_backup_then_daemon_migrates_at_boot "$([[ $rc == 0 && "$bk_n" == 1 && "$old_n" -ge 1 && "$kept_n" == "$old_n" && "$bk_check" == ok && "$bk_ids" == "$base_ids" && "$bk_has_new" == 0 && "$store_has_new" == 1 &&
   "$events_after" == $((events_before + 1)) && "$inc_before" == "$inc_after" && "$seq_after" -gt "$seq_before" && "$(jq -r .path <<<"$boot_migrated")" == "$DB" &&
   "$listen_after" == store.migrated,server.listening* && "$readback" == current && "$(opened_db "$pid_b")" == "$DB" ]] &&
-  grep -q 'pruned older backup' "$root/deploy.out" && grep -q '_node-readback scratch scratch' "$JUSTLOG" && echo 1 || echo 0)" \
-  "$(jq -cn --argjson rc "$rc" --arg bk "$bk" --arg old "$old_backups" --arg check "$bk_check" --arg bkids "$bk_ids" --arg bknew "$bk_has_new" --arg storenew "$store_has_new" \
+  ! grep -q 'pruned older backup' "$root/deploy.out" && grep -q '_node-readback scratch scratch' "$JUSTLOG" && echo 1 || echo 0)" \
+  "$(jq -cn --argjson rc "$rc" --arg bk "$bk" --arg old "$old_backups" --arg kept "$kept_n/$old_n" --arg check "$bk_check" --arg bkids "$bk_ids" --arg bknew "$bk_has_new" --arg storenew "$store_has_new" \
     --arg eb "$events_before" --arg ea "$events_after" --arg sb "$seq_before" --arg sa "$seq_after" --arg incsame "$([[ "$inc_before" == "$inc_after" ]] && echo true || echo false)" \
     --argjson booted "${boot_migrated:-null}" --arg order "$listen_after" --arg readback "$readback" --arg opened "$(opened_db "$pid_b")" \
-    '{exit: $rc, backup: $bk, olderBackupsBefore: $old, backupQuickCheck: $check, backupIds: $bkids, backupHasNewId: $bknew, storeHasNewId: $storenew,
+    '{exit: $rc, backup: $bk, olderBackupsBefore: $old, olderBackupsKept: $kept, backupQuickCheck: $check, backupIds: $bkids, backupHasNewId: $bknew, storeHasNewId: $storenew,
       storeMigratedRows: [$eb, $ea], hrcEventsSeq: [$sb, $sa], incarnationUnchanged: $incsame, bootLine: $booted, bootOrder: $order,
       readback: $readback, daemonOpened: $opened}')"
 

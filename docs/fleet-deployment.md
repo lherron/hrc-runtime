@@ -200,8 +200,8 @@ configured so that macOS TCC grants survive releases (T-12224;
   `pending`, stage first takes an online backup with `rusthrc store backup`
   (`VACUUM INTO`, read-only, `quick_check`) to
   `backups/pre-activate-<stamp>-<pid>.sqlite` while the old daemon still serves,
-  refusing when the volume lacks the store and WAL plus 2 GiB, and keeps only that
-  newest backup. The invoking Mable seat then restarts the node, and
+  refusing when the volume lacks the store and WAL plus 2 GiB. It deletes no
+  older backup; the daemon's nightly retention ages them at 7 days. The invoking Mable seat then restarts the node, and
   `hrc-owner.sh boot-check` reads the boots after the restart from the owner log:
   any `store.migration_failed` fails the deploy naming the failing id and the
   number of failed boots (launchd's retries), and otherwise the store must read

@@ -366,7 +366,7 @@ commit_owner_exe() {
 # its WAL plus 2 GiB, so a backup never fills the disk under the live daemon.
 BACKUP_HEADROOM_KIB=$((2 * 1024 * 1024))
 backup_store() {
-  local db="$1" exe="$2" dir backup size wal=0 need avail old
+  local db="$1" exe="$2" dir backup size wal=0 need avail
   [[ -f "$db" ]] || fail "no store at $db; nothing staged"
   dir="$(dirname "$db")/backups"
   mkdir -p "$dir" || fail "cannot create $dir; nothing staged"
@@ -382,12 +382,9 @@ backup_store() {
   "$exe" store backup "$db" "$backup" >/dev/null || fail "backup of $db failed; nothing staged"
   chmod 600 "$backup"
   echo "[stage] backup=$backup (quick_check ok)"
-  # The backup just written is this migration's rollback point; older copies
-  # are a full store each (2-25 GiB) and roll back nothing current.
-  for old in "$dir"/pre-activate-*.sqlite; do
-    [[ -f "$old" && "$old" != "$backup" ]] || continue
-    rm -f -- "$old" && echo "[stage] pruned older backup $old"
-  done
+  # Older backups stay (T-13056): the daemon's nightly retention ages
+  # pre-activate-* at 7 days, and the free-space check above refuses a backup
+  # that would not fit.
 }
 
 log_mark() {
