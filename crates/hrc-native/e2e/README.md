@@ -8,26 +8,20 @@ Rust tests create stores through the library migrator; Python drivers use
 The CLI differential still needs its Bun oracle, as do the manual comparisons
 and drivers exercising Bun repositories, SDKs or a Bun backend.
 
-`just e2e-native-full` runs eight standing product workflows, by hand only. It
-is not on the post-push runner, because it needs a Bun baseline and live model
-turns (Lance ruling 2026-10-26: no Bun in the gate). The workflows: schema refusal without writes,
-owner recovery/lifecycle, accounting, the front door, cold birth and reattach,
-mid-turn broker restart, submission doors, and maintenance live-seat safety.
-It builds the native/kernel binaries and runs each script even if an earlier
-one fails. A failure is a failed check; no expected-red list masks it.
+The native-only owner/route/lifecycle drivers run individually with
+`--binary <rusthrc> --artifacts <directory>`; `routes.py`, `target_list.py`,
+`ensure_archived_successor.py` and `accounting.py` also require a fresh
+`--scratch-root /tmp/<name>`. `hrcpty_substrate.py` accepts `--root` instead.
+They migrate private stores, launch native owners, assert literals or durable
+invariants and clean their scratch roots. `lifecycle_credentials.py` uses the
+shared deterministic real-hrcpty seat fixture. None of these needs a model.
+The retired front proxy and full comparison orchestrator are deleted.
 
-Run from a clean terminal (for example `ghostmux new --cwd <checkout>`).
-Required: Bun (parity baseline), the current installed Bun
-release, live aspd, tmux, wrkq and harness credentials. The runner copies the
-Bun release outside the atomic tree before any daemon starts. All writes use
-fresh disposable runtime/state/project roots. It never installs or restarts a
-shared service. Drivers own their scratch daemon/broker cleanup.
-
-Artifacts default to `${FOUNDRY_ARTIFACTS:-/tmp}/hrc-native-full-<time>-<pid>`;
-set `HRC_NATIVE_FULL_ARTIFACTS` to keep them elsewhere. `summary.json` contains
-each command and exit status; each suite directory contains `driver.log` plus
-the driver's original captures/comparison reports. Override baseline/socket
-with `python3 crates/hrc-native/e2e/full.py --help`.
+T-13074 follow-on List (retained, not native-qualified): lifecycle_actions,
+lifecycle_peer, runtime_reads, maintenance, session_index, session_projection,
+runtimes_start, turn_no_intent, steer_no_intent. `error_wire.py` retains its
+422 capability assertion and is product-blocked on native cold schema admission;
+see the task's `error-wire-judgment.md`. Lists do not count as passing suites.
 
 The manual corpus below remains explicit qualification, with scratch roots,
 real seats, paired captures or node-specific prerequisites supplied by its
@@ -77,24 +71,21 @@ Deleted entries stay listed to explain their removal; their source remains in gi
 
 | Script | Product claim / reason | Verdict |
 | --- | --- | --- |
-| `accounting.py` | Real-owner accounting differential, with separate stores for proxy traffic. | promote |
-| `cold_birth.py` | N1 gates 1, 2 and 4 as one real workflow on fresh, isolated state. | promote |
+| `accounting.py` | Native weighted request metrics, nonempty ledger, streams, writer recovery, cap and retention. | keep-manual |
 | `broker_projection_failure.py` | Owner projection failure preserves a live hrc-pty runtime and credential, reports degradation and recovers; real broker exit crash-marks; transport-only close with running broker averts condemnation (T-12169). | keep-manual |
-| `error_wire.py` | Internal error cause/request ID and real codex presentation broker capability refusal, with an unstructured turn control (T-12063). | keep-manual |
-| `ensure_archived_successor.py` | Archived ensure differential: real Bun repository snapshot, isolated owners. (requires explicit scratch/capture inputs; retained qualification) | keep-manual |
-| `front_accounting.py` | Separate-state front accounting probe; real Bun behind a byte-forwarding tap. (requires explicit scratch/capture inputs; retained qualification) | keep-manual |
-| `front_door.py` | F gates 1-3: rusthrc front on hrc.sock, Bun behind on hrc-bun.sock, one scratch state. (protected by T-11826) | promote |
+| `error_wire.py` | T-13074 List: follow-on conversion; not native-qualified. 422 assertion retained; product-blocked capability admission. | list |
+| `ensure_archived_successor.py` | Native archived succession: generation, inherited intent/continuation, repeat identity and continuity. | keep-manual |
 | `front_door_report.py` | none — task-time acceptance measurement for completed T-11822; front_door.py retains the behavioral gate | delete |
-| `lifecycle_actions.py` | Granted lifecycle on the one authorized disposable owner, versus copied Bun. (requires explicit scratch/capture inputs; retained qualification) | keep-manual |
-| `lifecycle_credentials.py` | Real owner credential lifecycle: boot backfill, rotation, mint and revocation. (requires explicit scratch/capture inputs; retained qualification) | keep-manual |
-| `lifecycle_peer.py` | Bun/native origins forward a verified primary's grant to the owned Bun peer. (requires explicit scratch/capture inputs; retained qualification) | keep-manual |
-| `lifecycle_rows.py` | Compare real boot/stop ledger rows over clean, malformed and foreign history. (requires explicit scratch/capture inputs; retained qualification) | keep-manual |
-| `lifecycle_shutdown.py` | Real HTTP request drain: a partial body must not hold the owner indefinitely. (requires explicit scratch/capture inputs; retained qualification) | keep-manual |
+| `lifecycle_actions.py` | T-13074 List: follow-on conversion; not native-qualified.  | list |
+| `lifecycle_credentials.py` | Native real-runtime credential rotation, file protection, authorization refusals and revocation. | keep-manual |
+| `lifecycle_peer.py` | T-13074 List: follow-on conversion; not native-qualified.  | list |
+| `lifecycle_rows.py` | Native boot/stop facts, predecessor classification, lastRestart provenance and immutable history. | keep-manual |
+| `lifecycle_shutdown.py` | Native clean/held-request shutdown and bounded drain, with listener variants. | keep-manual |
 | `retention_auto_vacuum.py` | A non-incremental scratch store keeps expired bundle directories and artifact/watch pointers when retention refuses; `--reproduce` demonstrates the pre-fix gap (T-13046). | keep-manual |
 | `nightly_retention.py` | C1b three-table, backup and first-turn bundle checks against a frozen Bun-verified survivor golden on APFS clones of its SHA256-pinned offline store; schedule with no window/no mark, bounded holds and vacuum. Takes `--source <offline backup> --binary <rusthrc> --out <evidence>`. | keep-manual |
 | `ledger_prune.py` | Mark-gated runtime prune on copies of a real ledger: every refusal deletes nothing, only runtimes behind the mark go, the scheduled task (TZ-shifted to 04:00) reports `no_window` or deletes, and the deadline stops it (T-12855). Takes `--source <state.sqlite backup>`. | keep-manual |
 | `ledger_prune_resume.py` | A seat whose every runtime was pruned through the mark-gated task is started again with its stored continuation, handoff and session intact (T-12855, contract gate 5). Live model turns. | keep-manual |
-| `maintenance.py` | Real live-seat safety and Bun-authored orphan maintenance in both modes. | promote |
+| `maintenance.py` | T-13074 List: follow-on conversion; not native-qualified.  | list |
 | `n2_attached.py` | `hrc run` attached-run door on an hrcpty seat in a real pty: parked promptless birth, gate after the committed start, warm run on the same seat, refusals. Live model turns. | keep-manual |
 | `n2_continuation_harness.py` | A respawn after the profile drifts (codex-hrcpty to claude-hrcpty) keeps the session's applied harness and resumes the Codex thread. An explicit cross-provider harness on that continuation is refused `continuation_harness_mismatch` before any operation is recorded (T-12419). Needs live codex credentials; scratch root under /tmp (socket path length). | keep-manual |
 | `n2_inspect_crash.py` | Broker SIGKILL mid-turn settles the runtime terminal and the run failed; inspect with recoverFinalSummary answers terminal-fenced. Live model turns. | keep-manual |
@@ -129,25 +120,23 @@ Deleted entries stay listed to explain their removal; their source remains in gi
 | `n4_placement.py` | N4 project-root placement on one owner (bun or native), recorded for a compare. (requires explicit scratch/capture inputs; retained qualification) | keep-manual |
 | `n4_svc_authority.py` | svc as registry host and collective-history authority, on svc's own data (T-11931). (protected by T-11933) | keep-manual |
 | `n4_watchdog.py` | N4 first-turn watchdog: Bun then native trip the same armed rows. (requires explicit scratch/capture inputs; retained qualification) | keep-manual |
-| `owner_relative_controls.py` | Mutate real ready captures; the named owner-relative gate must discriminate. (requires explicit scratch/capture inputs; retained qualification) | keep-manual |
 | `participant_live.py` | Actual participant-owned bootstrap broker, real ASP compile, blank claude profile. (requires explicit scratch/capture inputs; retained qualification) | keep-manual |
 | `participants.py` | Direct join/attach HTTPs against sequential owners of empty scratch state. (requires explicit scratch/capture inputs; retained qualification) | keep-manual |
 | `preparation.py` | Real ASP declaration workflow; no broker or model starts. (requires explicit scratch/capture inputs; retained qualification) | keep-manual |
-| `routes.py` | Finite N1 API workflow on a real Bun-created scratch store. (protected by T-11933) | keep-manual |
+| `routes.py` | Native HTTP route literals and metadata event invariants; shared scenario callback runner. | keep-manual |
 | `runtime_key_order.py` | none — completed T-11880 capture analysis; promoted maintenance and existing conformance key-order comparisons retain wire checks | delete |
-| `runtime_reads.py` | Real-seat runtime reads against sequential owners on one scratch snapshot. (requires explicit scratch/capture inputs; retained qualification) | keep-manual |
+| `runtime_reads.py` | T-13074 List: follow-on conversion; not native-qualified.  | list |
 | `runtime_surfaces.py` | Real ready-seat attachment and durable surface fences on isolated state. (requires explicit scratch/capture inputs; retained qualification) | keep-manual |
-| `runtimes_start.py` | POST /v1/runtimes/start on Bun and native, compared case by case (T-11911). `--deferred-message-only` qualifies native exact/suffix deferred message binding, pinned delivery/replay, changed-message refusal and unchanged ensure refusal on Codex (T-12316). Requires explicit scratch/capture inputs. | keep-manual |
+| `runtimes_start.py` | T-13074 List: follow-on conversion; not native-qualified.  | list |
 | `schema_refusal.py` | Gate3: schema refusal preserves canonical DB and control files. | promote |
-| `server_owner.py` | Real owner recovery, with refusal and concurrent-reclaimer controls. | promote |
-| `session_index.py` | N1 session index workflow on a real Bun-created scratch store. (requires explicit scratch/capture inputs; retained qualification) | keep-manual |
-| `session_projection.py` | Real owners, own historical fixtures: recency, liveness, ordering and parsing. (requires explicit scratch/capture inputs; retained qualification) | keep-manual |
-| `steer_no_intent.py` | T-11928: `hrc turn` steers a seat that has a session but no live runtime. (requires explicit scratch/capture inputs; retained qualification) | keep-manual |
+| `server_owner.py` | Native owner recovery and malformed/live/dead/replaced lock controls. | keep-manual |
+| `session_index.py` | T-13074 List: follow-on conversion; not native-qualified.  | list |
+| `session_projection.py` | T-13074 List: follow-on conversion; not native-qualified.  | list |
+| `steer_no_intent.py` | T-13074 List: follow-on conversion; not native-qualified.  | list |
 | `steer_returns_on_admission.py` | T-12243: a steer to a codex-hrcpty stub seat answers at admission, both when it starts a long turn on an idle seat and when it lands in that open turn (the pre-fix binary held the response until the run ended). Self-contained (stub broker, fake aspd); `--artifacts` required. | keep-manual |
 | `steer_timeout.py` | T-12228: a steer past the 20 s RPC bound into a live codex-hrcpty stub seat fails that submission only (binding kept, runtime not stale, next delivery on the same runtime); the orphan sweep preserves a stale row whose broker answers and delivery then fails closed instead of minting; terminating a never-launched runtime keeps the continuation. Self-contained (stub broker, fake aspd); `--artifacts` required. | keep-manual |
 | `target_placement.py` | Real target-session intent and placement reads, on an existing ready scratch seat. (requires explicit scratch/capture inputs; retained qualification) | keep-manual |
-| `transcript_index.py` | T-12013: transcript follower resume from Bun's cursor, late-prose/inversion repair, search, status and rebuild against Bun on one snapshot. (requires explicit scratch/capture inputs; retained qualification) | keep-manual |
-| `turn_no_intent.py` | T-11928: the real `hrc turn` births a session that never applied an intent. (requires explicit scratch/capture inputs; retained qualification) | keep-manual |
+| `turn_no_intent.py` | T-13074 List: follow-on conversion; not native-qualified.  | list |
 
 ## Embedded kernel history (T-12141)
 
@@ -169,7 +158,7 @@ Projection shape, malformed JSON, sparse ledger and operation mapping are
 covered by hrc-domain's existing tests; `kernel_fold.py` covers real owner
 summon/attach, ledger wake, startup and shutdown. The historical N3 volume
 and N4 kernel-vs-Bun parity drivers retired too: a Bun owner has no kernel.
-N3 stream transport parity remains in `n3_streams.py`; `front_door.py` asserts
+N3 stream transport parity remains in `n3_streams.py`; the retired front probe asserted
 that front mode hosts no kernel. See migration §8.1 for activation gates.
 
 `seat_handoffs.py --binary <unmanaged rusthrc> --scratch-root <fresh path> --out <artifacts>` now drives the native handoff CLI and private owner/store, including etag refusals and owner-restart durability. Live model rotation is the installed acceptance for T-12248.
@@ -182,7 +171,7 @@ provider and all six owner operations. `live_probe.py` checks its installed
 read-only discovery. `kernel_fd_cost.py` keeps plain/events connection checks;
 query subscriptions now belong to praesidium-kernel. `seat_handoffs.py` and
 `seat_work.py` keep owner/CLI/ledger durability and fence checks, while their
-projection assertions move to the praesidium kernel. `front_door.py` still
+projection assertions move to the praesidium kernel. the retired front probe previously
 requires no HRC operator socket on fronts. `kq.py` reads praesidium:praesidium.
 
 The retained `kernel_fold.py` also proves owner clear-context termination:

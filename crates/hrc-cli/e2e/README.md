@@ -37,9 +37,8 @@ Hand-run native checks (no recording mode):
 nonempty turn IDs and truthful active-turn probes. This keeps restartme's arm,
 cancel and terminal facts bound to the same actual turn.
 
-`annotations.py` retains SDK client qualification. `copied_release.py` remains
-untouched for five native daemon drivers: lifecycle_actions, lifecycle_credentials,
-lifecycle_peer, lifecycle_rows and server_owner. It is the explicit temporary
-exception to the executable Bun/retiring-package scan until those callers retire.
+`annotations.py` retains SDK client qualification. The copied-release helper
+was removed with the native lifecycle/owner driver sweep (T-13074); no native
+daemon driver imports a copied CLI release.
 Frozen provenance in `fixtures/` remains immutable. Never point a manual driver
 at a shared/live node.

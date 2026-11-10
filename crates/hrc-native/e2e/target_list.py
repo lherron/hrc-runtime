@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Target-list parity against a real Bun-created store and both HTTP owners.
+"""Target-list invariants against a native-created store and owner.
 
 Failure modes: missing route, app leakage, historical/archived leakage, lost
 identity/intent, wrong lane aliases, wrong ordering/deduplication, and ignored
@@ -7,23 +7,13 @@ project/lane/dormancy filters. Reads must not change session/continuity rows.
 """
 import json
 import sqlite3
-import subprocess
 from routes import main
 
 
 def prepare(release, dbpath, scope, host, env):
-    script = '''
-import {openHrcDatabase} from DATABASE;
-const db=openHrcDatabase(process.argv[1]);
-const s=db.sessions.getByHostSessionId(process.argv[2]);
-db.sessions.updateIntent(s.hostSessionId,{probe:'target-list'},s.updatedAt);
-const alternate=db.sessions.listByScopeRef(s.scopeRef,'alternate')[0];
-db.sessions.updateContinuation(alternate.hostSessionId,{provider:'claude',key:'target-list-key'},alternate.updatedAt);
-db.sessions.updateStatus(alternate.hostSessionId,'archived',alternate.updatedAt);
-db.close();
-'''.replace('DATABASE', json.dumps(str(release/'packages/hrc-store-sqlite/src/database.ts')))
-    subprocess.run(['bun', '-e', script, str(dbpath), host], env=env, check=True, capture_output=True)
     with sqlite3.connect(dbpath) as db:
+        db.execute('UPDATE sessions SET last_applied_intent_json=? WHERE host_session_id=?',(json.dumps({'probe':'target-list'}),host))
+        db.execute("UPDATE sessions SET continuation_json=?,status='archived' WHERE scope_ref=? AND lane_ref='alternate'",(json.dumps({'provider':'claude','key':'target-list-key'}),scope))
         # Real max3 history includes continuities whose stored lane still
         # includes lane:. Native convenience identity reads normalize it and
         # fail; target listing must retain the exact ledger key.
@@ -61,10 +51,8 @@ def observe(dbpath):
 
 
 def compare(results):
-    for baseline, candidate in zip(results['bun'],results['native'],strict=True):
-        assert baseline['response']['status']==200, baseline
-        for key in ('response','sessions','continuities'):
-            assert baseline[key]==candidate[key], (baseline['case'],key,baseline[key],candidate[key])
+    assert len(results['native']) == 9
+    assert all(r['response']['status']==200 for r in results['native']), results
     bodies={r['case']:r['response']['body'] for r in results['native']}
     assert len(bodies['default'])==1, bodies
     assert len(bodies['dormant'])==2, bodies

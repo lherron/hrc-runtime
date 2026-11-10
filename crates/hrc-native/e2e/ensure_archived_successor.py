@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Archived ensure differential: real Bun repository snapshot, isolated owners.
+"""Archived ensure succession on a native-created store.
 
 Failure modes: 404 instead of succession; lost continuation or inherited intent;
 wrong generation/parent; stale continuity; duplicate/missing creation fact; repeat
@@ -7,24 +7,13 @@ birth; identity timing or wire key-order divergence. No harness birth is needed.
 """
 import json
 import sqlite3
-import subprocess
 from routes import main
 
 
 def prepare(release, dbpath, scope, host, env):
-    # First observe the actual public resolve response (routes.main), then use
-    # Bun's real repositories to archive both lanes with a continuation.
-    script = '''
-import {openHrcDatabase} from DATABASE;
-const db=openHrcDatabase(process.argv[1]);
-for (const session of db.sessions.listByScopeRef(process.argv[2])) {
-  db.sessions.updateIntent(session.hostSessionId,{probe:'inherited'},'2026-10-25T12:00:00.000Z');
-  db.sessions.updateContinuation(session.hostSessionId,{provider:'claude',key:'ensure-scratch-key'},'2026-10-25T12:00:00.000Z');
-  db.sessions.updateStatus(session.hostSessionId,'archived','2026-10-25T12:00:00.000Z');
-}
-db.close();
-'''.replace('DATABASE', json.dumps(str(release/'packages/hrc-store-sqlite/src/database.ts')))
-    subprocess.run(['bun', '-e', script, str(dbpath), scope], env=env, check=True, capture_output=True)
+    with sqlite3.connect(dbpath) as db:
+        db.execute("UPDATE sessions SET last_applied_intent_json=?,continuation_json=?,status='archived' WHERE scope_ref=?",
+                   (json.dumps({'probe':'inherited'}),json.dumps({'provider':'claude','key':'ensure-scratch-key'}),scope))
 
 
 def cases(scope, host):
@@ -44,5 +33,27 @@ def observe(dbpath):
         }.items()}
 
 
+def compare(results):
+    rows=results['native']
+    assert len(rows)==4
+    for r in rows:
+        assert r['response']['status']==200,r
+    for a,b in ((rows[0],rows[1]),(rows[2],rows[3])):
+        assert a['response']['body']['activeHostSessionId']==b['response']['body']['activeHostSessionId'],(a,b)
+    sessions=rows[-1]['sessions']
+    assert len(sessions)==4,sessions
+    assert len(rows[-1]['events'])==4,rows[-1]['events']
+    for lane in ('main','alternate'):
+        old,new=sorted((s for s in sessions if s['lane_ref']==lane),key=lambda s:s['generation'])
+        assert old['status']=='archived' and new['status']=='active' and new['generation']==old['generation']+1,(old,new)
+        assert new['prior_host_session_id']==old['host_session_id'],(old,new)
+        facts=[e for e in rows[-1]['events'] if e['host_session_id']==new['host_session_id']]
+        assert len(facts)==1 and facts[0]['generation']==new['generation'],facts
+        assert json.loads(facts[0]['payload_json'])['priorHostSessionId']==old['host_session_id'],facts
+        assert json.loads(new['continuation_json'])=={'provider':'claude','key':'ensure-scratch-key'},new
+        assert json.loads(new['last_applied_intent_json'])=={'probe':'replacement' if lane=='main' else 'inherited'},new
+        assert any(c['active_host_session_id']==new['host_session_id'] for c in rows[-1]['continuities']),new
+
+
 if __name__ == '__main__':
-    main(prepare=prepare, case_factory=cases, observe=observe, suite='ensure-archived-successor')
+    main(prepare=prepare, case_factory=cases, observe=observe, suite='ensure-archived-successor',compare=compare)

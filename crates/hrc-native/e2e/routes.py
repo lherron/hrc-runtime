@@ -1,10 +1,9 @@
 #!/usr/bin/env python3
-"""Finite N1 API workflow on a real Bun-created scratch store.
+"""Native route workflow with literal checks and optional scenario callbacks.
 
-Run from a clean terminal. Bun creates sessions through its public API. Each
-owner then receives the same request sequence from the same scratch snapshot.
-Only response timestamps created by that sequence may differ; their types and
-request-time bounds are checked. All other response keys/values must agree.
+A fresh migrated store and private project ledger are primed through native
+HTTP. Scenario callbacks observe the same native request sequence; no baseline
+or captured golden is consulted.
 """
 import argparse
 from http.client import HTTPException
@@ -19,10 +18,10 @@ from urllib.parse import urlencode
 from foundation import daemon_env, UnixHTTP
 
 
-def main(prepare=None, case_factory=None, observe=None, suite="n1-routes", settle=None, compare=None):
+def main(prepare=None, case_factory=None, observe=None, suite="n1-routes", settle=None, compare=None, owners=("native",)):
+    assert owners == ("native",), "native owner only"
     p = argparse.ArgumentParser()
     p.add_argument('--binary', type=Path, required=True)
-    p.add_argument('--bun-release', type=Path, required=True)
     p.add_argument('--scratch-root', type=Path, required=True)
     p.add_argument('--artifacts', type=Path, required=True)
     args = p.parse_args()
@@ -31,8 +30,7 @@ def main(prepare=None, case_factory=None, observe=None, suite="n1-routes", settl
     assert not root.exists(), 'fresh scratch root required'
     root.mkdir(parents=True)
     args.artifacts.mkdir(parents=True, exist_ok=True)
-    release = args.bun_release.resolve()
-    assert release.parent.name != 'hrc-runtime-releases'
+    release = None
     env = dict(os.environ, HRC_RUNTIME_DIR=str(root/'run'), HRC_STATE_DIR=str(root/'state'),
                HRC_PEER_CONFIG_FILE=str(root/'absent-federation.json'),
                HRC_WRKQ_DB=str(root/'wrkq.db'), WRKQ_DB=str(root/'wrkq.db'),
@@ -64,7 +62,7 @@ def main(prepare=None, case_factory=None, observe=None, suite="n1-routes", settl
             subprocess.run([str(args.binary.resolve()), 'store', 'migrate', str(dbpath)],
                            env=env, check=True, capture_output=True)
         log = (args.artifacts/f'{label}.log').open('w')
-        argv = [str(args.binary.resolve()),'server'] if kind=='native' else ['bun',str(release/'packages/hrc-cli/src/cli.ts'),'server','serve']
+        argv = [str(args.binary.resolve()),'server','serve']
         proc = subprocess.Popen(argv,env=daemon_env(env),cwd=root,stdout=log,stderr=log)
         for _ in range(300):
             assert proc.poll() is None, (label,'owner exited')
@@ -86,7 +84,7 @@ def main(prepare=None, case_factory=None, observe=None, suite="n1-routes", settl
     try:
         subprocess.run(['wrkqadm','migrate'],env=env,check=True,capture_output=True)
         subprocess.run([str(Path.home() / ".local/bin/wrkq"),'mkdir','/n1-t11818','--kind','project','--as','agent:cody'],env=env,check=True,capture_output=True)
-        up('bun','prime')
+        up('native','prime')
         for lane in ('main','alternate'):
             created = call('POST','/v1/sessions/resolve',{'sessionRef':scope+'/lane:'+lane,'create':True,'summonIntent':'explicit_local'})
             assert created['status']==200 and created['body']['created'] is True,created
@@ -121,7 +119,7 @@ def main(prepare=None, case_factory=None, observe=None, suite="n1-routes", settl
             ('wrong-method','DELETE','/v1/sessions/metadata',None),
         ]
         if case_factory: cases = case_factory(scope, host)
-        for kind in ('bun','native'):
+        for kind in owners:
             with sqlite3.connect(root/'snapshot.sqlite') as source,sqlite3.connect(dbpath) as target:source.backup(target)
             up(kind,kind)
             # Background projections (the transcript follower) finish before cases run.
@@ -146,14 +144,31 @@ def main(prepare=None, case_factory=None, observe=None, suite="n1-routes", settl
             (args.artifacts/'summary.json').write_text(json.dumps({'pass':True,'suite':suite})+'\n')
             print(json.dumps({'pass':True,'suite':suite}))
             return
-        compared=subprocess.run(['python3',str(Path(__file__).resolve().parents[3]/'conformance/hrc-parity/run.py'),
-            'compare','--suite',suite,'--baseline',str(args.artifacts/'bun'),
-            '--candidate',str(args.artifacts/'native'),'--out',str(args.artifacts/'compare')],capture_output=True,text=True)
-        (args.artifacts/'compare.stdout').write_text(compared.stdout)
-        (args.artifacts/'compare.stderr').write_text(compared.stderr)
-        assert compared.returncode==0, compared.stdout+compared.stderr
-        print(json.dumps({'pass':True,'comparison':str(args.artifacts/'compare/summary.json')}))
-    finally:down()
+        validate_routes(results['native'], host)
+        (args.artifacts/'summary.json').write_text(json.dumps({'pass':True,'suite':suite,'cases':len(results['native'])})+'\n')
+        print(json.dumps({'pass':True,'suite':suite,'cases':len(results['native'])}))
+    finally:
+        down()
+        import shutil
+        shutil.rmtree(root)
+
+
+def validate_routes(rows, host):
+    assert len(rows) == 24, len(rows)
+    by = {r['case']: r for r in rows}
+    errors = {'sessions-invalid-status':400, 'sessions-invalid-limit':400,
+              'session-missing-host':404,
+              'session-continuity-missing':400, 'metadata-invalid':400,
+              'sessions-page-invalid':400, 'sessions-facets-invalid':400,
+              'wrong-method':404}
+    for name, row in by.items():
+        assert row['response']['status'] == errors.get(name, 200), (name, row)
+    assert by['session-by-host']['response']['body']['hostSessionId'] == host
+    assert by['metadata-read']['response']['body']['metadata']['title'] == 'N1 scratch', by['metadata-read']
+    assert by['runtimes-empty']['response']['body'] == []
+    assert by['metadata-write']['metadataEvents'] == 2
+    assert by['metadata-repeat']['metadataEvents'] == 0
+    assert by['metadata-clear']['metadataEvents'] == 1
 
 
 if __name__=='__main__':main()

@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
-"""Granted lifecycle on the one authorized disposable owner, versus copied Bun.
+"""Granted native lifecycle on the authorized disposable owner (List, not qualified).
 
 Failure modes: env attribution grants authority; a refusal writes/acts; ACK is
 lost before stop; restart loses its successor or starts two; grant attribution
 is absent from durable stop rows; production ownership changes. Credentials
-stay in memory and never appear in evidence. Both actors are real owned seats.
+stay in memory and never appear in evidence. Both actors must be real owned seats. Follow-on: replace the legacy fixture.
 """
 import argparse
 import json
@@ -21,14 +21,13 @@ import uuid
 
 ROOT = Path(__file__).resolve().parents[3]
 sys.path.insert(0,str(ROOT/'crates/hrc-cli/e2e'))
-from copied_release import copied_bun_cli,preflight_unmanaged
 from metrics_isolation import MetricsIsolation
 from foundation import daemon_env, UnixHTTP
 
 
 def main(isolation):
     p=argparse.ArgumentParser()
-    for name in ('binary','oracle','environment','seat','artifacts'):
+    for name in ('binary','environment','seat','artifacts'):
         p.add_argument('--'+name,type=Path,required=True)
     a=p.parse_args()
     root=Path('/tmp/n5-server-owned-11819')
@@ -41,8 +40,6 @@ def main(isolation):
     assert Path(env['HRC_RUNTIME_DIR'])==root/'run' and Path(env['HRC_STATE_DIR'])==root/'state'
     assert env['HRC_WRKQ_DB'].startswith('rpc://127.0.0.1:')
     assert not(root/'run/hrc.sock').exists() and not(root/'run/server.lock').exists()
-    oracle=copied_bun_cli(a.oracle,root/'lifecycle-copy')
-    bun=shutil.which('bun')
     processes=[]
     owned=[]
     contexts={}
@@ -78,9 +75,8 @@ def main(isolation):
             time.sleep(.05)
         raise AssertionError('owned successor did not become healthy')
     def boot(owner):
-        preflight_unmanaged(oracle,env,a.artifacts/'release-preflight.json')
         log=(a.artifacts/(owner+'.log')).open('a')
-        command=[bun,str(oracle)] if owner=='bun' else [str(a.binary.resolve())]
+        command=[str(a.binary.resolve())]
         schema_path = Path(env['HRC_STATE_DIR']) / 'state.sqlite'
         if not schema_path.exists():
             schema_path.parent.mkdir(parents=True, exist_ok=True)
@@ -154,13 +150,12 @@ def main(isolation):
             out.append(row)
         return out
     try:
-        boot('bun')
+        boot('native')
         provision('mable')
         provision('tabularasa')
         down()
         matrix=[('restart',{}),('stop',{}),('restart',{'wait':True}),('restart',{'force':True}),('restart',{'drain':True}),('stop',{'force':True})]
-        baseline={}
-        for owner in ('bun','native'):
+        for owner in ('native',):
             if (root/'run/server.pid').exists():down()
             for index,(action,flags) in enumerate(matrix):
                 if not(root/'run/server.pid').exists():boot(owner)
@@ -209,21 +204,20 @@ def main(isolation):
                     payload=json.loads(row['payload_json'])
                     assert payload['reason']=='lifecycle:'+action and payload['grant']==response['grant'] and 'ungranted' not in payload
                 current=dict(response=normalized_response(response),rows=normalized_rows(delta,old,new,response['grant']))
-                if owner=='bun':baseline[index]=current
-                else:assert current==baseline[index],(index,baseline[index],current)
+
                 cases.append(dict(owner=owner,index=index,action=action,flags=flags,**{'pass':True}))
                 assert production_owner()==before_production
     finally:
-        # Always return these real seats through Bun's established teardown.
+        # Return the owned seats through native teardown.
         down()
-        boot('bun')
+        boot('native')
         for runtime in owned:
             row=call('/v1/runtimes/inspect',dict(runtimeId=runtime))
             if row['status']!='terminated':call('/v1/terminate',dict(runtimeId=runtime,reason='owned lifecycle action cleanup'))
             assert call('/v1/runtimes/inspect',dict(runtimeId=runtime))['status']=='terminated'
         down()
         assert production_owner()==before_production
-        report=dict(cases=cases,**{'pass':len(cases)==12 and all(c['pass'] for c in cases)},productionBefore=before_production,productionAfter=production_owner(),cleanup=dict(runtimeIds=owned,socketAbsent=not(root/'run/hrc.sock').exists(),lockAbsent=not(root/'run/server.lock').exists(),credentialFiles=list(map(str,(root/'run/lifecycle').glob('*.credential')))))
+        report=dict(cases=cases,**{'pass':len(cases)==6 and all(c['pass'] for c in cases)},productionBefore=before_production,productionAfter=production_owner(),cleanup=dict(runtimeIds=owned,socketAbsent=not(root/'run/hrc.sock').exists(),lockAbsent=not(root/'run/server.lock').exists(),credentialFiles=list(map(str,(root/'run/lifecycle').glob('*.credential')))))
         assert not report['cleanup']['credentialFiles']
         (a.artifacts/'results.json').write_text(json.dumps(report,indent=2)+'\n')
     print(json.dumps(dict(pass_=report['pass'],cases=len(cases))))

@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """hrcpty seat substrate, end to end on one isolated rusthrc (T-12049).
 
-One fresh short root (unix socket paths stay < 104 bytes) holds a Bun-created
+One fresh short root (unix socket paths stay < 104 bytes) holds a native-migrated
 schema, runtime/state dirs, a FAKE aspd and a stub execution release. The real
 `claude-code-hrcpty` broker driver (T-12050) has not landed, so a real birth
 cannot complete: the fake aspd answers `aspc.compileHarnessInvocation` with a
@@ -91,7 +91,7 @@ import threading
 import time
 import uuid
 
-from n2_scratch import UnixHTTP
+from n2_scratch import UnixHTTP, reap_root
 
 HERE = Path(__file__).resolve().parent
 REPO = HERE.parents[2]
@@ -992,20 +992,10 @@ def main():
                     proc.wait(timeout=20)
                 except subprocess.TimeoutExpired:
                     proc.kill()
-        for pid in (pty_pid, child_pid, *(codex.pids() if 'codex' in locals() else [])):
-            if pid and alive(pid):
-                os.kill(pid, signal.SIGKILL)
-        if tmux_sock:
-            subprocess.run(['tmux', '-S', str(tmux_sock), 'kill-server'], capture_output=True)
-        for sockfile in (root / 'run/btmux').glob('*') if (root / 'run/btmux').exists() else []:
-            subprocess.run(['tmux', '-S', str(sockfile), 'kill-server'], capture_output=True)
-        leftovers = descendants_of([str(root), root.name])
-        for pid, _ in leftovers:
-            if pid != os.getpid():
-                try:
-                    os.kill(pid, signal.SIGKILL)
-                except ProcessLookupError:
-                    pass
+        # Recorded child PIDs can be reaped and reused before this finalizer.
+        # The shared reaper selects current argv under this fresh root and
+        # excludes this driver and its ancestors; never signal a stale PID.
+        reap_root(root, args.artifacts)
         aspd.close()
         for log in r.logs:
             log.close()
@@ -1021,7 +1011,7 @@ def main():
             dump = {t: r.rows(f'SELECT * FROM {t}') for t in ('runtimes', 'runs', 'broker_invocations')}
             dump['hrc_events'] = r.rows('SELECT hrc_seq,ts,event_kind,runtime_id,run_id,transport,payload_json FROM hrc_events ORDER BY hrc_seq')
             (args.artifacts / 'rows.json').write_text(json.dumps(dump, indent=1, default=str) + '\n')
-        remaining = [l for _, l in descendants_of([str(root), root.name])]
+        remaining = [l for _, l in descendants_of([str(root.resolve()) + "/"])]
         r.check('cleanup.no-leftover-processes', not remaining, remaining=remaining)
         if not args.keep:
             shutil.rmtree(root, ignore_errors=True)

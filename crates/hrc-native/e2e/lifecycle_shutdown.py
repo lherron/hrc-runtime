@@ -26,23 +26,24 @@ from metrics_isolation import isolated_suite
 @isolated_suite
 def main():
     parser = argparse.ArgumentParser()
-    for name in ('binary', 'environment', 'artifacts'):
+    for name in ('binary', 'artifacts'):
         parser.add_argument('--' + name, type=Path, required=True)
     parser.add_argument('--oracle', type=Path, help='Retained compatibility argument; unused')
     parser.add_argument('--held-only', action='store_true')
     parser.add_argument('--listener', choices=('unix', 'peer', 'registry'), default='unix')
     parser.add_argument('--federation-host', default='100.73.60.81')
+    parser.add_argument('--environment', type=Path)
     args = parser.parse_args()
     args.artifacts.mkdir(parents=True, exist_ok=True)
     env = {k: v for k, v in os.environ.items()
            if not k.startswith(('ASP_', 'HRC_', 'WRKQ', 'HARNESS_BROKER_'))}
-    env.update(json.loads(args.environment.read_text()))
+    env.update(json.loads(args.environment.read_text()) if args.environment else {})
     env.pop('XPC_SERVICE_NAME', None)
     env.pop('HRC_LAUNCHD_LABEL', None)
-    assert env['HRC_WRKQ_DB'].startswith('rpc://127.0.0.1:')
     cases = []
-    with tempfile.TemporaryDirectory(prefix='s-', dir='/tmp/n5-server-owned-11819') as tmp:
+    with tempfile.TemporaryDirectory(prefix='s-', dir='/tmp') as tmp:
         root = Path(tmp)
+        env.update(HRC_WRKQ_DB=str(root/'wrkq.db'), WRKQ_DB=str(root/'wrkq.db'), HRC_PEER_CONFIG_FILE=str(root/'absent.json'), HRC_ACP_WEBHOOK_URL='', HRC_EVENT_FORWARD_URL='')
         env.update(HRC_RUNTIME_DIR=str(root/'run'), HRC_STATE_DIR=str(root/'state'))
         ports = {}
         token = secrets.token_hex(24)

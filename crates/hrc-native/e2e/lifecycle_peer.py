@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
-"""Bun/native origins forward a verified primary's grant to the owned Bun peer.
+"""Native origins forward a verified primary's grant to an owned peer (List).
 
 Failure modes: origin acts instead of target; peer attestation loses identity;
 restart proof accepts an unchanged process; missing proof fields pass; target
 credentials leak into evidence; cleanup touches production. Native peer receive
-is explicitly outside this drive. Every target actuation uses the one approved
+requires follow-on qualification with a deterministic primary fixture. Every target actuation uses the one approved
 /tmp/n5-server-owned-11819 owner. The origin is disposable and only receives
 plain SIGTERM during fixture handoff/cleanup.
 """
@@ -26,14 +26,13 @@ import uuid
 
 ROOT = Path(__file__).resolve().parents[3]
 sys.path.insert(0, str(ROOT/'crates/hrc-cli/e2e'))
-from copied_release import copied_bun_cli, preflight_unmanaged
 from foundation import daemon_env, UnixHTTP
 from metrics_isolation import MetricsIsolation
 
 
 def main(isolation):
     parser = argparse.ArgumentParser()
-    for name in ('binary', 'oracle', 'environment', 'seat', 'artifacts'):
+    for name in ('binary', 'environment', 'seat', 'artifacts'):
         parser.add_argument('--'+name, type=Path, required=True)
     parser.add_argument('--federation-host', default='100.73.60.81')
     args = parser.parse_args()
@@ -52,8 +51,6 @@ def main(isolation):
     def production_owner():
         return {n:dict(inode=(production/n).stat().st_ino, **({'pid':(production/n).read_text()} if n=='server.pid' else {})) for n in ('server.pid','hrc.sock')}
     production_before = production_owner()
-    oracle = copied_bun_cli(args.oracle, target/'lifecycle-copy')
-    bun = shutil.which('bun')
     processes = []
     cases = []
     runtime = None
@@ -89,9 +86,8 @@ def main(isolation):
                 time.sleep(.05)
             raise AssertionError('owned peer did not become healthy')
         def boot(root, owner, child_env):
-            preflight_unmanaged(oracle, child_env, args.artifacts/'release-preflight.json')
             log = (args.artifacts/(('target' if root==target else 'origin')+'-'+owner+'.log')).open('a')
-            command = [bun, str(oracle)] if owner=='bun' else [str(args.binary.resolve())]
+            command = [str(args.binary.resolve())]
             schema_path = Path(child_env['HRC_STATE_DIR']) / 'state.sqlite'
             if not schema_path.exists():
                 schema_path.parent.mkdir(parents=True, exist_ok=True)
@@ -117,7 +113,7 @@ def main(isolation):
             with sqlite3.connect('file:'+str(root/'state/state.sqlite')+'?mode=ro', uri=True) as db:
                 return list(db.execute("SELECT hrc_seq,event_kind,payload_json FROM hrc_events WHERE scope_ref='server:hrc' AND source_ref IS NULL AND evidence_origin IS NULL ORDER BY hrc_seq"))
         try:
-            boot(origin, 'bun', origins)
+            boot(origin, 'native', origins)
             profile = origin/'agents/mable'
             profile.mkdir(parents=True)
             (profile/'agent-profile.toml').write_text('version = 4\n[identity]\ndisplay = "N5 peer fixture"\n[provisioning]\nharness = "claude"\nyolo = true\n[spaces]\nbase = []\n')
@@ -143,11 +139,10 @@ def main(isolation):
                 path.write_text(json.dumps(config))
                 path.chmod(0o600)
             origins['HRC_PEER_CONFIG_FILE'] = str(origin/'origin.json')
-            baseline = {}
-            for owner in ('bun','native'):
+            for owner in ('native',):
                 boot(origin, owner, origins)
                 for action in ('restart','stop'):
-                    if not (target/'run/server.pid').exists():boot(target,'bun',target_env)
+                    if not (target/'run/server.pid').exists():boot(target,'native',target_env)
                     old, before = ready(target)
                     initial = rows(target)
                     origin_rows = rows(origin)
@@ -180,21 +175,20 @@ def main(isolation):
                     if 'remote' in normalized:
                         normalized['remote']['beforeStartedAt'] = '<old boot>'
                         normalized['remote']['afterStartedAt'] = '<new boot>'
-                    if owner=='bun':baseline[action] = normalized
-                    else:assert normalized==baseline[action], (baseline[action],normalized)
+
                     cases.append(dict(owner=owner,action=action,**{'pass':True}))
                 down(origin)
         finally:
             down(target)
             down(origin)
             if runtime is not None:
-                boot(origin,'bun',origins)
+                boot(origin,'native',origins)
                 call(origin,'/v1/terminate',dict(runtimeId=runtime,reason='owned peer lifecycle cleanup'))
                 assert call(origin,'/v1/runtimes/inspect',dict(runtimeId=runtime))['status']=='terminated'
                 down(origin)
             assert production_owner()==production_before
             assert not list((origin/'run/lifecycle').glob('*.credential'))
-            result = dict(cases=cases,**{'pass':len(cases)==4},productionUnchanged=True,
+            result = dict(cases=cases,**{'pass':len(cases)==2},productionUnchanged=True,
                           cleanup=dict(originSocketAbsent=not(origin/'run/hrc.sock').exists(),targetSocketAbsent=not(target/'run/hrc.sock').exists(),runtimeTerminated=runtime))
             (args.artifacts/'results.json').write_text(json.dumps(result,indent=2)+'\n')
     print(json.dumps(result))

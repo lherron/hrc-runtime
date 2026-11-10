@@ -20,7 +20,6 @@ import time
 
 ROOT = Path(__file__).resolve().parents[3]
 sys.path.insert(0, str(ROOT/'crates/hrc-cli/e2e'))
-from copied_release import copied_bun_cli, preflight_unmanaged
 from foundation import daemon_env, UnixHTTP
 from metrics_isolation import isolated_suite
 
@@ -28,7 +27,7 @@ from metrics_isolation import isolated_suite
 @isolated_suite
 def main():
     p = argparse.ArgumentParser()
-    for flag in ('binary', 'oracle', 'artifacts'):
+    for flag in ('binary', 'artifacts'):
         p.add_argument('--'+flag, type=Path, required=True)
     a = p.parse_args()
     a.artifacts.mkdir(parents=True, exist_ok=True)
@@ -38,7 +37,6 @@ def main():
     results = []
     with tempfile.TemporaryDirectory(prefix='n5o77-', dir='/tmp') as temporary:
         root = Path(temporary)
-        oracle = copied_bun_cli(a.oracle, root/'release')
         env.update(HRC_ACP_WEBHOOK_URL='', HRC_EVENT_FORWARD_URL='',
                    HRC_WRKQ_DB=str(root/'wrkq.db'), WRKQ_DB=str(root/'wrkq.db'),
                    HRC_PEER_CONFIG_FILE=str(root/'absent-federation.json'))
@@ -50,9 +48,7 @@ def main():
                                env=env, check=True, capture_output=True)
             child_env = dict(env, HRC_RUNTIME_DIR=str(run), HRC_STATE_DIR=str(state),
                              HRC_EVENT_INGEST_SOCKET=str(run/'ingest.sock'))
-            if owner == 'bun':
-                preflight_unmanaged(oracle, child_env, a.artifacts/(label+'-preflight.json'))
-            argv = [shutil.which('bun'), str(oracle)] if owner == 'bun' else [str(a.binary.resolve())]
+            argv = [str(a.binary.resolve())]
             with (a.artifacts/(label+'.log')).open('w') as log:
                 proc = subprocess.Popen(argv+['server','serve'], env=daemon_env(child_env), cwd=root,
                                         stdin=subprocess.DEVNULL, stdout=log, stderr=log)
@@ -82,7 +78,7 @@ def main():
         # A reaped private process supplies an actually dead PID, never a guess.
         dead=subprocess.Popen([sys.executable,'-c','pass']);dead.wait()
         try:
-            for owner in ('bun','native'):
+            for owner in ('native',):
                 run=root/(owner+'-crash')/'run';state=run.parent/'state'
                 first=spawn(owner,run,state,owner+'-first')
                 assert ready(first,run),'initial owner did not boot'
@@ -131,9 +127,6 @@ def main():
                         try:proc.wait(timeout=3)
                         except subprocess.TimeoutExpired:pass
                         preserved=path.read_text()==raw and (run/'server.pid').read_text()==sentinel
-                        # Bun's CLI probes the existing HTTP owner before the
-                        # lock path; an open, silent socket keeps that probe
-                        # pending. Both paths must leave its files untouched.
                         refused=proc.poll() not in (None,0) or held is not None
                         passed=not started and refused and preserved
                         if held:passed=passed and (run/'hrc.sock').stat().st_ino==socket_inode

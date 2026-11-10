@@ -217,14 +217,6 @@ cargo-check:
     python3 crates/hrc-native/e2e/lifecycle_publication.py --binary {{rusthrc_mac_debug}} --artifacts "${HRC_NATIVE_E2E_ARTIFACTS:-/tmp/hrc-native-e2e-$(date +%s)-$$}/lifecycle-publication"
     python3 crates/hrc-native/e2e/command_runs.py --binary {{rusthrc_mac_debug}} --scratch-root "/tmp/hrc-command-runs-$(date +%s)-$$" --artifacts "${HRC_NATIVE_E2E_ARTIFACTS:-/tmp/hrc-native-e2e-$(date +%s)-$$}/command-runs"
 
-# Standing native workflows, run by hand only. They compare native against a
-# named installed Bun baseline with live model turns (aspd, tmux and model
-# credentials required), so they stay off the post-push runner under the
-# 2026-10-26 no-Bun-in-the-gate ruling.
-e2e-native-full:
-    {{rbuild}} --mac --pull {{mac_debug}}/rusthrc --pull {{mac_debug}}/hrc-pty cargo build --manifest-path crates/Cargo.toml --locked -p hrc-native -p hrc-pty
-    python3 crates/hrc-native/e2e/full.py --binary {{rusthrc_mac_debug}} --artifacts "${HRC_NATIVE_FULL_ARTIFACTS:-${FOUNDRY_ARTIFACTS:-/tmp}/hrc-native-full-$(date +%s)-$$}"
-
 # -- Ephemeral development environment (T-06896) -----------------------------
 #
 # hrc-runtime is a daemon project, so "the environment the suite needs" is a

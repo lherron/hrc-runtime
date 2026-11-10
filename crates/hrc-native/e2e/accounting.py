@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
-"""Real-owner accounting differential, with separate stores for proxy traffic.
+"""Native owner accounting with weighted counts and writer controls.
 
 Failure modes: route/method/client strata drift, dropped errors/request IDs,
-wrong weights or bytes, metrics in a shared state root, missing forwarded
+wrong weights or bytes, metrics in a shared state root, missing
 traffic, missing successful-request L3 lines, or buffering/cancellation of streams.
 """
 import argparse
@@ -21,15 +21,14 @@ from foundation import daemon_env, UnixHTTP, owner_follow_ready
 
 def main():
     p=argparse.ArgumentParser()
-    for name in ('binary','bun-release','scratch-root','artifacts'):
+    for name in ('binary','scratch-root','artifacts'):
         p.add_argument('--'+name,type=Path,required=True)
     args=p.parse_args()
     assert not any(os.environ.get(k) for k in ('CLAUDECODE','CLAUDE_CODE_ENTRYPOINT','CODEX_SANDBOX'))
     root=args.scratch_root.absolute();assert not root.exists();root.mkdir(parents=True)
     args.artifacts.mkdir(parents=True,exist_ok=True)
-    release=args.bun_release.resolve();assert release.parent.name!='hrc-runtime-releases'
     base=dict(os.environ,HRC_PEER_CONFIG_FILE=str(root/'absent.json'),HRC_ACP_WEBHOOK_URL='',WRKQ_DB=str(root/'wrkq.db'),HRC_WRKQ_DB=str(root/'wrkq.db'))
-    for key in ('HRC_SESSION_REF','HRC_RUNTIME_ID','HRC_RUN_ID','HRC_HOST_SESSION_ID','HRC_EVENT_FORWARD_URL','HRC_EVENT_INGEST_TCP_PORT','HRC_EVENT_FORWARD_SOURCE_REF','WRKQ_DB_PATH','WRKQ_DB_PATH_FILE','HRC_BUN_PASSTHROUGH_SOCKET','HRC_METRICS'):
+    for key in ('HRC_SESSION_REF','HRC_RUNTIME_ID','HRC_RUN_ID','HRC_HOST_SESSION_ID','HRC_EVENT_FORWARD_URL','HRC_EVENT_INGEST_TCP_PORT','HRC_EVENT_FORWARD_SOURCE_REF','WRKQ_DB_PATH','WRKQ_DB_PATH_FILE','HRC_METRICS'):
         base.pop(key,None)
     owners=[];logs=[];observations={}
     def call(socket,method,path,client='probe',request_id=None,stream=False):
@@ -40,12 +39,11 @@ def main():
         body=response.readline() if stream else response.read()
         row={'method':method,'path':path,'status':response.status,'bytes':len(body),'client':client,'requestId':request_id}
         http.close();return row
-    def up(kind,proxy=None):
+    def up(kind):
         state=root/kind/'state';runtime=root/kind/'run'
         env=dict(base,HRC_STATE_DIR=str(state),HRC_RUNTIME_DIR=str(runtime),HRC_EVENT_INGEST_SOCKET=str(runtime/'ingest.sock'))
         log=(args.artifacts/(kind+'.log')).open('w');logs.append(log)
-        argv=[str(args.binary.resolve()),'server'] if kind.startswith('native') else ['bun',str(release/'packages/hrc-cli/src/cli.ts'),'server','serve']
-        if proxy:argv.extend(['--bun-socket',str(proxy)])
+        argv=[str(args.binary.resolve()),'server','serve']
         schema_path = Path(env['HRC_STATE_DIR']) / 'state.sqlite'
         if not schema_path.exists():
             schema_path.parent.mkdir(parents=True, exist_ok=True)
@@ -62,18 +60,17 @@ def main():
         raise AssertionError(kind+' not ready')
     try:
         subprocess.run(['wrkqadm','migrate'],env=base,check=True,capture_output=True)
-        bun=up('bun')
+        native=up('native')
         subprocess.run([str(Path.home() / ".local/bin/wrkq"),'mkdir','/n1-t11818','--kind','project','--as','agent:cody'],env=base,check=True,capture_output=True)
-        http=UnixHTTP(bun)
+        http=UnixHTTP(native)
         http.request('POST','/v1/sessions/resolve',json.dumps({'sessionRef':'agent:tabularasa:project:n1-t11818:task:accounting-'+str(time.time_ns())+'/lane:main','create':True,'summonIntent':'explicit_local'}),{'Content-Type':'application/json'})
         response=http.getresponse();assert response.status==200
         host=json.loads(response.read())['hostSessionId'];http.close()
-        state=root/'native/state';state.mkdir(parents=True)
-        subprocess.run([str(args.binary.resolve()), 'store', 'migrate', str(state/'state.sqlite')],check=True)
-        native=up('native',bun)
+        with sqlite3.connect(root/'native/state/state.sqlite') as db:
+            assert db.execute("SELECT count(*) FROM hrc_events WHERE event_kind='session.created'").fetchone()[0] > 0, 'empty accounting ledger'
         # Run a whole systematic tail, avoiding the UTC-minute boundary.
         if time.time()%60>50:time.sleep(60-time.time()%60+.1)
-        for kind,socket in [('bun',bun),('native',native)]:
+        for kind,socket in [('native',native)]:
             rows=[]
             for path in ('/v1/health','/v1/targets','/v1/sessions?all=true'):
                 client='n1-accounting/'+kind+'/'+path.split('/')[-1].split('?')[0]
@@ -92,13 +89,11 @@ def main():
             if proc.poll() is None:proc.send_signal(signal.SIGTERM);proc.wait(timeout=20)
         for log in logs:log.close()
     metrics={};counts={};request_logs={}
-    for kind in ('bun','native'):
+    for kind in ('native',):
         records=[]
-        prefix='rusthrc-server-' if kind=='native' else 'server-'
+        prefix='rusthrc-server-'
         for file in (root/kind/'state/metrics').glob(prefix+'*.ndjson'):
             records.extend(json.loads(line) for line in file.read_text().splitlines())
-        # Bun also records upstream forwarded traffic with the native client's
-        # label. Select each owner's own request population by its client prefix.
         records=[r for r in records if r.get('kind')=='server' and r.get('client','').startswith('n1-accounting/'+kind+'/')]
         metrics[kind]=records
         count=Counter()
@@ -125,13 +120,9 @@ def main():
     expected={'GET /v1/health n1-accounting/health':50,'GET /v1/targets n1-accounting/targets':50,'GET /v1/sessions n1-accounting/sessions':50,'GET /v1/health n1-accounting/request-id':7,'GET /v1/sessions/by-host/:hostSessionId n1-accounting/error':13,'GET /v1/events/bounded-stream n1-accounting/stream':1}
     report={'observations':observations,'counts':counts,'expected':expected,'metrics':metrics,'logs':request_logs}
     (args.artifacts/'accounting.json').write_text(json.dumps(report,indent=2)+'\n')
-    for kind in ('bun','native'):
+    for kind in ('native',):
         directory=args.artifacts/kind;directory.mkdir(exist_ok=True)
         (directory/'accounting.json').write_text(json.dumps({'metrics':metrics[kind],'observations':observations[kind],'logs':request_logs[kind]},indent=2)+'\n')
-    compared=subprocess.run(['python3',str(Path(__file__).resolve().parents[3]/'conformance/hrc-parity/run.py'),'compare','--suite','n1-accounting','--baseline',str(args.artifacts/'bun'),'--candidate',str(args.artifacts/'native'),'--out',str(args.artifacts/'compare')],capture_output=True,text=True)
-    (args.artifacts/'compare.stdout').write_text(compared.stdout+compared.stderr)
-    assert compared.returncode==0,compared.stdout+compared.stderr
-    assert counts['bun']==expected,counts['bun']
     assert counts['native']==expected,counts['native']
     assert any(r.get('sampleWeight')==20 for r in metrics['native'])
     # Writer failures and limits are isolated from the differential population.
@@ -158,17 +149,17 @@ def main():
         recent=directory/'rusthrc-server-2000-01-02.ndjson';recent.write_text('recent mtime')
         calendar_invalid=directory/'rusthrc-server-2000-99-99.ndjson';calendar_invalid.write_text('pattern still matches')
         # Retention covers every writer's dated day files (T-13047): a stopped
-        # writer's files (Bun's server-*, a node's script-*) age out too.
+        # writer's dated files age out too.
         other_writer=directory/'other-2000-01-01.ndjson';other_writer.write_text('another writer')
-        bun_owned=directory/'server-2000-01-01.ndjson';bun_owned.write_bytes(b'Bun-owned canary')
+        legacy_owned=directory/'server-2000-01-01.ndjson';legacy_owned.write_bytes(b'legacy writer canary')
         not_metrics=[directory/'notes-2000-01-01.txt',directory/'rusthrc-server.ndjson',directory/'-2000-01-01.ndjson']
         for file in not_metrics:file.write_text('not a dated metrics file')
-        for file in (expired,calendar_invalid,other_writer,bun_owned,*not_metrics):os.utime(file,(time.time()-15*86400,)*2)
+        for file in (expired,calendar_invalid,other_writer,legacy_owned,*not_metrics):os.utime(file,(time.time()-15*86400,)*2)
         socket=up('native-cap')
         assert call(socket,'GET','/v1/health','n1-cap')['status']==200
         time.sleep(1.2)
         assert cap.stat().st_size==128*1024*1024
-        assert not any(f.exists() for f in (expired,calendar_invalid,other_writer,bun_owned)) and recent.exists()
+        assert not any(f.exists() for f in (expired,calendar_invalid,other_writer,legacy_owned)) and recent.exists()
         assert all(f.exists() for f in not_metrics)
     finally:
         for proc in reversed(owners):
@@ -176,6 +167,8 @@ def main():
         for log in logs:log.close()
     assert 'server.metrics.day_cap_reached' in (args.artifacts/'native-cap.log').read_text()
     (args.artifacts/'results.json').write_text(json.dumps({'pass':True,'weightedCounts':counts,'writerControls':{'dropRecovery':True,'dayCap':True,'retention':True}},indent=2)+'\n')
+    import shutil
+    shutil.rmtree(root)
     print(json.dumps({'pass':True,'artifacts':str(args.artifacts)}))
 
 if __name__=='__main__':main()

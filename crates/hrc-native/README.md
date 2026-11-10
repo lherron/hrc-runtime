@@ -308,19 +308,9 @@ lines, as Bun's `hrc-server.log` does) and `rusthrc-server.err.log` (stderr);
 access metrics stay in
 `<stateRoot>/metrics/rusthrc-server-<day>.ndjson`.
 
-`e2e/front_door.py` is the scratch workflow for gates 1-3: Bun on the private
-socket, front refusals, the installed `hrc` CLI and a real model turn through
-the front, front-safe native reads against Bun, verbatim forwarding and live
-streams and a scratch mail injector through the front (front mode hosts no kernel), the
-low-rate log reconciliation, SIGKILL recovery, and rollback with the broker
-reattached. Run it from a clean ghostmux terminal:
-
-```
-python3 crates/hrc-native/e2e/front_door.py --rusthrc crates/target/debug/rusthrc \
-  --bun-release /tmp/hrcf-rel-T11822 \
-  --aspd-socket /Users/lherron/praesidium/var/aspd/run/aspd.sock \
-  --injector 0.1.0-dev.20261023155744 --scratch-root /tmp/hrcf/1 --artifacts /tmp/hrcf-results
-```
+The Bun front proxy is retired; its front-door probes were removed in
+T-13074. Native owner recovery is checked by `e2e/server_owner.py`, and cold
+birth/reattach by `e2e/n2_restart.py` and `e2e/hrcpty_substrate.py`.
 
 Every main-listener request, including pass-through traffic and refusals, uses
 Bun's normalized route labels, client strata and weighted metric schema in
@@ -332,12 +322,9 @@ the CLI's `cli-*`, a stopped Bun daemon's `server-*`, `script-*`) older than 14
 days by file mtime; other names are never touched. L3 logs write every completed non-stream request and
 stream open/close events. `HRC_METRICS=0` disables metrics as it does in Bun.
 The exact-route inventory is generated from Bun source
-at build time. `e2e/accounting.py` compares a real Bun/native request mix through
-`compare --suite n1-accounting`, then checks failed-writer recovery, retention,
-and the daily cap in independent scratch roots. `e2e/front_accounting.py` checks
-separate Rust/Bun metric files and L3 streams, exact low-rate counts, verbatim
-User-Agent and optional client request IDs, and upstream-error versus local
-transport-failure attribution through `compare --suite n1-front-accounting`.
+at build time. `e2e/accounting.py` asserts native weighted request counts,
+request and stream logs, then checks failed-writer recovery, retention and
+the daily cap in independent scratch roots. It runs without a baseline.
 Forwarding never generates a request ID; both writers retain Bun's sampling
 contract. Rust L3 records identify `server: rusthrc` and `servedBy`.
 

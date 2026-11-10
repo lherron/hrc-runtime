@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Paired real-owner federation retirement refusals."""
+"""Native federation retirement validation and old-home refusal."""
 from routes import main
 
 
@@ -10,5 +10,18 @@ def cases(scope, host):
     ]]
 
 
+def compare(results):
+    rows=results['native']
+    assert len(rows)==4
+    for row in rows[:3]:
+        assert row['response']['status']==400,row
+        assert row['response']['body']['error']['code']=='malformed_request',row
+    result=rows[-1]['response']
+    assert result['status']==200 and result['body']['ok'] is False,result
+    assert result['body']['outcome']=='refused' and result['body']['state']=='unchanged',result
+    assert result['body']['retryable'] is False,result
+    assert result['body']['detail']=='retirement must be performed by the scope old home',result
+
+
 if __name__ == '__main__':
-    main(case_factory=cases, suite='deferred-operator-routes')
+    main(case_factory=cases, suite='deferred-operator-routes',compare=compare)
