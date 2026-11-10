@@ -89,7 +89,8 @@ class Run:
         return subprocess.run(["ghostmux", "capture-pane", "-t", surface], capture_output=True, text=True).stdout
 
     def screenshot(self, surface, name):
-        subprocess.run(["ghostmux", "focus", "-t", surface], capture_output=True)
+        # No `ghostmux focus`: a background window screenshots the same, and
+        # raising every window takes the operator's keyboard for the whole run.
         time.sleep(0.8)
         out = subprocess.run(["ghostmux", "screenshot", "-t", surface, "-o", self.path(name)],
                              capture_output=True, text=True)
