@@ -59,10 +59,13 @@ and preserved process, presentation, continuation, placement and held reservatio
 It takes the standard binary/release/socket/scratch/artifacts arguments plus
 `--broker-module <absolute path to harness-broker/dist/index.js>` for the ASP
 broker module. `participant_eviction_broker.mjs` runs that module's real CLI and
-records any fixture-driver stop/dispose call. `result.json` and `steps.json` are
-the repeatable evidence. Broker-side saved-token invalidation is unsupported.
+records any fixture-driver stop/dispose call; that module is the only Bun left
+(the descriptor is built by `participant_descriptor.py`). `result.json` and
+`steps.json` are the repeatable evidence. Broker-side saved-token invalidation is
+unsupported.
 
-Participant `.mjs` files are descriptor assets. `n2_restart_self.md` is an
+`participant_descriptor.py` builds and hashes participant broker descriptors
+(descriptor.rs is the spec). `n2_restart_self.md` is an
 operator recipe. Retained CLI helpers are documented in its README.
 
 ## Corpus decisions
@@ -90,7 +93,7 @@ Deleted entries stay listed to explain their removal; their source remains in gi
 | `n2_continuation_harness.py` | A respawn after the profile drifts (codex-hrcpty to claude-hrcpty) keeps the session's applied harness and resumes the Codex thread. An explicit cross-provider harness on that continuation is refused `continuation_harness_mismatch` before any operation is recorded (T-12419). Needs live codex credentials; scratch root under /tmp (socket path length). | keep-manual |
 | `n2_inspect_crash.py` | Broker SIGKILL mid-turn settles the runtime terminal and the run failed; inspect with recoverFinalSummary answers terminal-fenced. Live model turns. | keep-manual |
 | `n2_lanes.py` | Non-main lane seat: warm turn, selector echo, canonical API lane, raw stored lane_ref in every table. Live model turns. | keep-manual |
-| `n2_participant.py` | Real participant-owned EPR broker: staged replay, live turn, clean exit; `--mode delivery` drives addressed steer/turn/literal into it pending, ACTIVE and absorbing, for `compare --suite n2-participant-delivery` (T-11960). `--mode respawn` drives a same-incarnation respawn onto the live runtime (advance) plus three refused controls, for `compare --suite n2-participant-respawn` (T-11996). (requires explicit scratch/capture inputs; retained qualification) | keep-manual |
+| `n2_participant.py` | Real participant-owned EPR broker: staged replay, live turn, clean exit; `--mode delivery` drives addressed steer/turn/literal into it pending, ACTIVE and absorbing, judged in the driver (T-11960). `--mode respawn` drives a same-incarnation respawn onto the live runtime (advance) plus three refused controls, judged in the driver (T-11996). (requires explicit scratch/capture inputs; retained qualification) | keep-manual |
 | `n2_quit.py` | Human `/quit` through the hrc-pty attach client ends the seat `user_initiated_session_end`, once, and ends the lease. Live model turns. | keep-manual |
 | `n2_recovery.py` | Cold-boot input recovery on restart: owed prompt delivered once, the runtime-less and non-durable runs failed `cold_input_continuation_lost`. Live model turns. | keep-manual |
 | `n2_restart.py` | Restart rusthrc mid-turn (no lost, duplicated or replayed rows), then restart idle and take a warm turn; drained-stop log per shutdown. Live model turns. | promote |
@@ -105,23 +108,23 @@ Deleted entries stay listed to explain their removal; their source remains in gi
 | `n3_injector.py` | Production `bunx hrc-mail-injector` + wrkc reply with the native owner replaced mid-delivery. Still starts the Bun injector (T-13068 List). | keep-manual |
 | `n3_kernel_volume.py` | Historical independent-kernel survival workflow; superseded by embedded kernel checks (T-12141). | delete |
 | `n3_mail.py` | Stop gate on real private wrkc obligations: unseen clear, presented block, refusal cap and reset, reply clears; malformed bodies 400, unknown runtime fails open. | keep-manual |
-| `n3_messages.py` | Message filters/row shape against Bun repository inserts and a Bun baseline (T-13068 List: needs a native seed). | keep-manual |
+| `n3_messages.py` | Message filters and row shape over native-seeded rows (messages.rs insert), each filter judged against its own model. | keep-manual |
 | `n3_publication.py` | Live project-event publication, then a from-zero replay with a withheld wrkq reply: no duplicate, created=false retry, live and replay facts agree. Live model turns. | keep-manual |
 | `n3_replay.py` | Bounded replay gaps (replay_window, event_oversize) over rows seeded with the native append, broker follow equals finite read, receipt ACK, selector refusals. | keep-manual |
 | `n3_streams.py` | Replay/live/reconnect streams over an owner restart on real HTTP writes. | keep-manual |
 | `n3_submissions.py` | Submission doors: parser refusal codes, absent target unavailable, withdraw refusals, real enqueue/steer/preempt turns. Live model turns. | promote |
 | `n3_subscribers.py` | Subscriber declare/follow/ACK doors on a private DB: undeclared and wrong-token refusals, retained refused for delivery, inclusive retry, stale ACK. Live model turns. | keep-manual |
 | `n4_federation.py` | N4 federation reads on two scratch nodes, recorded for a per-case compare. (protected by T-11872) | keep-manual |
-| `n4_gate.py` | N4 summon gate on one owner (bun or native), recorded for a compare. (requires explicit scratch/capture inputs; retained qualification) | keep-manual |
+| `n4_gate.py` | N4 summon gate on a native owner over native-seeded ledger/registry rows, each case a literal. (requires explicit scratch/capture inputs; retained qualification) | keep-manual |
 | `n4_history.py` | N4 collective history on two scratch nodes: origin n4a and authority svc. (requires explicit scratch/capture inputs; retained qualification) | keep-manual |
 | `n4_listener_stop.py` | Native federation listeners drain on owner shutdown (N5's stop seam). (requires explicit scratch/capture inputs; retained qualification) | keep-manual |
-| `n4_mail.py` | N4 gate 1: mail and a reply in both directions between mixed scratch nodes. (protected by T-11899) | keep-manual |
-| `n4_ops.py` | N4 operations reads on one frozen store: Bun then native answer the same cases. (requires explicit scratch/capture inputs; retained qualification) | keep-manual |
-| `n4_placement.py` | N4 project-root placement on one owner (bun or native), recorded for a compare. (requires explicit scratch/capture inputs; retained qualification) | keep-manual |
+| `n4_mail.py` | N4 gate 1: mail and a reply in both directions between two native scratch nodes (the injector is the production `bunx hrc-mail-injector`). (protected by T-11899) | keep-manual |
+| `n4_ops.py` | N4 operations reads on one frozen store, each case a literal. (requires explicit scratch/capture inputs; retained qualification) | keep-manual |
+| `n4_placement.py` | N4 project-root placement on a native owner; hrcpty births land in the resolved root. (requires explicit scratch/capture inputs; retained qualification) | keep-manual |
 | `n4_svc_authority.py` | svc as registry host and collective-history authority, on svc's own data (T-11931). (protected by T-11933) | keep-manual |
-| `n4_watchdog.py` | N4 first-turn watchdog: Bun then native trip the same armed rows. (requires explicit scratch/capture inputs; retained qualification) | keep-manual |
+| `n4_watchdog.py` | N4 first-turn watchdog: a native owner trips the armed rows, judged from first_turn.rs. (requires explicit scratch/capture inputs; retained qualification) | keep-manual |
 | `participant_live.py` | Actual participant-owned bootstrap broker, real ASP compile, blank claude profile. (requires explicit scratch/capture inputs; retained qualification) | keep-manual |
-| `participants.py` | Direct join/attach HTTPs against sequential owners of empty scratch state. (requires explicit scratch/capture inputs; retained qualification) | keep-manual |
+| `participants.py` | Direct join/attach HTTPs against one native owner of empty scratch state, each case a literal. (requires explicit scratch/capture inputs; retained qualification) | keep-manual |
 | `preparation.py` | Real ASP declaration workflow; no broker or model starts. (requires explicit scratch/capture inputs; retained qualification) | keep-manual |
 | `routes.py` | Native HTTP route literals and metadata event invariants; shared scenario callback runner. | keep-manual |
 | `runtime_key_order.py` | none — completed T-11880 capture analysis; promoted maintenance and existing conformance key-order comparisons retain wire checks | delete |
