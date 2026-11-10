@@ -628,6 +628,16 @@ impl Claim {
             };
             if !free(server, &existing)? {
                 if self.policy == "reject" {
+                    let host_not_serving = server
+                        .store
+                        .lock()
+                        .unwrap()
+                        .participant_host_not_serving(&scope, lane)?;
+                    if host_not_serving {
+                        summon::assert_reserved_address_allows_birth(
+                            server, &scope, lane, "start",
+                        )?;
+                    }
                     return Err(ApiError::domain(
                         StatusCode::CONFLICT,
                         "session_scope_occupied",

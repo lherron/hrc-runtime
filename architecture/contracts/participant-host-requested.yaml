@@ -22,7 +22,7 @@ predicate: >
   both resume checks. A later refusal point for a held address uses the
   same helper. On a qualifying refusal HRC appends participant.host_requested
   with payload scopeRef, laneRef, reservationId, door and requestedAt. Door
-  is turn, turn-lazy, ensure or resume. The event belongs to no seat session
+  is turn, turn-lazy, ensure, resume or start. The event belongs to no seat session
   or runtime. Its required ledger attribution uses the fixed non-seat
   host_session_id hrc-participant and generation 0, with no runtime_id and
   the addressed scope and lane in scope_ref and lane_ref. It never uses the
