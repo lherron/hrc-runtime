@@ -191,6 +191,7 @@ verify-bun:
     #!/usr/bin/env bash
     set -euo pipefail
     echo 'WARNING: verify-bun runs the full Bun/TS suites. Do not run it unless your change touches Bun/TS code (packages/, scripts/*.ts). Rust changes are covered by `just verify`.' >&2
+    {{rbuild}} --mac --pull {{mac_debug}}/rusthrc cargo build --manifest-path crates/Cargo.toml --locked -p hrc-native
     bash scripts/dev-env.sh up --owner $$
     eval "$(bash scripts/dev-env.sh env)"
     just check

@@ -25,13 +25,14 @@
  *
  * Test strategy:
  *   - Socket discovery tests use real filesystem (no mock)
- *   - Client round-trip tests spin up a real hrc-server on a temp socket
+ *   - Client round-trip tests spin up a scratch native owner on a temp socket
  *   - Error parsing tests use a minimal Bun.serve stub that returns known error shapes
  */
 import { afterAll, beforeAll, describe, expect, it } from 'bun:test'
+import { existsSync } from 'node:fs'
 import { mkdir, mkdtemp, rm } from 'node:fs/promises'
-import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import { fileURLToPath } from 'node:url'
 
 import type { StatusResponse } from 'hrc-core'
 import { HRC_API_VERSION } from 'hrc-core'
@@ -42,55 +43,100 @@ import { HrcClient } from '../index'
 // ---------------------------------------------------------------------------
 // 1. discoverSocket() — socket discovery
 // ---------------------------------------------------------------------------
-describe('Phase 6 diagnostics round-trip', () => {
-  let tmpDir: string
-  let runtimeRoot: string
-  let stateRoot: string
+const repoRoot = fileURLToPath(new URL('../../../../', import.meta.url))
+const candidates = [
+  join(repoRoot, 'crates/target/aarch64-apple-darwin/debug/rusthrc'),
+  join(repoRoot, 'crates/target/debug/rusthrc'),
+]
+const binary = process.env['HRC_TEST_RUSTHRC'] ?? candidates.find(existsSync) ?? candidates[0]!
+const hasBinary = existsSync(binary)
+if (!hasBinary) {
+  console.warn(
+    `Skipping SDK diagnostics: no built rusthrc at ${binary}; run just cargo-check first`
+  )
+}
+
+// A missing build is the only skip condition. Migration, boot and client failures
+// fail the suite. verify-bun builds the native owner before running these cases.
+describe.skipIf(!hasBinary)('Phase 6 diagnostics round-trip', () => {
+  let tmpDir: string | undefined
   let socketPath: string
-  let dbPath: string
-  let tmuxSocketPath: string
-  let server: { stop(): Promise<void> } | undefined
+  let server: ReturnType<typeof Bun.spawn> | undefined
 
   beforeAll(async () => {
-    tmpDir = await mkdtemp(join(tmpdir(), 'hrc-sdk-diag-'))
-    runtimeRoot = join(tmpDir, 'runtime')
-    stateRoot = join(tmpDir, 'state')
+    tmpDir = await mkdtemp('/tmp/sdk-diag-')
+    const runtimeRoot = join(tmpDir, 'run')
+    const stateRoot = join(tmpDir, 'state')
     socketPath = join(runtimeRoot, 'hrc.sock')
-    dbPath = join(stateRoot, 'state.sqlite')
-    tmuxSocketPath = join(runtimeRoot, 'tmux.sock')
-
     await mkdir(runtimeRoot, { recursive: true })
     await mkdir(stateRoot, { recursive: true })
-    await mkdir(join(runtimeRoot, 'spool'), { recursive: true })
 
-    const { createHrcServer } = await import('hrc-server')
-    server = await createHrcServer({
-      runtimeRoot,
-      stateRoot,
-      socketPath,
-      lockPath: join(runtimeRoot, 'server.lock'),
-      spoolDir: join(runtimeRoot, 'spool'),
-      dbPath,
-      tmuxSocketPath,
+    // Never pass this seat's identity, live ledger, launchd label or federation
+    // config to the owner. Every owner root and external socket is private.
+    const env = Object.fromEntries(
+      Object.entries(process.env).filter(
+        ([key]) =>
+          !/^(HRC_|ASP_|AGENT|HARNESS|WRKQ|TMUX|CLAUDE|CODEX|ACP_|GIT_|XPC_SERVICE_NAME)/.test(key)
+      )
+    )
+    Object.assign(env, {
+      HRC_RUNTIME_DIR: runtimeRoot,
+      HRC_STATE_DIR: stateRoot,
+      HRC_PEER_CONFIG_FILE: join(tmpDir, 'federation.json'),
+      HRC_WRKQ_DB: join(tmpDir, 'wrkq.sqlite'),
+      WRKQ_DB: join(tmpDir, 'wrkq.sqlite'),
+      HRC_ASPD_SOCKET: join(tmpDir, 'aspd.sock'),
+      HRC_EVENT_INGEST_SOCKET: join(runtimeRoot, 'ingest.sock'),
+      HRC_PROJECT_SEARCH_ROOTS: join(tmpDir, 'projects'),
+      ASP_HOME: join(tmpDir, 'asp'),
+      ASP_AGENTS_ROOT: join(tmpDir, 'agents'),
+      HRC_LAUNCHD_LABEL: 'hrc.sdk-diagnostics.scratch',
     })
-  })
+    const logPath = join(tmpDir, 'serve.log')
+    const migrate = Bun.spawn([binary, 'store', 'migrate', join(stateRoot, 'state.sqlite')], {
+      env,
+      stdout: 'pipe',
+      stderr: 'pipe',
+    })
+    const [code, stdout, stderr] = await Promise.all([
+      migrate.exited,
+      new Response(migrate.stdout).text(),
+      new Response(migrate.stderr).text(),
+    ])
+    if (code !== 0) throw new Error(`scratch migration failed (${code}): ${stdout}${stderr}`)
+    server = Bun.spawn([binary, 'server', 'serve'], {
+      env,
+      cwd: process.cwd(),
+      stdout: Bun.file(logPath),
+      stderr: Bun.file(logPath),
+    })
+    const client = new HrcClient(socketPath)
+    for (let attempt = 0; attempt < 100; attempt++) {
+      if (server.exitCode !== null) break
+      try {
+        await client.getHealth()
+        return
+      } catch {
+        await Bun.sleep(50)
+      }
+    }
+    throw new Error(`scratch rusthrc failed to become ready: ${await Bun.file(logPath).text()}`)
+  }, 15000)
 
   afterAll(async () => {
-    if (server) await server.stop()
-    try {
-      const { exited } = Bun.spawn(['tmux', '-S', tmuxSocketPath, 'kill-server'], {
-        stdout: 'ignore',
-        stderr: 'ignore',
-      })
-      await exited
-    } catch {
-      // fine when no tmux server was created
+    if (server) {
+      server.kill('SIGTERM')
+      const deadline = setTimeout(() => server?.kill('SIGKILL'), 5000)
+      try {
+        await server.exited
+      } finally {
+        clearTimeout(deadline)
+      }
     }
-    await rm(tmpDir, { recursive: true, force: true })
+    if (tmpDir) await rm(tmpDir, { recursive: true, force: true })
   })
 
   it('getHealth returns { ok: true }', async () => {
-    if (!server) return
     const client = new HrcClient(socketPath)
     // RED: getHealth does not exist on HrcClient
     const result = await (client as any).getHealth()
@@ -98,7 +144,6 @@ describe('Phase 6 diagnostics round-trip', () => {
   })
 
   it('getStatus returns server status with uptime', async () => {
-    if (!server) return
     const client = new HrcClient(socketPath)
     // RED: getStatus does not exist on HrcClient
     const result = (await (client as any).getStatus()) as StatusResponse
@@ -146,7 +191,6 @@ describe('Phase 6 diagnostics round-trip', () => {
   })
 
   it('listRuntimes returns an array', async () => {
-    if (!server) return
     const client = new HrcClient(socketPath)
     // RED: listRuntimes does not exist on HrcClient
     const result = await (client as any).listRuntimes()
@@ -156,7 +200,6 @@ describe('Phase 6 diagnostics round-trip', () => {
   })
 
   it('listRuns returns an array', async () => {
-    if (!server) return
     const client = new HrcClient(socketPath)
     const result = await client.listRuns({ limit: 1 })
     expect(Array.isArray(result)).toBe(true)
