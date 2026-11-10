@@ -3,6 +3,10 @@
 use super::{has_flag, js_json, js_keys, legacy_argv, pad_end, parse_flag, truthy};
 use crate::{Error, Result, client::Daemon, js::member, parse::Parsed};
 use serde_json::{Map, Value, json};
+use std::time::Duration;
+
+// Match the daemon's default maintenance budget, with a minute for its reply.
+const MAINTENANCE_TIMEOUT: Duration = Duration::from_secs(26 * 60);
 
 struct Gate {
     dry_run_flag: bool,
@@ -104,7 +108,11 @@ pub(super) fn sweep(args: &Parsed<'_>) -> Result<()> {
     if gate.yes {
         request.insert("yes".into(), true.into());
     }
-    let result = Daemon::connect()?.post("/v1/runtimes/sweep", Value::Object(request))?;
+    let result = Daemon::connect()?.post_bounded(
+        "/v1/runtimes/sweep",
+        Value::Object(request),
+        MAINTENANCE_TIMEOUT,
+    )?;
     if gate.json {
         crate::cli_print!("{}{}\n", ndjson_rows(&result), summary_line(&result));
         return Ok(());
@@ -256,7 +264,11 @@ pub(super) fn prune(args: &Parsed<'_>) -> Result<()> {
     if gate.yes {
         request.insert("yes".into(), true.into());
     }
-    let result = Daemon::connect()?.post("/v1/runtimes/prune", Value::Object(request))?;
+    let result = Daemon::connect()?.post_bounded(
+        "/v1/runtimes/prune",
+        Value::Object(request),
+        MAINTENANCE_TIMEOUT,
+    )?;
     let counts = result.get("deleteCounts").filter(|c| truthy(Some(c)));
     if gate.json {
         let mut out = ndjson_rows(&result);
@@ -337,15 +349,19 @@ pub(super) fn prune_window(args: &Parsed<'_>) -> Result<()> {
     if let Some(window) = args.value("window") {
         request.insert("window".into(), window.into());
     }
+    let mut minutes = 25.;
     if let Some(raw) = args.value("max-minutes") {
-        let minutes = raw
+        minutes = raw
             .parse::<f64>()
             .ok()
             .filter(|n| n.is_finite() && *n > 0.)
             .ok_or_else(|| Error::usage("--max-minutes must be a positive number"))?;
         request.insert("maxMinutes".into(), minutes.into());
     }
-    let result = Daemon::connect()?.post("/v1/runtimes/prune", Value::Object(request))?;
+    let timeout = Duration::try_from_secs_f64((minutes + 1.) * 60.)
+        .map_err(|_| Error::usage("--max-minutes is too large"))?;
+    let result =
+        Daemon::connect()?.post_bounded("/v1/runtimes/prune", Value::Object(request), timeout)?;
     if args.flag("json") {
         crate::cli_print!("{}\n", js_json(&result));
         return Ok(());
