@@ -1,289 +1,290 @@
 #!/usr/bin/env python3
-"""Real-seat runtime reads against sequential owners on one scratch snapshot.
+"""Runtime reads against one native owner and one real deterministic seat.
+
+The seat is a public birth (POST /v1/sessions/resolve then /v1/turns) on the
+CLI lifecycle fixture (crates/hrc-cli/e2e/native_seat.py): private authority
+and compiler, a leased hrc-pty substrate and the deterministic broker, no
+model. Two historical runtimes (terminated, failed) on the same session are a
+SQL fixture with no broker endpoint. Both are read back through the owner
+before any case runs.
 
 Failure modes: absent/empty seat, ignored filters or cursors, lost identity,
-incorrect errors, stale owner diagnostics, fabricated live probes, token leaks,
-and accidental event ACK/projection. Bun establishes the acknowledged baseline;
-native only reads the actual worker. Historical rows come from Bun's public
-repository and carry no broker endpoints. Cleanup is fenced to this scope/root.
+wrong refusal message/detail/precedence, stale owner diagnostics, fabricated
+live probes, and accidental event ACK. Expectations are read off
+placement/runtimes.rs (`query`, `list`, `seat`), runtime_views.rs (`inspect`,
+`target`) and the server.rs route table; no comparison owner.
+
+`main` is shared: maintenance.py passes its own cases, seed and judge.
 """
 import argparse
-from http.client import HTTPException
+import datetime
 import json
-import os
 from pathlib import Path
-import signal
-import shutil
-import socket
 import sqlite3
-import subprocess
+import sys
 import time
-from urllib.parse import urlencode
+from urllib.parse import quote, urlencode
 
-from foundation import daemon_env, UnixHTTP
+sys.path.insert(0, str(Path(__file__).resolve().parents[2] / 'hrc-cli/e2e'))
+from native_seat import Fixture  # noqa: E402
+from metrics_isolation import isolated_suite  # noqa: E402
+from n2_scratch import UnixHTTP  # noqa: E402
+
+OLD = '2026-01-01T00:00:00.000Z'
+HISTORY = (('old-a', 'terminated'), ('old-b', 'failed'))
+INSERT_RUNTIME = ('INSERT INTO runtimes (runtime_id,host_session_id,scope_ref,lane_ref,generation,transport,status,'
+                  'supports_inflight_input,created_at,updated_at) VALUES (?,?,?,?,?,?,?,0,?,?)')
 
 
-def main(case_factory=None, observe=None, paginate=True, before_subject=None, before_request=None):
+def stamp(value):
+    return datetime.datetime.fromisoformat(value.replace('Z', '+00:00')).timestamp()
+
+
+def arguments():
     p = argparse.ArgumentParser()
     p.add_argument('--binary', type=Path, required=True)
-    p.add_argument('--bun-release', type=Path, required=True)
-    p.add_argument('--aspd-socket', type=Path, required=True)
-    p.add_argument('--scratch-root', type=Path, required=True)
     p.add_argument('--artifacts', type=Path, required=True)
-    args = p.parse_args()
-    if any(os.environ.get(k) for k in ('CLAUDECODE', 'CLAUDE_CODE_ENTRYPOINT', 'CODEX_SANDBOX')):
-        raise RuntimeError('run this workflow from a clean ghostmux terminal')
-    root = args.scratch_root.absolute()
-    if root.exists():
-        raise RuntimeError('scratch root must be fresh: ' + str(root))
-    root.mkdir(parents=True)
-    args.artifacts.mkdir(parents=True, exist_ok=True)
-    release = args.bun_release.resolve()
-    assert release.parent.name != 'hrc-runtime-releases'
-    bin_dir = root / 'bin'
-    bin_dir.mkdir()
-    cli = release / 'packages/hrc-cli/bin/hrc.js'
-    assert cli.is_file()
-    (bin_dir / 'hrc').symlink_to(cli)
-    project = root / 'n1-t11818'
-    project.mkdir()
-    (root / 'run').mkdir()
-    (root / 'state').mkdir()
-    config = root / 'federation.json'
-    # An absent explicit config prevents fallback to production federation.
-    env = {k: v for k, v in os.environ.items() if not k.startswith('GIT_')}
-    env['PATH'] = str(bin_dir)+os.pathsep+os.environ.get('PATH','')
-    assert Path(shutil.which('hrc',path=env['PATH'])).resolve()==cli.resolve()
-    for k in ('HRC_SESSION_REF', 'HRC_RUNTIME_ID', 'HRC_RUN_ID', 'HRC_HOST_SESSION_ID',
-              'HRC_EVENT_FORWARD_URL', 'HRC_EVENT_INGEST_TCP_PORT', 'HRC_EVENT_FORWARD_SOURCE_REF',
-              'WRKQ_DB_PATH', 'WRKQ_DB_PATH_FILE', 'WRKQD_NODE_TOKENS', 'WRKQD_NODE_TOKENS_FILE', 'WRKQD_UNIX'):
-        env.pop(k, None)
-    env.update(ASP_HOME=str(root / 'asp-home'), HRC_RUNTIME_DIR=str(root / 'run'), HRC_STATE_DIR=str(root / 'state'),
-               ASP_PROJECT_ROOT_OVERRIDE=str(project), HRC_PROJECT_SEARCH_ROOTS=str(project),
-               HRC_WRKQ_DB=str(root / 'wrkq.db'), WRKQ_DB=str(root / 'wrkq.db'),
-               WRKQ_PRINCIPAL_REF='agent:cody',
-               HRC_WRKQD_TOKEN_FILE='', WRKQD_TOKEN_FILE='', WRKQD_TOKEN='',
-               HRC_PEER_CONFIG_FILE=str(config), HRC_EVENT_INGEST_SOCKET=str(root / 'run/ingest.sock'),
-               HRC_ACP_WEBHOOK_URL='', HRC_ASPD_SOCKET=str(args.aspd_socket.resolve()),
-               HRC_BROKER_DURABLE_IPC_ENABLED='1', HRC_HEADLESS_CODEX_BROKER_ENABLED='1',
-               HRC_CLAUDE_CODE_TMUX_BROKER_ENABLED='1')
-    db_path = root / 'state/state.sqlite'
-    scope = 'agent:tabularasa:project:n1-t11818:task:native-' + str(time.time_ns())
-    steps, gates, owners, logs = [{'name':'named-bun-cli','resolvedPath':str(cli.resolve()),'releasePath':str(release)}], {}, [], []
-    def command(name, argv, timeout=120):
-        argv = [cli if str(argv[0]) == 'hrc' else argv[0], *argv[1:]]
-        run = subprocess.run([str(v) for v in argv], env=env, cwd=project,
-                             capture_output=True, text=True, timeout=timeout)
-        steps.append({'name': name, 'argv': [str(v) for v in argv], 'exit': run.returncode,
-                      'stdout': run.stdout, 'stderr': run.stderr})
-        assert run.returncode == 0, (name, run.returncode, run.stdout, run.stderr)
-        return json.loads(run.stdout) if run.stdout.strip().startswith(('{', '[')) else run.stdout
-    def rows(sql, params=()):
-        with sqlite3.connect(f'file:{db_path}?mode=ro', uri=True) as db:
-            db.row_factory = sqlite3.Row
-            return [dict(row) for row in db.execute(sql, params)]
-    def http(method, path, body=None):
-        c = UnixHTTP(root / 'run/hrc.sock')
-        c.request(method, path, json.dumps(body) if body is not None else None,
-                  {'Content-Type': 'application/json'})
-        res = c.getresponse()
-        raw = res.read().decode()
-        response_headers={k.lower():v for k,v in res.getheaders() if k.lower()=='x-hrc-next-cursor'}
-        c.close()
-        return res.status, raw, response_headers
-    def up(kind, index):
-        log = (args.artifacts / f'{kind}-{index}.log').open('w')
-        logs.append(log)
-        argv = [args.binary.resolve(), 'server'] if kind == 'native' else [
-            'bun', release / 'packages/hrc-cli/src/cli.ts', 'server', 'serve']
-        proc = subprocess.Popen([str(a) for a in argv], env=daemon_env(env), cwd=project, stdout=log, stderr=log)
-        owners.append(proc)
-        for _ in range(200):
-            assert proc.poll() is None, (kind, 'owner exited', proc.returncode)
-            try:
-                if kind == 'bun':
-                    # HTTP can answer during startup before CLI shutdown handlers
-                    # exist. Require this child's listening event, then roundtrip.
-                    listening = False
-                    for line in Path(log.name).read_text().splitlines():
-                        try:
-                            record = json.loads(line)
-                        except json.JSONDecodeError:
-                            continue
-                        if record.get('event') == 'server.listening' and record.get('data', {}).get('pid') == proc.pid:
-                            listening = True
-                            break
-                    if not listening:
-                        time.sleep(.1)
-                        continue
-                status, raw, _ = http('GET', '/v1/status')
-                value = json.loads(raw)
-                if status == 200:
-                    if kind == 'native':
-                        assert Path(value['binaryPath']).resolve() == args.binary.resolve()
-                    else:
-                        assert Path(value['packagePath']).resolve().is_relative_to(release)
-                        assert value['release']['mode'] == 'unmanaged'
-                    return proc
-            except (OSError, HTTPException):
-                pass
-            time.sleep(.1)
-        raise AssertionError(kind + ' not ready')
-    def down(proc):
-        proc.send_signal(signal.SIGTERM)
-        proc.wait(timeout=20)
-        steps.append({'name': 'owner-shutdown', 'pid': proc.pid, 'exit': proc.returncode})
-        assert proc.returncode == 0
-    def wait_completed(run_id):
-        for _ in range(900):
-            matches = rows("SELECT * FROM hrc_events WHERE run_id=? AND event_kind='turn.completed'", (run_id,))
-            if matches:
-                return matches
-            time.sleep(.1)
-        raise AssertionError('turn did not complete: ' + run_id)
+    p.add_argument('--scratch-root', type=Path, help='accepted and ignored: the seat fixture makes its own short /tmp root')
+    return p
+
+
+def seed_history(f, runtime, suffixes=HISTORY, transport='sdk'):
+    """Historical rows on the live seat's session, through one store write; returns their ids."""
+    live = f.s.rows('SELECT * FROM runtimes WHERE runtime_id=?', (runtime,))[0]
+    with sqlite3.connect(f.s.db_path, timeout=30) as db:
+        for suffix, status in suffixes:
+            db.execute(INSERT_RUNTIME, (runtime + '-' + suffix, live['host_session_id'], live['scope_ref'], live['lane_ref'],
+                                        live['generation'], transport, status, OLD, OLD))
+    return [runtime + '-' + s for s, _ in suffixes]
+
+
+def http(f, method, path, body=None):
+    c = UnixHTTP(f.s.socket, 60)
+    c.request(method, path, json.dumps(body) if body is not None else None, {'Content-Type': 'application/json'})
+    res = c.getresponse()
+    raw = res.read().decode()
+    headers = {k.lower(): v for k, v in res.getheaders() if k.lower() == 'x-hrc-next-cursor'}
+    c.close()
     try:
-        command('project-init', ['git', 'init', '-q'])
-        command('wrkq-migrate', ['wrkqadm', 'migrate'])
-        command('wrkq-project', [str(Path.home() / ".local/bin/wrkq"), 'mkdir', '/n1-t11818', '--kind', 'project', '--json'])
-        command('wrkq-root', [str(Path.home() / ".local/bin/wrkq"), 'set', '/n1-t11818', '--root', project, '--json'])
-        command('schema-create', [args.binary.resolve(), 'store', 'migrate', db_path])
-        bun = up('bun', 0)
-        start = command('bun-ordinary-start', ['hrc', 'start', scope, '--project-id', 'n1-t11818',
-                        '--project-root', project, '--cwd', project, '-p',
-                        'Reply with exactly the word OK and nothing else. No tools.', '--json'])
-        runtime = start['runtime']['runtimeId']
-        wait_completed(start['runtime']['runId'])
-        host = start['session']['hostSessionId'] if 'session' in start else rows('SELECT host_session_id FROM runtimes WHERE runtime_id=?',(runtime,))[0]['host_session_id']
-        down(bun)
-        # Establish and persist a real Bun replay/ACK checkpoint before the
-        # shared snapshot. N1 may report that known checkpoint but cannot ACK
-        # any event itself. The daemon owner changes, the broker does not.
-        primer=up('bun',2)
-        for _ in range(300):
-            state=json.loads(rows('SELECT runtime_state_json FROM runtimes WHERE runtime_id=?',(runtime,))[0]['runtime_state_json'])
-            replay=state.get('brokerReplay',{})
-            if replay.get('activeControllerInstanceId')==f'hrc-server:{primer.pid}' and replay.get('ackedThroughSeq',-1)==replay.get('currentSeq'):
-                break
-            time.sleep(.05)
-        else:raise AssertionError('Bun did not establish a fully acknowledged baseline')
-        down(primer)
-        fixture='''import {openHrcDatabase} from PATH;
-const db=openHrcDatabase(process.argv[1]), live=db.runtimes.getByRuntimeId(process.argv[2]);
-for(const [suffix,status] of [['old-a','terminated'],['old-b','failed']]) db.runtimes.insert({runtimeId:live.runtimeId+'-'+suffix,hostSessionId:live.hostSessionId,scopeRef:live.scopeRef,laneRef:live.laneRef,generation:live.generation,transport:'sdk',status,supportsInflightInput:false,createdAt:'2026-01-01T00:00:00.000Z',updatedAt:'2026-01-01T00:00:00.000Z'});
-db.close();'''.replace('PATH',json.dumps(str(release/'packages/hrc-store-sqlite/src/database.ts')))
-        command('historical-runtime-fixture',['bun','-e',fixture,db_path,runtime])
-        # Bun's N2 legacy-startup job classifies the historical controllerless
-        # failed row as stale. Finish that setup once before the shared snapshot;
-        # this workflow compares reads, not the deferred N2 startup job.
-        history_owner=up('bun',3)
-        for _ in range(300):
-            if rows('SELECT status FROM runtimes WHERE runtime_id=?',(runtime+'-old-b',))[0]['status']=='stale':break
-            time.sleep(.05)
-        else:raise AssertionError('Bun historical setup did not settle')
-        down(history_owner)
-        with sqlite3.connect(db_path) as source,sqlite3.connect(root/'snapshot.sqlite') as target:source.backup(target)
-        q=lambda **kw:'/v1/runtimes?'+urlencode(kw)
-        cases=[('runtimes','GET','/v1/runtimes',None),
-               ('runtimes-all','GET',q(all='true'),None),
-               ('runtimes-page','GET',q(all='true',limit='1'),None),
-               ('runtimes-terminal','GET',q(all='true',status='stale,terminated'),None),
-               ('runtimes-terminal-hidden','GET',q(status='terminated'),None),
-               ('runtimes-host','GET',q(hostSessionId=host),None),
-               ('runtimes-scope','GET',q(scope=scope),None),
-               ('runtimes-agent','GET',q(agent='tabularasa'),None),
-               ('runtimes-task','GET',q(task=scope.rsplit(':',1)[1]),None),
-               ('runtimes-other-agent','GET',q(agent='absent'),None),
-               ('runtimes-other-host','GET',q(hostSessionId='absent'),None),
-               ('runtimes-status','GET',q(status='ready,busy'),None),
-               ('runtimes-unknown-status','GET',q(status='absent'),None),
-               ('runtimes-transport','GET',q(transport='headless'),None),
-               ('runtimes-stale','GET',q(stale='true',olderThan='24h'),None),
-               ('runtimes-bool','GET',q(all='yes'),None),
-               ('runtimes-transport-invalid','GET',q(transport='bad'),None),
-               ('runtimes-limit-zero','GET',q(limit='0'),None),
-               ('runtimes-limit-negative','GET',q(limit='-1'),None),
-               ('runtimes-limit-fraction','GET',q(limit='1.2'),None),
-               ('runtimes-limit-overflow','GET',q(limit='501'),None),
-               ('runtimes-cursor','GET',q(cursor='bad'),None),
-               ('runtimes-duration','GET',q(olderThan='24'),None),
-               ('inspect','POST','/v1/runtimes/inspect',{'runtimeId':runtime}),
-               ('inspect-array','POST','/v1/runtimes/inspect',[]),
-               ('inspect-number','POST','/v1/runtimes/inspect',1),
-               ('inspect-owner-null','POST','/v1/runtimes/inspect',{'runtimeId':runtime,'ownerRunId':None}),
-               ('inspect-owner-empty','POST','/v1/runtimes/inspect',{'runtimeId':runtime,'ownerRunId':''}),
-               ('inspect-trimmed','POST','/v1/runtimes/inspect',{'runtimeId':' '+runtime+' '}),
-               ('inspect-missing','POST','/v1/runtimes/inspect',{}),
-               ('inspect-unknown','POST','/v1/runtimes/inspect',{'runtimeId':'absent'}),
-               ('seat','GET','/v1/runtimes/'+runtime+'/seat',None),
-               ('seat-encoded','GET','/v1/runtimes/%72'+runtime[1:]+'/seat',None),
-               ('seat-inactive','GET','/v1/runtimes/'+runtime+'-old-a/seat',None),
-               ('inspect-inactive','POST','/v1/runtimes/inspect',{'runtimeId':runtime+'-old-a'}),
-               ('seat-unknown','GET','/v1/runtimes/absent/seat',None),
-               ('target','GET','/v1/targets/by-session-ref?'+urlencode({'sessionRef':scope+'/lane:main'}),None),
-               ('target-default','GET','/v1/targets/by-session-ref?'+urlencode({'sessionRef':scope+'/lane:default'}),None),
-               ('target-invalid','GET','/v1/targets/by-session-ref?sessionRef=bad',None),
-               ('target-missing','GET','/v1/targets/by-session-ref',None),
-               ('target-unknown','GET','/v1/targets/by-session-ref?'+urlencode({'sessionRef':scope+'-absent/lane:main'}),None)]
-        if case_factory is not None:cases=case_factory(runtime,host,scope,root)
-        observations={}
-        for kind in ('bun','native'):
-            with sqlite3.connect(root/'snapshot.sqlite') as source,sqlite3.connect(db_path) as target:source.backup(target)
-            owner_before=time.time()
-            owner=up(kind,1)
-            if before_subject is not None: before_subject(kind, db_path, root)
-            values=[]
-            for name,method,path,body in cases:
-                initial = before_request(kind, name, db_path) if before_request is not None else None
-                before=time.time()
-                status,raw,headers=http(method,path,body)
-                try:response=json.loads(raw)
-                except json.JSONDecodeError:response=raw
-                persisted_probe=None
-                if name.startswith('seat') and status==200:
-                    persisted_state=rows('SELECT runtime_state_json FROM runtimes WHERE runtime_id=?',(response['runtimeId'],))[0]['runtime_state_json']
-                    persisted_probe=json.loads(persisted_state or '{}').get('brokerDispatchDiagnostics',{}).get('liveSeatProbe')
-                record={'persistedProbe':persisted_probe,'case':name,'method':method,'path':path,'request':body,'status':status,'body':response,'headers':headers,'before':before,'after':time.time(),'ownerPid':owner.pid,'ownerBefore':owner_before}
-                if initial is not None: record["initial"] = initial
-                if observe is not None:record.update(observe(kind,record,db_path))
-                values.append(record)
-            if paginate:
-                page=next(r for r in values if r['case']=='runtimes-page')
-                cursor=page['headers'].get('x-hrc-next-cursor','missing')
-                before=time.time()
-                path=q(all='true',limit='1',cursor=cursor)
-                status,raw,headers=http('GET',path)
-                values.append({'persistedProbe':None,'case':'runtimes-next','method':'GET','path':path,'request':None,'status':status,'body':json.loads(raw),'headers':headers,'before':before,'after':time.time(),'ownerPid':owner.pid,'ownerBefore':owner_before})
-            observations[kind]=values
-            down(owner)
-        for kind,values in observations.items():
-            directory=args.artifacts/kind
-            directory.mkdir(exist_ok=True)
-            (directory/'observations.json').write_text(json.dumps(values,indent=2)+'\n')
-        (args.artifacts/'observations.json').write_text(json.dumps(observations,indent=2)+'\n')
-        gates['workflow']={'pass':True,'runtimeId':runtime,'hostSessionId':host}
-    finally:
-        # Every candidate came from our own fresh database. Validate both scope
-        # and destination before cleaning only this workflow's tmux servers.
-        if db_path.exists():
-            for record in rows('SELECT scope_ref,runtime_state_json FROM runtimes'):
-                assert record['scope_ref'] == scope, record['scope_ref']
-                state = json.loads(record['runtime_state_json'] or '{}')
-                path = state.get('tmux', {}).get('socketPath')
-                if path:
-                    assert Path(path).resolve().is_relative_to((root / 'run').resolve())
-                    subprocess.run(['tmux', '-S', path, 'kill-server'], capture_output=True, timeout=5)
-        for owner in owners:
-            if owner.poll() is None:
-                owner.terminate()
-                owner.wait(timeout=20)
-        for log in logs:
-            log.close()
-        (args.artifacts / 'results.json').write_text(json.dumps({'gates': gates, 'steps': steps, 'scratchRoot': str(root)}, indent=2) + '\n')
-    assert gates.get('workflow',{}).get('pass')
-    print(json.dumps({'pass':['runtime-read-baseline'],'artifacts':str(args.artifacts)}))
+        return res.status, json.loads(raw), headers
+    except json.JSONDecodeError:
+        return res.status, raw, headers
 
 
+def main(case_factory=None, judge=None, seed=None, observe=None, paginate=True):
+    args = arguments().parse_args()
+    args.artifacts.mkdir(parents=True, exist_ok=True)
+    observations, failures = [], []
+    with Fixture(args) as f:
+        seat = f.birth(prompt='runtime reads fixture turn')
+        runtime, host, scope = seat['runtimeId'], seat['hostSessionId'], seat['sessionRef'].split('/lane:')[0]
+        context = {'runtime': runtime, 'host': host, 'scope': scope, 'fixture': f}
+        context['history'] = seed_history(f, runtime)
+        if seed:
+            seed(context)
+        # Owner readback before any case: the live seat and every historical row.
+        status, listed, _ = http(f, 'GET', '/v1/runtimes?all=true')
+        assert status == 200 and runtime in [r['runtimeId'] for r in listed], listed
+        assert set(context['history']) <= {r['runtimeId'] for r in listed}, listed
+        q = lambda **kw: '/v1/runtimes?' + urlencode(kw)
+        cases = case_factory(context) if case_factory else read_cases(context, q)
+        for name, method, path, body in cases:
+            initial = observe(context) if observe else None
+            before = time.time()
+            status, value, headers = http(f, method, path, body)
+            record = {'case': name, 'method': method, 'path': path, 'request': body, 'status': status, 'body': value,
+                      'headers': headers, 'before': before, 'after': time.time(), 'ownerPid': f.s.owners[-1].pid}
+            if name.startswith('seat') and status == 200:
+                state = f.s.rows('SELECT runtime_state_json FROM runtimes WHERE runtime_id=?', (value['runtimeId'],))[0]['runtime_state_json']
+                record['persistedProbe'] = json.loads(state or '{}').get('brokerDispatchDiagnostics', {}).get('liveSeatProbe')
+            if observe:
+                record.update(initial=initial, durable=observe(context))
+            observations.append(record)
+        if paginate:
+            page = next(r for r in observations if r['case'] == 'runtimes-page')
+            cursor = page['headers'].get('x-hrc-next-cursor', 'missing')
+            path = q(all='true', limit='1', cursor=cursor)
+            before = time.time()
+            status, value, headers = http(f, 'GET', path)
+            observations.append({'case': 'runtimes-next', 'method': 'GET', 'path': path, 'request': None, 'status': status,
+                                 'body': value, 'headers': headers, 'before': before, 'after': time.time()})
+        (args.artifacts / 'observations.json').write_text(json.dumps({'context': {k: v for k, v in context.items() if k != 'fixture'},
+                                                                      'observations': observations}, indent=2) + '\n')
+        failures = (judge or judge_reads)(observations, context)
+        (args.artifacts / 'failures.json').write_text(json.dumps(failures, indent=2, default=str) + '\n')
+    assert not failures, failures
+    print(json.dumps({'pass': True, 'cases': len(observations), 'artifacts': str(args.artifacts)}))
+
+
+def read_cases(c, q):
+    runtime, host, scope = c['runtime'], c['host'], c['scope']
+    old_a = c['history'][0]
+    return [('runtimes', 'GET', '/v1/runtimes', None),
+            ('runtimes-all', 'GET', q(all='true'), None),
+            ('runtimes-page', 'GET', q(all='true', limit='1'), None),
+            ('runtimes-terminal', 'GET', q(all='true', status='stale,terminated'), None),
+            ('runtimes-terminal-hidden', 'GET', q(status='terminated'), None),
+            ('runtimes-host', 'GET', q(hostSessionId=host), None),
+            ('runtimes-scope', 'GET', q(scope=scope), None),
+            ('runtimes-agent', 'GET', q(agent='tabularasa'), None),
+            ('runtimes-task', 'GET', q(task=scope.rsplit(':', 1)[1]), None),
+            ('runtimes-other-agent', 'GET', q(agent='absent'), None),
+            ('runtimes-other-host', 'GET', q(hostSessionId='absent'), None),
+            ('runtimes-status', 'GET', q(status='ready,busy'), None),
+            ('runtimes-unknown-status', 'GET', q(status='absent'), None),
+            ('runtimes-transport', 'GET', q(transport='headless'), None),
+            ('runtimes-transport-live', 'GET', q(transport='hrcpty'), None),
+            ('runtimes-stale', 'GET', q(stale='true', olderThan='24h'), None),
+            ('runtimes-bool', 'GET', q(all='yes'), None),
+            ('runtimes-transport-invalid', 'GET', q(transport='bad'), None),
+            ('runtimes-limit-zero', 'GET', q(limit='0'), None),
+            ('runtimes-limit-negative', 'GET', q(limit='-1'), None),
+            ('runtimes-limit-fraction', 'GET', q(limit='1.2'), None),
+            ('runtimes-limit-overflow', 'GET', q(limit='501'), None),
+            ('runtimes-cursor', 'GET', q(cursor='bad'), None),
+            ('runtimes-duration', 'GET', q(olderThan='24'), None),
+            ('inspect', 'POST', '/v1/runtimes/inspect', {'runtimeId': runtime}),
+            ('inspect-array', 'POST', '/v1/runtimes/inspect', []),
+            ('inspect-number', 'POST', '/v1/runtimes/inspect', 1),
+            ('inspect-owner-null', 'POST', '/v1/runtimes/inspect', {'runtimeId': runtime, 'ownerRunId': None}),
+            ('inspect-owner-empty', 'POST', '/v1/runtimes/inspect', {'runtimeId': runtime, 'ownerRunId': ''}),
+            ('inspect-trimmed', 'POST', '/v1/runtimes/inspect', {'runtimeId': ' ' + runtime + ' '}),
+            ('inspect-missing', 'POST', '/v1/runtimes/inspect', {}),
+            ('inspect-unknown', 'POST', '/v1/runtimes/inspect', {'runtimeId': 'absent'}),
+            ('seat', 'GET', '/v1/runtimes/' + runtime + '/seat', None),
+            ('seat-encoded', 'GET', '/v1/runtimes/' + quote(runtime[0], safe='').replace(runtime[0], '%%%02X' % ord(runtime[0])) + runtime[1:] + '/seat', None),
+            ('seat-inactive', 'GET', '/v1/runtimes/' + old_a + '/seat', None),
+            ('inspect-inactive', 'POST', '/v1/runtimes/inspect', {'runtimeId': old_a}),
+            ('seat-unknown', 'GET', '/v1/runtimes/absent/seat', None),
+            ('target', 'GET', '/v1/targets/by-session-ref?' + urlencode({'sessionRef': scope + '/lane:main'}), None),
+            ('target-default', 'GET', '/v1/targets/by-session-ref?' + urlencode({'sessionRef': scope + '/lane:default'}), None),
+            ('target-invalid', 'GET', '/v1/targets/by-session-ref?sessionRef=bad', None),
+            ('target-missing', 'GET', '/v1/targets/by-session-ref', None),
+            ('target-unknown', 'GET', '/v1/targets/by-session-ref?' + urlencode({'sessionRef': scope + '-absent/lane:main'}), None)]
+
+
+def judge_reads(rows, c):
+    failures = []
+    by = {r['case']: r for r in rows}
+    runtime, (old_a, old_b) = c['runtime'], c['history']
+
+    def fail(name, what, value=None):
+        failures.append((name, what, value if value is not None else {k: by[name].get(k) for k in ('status', 'body', 'headers')}))
+
+    def bounded(name, at, start=None):
+        return isinstance(at, str) and (start or by[name]['before']) - .01 <= stamp(at) <= by[name]['after'] + .01
+
+    def unchanged_probe(name, probe):
+        # controller/seat.rs record: an idle probe that changes nothing is not persisted, so the
+        # retained observation is still the binding's, from before this request.
+        return ((probe.get('availability'), probe.get('state'), probe.get('cause'), probe.get('invocationId')) ==
+                ('current', 'idle', 'binding-established', by['seat']['body'].get('invocationId'))
+                and isinstance(probe.get('observedAt'), str) and stamp(probe['observedAt']) < by[name]['before'])
+
+    def listed(name, ids, cursor=False):
+        r = by[name]
+        got = [x['runtimeId'] for x in r['body']] if r['status'] == 200 and isinstance(r['body'], list) else None
+        if got != ids:
+            return fail(name, 'runtime ids')
+        if ('x-hrc-next-cursor' in r['headers']) != cursor:
+            fail(name, 'cursor header')
+        for x in r['body']:
+            want_status = {runtime: x['status'], old_a: 'terminated', old_b: 'failed'}[x['runtimeId']]
+            if (x.get('hostSessionId'), x.get('scopeRef'), x.get('laneRef'), x.get('status')) != (c['host'], c['scope'], 'main', want_status) \
+                    or x.get('identity', {}).get('agentId') != 'tabularasa':
+                fail(name, 'row identity', x)
+            if x['runtimeId'] == runtime and (x.get('transport'), x.get('controllerKind')) != ('hrcpty', 'harness-broker'):
+                fail(name, 'live row', x)
+
+    def refusal(name, status, code, message, detail):
+        r = by[name]
+        error = r['body'].get('error', {}) if isinstance(r['body'], dict) else {}
+        if r['status'] != status or error.get('code') != code or error.get('message') != message or error.get('detail') != detail:
+            fail(name, 'refusal')
+
+    names = [r['case'] for r in rows]
+    if len(names) != len(set(names)) or len(names) != 43:
+        failures.append(('matrix', names))
+    # Live runtimes only by default; terminal history only with all=true, ordered (statusRank, createdAt, runtimeId).
+    for name in ('runtimes', 'runtimes-host', 'runtimes-scope', 'runtimes-agent', 'runtimes-task', 'runtimes-status', 'runtimes-transport-live'):
+        listed(name, [runtime])
+    listed('runtimes-all', [old_a, old_b, runtime])
+    listed('runtimes-page', [old_a], cursor=True)
+    listed('runtimes-next', [old_b], cursor=True)
+    listed('runtimes-terminal', [old_a])  # the failed row is neither stale nor terminated
+    for name in ('runtimes-terminal-hidden', 'runtimes-other-agent', 'runtimes-other-host', 'runtimes-unknown-status',
+                 'runtimes-transport', 'runtimes-stale'):
+        listed(name, [])
+    if by['runtimes']['status'] == 200 and by['runtimes']['body'] and by['runtimes']['body'][0]['status'] != 'ready':
+        fail('runtimes', 'completed deterministic seat is ready')
+    refusal('runtimes-bool', 400, 'malformed_request', 'all must be a boolean', {'field': 'all', 'value': 'yes'})
+    refusal('runtimes-transport-invalid', 400, 'malformed_request', 'transport must be one of: tmux, headless, sdk, hrcpty', {'field': 'transport', 'value': 'bad'})
+    refusal('runtimes-limit-zero', 400, 'malformed_request', 'limit must be between 1 and 500', {'field': 'limit', 'value': 0})
+    refusal('runtimes-limit-overflow', 400, 'malformed_request', 'limit must be between 1 and 500', {'field': 'limit', 'value': 501})
+    refusal('runtimes-limit-negative', 400, 'malformed_request', 'limit must be a non-negative integer', {'field': 'limit', 'value': '-1'})
+    refusal('runtimes-limit-fraction', 400, 'malformed_request', 'limit must be a non-negative integer', {'field': 'limit', 'value': '1.2'})
+    refusal('runtimes-cursor', 400, 'malformed_request', 'cursor must be a runtime-list cursor returned by the server', {'field': 'cursor'})
+    refusal('runtimes-duration', 400, 'malformed_request', 'olderThan must be a duration like 30m, 2h, or 24h', {'field': 'olderThan', 'value': '24'})
+    refusal('inspect-array', 400, 'malformed_request', 'runtimeId is required', {'field': 'runtimeId'})
+    refusal('inspect-missing', 400, 'malformed_request', 'runtimeId is required', {'field': 'runtimeId'})
+    refusal('inspect-number', 400, 'malformed_request', 'request body must be an object', {})
+    refusal('inspect-owner-null', 400, 'malformed_request', 'ownerRunId must be a string', {'field': 'ownerRunId'})
+    refusal('inspect-owner-empty', 400, 'malformed_request', 'ownerRunId must be a string', {'field': 'ownerRunId'})
+    refusal('inspect-unknown', 404, 'unknown_runtime', 'unknown runtime "absent"', {'runtimeId': 'absent'})
+    refusal('seat-unknown', 404, 'unknown_runtime', 'unknown runtime "absent"', {'runtimeId': 'absent'})
+    refusal('target-missing', 400, 'malformed_request', 'sessionRef is required', {'field': 'sessionRef'})
+    unknown = c['scope'] + '-absent/lane:main'
+    refusal('target-unknown', 404, 'unknown_session', f'unknown session "{unknown}"', {'sessionRef': unknown})
+    # Inspect the live seat: identity, a probe of the actual broker during this request, attached control, bounded ages.
+    for name in ('inspect', 'inspect-trimmed'):
+        r = by[name]; b = r['body'] if isinstance(r['body'], dict) else {}
+        probe = b.get('brokerDispatch', {}).get('liveSeatProbe', {})
+        ok = (r['status'] == 200 and b.get('runtimeId') == runtime and b.get('hostSessionId') == c['host'] and b.get('transport') == 'hrcpty'
+              and b.get('controllerKind') == 'harness-broker' and b.get('status') == 'ready'
+              and b.get('brokerDispatch', {}).get('agreement') == 'agree' and probe.get('state') == 'idle'
+              and unchanged_probe(name, probe)
+              and (b.get('control') or {}).get('brokerAttached') is True)
+        if not ok:
+            fail(name, 'live inspect', b)
+        for key, source in (('createdAgeSec', 'createdAt'), ('lastActivityAgeSec', 'lastActivityAt')):
+            at = b.get(source)
+            age = b.get(key)
+            if at is None and source == 'lastActivityAt':
+                ok = age is None
+            else:
+                ok = isinstance(age, int) and max(0, int(r['before'] - stamp(at))) <= age <= max(0, int(r['after'] - stamp(at)) + 1)
+            if not ok:
+                fail(name, key, (age, at))
+    r = by['inspect-inactive']; b = r['body'] if isinstance(r['body'], dict) else {}
+    if r['status'] != 200 or (b.get('runtimeId'), b.get('status'), b.get('transport')) != (old_a, 'terminated', 'sdk') or 'brokerDispatch' in b:
+        fail('inspect-inactive', 'historical inspect')
+    # Seat: the real broker answers idle on the live invocation, alongside its committed sequence.
+    for name in ('seat', 'seat-encoded'):
+        r = by[name]; b = r['body'] if isinstance(r['body'], dict) else {}
+        inv = b.get('invocationId')
+        ok = (r['status'] == 200 and b.get('runtimeId') == runtime and isinstance(inv, str) and inv
+              and isinstance(b.get('currentBrokerSeq'), int) and b['currentBrokerSeq'] > 0 and b.get('probeError') is None
+              and (b.get('probe') or {}).get('invocationId') == inv and (b.get('probe') or {}).get('seat') == {'state': 'idle'})
+        if not ok:
+            fail(name, 'live seat')
+        if not unchanged_probe(name, r.get('persistedProbe') or {}):
+            fail(name, 'an unchanged idle probe leaves the retained observation', r.get('persistedProbe'))
+    r = by['seat-inactive']; b = r['body'] if isinstance(r['body'], dict) else {}
+    if r['status'] != 200 or (b.get('runtimeId'), b.get('invocationId'), b.get('currentBrokerSeq'), b.get('probe')) != (old_a, None, None, None) or not b.get('probeError'):
+        fail('seat-inactive', 'no invocation: no sequence, no probe, a probe error')
+    # A failed probe is a change: recorded unavailable, during this request.
+    persisted = r.get('persistedProbe') or {}
+    if (persisted.get('availability'), persisted.get('cause'), persisted.get('invocationId')) != ('unavailable', 'explicit-probe', None) \
+            or not bounded('seat-inactive', persisted.get('observedAt')) or b.get('probeError', {}).get('code') != 'broker_runtime_not_active':
+        fail('seat-inactive', 'unavailable probe recorded', persisted)
+    # Target: the session's main lane is bound to the live runtime; default is main.
+    for name in ('target', 'target-default'):
+        r = by[name]; b = r['body'] if isinstance(r['body'], dict) else {}
+        if r['status'] != 200 or b.get('state') != 'bound' or (b.get('runtime') or {}).get('runtimeId') != runtime:
+            fail(name, 'bound target')
+    refusal('target-invalid', 400, 'invalid_selector', 'sessionRef must use "<scopeRef>/lane:<laneRef>" format', {'sessionRef': 'bad'})
+    return failures
 
 
 if __name__ == '__main__':
-    main()
+    isolated_suite(main)()
