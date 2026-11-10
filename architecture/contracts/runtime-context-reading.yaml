@@ -62,13 +62,11 @@ source:
   - wrkc:EN-29872
   - architecture/records/invariants/hrc-runtime.harness-broker-committed-observation-control.yaml
   - architecture/records/invariants/hrc-runtime.ledger-tool-result-storage.yaml
-  - packages/hrc-server/src/broker/event-mapper.ts
-  - packages/hrc-server/src/broker/event-mapper/project-envelope.ts
-  - packages/hrc-server/src/broker/event-mapper/state-projection.ts
-  - packages/hrc-server/src/broker/event-mapper/context-reading.ts
-  - packages/hrc-store-sqlite/src/repositories/broker-invocation-event-repository.ts
+  - crates/hrc-native/src/server/projection/projection/mod.rs
+  - crates/hrc-native/src/server/projection/projection/state.rs
+  - crates/hrc-native/src/server/projection/projection/context.rs
   - architecture/contracts/hrc-rust-migration.yaml
-  - packages/hrc-server/src/presentation-read-model.ts
+  - crates/hrc-store/src/presentation.rs
 validation_scope: >
   Requester acceptance covers context events on live codex-app-server and
   claude-code-tmux seats and the persisted reading appearing for an idle runtime

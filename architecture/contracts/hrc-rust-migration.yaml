@@ -422,7 +422,7 @@ source:
   - crates/hrc-store/src/events.rs
   - crates/hrc-native/src/server/front/hosting.rs
   - crates/hrc-native/src/server/placement/owner.rs
-  - packages/hrc-store-sqlite/src/migrations.ts
+  - crates/hrc-store/src/migrate/mod.rs
   - scripts/hrc-owner.sh
   - commit:1e5109af
   - wrkq:T-12067
@@ -472,16 +472,14 @@ source:
   - architecture/records/invariants/hrc-runtime.bounded-lifecycle-event-observation.yaml
   - architecture/records/invariants/hrc-runtime.viewer-presentation-sidecar.yaml
   - architecture/records/invariants/hrc-runtime.observable-release.yaml
-  - packages/hrc-server/src/presentation-read-model.ts
-  - packages/hrc-server/src/server-session-methods.ts
-  - packages/hrc-server/src/selector-message-handlers.ts
-  - packages/hrc-server/src/bounded-event-stream.ts
-  - packages/hrc-server/src/server-exact-routes.ts
-  - packages/hrc-server/src/event-handlers.ts
-  - packages/hrc-server/src/hrc-event-helper.ts
-  - packages/hrc-server/src/federation/scope-read-routing.ts
-  - packages/hrc-store-sqlite/src/repositories/event-repositories.ts
-  - packages/hrc-store-sqlite/src/repositories/shared.ts
+  - crates/hrc-store/src/presentation.rs
+  - crates/hrc-native/src/server/projection/sessions.rs
+  - crates/hrc-store/src/index.rs
+  - crates/hrc-native/src/server/projection/streams.rs
+  - crates/hrc-native/src/server/projection/lifecycle_events.rs
+  - crates/hrc-native/src/server/projection/projection/events.rs
+  - crates/hrc-native/src/server/placement/federation/routing.rs
+  - crates/hrc-store/src/monitor_read.rs
   - crates/hrc-domain/src/owner.rs
   - crates/hrc-domain/src/reader.rs
   - crates/hrc-domain/src/projector.rs
@@ -489,12 +487,10 @@ source:
   - crates/hrc-domain/src/preview.rs
   - packages/hrc-core/src/tool-result-storage.ts
   - packages/hrc-core/src/declaration-contracts.ts
-  - packages/hrc-server/src/declaration-handlers.ts
-  - packages/hrc-server/src/exact-claim.ts
-  - packages/hrc-server/src/roster-claim.ts
-  - packages/hrc-server/src/scope-claim-core.ts
-  - packages/hrc-server/src/session-restart.ts
-  - packages/hrc-server/src/runtime-control-handlers/session-rotation.ts
+  - crates/hrc-native/src/server/placement/aspc.rs
+  - crates/hrc-native/src/server/broker/start.rs
+  - crates/hrc-native/src/server/turns/restart.rs
+  - crates/hrc-native/src/server/turns/context.rs
   - packages/hrc-core/src/http-contracts-runtime.ts
   - crates/hrc-native/src/server.rs
   - crates/hrc-domain/src/declarations.rs

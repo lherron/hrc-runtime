@@ -34,14 +34,13 @@ source:
   - wrkc:EN-29430
   - architecture/records/invariants/hrc-runtime.harness-broker-committed-observation-control.yaml
   - architecture/records/invariants/hrc-runtime.bounded-lifecycle-event-observation.yaml
-  - packages/hrc-server/src/broker/event-mapper/runtime-state.ts
-  - packages/hrc-server/src/broker/controller/bc-submission.ts
-  - packages/hrc-server/src/hrc-event-helper.ts
-  - packages/hrc-store-sqlite/src/repositories/event-repositories.ts
-  - packages/hrc-store-sqlite/src/lifecycle-append-hub.ts
-  - packages/hrc-server/src/follow-fanout.ts
-  - packages/hrc-cli/src/monitor/wait-projection.ts
-  - packages/hrc-cli/src/monitor/wait-command.ts
+  - crates/hrc-native/src/server/broker/controller/seat.rs
+  - crates/hrc-native/src/server/projection/projection/events.rs
+  - crates/hrc-store/src/lib.rs
+  - crates/hrc-native/src/server.rs
+  - crates/hrc-native/src/server/projection/streams.rs
+  - crates/hrc-cli/src/monitor/state.rs
+  - crates/hrc-cli/src/monitor/wait.rs
 validation_scope: >
   Requester acceptance covers one live runtime.settled event per stale owner
   and monitor projection clearing a matching activeTurnId while preserving a
