@@ -160,6 +160,17 @@ pub async fn attach_and_replay(
                 base
             };
         let now = hrc_store::timestamp();
+        let previous_caps = rt
+            .active_invocation_id
+            .as_deref()
+            .map(|id| db::invocation(&tx, id))
+            .transpose()?
+            .flatten()
+            .and_then(|i| serde_json::from_str::<Value>(&i.capabilities_json).ok())
+            .unwrap_or(Value::Null);
+        let seat_changed = rt.status != status
+            || previous_caps["admission"]["classes"]
+                != snapshot["capabilities"]["admission"]["classes"];
         db::update_invocation(
             &tx,
             &invocation,
@@ -191,6 +202,22 @@ pub async fn attach_and_replay(
                 ("runtime_state_json", db::text(state.to_string())),
             ],
         )?;
+        if seat_changed {
+            projection::events::append(
+                &tx,
+                "runtime.reassociated",
+                &projection::events::Ev {
+                    ts: now.clone(),
+                    host_session_id: rt.host_session_id.clone(),
+                    scope_ref: rt.scope_ref.clone(),
+                    lane_ref: rt.lane_ref.clone(),
+                    generation: rt.generation,
+                    runtime_id: Some(runtime_id.clone()),
+                    ..Default::default()
+                },
+                &json!({"runtimeId":runtime_id,"invocationId":invocation,"status":status,"cause":"broker-reattach","admissionClasses":snapshot["capabilities"]["admission"]["classes"]}),
+            )?;
+        }
         tx.commit()?;
         server.ledger_committed();
     }
@@ -264,7 +291,7 @@ pub fn fail_replay_stale(
             ("runtime_state_json", db::text(state.to_string())),
         ],
     )?;
-    if stale {
+    if !hrc_store::status::UNAVAILABLE.contains(&rt.status.as_str()) {
         let ev = projection::events::Ev {
             ts: now.clone(),
             host_session_id: rt.host_session_id.clone(),

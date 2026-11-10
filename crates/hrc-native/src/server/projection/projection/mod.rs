@@ -742,14 +742,24 @@ fn project_in(
     let fenced = participant_fenced(db, invocation_id)?;
     let stale = fenced || stale_envelope(&persisted, &inv);
     provider_transcript(db, &persisted, &inv, &rt, &ctx, &now)?;
+    let prior_classes = if rt.active_invocation_id.as_deref() != Some(invocation_id) {
+        Some(db::admission_classes(
+            db,
+            rt.active_invocation_id.as_deref(),
+        )?)
+    } else {
+        None
+    };
     if retained {
         state::project_retained(db, mem, &persisted, &ctx, &now, stale)?;
     } else {
         state::project(db, mem, &persisted, &ctx, &now, stale, fenced, &mut derived)?;
     }
-    if !stale && !state::retryable_failure(&persisted) {
-        events::emit_lifecycle(db, &persisted, &ctx.ev(&now), &now)?;
-    }
+    let lifecycle = if !stale && !state::retryable_failure(&persisted) {
+        events::emit_lifecycle(db, &persisted, &ctx.ev(&now), &now)?
+    } else {
+        None
+    };
     // Context readings belong to live terminal projection only.
     if !stale && !fenced && !retained {
         context::project(db, &persisted, &ctx, &now)?;
@@ -764,6 +774,32 @@ fn project_in(
             &persisted,
             &ctx.ev(&now),
             (&d.tool_use_id, &d.tool_name),
+        )?;
+    }
+    // Some broker facts (notably turn.attributed and harness recovery) can
+    // move ownership without mapping to a turn lifecycle kind. Their durable
+    // seat change must be observable before after_mapped's separate transaction.
+    if !retained
+        && !stale
+        && lifecycle.is_none()
+        && derived.is_empty()
+        && let Some(current) = db::runtime(db, &ctx.runtime_id)?
+        && (!hrc_store::status::UNAVAILABLE.contains(&rt.status.as_str())
+            || !hrc_store::status::UNAVAILABLE.contains(&current.status.as_str()))
+        && (current.status != rt.status
+            || current.active_run_id != rt.active_run_id
+            || (current.active_invocation_id != rt.active_invocation_id
+                && prior_classes
+                    != Some(db::admission_classes(
+                        db,
+                        current.active_invocation_id.as_deref(),
+                    )?)))
+    {
+        events::append(
+            db,
+            "runtime.reassociated",
+            &ctx.ev(&now),
+            &json!({"runtimeId":ctx.runtime_id,"status":current.status,"activeRunId":current.active_run_id,"cause":persisted["type"],"brokerSeq":seq}),
         )?;
     }
     mark(

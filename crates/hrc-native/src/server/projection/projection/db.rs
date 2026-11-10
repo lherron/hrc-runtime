@@ -3,7 +3,7 @@
 //! skips `undefined`); `Sql::Null` is an explicit NULL.
 use anyhow::{Context, Result};
 use rusqlite::{Connection, OptionalExtension, Row, params, types::Value as Sql};
-use serde_json::Value;
+use serde_json::{Value, json};
 
 pub fn text(v: impl Into<String>) -> Sql {
     Sql::Text(v.into())
@@ -63,6 +63,26 @@ pub fn invocation(db: &Connection, id: &str) -> Result<Option<Inv>> {
         )
         .optional()?)
 }
+/// The stored capability classes served by the seat read; never probes.
+pub fn admission_classes(db: &Connection, invocation_id: Option<&str>) -> Result<Value> {
+    let caps = invocation_id
+        .map(|id| {
+            db.query_row(
+                "SELECT capabilities_json FROM broker_invocations WHERE invocation_id=?",
+                [id],
+                |r| r.get::<_, Option<String>>(0),
+            )
+            .optional()
+        })
+        .transpose()?
+        .flatten()
+        .flatten()
+        .and_then(|raw| serde_json::from_str::<Value>(&raw).ok());
+    Ok(caps
+        .and_then(|v| v["admission"]["classes"].as_array().map(|a| json!(a)))
+        .unwrap_or(Value::Null))
+}
+
 pub fn invocations_for_runtime(db: &Connection, runtime: &str) -> Result<Vec<Inv>> {
     let mut stmt = db.prepare(
         "SELECT * FROM broker_invocations WHERE runtime_id=? ORDER BY created_at ASC, invocation_id ASC",

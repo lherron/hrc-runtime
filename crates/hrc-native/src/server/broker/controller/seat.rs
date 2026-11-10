@@ -56,6 +56,8 @@ pub fn record(
     observed: &str,
     cause: &str,
 ) -> Result<Value> {
+    let tx = db.unchecked_transaction()?;
+    let db = &tx;
     let Some(rt) = db::runtime(db, runtime_id)? else {
         return Ok(Value::Null);
     };
@@ -73,14 +75,25 @@ pub fn record(
         observation["turnId"] = t.clone();
     }
     observation["cause"] = cause.into();
+    let changed = [
+        "availability",
+        "state",
+        "invocationId",
+        "turnId",
+        "brokerHeldDepth",
+    ]
+    .iter()
+    .any(|key| previous[*key] != observation[*key]);
     let mut transition = previous_transition;
-    if transitioned {
-        let mut t = json!({"runtimeId":runtime_id,"invocationId":invocation,"previousState":previous.get("state").cloned().unwrap_or(Value::Null),"nextState":seat_state,"transitionedAt":observed,"cause":cause,"brokerHeldDepth":response["brokerHeldDepth"]});
+    if changed {
+        let mut t = json!({"runtimeId":runtime_id,"invocationId":invocation,"previousState":previous.get("state").cloned().unwrap_or(Value::Null),"nextState":seat_state,"previousAvailability":previous["availability"],"availability":"current","transitionedAt":observed,"cause":cause,"brokerHeldDepth":response["brokerHeldDepth"]});
         if let Some(turn) = &turn {
             t["turnId"] = turn.clone();
         }
         durable(db, &rt, "broker.seat.transition", &t, observed, None)?;
-        transition = Some(t);
+        if transitioned {
+            transition = Some(t);
+        }
     }
     let age = transition
         .as_ref()
@@ -106,16 +119,7 @@ pub fn record(
     }
     // A fresh RPC result still gates dispatch, but timestamps and causes alone
     // do not change durable seat state. Preserve recovery and one-shot warnings.
-    let unchanged = [
-        "availability",
-        "state",
-        "invocationId",
-        "turnId",
-        "brokerHeldDepth",
-    ]
-    .iter()
-    .all(|key| previous[*key] == observation[*key]);
-    if unchanged && !warn {
+    if !changed && !warn {
         return Ok(observation);
     }
     d["liveSeatProbe"] = observation.clone();
@@ -127,6 +131,7 @@ pub fn record(
         durable(db, &rt, "broker.seat.stalled", &fields, observed, None)?;
         log("warn", "broker.seat.stalled", fields);
     }
+    tx.commit()?;
     Ok(observation)
 }
 /// recordUnavailableSeatProbe
@@ -138,6 +143,8 @@ pub fn record_unavailable(
     cause: &str,
     error: &str,
 ) -> Result<()> {
+    let tx = db.unchecked_transaction()?;
+    let db = &tx;
     let Some(rt) = db::runtime(db, runtime_id)? else {
         return Ok(());
     };
@@ -151,9 +158,32 @@ pub fn record_unavailable(
     }
     o["cause"] = cause.into();
     o["error"] = error.into();
+    // Failure timestamps, cause and error alone are not a seat change.
+    if [
+        "availability",
+        "state",
+        "invocationId",
+        "turnId",
+        "brokerHeldDepth",
+    ]
+    .iter()
+    .all(|key| previous[*key] == o[*key])
+    {
+        return Ok(());
+    }
+    durable(
+        db,
+        &rt,
+        "broker.seat.transition",
+        &json!({"runtimeId":runtime_id,"invocationId":o["invocationId"],"previousState":previous["state"],"nextState":o["state"],"previousAvailability":previous["availability"],"availability":o["availability"],"transitionedAt":observed,"cause":cause,"turnId":o["turnId"],"brokerHeldDepth":o["brokerHeldDepth"]}),
+        observed,
+        None,
+    )?;
     d["liveSeatProbe"] = o;
     state["brokerDispatchDiagnostics"] = d;
-    db::update_runtime_state(db, runtime_id, &state, observed)
+    db::update_runtime_state(db, runtime_id, &state, observed)?;
+    tx.commit()?;
+    Ok(())
 }
 
 /// settleRuntimeOnIdleSeat (T-10841)

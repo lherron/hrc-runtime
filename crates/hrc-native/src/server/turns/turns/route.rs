@@ -387,13 +387,17 @@ async fn wait_run(
         if let Some(r) = run.filter(|r| !run_active(&r.status)) {
             if !interactive {
                 let db = server.store.lock().unwrap();
-                if db::runtime(&db.sqlite, runtime_id)?
-                    .is_some_and(|x| x.active_run_id.as_deref() == Some(run_id))
+                let tx = db
+                    .sqlite
+                    .unchecked_transaction()
+                    .map_err(anyhow::Error::from)?;
+                if let Some(current) = db::runtime(&tx, runtime_id)?
+                    .filter(|x| x.active_run_id.as_deref() == Some(run_id))
                 {
                     let now = hrc_store::timestamp();
-                    db.sqlite.execute("UPDATE runtimes SET active_run_id = NULL, updated_at = ? WHERE runtime_id = ?", params![now, runtime_id]).map_err(anyhow::Error::from)?;
+                    tx.execute("UPDATE runtimes SET active_run_id = NULL, updated_at = ? WHERE runtime_id = ?", params![now, runtime_id]).map_err(anyhow::Error::from)?;
                     db::update_runtime(
-                        &db.sqlite,
+                        &tx,
                         runtime_id,
                         &[
                             ("status", db::text("ready")),
@@ -404,6 +408,23 @@ async fn wait_run(
                             ("updated_at", db::text(now.as_str())),
                         ],
                     )?;
+                    events::append(
+                        &tx,
+                        "runtime.settled",
+                        &events::Ev {
+                            ts: now.clone(),
+                            host_session_id: current.host_session_id,
+                            scope_ref: current.scope_ref,
+                            lane_ref: current.lane_ref,
+                            generation: current.generation,
+                            runtime_id: Some(runtime_id.into()),
+                            ..Default::default()
+                        },
+                        &json!({"runtimeId":runtime_id,"clearedRunId":run_id,"status":"ready","cause":"completion-repair"}),
+                    )?;
+                    tx.commit().map_err(anyhow::Error::from)?;
+                    drop(db);
+                    server.ledger_committed();
                 }
             }
             if r.status != "completed" {
@@ -456,9 +477,10 @@ fn input_failure(
     let binding_missing = error.code == "broker_runtime_not_active";
     let result: anyhow::Result<bool> = (|| {
         let db = server.store.lock().unwrap();
+        let tx = db.sqlite.unchecked_transaction()?;
         let now = hrc_store::timestamp();
-        let inv_state = db::invocation(&db.sqlite, invocation)?.map(|i| i.invocation_state);
-        let current = db::runtime(&db.sqlite, &rt.runtime_id)?;
+        let inv_state = db::invocation(&tx, invocation)?.map(|i| i.invocation_state);
+        let current = db::runtime(&tx, &rt.runtime_id)?;
         let reaped = current
             .as_ref()
             .is_some_and(|c| lease::unavailable(&c.status));
@@ -475,10 +497,10 @@ fn input_failure(
             || message.contains("Cannot accept input in state: starting")
             || message.contains("Cannot accept input in state: stopping");
         if timeout {
-            db.sqlite.execute("UPDATE runs SET broker_input_fenced_at=?, broker_input_fence_reason=?, updated_at=? WHERE run_id=?", params![now, error.code, now, run_id])?;
+            tx.execute("UPDATE runs SET broker_input_fenced_at=?, broker_input_fence_reason=?, updated_at=? WHERE run_id=?", params![now, error.code, now, run_id])?;
         }
         db::mark_run_completed(
-            &db.sqlite,
+            &tx,
             run_id,
             db::Completion {
                 status: "failed",
@@ -489,7 +511,7 @@ fn input_failure(
             },
         )?;
         if timeout {
-            db.sqlite.execute(
+            tx.execute(
                 "UPDATE runtimes SET active_run_id = NULL, updated_at = ? WHERE runtime_id = ?",
                 params![now, rt.runtime_id],
             )?;
@@ -501,7 +523,7 @@ fn input_failure(
             ),
             ("status_changed_at", db::text(now.as_str())),
         ];
-        cols.extend(db::activity_cols(&db.sqlite, &rt.runtime_id, &now, &now)?);
+        cols.extend(db::activity_cols(&tx, &rt.runtime_id, &now, &now)?);
         if reprovision {
             let mut state = current.as_ref().unwrap_or(rt).state_object();
             state["status"] = "stale".into();
@@ -513,7 +535,33 @@ fn input_failure(
             state["terminalInvocation"] = terminal;
             cols.push(("runtime_state_json", db::text(state.to_string())));
         }
-        db::update_runtime(&db.sqlite, &rt.runtime_id, &cols)?;
+        db::update_runtime(&tx, &rt.runtime_id, &cols)?;
+        if let (Some(before), Some(after)) = (&current, db::runtime(&tx, &rt.runtime_id)?)
+            && (!hrc_store::status::UNAVAILABLE.contains(&before.status.as_str())
+                || !hrc_store::status::UNAVAILABLE.contains(&after.status.as_str()))
+            && (before.status != after.status || before.active_run_id != after.active_run_id)
+        {
+            let kind = if before.status != "stale" && after.status == "stale" {
+                "runtime.stale"
+            } else {
+                "runtime.reassociated"
+            };
+            events::append(
+                &tx,
+                kind,
+                &events::Ev {
+                    ts: now.clone(),
+                    host_session_id: before.host_session_id.clone(),
+                    scope_ref: before.scope_ref.clone(),
+                    lane_ref: before.lane_ref.clone(),
+                    generation: before.generation,
+                    runtime_id: Some(rt.runtime_id.clone()),
+                    ..Default::default()
+                },
+                &json!({"runtimeId":rt.runtime_id,"status":after.status,"activeRunId":after.active_run_id,"cause":"input-failure","errorCode":error.code}),
+            )?;
+        }
+        tx.commit()?;
         Ok(reprovision)
     })();
     server.ledger_committed();

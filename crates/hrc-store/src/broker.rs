@@ -244,6 +244,19 @@ impl Store {
                 &json!({"invocation":{"operatorAttachPending":operator_attach_pending},"presentation":presentation,"hrcpty":{"socketPath":h["socketPath"],"attachCommand":h["attachCommand"]}}),
             )?;
         }
+        // The started snapshot publishes capabilities and runtime status even
+        // without an operator presentation (notably a headless seat).
+        if allocation.get("tuiWindow").is_none() && hrcpty.is_none() {
+            event(
+                &tx,
+                &session,
+                id,
+                None,
+                "runtime",
+                "runtime.ensured",
+                &json!({"runtimeId":id["runtimeId"],"status":status,"admissionClasses":capabilities["admission"]["classes"],"authority":"broker-started-snapshot"}),
+            )?;
+        }
         tx.commit()?;
         Ok(())
     }
