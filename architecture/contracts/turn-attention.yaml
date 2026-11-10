@@ -72,9 +72,6 @@ source:
   - wrkq:T-12015
   - wrkq:T-12644
   - architecture/contracts/hrc-rust-migration.yaml
-  - crates/hrc-domain/src/projector.rs
-  - crates/hrc-domain/src/projection.rs
-  - crates/hrc-domain/src/preview.rs
   - crates/hrc-store/src/presentation.rs
   - crates/hrc-store/src/lib.rs
   - architecture/contracts/seat-annotations.yaml

@@ -20,8 +20,9 @@ predicate: >
   clearedRunId names the owner removed by this settlement. This event records
   runtime reconciliation, never another turn terminal or completion of a run.
   It does not represent every transition to ready. Ledger visibility and live
-  follow publication occur after commit through the store's committed-append
-  hub; the settlement WARN log is also written after commit. For each runtime
+  follow publication occur after commit through Server::ledger_committed
+  (crates/hrc-native/src/server.rs); the settlement WARN log is also written
+  after commit. For each runtime
   or session projection independently, the event applies only when its
   projected activeTurnId equals clearedRunId. Application clears that owner
   and sets projected status idle where the projection carries runtime status.
