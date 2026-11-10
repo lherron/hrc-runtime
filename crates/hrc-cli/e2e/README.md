@@ -39,3 +39,4 @@ T-11945 comment C-32046 records the pre-deletion triage and its evidence.
 | `summon.py` | Strict target materialization, on unique scratch project/scopes only. (requires explicit scratch/capture inputs; retained qualification) | keep-manual |
 | `targets.py` | Read-only placement and pane commands on a real owned seat. Verify scope (requires explicit scratch/capture inputs; retained qualification) | keep-manual |
 | `turn_live.py` | Real model qualification on an explicitly owned daemon and scratch project. (requires explicit scratch/capture inputs; retained qualification) | keep-manual |
+| `transcript_search.py` | T-13053 native search against a Bun-verified golden: real native index, forwarding request tap, every filter/target, output and refusal, duration clocks and unreachable transport. | keep-manual |

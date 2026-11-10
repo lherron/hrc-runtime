@@ -4,6 +4,7 @@ pub(crate) mod engine;
 pub(crate) mod live;
 pub(crate) mod reader;
 pub(crate) mod render;
+pub(crate) mod search;
 pub(crate) mod selector;
 pub(crate) mod session_report;
 pub(crate) mod show;

@@ -22,10 +22,7 @@ async function parse(args: string[]): Promise<{ root: Command; command: Command 
 }
 
 describe('CLI option ownership', () => {
-  for (const path of [
-    ['runtime', 'list'],
-    ['monitor', 'search', 'query'],
-  ]) {
+  for (const path of [['runtime', 'list']]) {
     test(`${path.join(' ')} owns spaced and equals --agent filters`, async () => {
       for (const flags of [['--agent', 'astra'], ['--agent=astra']]) {
         const { root, command } = await parse([...path, ...flags, '--json'])
@@ -49,7 +46,7 @@ describe('CLI option ownership', () => {
     )
     expect(
       collisions.filter(({ option }) => option.required).map(({ option }) => option.long)
-    ).toEqual(['--agent', '--agent'])
+    ).toEqual(['--agent'])
   })
 
   test('global output works before, between and after command names', async () => {
@@ -87,7 +84,6 @@ describe('CLI option ownership', () => {
   test('help validation uses parsed option values, including variadic and short flags', async () => {
     for (const args of [
       ['runtime', 'list', '--agent', 'astra', '--help'],
-      ['monitor', 'search', 'query', '--agent', 'astra', '--help'],
       ['server', 'serve', '--allow-persona', 'astra', 'cody', '--help'],
       ['start', '-phello', '--help'],
     ]) {

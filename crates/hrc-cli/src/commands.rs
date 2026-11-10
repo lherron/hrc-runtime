@@ -51,6 +51,7 @@ pub(crate) fn execute(args: &Parsed<'_>) -> Result<()> {
         "server status" => crate::server_status::command(args),
         "monitor events" => crate::forensics::events(args),
         "monitor transcript" => crate::forensics::transcript(args),
+        "monitor search" => crate::monitor::search::command(args),
         "monitor stats" => crate::forensics::stats(args),
         "monitor show" => crate::monitor::show::command(args),
         "monitor wait" => crate::monitor::wait::command(args),

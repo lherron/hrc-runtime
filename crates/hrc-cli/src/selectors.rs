@@ -34,7 +34,7 @@ fn session(value: &str) -> std::result::Result<(String, String), String> {
     crate::monitor::selector::split_session_ref(value)
 }
 fn parse(raw: &str, client: Option<&Daemon>) -> Result<Selector> {
-    parse_profile_aware(raw, client).map_err(|failure| match failure {
+    parse_profile_aware(raw, client, false).map_err(|failure| match failure {
         Failure::Grammar(e) => e,
         Failure::Placement(e) => invalid(raw, e.message),
     })
@@ -54,6 +54,7 @@ impl From<Error> for Failure {
 fn parse_profile_aware(
     raw: &str,
     client: Option<&Daemon>,
+    connect_for_handle: bool,
 ) -> std::result::Result<Selector, Failure> {
     if raw.is_empty() {
         return Err(invalid(raw, "selector must not be empty").into());
@@ -111,6 +112,15 @@ fn parse_profile_aware(
     let opts = scope::ResolveOptions {
         env_default_task: env_task.as_deref(),
         ..Default::default()
+    };
+    // Search validates pure selectors before socket discovery, while handles
+    // still observe placement through this same profile-aware parser.
+    let owned_client;
+    let client = if connect_for_handle && client.is_none() {
+        owned_client = Daemon::connect().map_err(Failure::Placement)?;
+        Some(&owned_client)
+    } else {
+        client
     };
     let mut observed_role = None;
     if let Some(client) = client {
@@ -373,7 +383,7 @@ pub(crate) fn continuity(raw: &str, client: &Daemon) -> Result<(String, String)>
     } else {
         raw.into()
     };
-    let selector = parse_profile_aware(&source, Some(client)).map_err(|failure| {
+    let selector = parse_profile_aware(&source, Some(client), false).map_err(|failure| {
         let e = match failure {
             Failure::Placement(e) => return e,
             Failure::Grammar(e) => e,
@@ -400,6 +410,17 @@ pub(crate) fn continuity(raw: &str, client: &Daemon) -> Result<(String, String)>
 pub(crate) fn scope_lane(raw: &str, client: &Daemon) -> Result<Option<(String, Option<String>)>> {
     Ok(match parse(raw, Some(client))? {
         Selector::Scope(scope, lane) => Some((scope, lane)),
+        _ => None,
+    })
+}
+/// Pure explicit selectors do not need a daemon; bare handles resolve their
+/// profile role lazily. Placement failures retain their original message.
+pub(crate) fn profile_scope(raw: &str) -> Result<Option<String>> {
+    let selector = parse_profile_aware(raw, None, true).map_err(|failure| match failure {
+        Failure::Grammar(e) | Failure::Placement(e) => e,
+    })?;
+    Ok(match selector {
+        Selector::Scope(scope, _) => Some(scope),
         _ => None,
     })
 }

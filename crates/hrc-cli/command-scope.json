@@ -4,8 +4,8 @@
   "commands": [
     {
       "command": "",
-      "disposition": "POSTPONED",
-      "implementation": "bun"
+      "disposition": "IMPLEMENT",
+      "implementation": "native"
     },
     {
       "command": "admin",
@@ -134,8 +134,8 @@
     },
     {
       "command": "monitor",
-      "disposition": "POSTPONED",
-      "implementation": "bun"
+      "disposition": "IMPLEMENT",
+      "implementation": "native"
     },
     {
       "command": "monitor events",
@@ -144,8 +144,8 @@
     },
     {
       "command": "monitor search",
-      "disposition": "POSTPONED",
-      "implementation": "bun"
+      "disposition": "IMPLEMENT",
+      "implementation": "native"
     },
     {
       "command": "monitor session-report",

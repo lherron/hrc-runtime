@@ -1,0 +1,2181 @@
+[
+  {
+    "argv": [
+      "kestrel"
+    ],
+    "result": {
+      "code": 0,
+      "stdout": "cody@hrc-runtime:T-13053   (2 generations)\n  rt-a  gen 1   2026-11-01 01:00   2 hits   best seq 1..9\n    [kestrel] question\n    hrc monitor transcript rt-a --seq 1..9\n  rt-b  gen 2   2026-11-01 01:02   1 hit   best seq 21..29\n    [kestrel] question\n    hrc monitor transcript rt-b --seq 21..29\noutsider@hrc-runtime:T-13053\n  rt-c  gen 1   2026-11-01 01:03   1 hit   best seq 31..39\n    [kestrel] question\n    hrc monitor transcript rt-c --seq 31..39\nindex: 1,004 turns, behind by 0 events\n",
+      "stderr": "",
+      "requests": [
+        {
+          "query": "kestrel",
+          "limit": 20,
+          "candidateLimit": 300
+        }
+      ]
+    }
+  },
+  {
+    "argv": [
+      "kestrel",
+      "--json"
+    ],
+    "result": {
+      "code": 0,
+      "stdout": "{\n  \"mode\": \"discovery\",\n  \"hits\": [\n    {\n      \"turnRowid\": 1,\n      \"invocationId\": \"inv-rt-a\",\n      \"runtimeId\": \"rt-a\",\n      \"agent\": \"cody\",\n      \"project\": \"hrc-runtime\",\n      \"task\": \"T-13053\",\n      \"scopeRef\": \"agent:cody:project:hrc-runtime:task:T-13053\",\n      \"generation\": 1,\n      \"seqFrom\": 1,\n      \"seqTo\": 9,\n      \"startedAt\": \"2026-11-01T00:00:00.000Z\",\n      \"completedAt\": \"2026-11-01T01:00:00.000Z\",\n      \"terminalStatus\": \"completed\",\n      \"messageCount\": 2,\n      \"truncated\": false,\n      \"userText\": \"kestrel question\",\n      \"finalText\": \"kestrel \\t answer\\n 0\",\n      \"midText\": \"mid\",\n      \"score\": 4.776064369139357,\n      \"snippet\": \"[kestrel] question\",\n      \"scopeGenerationCount\": 2\n    },\n    {\n      \"turnRowid\": 2,\n      \"invocationId\": \"inv-rt-a\",\n      \"runtimeId\": \"rt-a\",\n      \"agent\": \"cody\",\n      \"project\": \"hrc-runtime\",\n      \"task\": \"T-13053\",\n      \"scopeRef\": \"agent:cody:project:hrc-runtime:task:T-13053\",\n      \"generation\": 1,\n      \"seqFrom\": 11,\n      \"seqTo\": 19,\n      \"startedAt\": \"2026-11-01T00:00:00.000Z\",\n      \"completedAt\": \"2026-11-01T01:01:00.000Z\",\n      \"terminalStatus\": \"failed\",\n      \"messageCount\": 2,\n      \"truncated\": false,\n      \"userText\": \"kestrel question\",\n      \"finalText\": \"kestrel \\t answer\\n 1\",\n      \"midText\": \"mid\",\n      \"score\": 4.776064369139357,\n      \"snippet\": \"[kestrel] question\",\n      \"scopeGenerationCount\": 2\n    },\n    {\n      \"turnRowid\": 3,\n      \"invocationId\": \"inv-rt-b\",\n      \"runtimeId\": \"rt-b\",\n      \"agent\": \"cody\",\n      \"project\": \"hrc-runtime\",\n      \"task\": \"T-13053\",\n      \"scopeRef\": \"agent:cody:project:hrc-runtime:task:T-13053\",\n      \"generation\": 2,\n      \"seqFrom\": 21,\n      \"seqTo\": 29,\n      \"startedAt\": \"2026-11-01T00:00:00.000Z\",\n      \"completedAt\": \"2026-11-01T01:02:00.000Z\",\n      \"terminalStatus\": \"interrupted\",\n      \"messageCount\": 2,\n      \"truncated\": false,\n      \"userText\": \"kestrel question\",\n      \"finalText\": \"kestrel \\t answer\\n 2\",\n      \"midText\": \"mid\",\n      \"score\": 4.776064369139357,\n      \"snippet\": \"[kestrel] question\",\n      \"scopeGenerationCount\": 2\n    },\n    {\n      \"turnRowid\": 4,\n      \"invocationId\": \"inv-rt-c\",\n      \"runtimeId\": \"rt-c\",\n      \"agent\": \"outsider\",\n      \"project\": \"hrc-runtime\",\n      \"task\": \"T-13053\",\n      \"scopeRef\": \"agent:outsider:project:hrc-runtime:task:T-13053\",\n      \"generation\": 1,\n      \"seqFrom\": 31,\n      \"seqTo\": 39,\n      \"startedAt\": \"2026-11-01T00:00:00.000Z\",\n      \"completedAt\": \"2026-11-01T01:03:00.000Z\",\n      \"terminalStatus\": \"completed\",\n      \"messageCount\": 2,\n      \"truncated\": false,\n      \"userText\": \"kestrel question\",\n      \"finalText\": \"kestrel \\t answer\\n 3\",\n      \"midText\": \"mid\",\n      \"score\": 4.776064369139357,\n      \"snippet\": \"[kestrel] question\",\n      \"scopeGenerationCount\": 1\n    }\n  ],\n  \"index\": {\n    \"turnsIndexed\": 1004,\n    \"lastEventId\": 0,\n    \"ledgerMaxEventId\": 0,\n    \"lagEvents\": 0,\n    \"invocationsReindexed\": 0\n  }\n}\n",
+      "stderr": "",
+      "requests": [
+        {
+          "query": "kestrel",
+          "limit": 20,
+          "candidateLimit": 300
+        }
+      ]
+    }
+  },
+  {
+    "argv": [
+      "kestrel",
+      "--agent",
+      "cody"
+    ],
+    "result": {
+      "code": 0,
+      "stdout": "cody@hrc-runtime:T-13053   (2 generations)\n  rt-a  gen 1   2026-11-01 01:00   2 hits   best seq 1..9\n    [kestrel] question\n    hrc monitor transcript rt-a --seq 1..9\n  rt-b  gen 2   2026-11-01 01:02   1 hit   best seq 21..29\n    [kestrel] question\n    hrc monitor transcript rt-b --seq 21..29\nindex: 1,004 turns, behind by 0 events\n",
+      "stderr": "",
+      "requests": [
+        {
+          "query": "kestrel",
+          "agent": "cody",
+          "limit": 20,
+          "candidateLimit": 300
+        }
+      ]
+    }
+  },
+  {
+    "argv": [
+      "kestrel",
+      "--project",
+      "hrc-runtime"
+    ],
+    "result": {
+      "code": 0,
+      "stdout": "cody@hrc-runtime:T-13053   (2 generations)\n  rt-a  gen 1   2026-11-01 01:00   2 hits   best seq 1..9\n    [kestrel] question\n    hrc monitor transcript rt-a --seq 1..9\n  rt-b  gen 2   2026-11-01 01:02   1 hit   best seq 21..29\n    [kestrel] question\n    hrc monitor transcript rt-b --seq 21..29\noutsider@hrc-runtime:T-13053\n  rt-c  gen 1   2026-11-01 01:03   1 hit   best seq 31..39\n    [kestrel] question\n    hrc monitor transcript rt-c --seq 31..39\nindex: 1,004 turns, behind by 0 events\n",
+      "stderr": "",
+      "requests": [
+        {
+          "query": "kestrel",
+          "project": "hrc-runtime",
+          "limit": 20,
+          "candidateLimit": 300
+        }
+      ]
+    }
+  },
+  {
+    "argv": [
+      "kestrel",
+      "--task",
+      "T-13053"
+    ],
+    "result": {
+      "code": 0,
+      "stdout": "cody@hrc-runtime:T-13053   (2 generations)\n  rt-a  gen 1   2026-11-01 01:00   2 hits   best seq 1..9\n    [kestrel] question\n    hrc monitor transcript rt-a --seq 1..9\n  rt-b  gen 2   2026-11-01 01:02   1 hit   best seq 21..29\n    [kestrel] question\n    hrc monitor transcript rt-b --seq 21..29\noutsider@hrc-runtime:T-13053\n  rt-c  gen 1   2026-11-01 01:03   1 hit   best seq 31..39\n    [kestrel] question\n    hrc monitor transcript rt-c --seq 31..39\nindex: 1,004 turns, behind by 0 events\n",
+      "stderr": "",
+      "requests": [
+        {
+          "query": "kestrel",
+          "task": "T-13053",
+          "limit": 20,
+          "candidateLimit": 300
+        }
+      ]
+    }
+  },
+  {
+    "argv": [
+      "kestrel",
+      "--limit",
+      "1"
+    ],
+    "result": {
+      "code": 0,
+      "stdout": "cody@hrc-runtime:T-13053   (2 generations)\n  rt-a  gen 1   2026-11-01 01:00   2 hits   best seq 1..9\n    [kestrel] question\n    hrc monitor transcript rt-a --seq 1..9\nindex: 1,004 turns, behind by 0 events\n",
+      "stderr": "",
+      "requests": [
+        {
+          "query": "kestrel",
+          "limit": 1,
+          "candidateLimit": 300
+        }
+      ]
+    }
+  },
+  {
+    "argv": [
+      "kestrel",
+      "--candidate-limit",
+      "2"
+    ],
+    "result": {
+      "code": 0,
+      "stdout": "cody@hrc-runtime:T-13053   (2 generations)\n  rt-a  gen 1   2026-11-01 01:00   2 hits   best seq 1..9\n    [kestrel] question\n    hrc monitor transcript rt-a --seq 1..9\nindex: 1,004 turns, behind by 0 events\n",
+      "stderr": "",
+      "requests": [
+        {
+          "query": "kestrel",
+          "limit": 20,
+          "candidateLimit": 2
+        }
+      ]
+    }
+  },
+  {
+    "argv": [
+      "kestrel",
+      "--since",
+      "2026-11-01"
+    ],
+    "result": {
+      "code": 0,
+      "stdout": "cody@hrc-runtime:T-13053   (2 generations)\n  rt-a  gen 1   2026-11-01 01:00   2 hits   best seq 1..9\n    [kestrel] question\n    hrc monitor transcript rt-a --seq 1..9\n  rt-b  gen 2   2026-11-01 01:02   1 hit   best seq 21..29\n    [kestrel] question\n    hrc monitor transcript rt-b --seq 21..29\noutsider@hrc-runtime:T-13053\n  rt-c  gen 1   2026-11-01 01:03   1 hit   best seq 31..39\n    [kestrel] question\n    hrc monitor transcript rt-c --seq 31..39\nindex: 1,004 turns, behind by 0 events\n",
+      "stderr": "",
+      "requests": [
+        {
+          "query": "kestrel",
+          "since": "2026-11-01T00:00:00.000Z",
+          "limit": 20,
+          "candidateLimit": 300
+        }
+      ]
+    }
+  },
+  {
+    "argv": [
+      "kestrel",
+      "--until",
+      "2026-11-01T01:01:00Z"
+    ],
+    "result": {
+      "code": 0,
+      "stdout": "cody@hrc-runtime:T-13053   (2 generations)\n  rt-a  gen 1   2026-11-01 01:00   2 hits   best seq 1..9\n    [kestrel] question\n    hrc monitor transcript rt-a --seq 1..9\nindex: 1,004 turns, behind by 0 events\n",
+      "stderr": "",
+      "requests": [
+        {
+          "query": "kestrel",
+          "until": "2026-11-01T01:01:00.000Z",
+          "limit": 20,
+          "candidateLimit": 300
+        }
+      ]
+    }
+  },
+  {
+    "argv": [
+      "kestrel",
+      "--since",
+      "2026-11-01T02:00:00+01:00",
+      "--json"
+    ],
+    "result": {
+      "code": 0,
+      "stdout": "{\n  \"mode\": \"discovery\",\n  \"hits\": [\n    {\n      \"turnRowid\": 1,\n      \"invocationId\": \"inv-rt-a\",\n      \"runtimeId\": \"rt-a\",\n      \"agent\": \"cody\",\n      \"project\": \"hrc-runtime\",\n      \"task\": \"T-13053\",\n      \"scopeRef\": \"agent:cody:project:hrc-runtime:task:T-13053\",\n      \"generation\": 1,\n      \"seqFrom\": 1,\n      \"seqTo\": 9,\n      \"startedAt\": \"2026-11-01T00:00:00.000Z\",\n      \"completedAt\": \"2026-11-01T01:00:00.000Z\",\n      \"terminalStatus\": \"completed\",\n      \"messageCount\": 2,\n      \"truncated\": false,\n      \"userText\": \"kestrel question\",\n      \"finalText\": \"kestrel \\t answer\\n 0\",\n      \"midText\": \"mid\",\n      \"score\": 4.776064369139357,\n      \"snippet\": \"[kestrel] question\",\n      \"scopeGenerationCount\": 2\n    },\n    {\n      \"turnRowid\": 2,\n      \"invocationId\": \"inv-rt-a\",\n      \"runtimeId\": \"rt-a\",\n      \"agent\": \"cody\",\n      \"project\": \"hrc-runtime\",\n      \"task\": \"T-13053\",\n      \"scopeRef\": \"agent:cody:project:hrc-runtime:task:T-13053\",\n      \"generation\": 1,\n      \"seqFrom\": 11,\n      \"seqTo\": 19,\n      \"startedAt\": \"2026-11-01T00:00:00.000Z\",\n      \"completedAt\": \"2026-11-01T01:01:00.000Z\",\n      \"terminalStatus\": \"failed\",\n      \"messageCount\": 2,\n      \"truncated\": false,\n      \"userText\": \"kestrel question\",\n      \"finalText\": \"kestrel \\t answer\\n 1\",\n      \"midText\": \"mid\",\n      \"score\": 4.776064369139357,\n      \"snippet\": \"[kestrel] question\",\n      \"scopeGenerationCount\": 2\n    },\n    {\n      \"turnRowid\": 3,\n      \"invocationId\": \"inv-rt-b\",\n      \"runtimeId\": \"rt-b\",\n      \"agent\": \"cody\",\n      \"project\": \"hrc-runtime\",\n      \"task\": \"T-13053\",\n      \"scopeRef\": \"agent:cody:project:hrc-runtime:task:T-13053\",\n      \"generation\": 2,\n      \"seqFrom\": 21,\n      \"seqTo\": 29,\n      \"startedAt\": \"2026-11-01T00:00:00.000Z\",\n      \"completedAt\": \"2026-11-01T01:02:00.000Z\",\n      \"terminalStatus\": \"interrupted\",\n      \"messageCount\": 2,\n      \"truncated\": false,\n      \"userText\": \"kestrel question\",\n      \"finalText\": \"kestrel \\t answer\\n 2\",\n      \"midText\": \"mid\",\n      \"score\": 4.776064369139357,\n      \"snippet\": \"[kestrel] question\",\n      \"scopeGenerationCount\": 2\n    },\n    {\n      \"turnRowid\": 4,\n      \"invocationId\": \"inv-rt-c\",\n      \"runtimeId\": \"rt-c\",\n      \"agent\": \"outsider\",\n      \"project\": \"hrc-runtime\",\n      \"task\": \"T-13053\",\n      \"scopeRef\": \"agent:outsider:project:hrc-runtime:task:T-13053\",\n      \"generation\": 1,\n      \"seqFrom\": 31,\n      \"seqTo\": 39,\n      \"startedAt\": \"2026-11-01T00:00:00.000Z\",\n      \"completedAt\": \"2026-11-01T01:03:00.000Z\",\n      \"terminalStatus\": \"completed\",\n      \"messageCount\": 2,\n      \"truncated\": false,\n      \"userText\": \"kestrel question\",\n      \"finalText\": \"kestrel \\t answer\\n 3\",\n      \"midText\": \"mid\",\n      \"score\": 4.776064369139357,\n      \"snippet\": \"[kestrel] question\",\n      \"scopeGenerationCount\": 1\n    }\n  ],\n  \"index\": {\n    \"turnsIndexed\": 1004,\n    \"lastEventId\": 0,\n    \"ledgerMaxEventId\": 0,\n    \"lagEvents\": 0,\n    \"invocationsReindexed\": 0\n  }\n}\n",
+      "stderr": "",
+      "requests": [
+        {
+          "query": "kestrel",
+          "since": "2026-11-01T01:00:00.000Z",
+          "limit": 20,
+          "candidateLimit": 300
+        }
+      ]
+    }
+  },
+  {
+    "argv": [
+      "kestrel",
+      "--agent",
+      "",
+      "--project",
+      "",
+      "--task",
+      ""
+    ],
+    "result": {
+      "code": 0,
+      "stdout": "cody@hrc-runtime:T-13053   (2 generations)\n  rt-a  gen 1   2026-11-01 01:00   2 hits   best seq 1..9\n    [kestrel] question\n    hrc monitor transcript rt-a --seq 1..9\n  rt-b  gen 2   2026-11-01 01:02   1 hit   best seq 21..29\n    [kestrel] question\n    hrc monitor transcript rt-b --seq 21..29\noutsider@hrc-runtime:T-13053\n  rt-c  gen 1   2026-11-01 01:03   1 hit   best seq 31..39\n    [kestrel] question\n    hrc monitor transcript rt-c --seq 31..39\nindex: 1,004 turns, behind by 0 events\n",
+      "stderr": "",
+      "requests": [
+        {
+          "query": "kestrel",
+          "agent": "",
+          "project": "",
+          "task": "",
+          "limit": 20,
+          "candidateLimit": 300
+        }
+      ]
+    }
+  },
+  {
+    "argv": [
+      "kestrel",
+      "--target",
+      ""
+    ],
+    "result": {
+      "code": 0,
+      "stdout": "cody@hrc-runtime:T-13053   (2 generations)\n  rt-a  gen 1   2026-11-01 01:00   2 hits   best seq 1..9\n    [kestrel] question\n    hrc monitor transcript rt-a --seq 1..9\n  rt-b  gen 2   2026-11-01 01:02   1 hit   best seq 21..29\n    [kestrel] question\n    hrc monitor transcript rt-b --seq 21..29\noutsider@hrc-runtime:T-13053\n  rt-c  gen 1   2026-11-01 01:03   1 hit   best seq 31..39\n    [kestrel] question\n    hrc monitor transcript rt-c --seq 31..39\nindex: 1,004 turns, behind by 0 events\n",
+      "stderr": "",
+      "requests": [
+        {
+          "query": "kestrel",
+          "limit": 20,
+          "candidateLimit": 300
+        }
+      ]
+    }
+  },
+  {
+    "argv": [
+      "kestrel",
+      "--agent",
+      "--json"
+    ],
+    "result": {
+      "code": 0,
+      "stdout": "{\n  \"mode\": \"discovery\",\n  \"hits\": [],\n  \"index\": {\n    \"turnsIndexed\": 1004,\n    \"lastEventId\": 0,\n    \"ledgerMaxEventId\": 0,\n    \"lagEvents\": 0,\n    \"invocationsReindexed\": 0\n  }\n}\n",
+      "stderr": "",
+      "requests": [
+        {
+          "query": "kestrel",
+          "agent": "--json",
+          "limit": 20,
+          "candidateLimit": 300
+        }
+      ]
+    }
+  },
+  {
+    "argv": [
+      "kestrel",
+      "--limit",
+      "01"
+    ],
+    "result": {
+      "code": 0,
+      "stdout": "cody@hrc-runtime:T-13053   (2 generations)\n  rt-a  gen 1   2026-11-01 01:00   2 hits   best seq 1..9\n    [kestrel] question\n    hrc monitor transcript rt-a --seq 1..9\nindex: 1,004 turns, behind by 0 events\n",
+      "stderr": "",
+      "requests": [
+        {
+          "query": "kestrel",
+          "limit": 1,
+          "candidateLimit": 300
+        }
+      ]
+    }
+  },
+  {
+    "argv": [
+      "kestrel",
+      "--limit",
+      "00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000001"
+    ],
+    "result": {
+      "code": 0,
+      "stdout": "cody@hrc-runtime:T-13053   (2 generations)\n  rt-a  gen 1   2026-11-01 01:00   2 hits   best seq 1..9\n    [kestrel] question\n    hrc monitor transcript rt-a --seq 1..9\nindex: 1,004 turns, behind by 0 events\n",
+      "stderr": "",
+      "requests": [
+        {
+          "query": "kestrel",
+          "limit": 1,
+          "candidateLimit": 300
+        }
+      ]
+    }
+  },
+  {
+    "argv": [
+      "kestrel",
+      "--limit=2",
+      "--json"
+    ],
+    "result": {
+      "code": 0,
+      "stdout": "{\n  \"mode\": \"discovery\",\n  \"hits\": [\n    {\n      \"turnRowid\": 1,\n      \"invocationId\": \"inv-rt-a\",\n      \"runtimeId\": \"rt-a\",\n      \"agent\": \"cody\",\n      \"project\": \"hrc-runtime\",\n      \"task\": \"T-13053\",\n      \"scopeRef\": \"agent:cody:project:hrc-runtime:task:T-13053\",\n      \"generation\": 1,\n      \"seqFrom\": 1,\n      \"seqTo\": 9,\n      \"startedAt\": \"2026-11-01T00:00:00.000Z\",\n      \"completedAt\": \"2026-11-01T01:00:00.000Z\",\n      \"terminalStatus\": \"completed\",\n      \"messageCount\": 2,\n      \"truncated\": false,\n      \"userText\": \"kestrel question\",\n      \"finalText\": \"kestrel \\t answer\\n 0\",\n      \"midText\": \"mid\",\n      \"score\": 4.776064369139357,\n      \"snippet\": \"[kestrel] question\",\n      \"scopeGenerationCount\": 2\n    },\n    {\n      \"turnRowid\": 2,\n      \"invocationId\": \"inv-rt-a\",\n      \"runtimeId\": \"rt-a\",\n      \"agent\": \"cody\",\n      \"project\": \"hrc-runtime\",\n      \"task\": \"T-13053\",\n      \"scopeRef\": \"agent:cody:project:hrc-runtime:task:T-13053\",\n      \"generation\": 1,\n      \"seqFrom\": 11,\n      \"seqTo\": 19,\n      \"startedAt\": \"2026-11-01T00:00:00.000Z\",\n      \"completedAt\": \"2026-11-01T01:01:00.000Z\",\n      \"terminalStatus\": \"failed\",\n      \"messageCount\": 2,\n      \"truncated\": false,\n      \"userText\": \"kestrel question\",\n      \"finalText\": \"kestrel \\t answer\\n 1\",\n      \"midText\": \"mid\",\n      \"score\": 4.776064369139357,\n      \"snippet\": \"[kestrel] question\",\n      \"scopeGenerationCount\": 2\n    },\n    {\n      \"turnRowid\": 3,\n      \"invocationId\": \"inv-rt-b\",\n      \"runtimeId\": \"rt-b\",\n      \"agent\": \"cody\",\n      \"project\": \"hrc-runtime\",\n      \"task\": \"T-13053\",\n      \"scopeRef\": \"agent:cody:project:hrc-runtime:task:T-13053\",\n      \"generation\": 2,\n      \"seqFrom\": 21,\n      \"seqTo\": 29,\n      \"startedAt\": \"2026-11-01T00:00:00.000Z\",\n      \"completedAt\": \"2026-11-01T01:02:00.000Z\",\n      \"terminalStatus\": \"interrupted\",\n      \"messageCount\": 2,\n      \"truncated\": false,\n      \"userText\": \"kestrel question\",\n      \"finalText\": \"kestrel \\t answer\\n 2\",\n      \"midText\": \"mid\",\n      \"score\": 4.776064369139357,\n      \"snippet\": \"[kestrel] question\",\n      \"scopeGenerationCount\": 2\n    }\n  ],\n  \"index\": {\n    \"turnsIndexed\": 1004,\n    \"lastEventId\": 0,\n    \"ledgerMaxEventId\": 0,\n    \"lagEvents\": 0,\n    \"invocationsReindexed\": 0\n  }\n}\n",
+      "stderr": "",
+      "requests": [
+        {
+          "query": "kestrel",
+          "limit": 2,
+          "candidateLimit": 300
+        }
+      ]
+    }
+  },
+  {
+    "argv": [
+      "kestrel",
+      "--target",
+      "invocation:inv-rt-a"
+    ],
+    "result": {
+      "code": 0,
+      "stdout": "seq 1..9  01:00  [final]  [kestrel] question\nseq 11..19  01:01  [failed]  [kestrel] question\n",
+      "stderr": "",
+      "requests": [
+        {
+          "query": "kestrel",
+          "invocationId": "inv-rt-a",
+          "limit": 20,
+          "candidateLimit": 300
+        }
+      ]
+    }
+  },
+  {
+    "argv": [
+      "kestrel",
+      "--target",
+      "invocation:inv-rt-a",
+      "--json"
+    ],
+    "result": {
+      "code": 0,
+      "stdout": "{\n  \"mode\": \"within_runtime\",\n  \"hits\": [\n    {\n      \"turnRowid\": 1,\n      \"invocationId\": \"inv-rt-a\",\n      \"runtimeId\": \"rt-a\",\n      \"agent\": \"cody\",\n      \"project\": \"hrc-runtime\",\n      \"task\": \"T-13053\",\n      \"scopeRef\": \"agent:cody:project:hrc-runtime:task:T-13053\",\n      \"generation\": 1,\n      \"seqFrom\": 1,\n      \"seqTo\": 9,\n      \"startedAt\": \"2026-11-01T00:00:00.000Z\",\n      \"completedAt\": \"2026-11-01T01:00:00.000Z\",\n      \"terminalStatus\": \"completed\",\n      \"messageCount\": 2,\n      \"truncated\": false,\n      \"userText\": \"kestrel question\",\n      \"finalText\": \"kestrel \\t answer\\n 0\",\n      \"midText\": \"mid\",\n      \"score\": 4.776064369139357,\n      \"snippet\": \"[kestrel] question\",\n      \"scopeGenerationCount\": 2\n    },\n    {\n      \"turnRowid\": 2,\n      \"invocationId\": \"inv-rt-a\",\n      \"runtimeId\": \"rt-a\",\n      \"agent\": \"cody\",\n      \"project\": \"hrc-runtime\",\n      \"task\": \"T-13053\",\n      \"scopeRef\": \"agent:cody:project:hrc-runtime:task:T-13053\",\n      \"generation\": 1,\n      \"seqFrom\": 11,\n      \"seqTo\": 19,\n      \"startedAt\": \"2026-11-01T00:00:00.000Z\",\n      \"completedAt\": \"2026-11-01T01:01:00.000Z\",\n      \"terminalStatus\": \"failed\",\n      \"messageCount\": 2,\n      \"truncated\": false,\n      \"userText\": \"kestrel question\",\n      \"finalText\": \"kestrel \\t answer\\n 1\",\n      \"midText\": \"mid\",\n      \"score\": 4.776064369139357,\n      \"snippet\": \"[kestrel] question\",\n      \"scopeGenerationCount\": 2\n    }\n  ],\n  \"index\": {\n    \"turnsIndexed\": 1004,\n    \"lastEventId\": 0,\n    \"ledgerMaxEventId\": 0,\n    \"lagEvents\": 0,\n    \"invocationsReindexed\": 0\n  }\n}\n",
+      "stderr": "",
+      "requests": [
+        {
+          "query": "kestrel",
+          "invocationId": "inv-rt-a",
+          "limit": 20,
+          "candidateLimit": 300
+        }
+      ]
+    }
+  },
+  {
+    "argv": [
+      "kestrel",
+      "--target",
+      "inv-rt-a"
+    ],
+    "result": {
+      "code": 0,
+      "stdout": "seq 1..9  01:00  [final]  [kestrel] question\nseq 11..19  01:01  [failed]  [kestrel] question\n",
+      "stderr": "",
+      "requests": [
+        {
+          "query": "kestrel",
+          "invocationId": "inv-rt-a",
+          "limit": 20,
+          "candidateLimit": 300
+        }
+      ]
+    }
+  },
+  {
+    "argv": [
+      "kestrel",
+      "--target",
+      "inv-rt-a",
+      "--json"
+    ],
+    "result": {
+      "code": 0,
+      "stdout": "{\n  \"mode\": \"within_runtime\",\n  \"hits\": [\n    {\n      \"turnRowid\": 1,\n      \"invocationId\": \"inv-rt-a\",\n      \"runtimeId\": \"rt-a\",\n      \"agent\": \"cody\",\n      \"project\": \"hrc-runtime\",\n      \"task\": \"T-13053\",\n      \"scopeRef\": \"agent:cody:project:hrc-runtime:task:T-13053\",\n      \"generation\": 1,\n      \"seqFrom\": 1,\n      \"seqTo\": 9,\n      \"startedAt\": \"2026-11-01T00:00:00.000Z\",\n      \"completedAt\": \"2026-11-01T01:00:00.000Z\",\n      \"terminalStatus\": \"completed\",\n      \"messageCount\": 2,\n      \"truncated\": false,\n      \"userText\": \"kestrel question\",\n      \"finalText\": \"kestrel \\t answer\\n 0\",\n      \"midText\": \"mid\",\n      \"score\": 4.776064369139357,\n      \"snippet\": \"[kestrel] question\",\n      \"scopeGenerationCount\": 2\n    },\n    {\n      \"turnRowid\": 2,\n      \"invocationId\": \"inv-rt-a\",\n      \"runtimeId\": \"rt-a\",\n      \"agent\": \"cody\",\n      \"project\": \"hrc-runtime\",\n      \"task\": \"T-13053\",\n      \"scopeRef\": \"agent:cody:project:hrc-runtime:task:T-13053\",\n      \"generation\": 1,\n      \"seqFrom\": 11,\n      \"seqTo\": 19,\n      \"startedAt\": \"2026-11-01T00:00:00.000Z\",\n      \"completedAt\": \"2026-11-01T01:01:00.000Z\",\n      \"terminalStatus\": \"failed\",\n      \"messageCount\": 2,\n      \"truncated\": false,\n      \"userText\": \"kestrel question\",\n      \"finalText\": \"kestrel \\t answer\\n 1\",\n      \"midText\": \"mid\",\n      \"score\": 4.776064369139357,\n      \"snippet\": \"[kestrel] question\",\n      \"scopeGenerationCount\": 2\n    }\n  ],\n  \"index\": {\n    \"turnsIndexed\": 1004,\n    \"lastEventId\": 0,\n    \"ledgerMaxEventId\": 0,\n    \"lagEvents\": 0,\n    \"invocationsReindexed\": 0\n  }\n}\n",
+      "stderr": "",
+      "requests": [
+        {
+          "query": "kestrel",
+          "invocationId": "inv-rt-a",
+          "limit": 20,
+          "candidateLimit": 300
+        }
+      ]
+    }
+  },
+  {
+    "argv": [
+      "kestrel",
+      "--target",
+      "runtime:rt-a"
+    ],
+    "result": {
+      "code": 0,
+      "stdout": "seq 1..9  01:00  [final]  [kestrel] question\nseq 11..19  01:01  [failed]  [kestrel] question\n",
+      "stderr": "",
+      "requests": [
+        {
+          "query": "kestrel",
+          "runtimeId": "rt-a",
+          "limit": 20,
+          "candidateLimit": 300
+        }
+      ]
+    }
+  },
+  {
+    "argv": [
+      "kestrel",
+      "--target",
+      "runtime:rt-a",
+      "--json"
+    ],
+    "result": {
+      "code": 0,
+      "stdout": "{\n  \"mode\": \"within_runtime\",\n  \"hits\": [\n    {\n      \"turnRowid\": 1,\n      \"invocationId\": \"inv-rt-a\",\n      \"runtimeId\": \"rt-a\",\n      \"agent\": \"cody\",\n      \"project\": \"hrc-runtime\",\n      \"task\": \"T-13053\",\n      \"scopeRef\": \"agent:cody:project:hrc-runtime:task:T-13053\",\n      \"generation\": 1,\n      \"seqFrom\": 1,\n      \"seqTo\": 9,\n      \"startedAt\": \"2026-11-01T00:00:00.000Z\",\n      \"completedAt\": \"2026-11-01T01:00:00.000Z\",\n      \"terminalStatus\": \"completed\",\n      \"messageCount\": 2,\n      \"truncated\": false,\n      \"userText\": \"kestrel question\",\n      \"finalText\": \"kestrel \\t answer\\n 0\",\n      \"midText\": \"mid\",\n      \"score\": 4.776064369139357,\n      \"snippet\": \"[kestrel] question\",\n      \"scopeGenerationCount\": 2\n    },\n    {\n      \"turnRowid\": 2,\n      \"invocationId\": \"inv-rt-a\",\n      \"runtimeId\": \"rt-a\",\n      \"agent\": \"cody\",\n      \"project\": \"hrc-runtime\",\n      \"task\": \"T-13053\",\n      \"scopeRef\": \"agent:cody:project:hrc-runtime:task:T-13053\",\n      \"generation\": 1,\n      \"seqFrom\": 11,\n      \"seqTo\": 19,\n      \"startedAt\": \"2026-11-01T00:00:00.000Z\",\n      \"completedAt\": \"2026-11-01T01:01:00.000Z\",\n      \"terminalStatus\": \"failed\",\n      \"messageCount\": 2,\n      \"truncated\": false,\n      \"userText\": \"kestrel question\",\n      \"finalText\": \"kestrel \\t answer\\n 1\",\n      \"midText\": \"mid\",\n      \"score\": 4.776064369139357,\n      \"snippet\": \"[kestrel] question\",\n      \"scopeGenerationCount\": 2\n    }\n  ],\n  \"index\": {\n    \"turnsIndexed\": 1004,\n    \"lastEventId\": 0,\n    \"ledgerMaxEventId\": 0,\n    \"lagEvents\": 0,\n    \"invocationsReindexed\": 0\n  }\n}\n",
+      "stderr": "",
+      "requests": [
+        {
+          "query": "kestrel",
+          "runtimeId": "rt-a",
+          "limit": 20,
+          "candidateLimit": 300
+        }
+      ]
+    }
+  },
+  {
+    "argv": [
+      "kestrel",
+      "--target",
+      "rt-a"
+    ],
+    "result": {
+      "code": 0,
+      "stdout": "seq 1..9  01:00  [final]  [kestrel] question\nseq 11..19  01:01  [failed]  [kestrel] question\n",
+      "stderr": "",
+      "requests": [
+        {
+          "query": "kestrel",
+          "runtimeId": "rt-a",
+          "limit": 20,
+          "candidateLimit": 300
+        }
+      ]
+    }
+  },
+  {
+    "argv": [
+      "kestrel",
+      "--target",
+      "rt-a",
+      "--json"
+    ],
+    "result": {
+      "code": 0,
+      "stdout": "{\n  \"mode\": \"within_runtime\",\n  \"hits\": [\n    {\n      \"turnRowid\": 1,\n      \"invocationId\": \"inv-rt-a\",\n      \"runtimeId\": \"rt-a\",\n      \"agent\": \"cody\",\n      \"project\": \"hrc-runtime\",\n      \"task\": \"T-13053\",\n      \"scopeRef\": \"agent:cody:project:hrc-runtime:task:T-13053\",\n      \"generation\": 1,\n      \"seqFrom\": 1,\n      \"seqTo\": 9,\n      \"startedAt\": \"2026-11-01T00:00:00.000Z\",\n      \"completedAt\": \"2026-11-01T01:00:00.000Z\",\n      \"terminalStatus\": \"completed\",\n      \"messageCount\": 2,\n      \"truncated\": false,\n      \"userText\": \"kestrel question\",\n      \"finalText\": \"kestrel \\t answer\\n 0\",\n      \"midText\": \"mid\",\n      \"score\": 4.776064369139357,\n      \"snippet\": \"[kestrel] question\",\n      \"scopeGenerationCount\": 2\n    },\n    {\n      \"turnRowid\": 2,\n      \"invocationId\": \"inv-rt-a\",\n      \"runtimeId\": \"rt-a\",\n      \"agent\": \"cody\",\n      \"project\": \"hrc-runtime\",\n      \"task\": \"T-13053\",\n      \"scopeRef\": \"agent:cody:project:hrc-runtime:task:T-13053\",\n      \"generation\": 1,\n      \"seqFrom\": 11,\n      \"seqTo\": 19,\n      \"startedAt\": \"2026-11-01T00:00:00.000Z\",\n      \"completedAt\": \"2026-11-01T01:01:00.000Z\",\n      \"terminalStatus\": \"failed\",\n      \"messageCount\": 2,\n      \"truncated\": false,\n      \"userText\": \"kestrel question\",\n      \"finalText\": \"kestrel \\t answer\\n 1\",\n      \"midText\": \"mid\",\n      \"score\": 4.776064369139357,\n      \"snippet\": \"[kestrel] question\",\n      \"scopeGenerationCount\": 2\n    }\n  ],\n  \"index\": {\n    \"turnsIndexed\": 1004,\n    \"lastEventId\": 0,\n    \"ledgerMaxEventId\": 0,\n    \"lagEvents\": 0,\n    \"invocationsReindexed\": 0\n  }\n}\n",
+      "stderr": "",
+      "requests": [
+        {
+          "query": "kestrel",
+          "runtimeId": "rt-a",
+          "limit": 20,
+          "candidateLimit": 300
+        }
+      ]
+    }
+  },
+  {
+    "argv": [
+      "kestrel",
+      "--target",
+      "scope:agent:cody:project:hrc-runtime:task:T-13053"
+    ],
+    "result": {
+      "code": 0,
+      "stdout": "cody@hrc-runtime:T-13053   (2 generations)\n  rt-a  gen 1   2026-11-01 01:00   2 hits   best seq 1..9\n    [kestrel] question\n    hrc monitor transcript rt-a --seq 1..9\n  rt-b  gen 2   2026-11-01 01:02   1 hit   best seq 21..29\n    [kestrel] question\n    hrc monitor transcript rt-b --seq 21..29\nindex: 1,004 turns, behind by 0 events\n",
+      "stderr": "",
+      "requests": [
+        {
+          "query": "kestrel",
+          "scopeRef": "agent:cody:project:hrc-runtime:task:T-13053",
+          "limit": 20,
+          "candidateLimit": 300
+        }
+      ]
+    }
+  },
+  {
+    "argv": [
+      "kestrel",
+      "--target",
+      "scope:agent:cody:project:hrc-runtime:task:T-13053",
+      "--json"
+    ],
+    "result": {
+      "code": 0,
+      "stdout": "{\n  \"mode\": \"discovery\",\n  \"hits\": [\n    {\n      \"turnRowid\": 1,\n      \"invocationId\": \"inv-rt-a\",\n      \"runtimeId\": \"rt-a\",\n      \"agent\": \"cody\",\n      \"project\": \"hrc-runtime\",\n      \"task\": \"T-13053\",\n      \"scopeRef\": \"agent:cody:project:hrc-runtime:task:T-13053\",\n      \"generation\": 1,\n      \"seqFrom\": 1,\n      \"seqTo\": 9,\n      \"startedAt\": \"2026-11-01T00:00:00.000Z\",\n      \"completedAt\": \"2026-11-01T01:00:00.000Z\",\n      \"terminalStatus\": \"completed\",\n      \"messageCount\": 2,\n      \"truncated\": false,\n      \"userText\": \"kestrel question\",\n      \"finalText\": \"kestrel \\t answer\\n 0\",\n      \"midText\": \"mid\",\n      \"score\": 4.776064369139357,\n      \"snippet\": \"[kestrel] question\",\n      \"scopeGenerationCount\": 2\n    },\n    {\n      \"turnRowid\": 2,\n      \"invocationId\": \"inv-rt-a\",\n      \"runtimeId\": \"rt-a\",\n      \"agent\": \"cody\",\n      \"project\": \"hrc-runtime\",\n      \"task\": \"T-13053\",\n      \"scopeRef\": \"agent:cody:project:hrc-runtime:task:T-13053\",\n      \"generation\": 1,\n      \"seqFrom\": 11,\n      \"seqTo\": 19,\n      \"startedAt\": \"2026-11-01T00:00:00.000Z\",\n      \"completedAt\": \"2026-11-01T01:01:00.000Z\",\n      \"terminalStatus\": \"failed\",\n      \"messageCount\": 2,\n      \"truncated\": false,\n      \"userText\": \"kestrel question\",\n      \"finalText\": \"kestrel \\t answer\\n 1\",\n      \"midText\": \"mid\",\n      \"score\": 4.776064369139357,\n      \"snippet\": \"[kestrel] question\",\n      \"scopeGenerationCount\": 2\n    },\n    {\n      \"turnRowid\": 3,\n      \"invocationId\": \"inv-rt-b\",\n      \"runtimeId\": \"rt-b\",\n      \"agent\": \"cody\",\n      \"project\": \"hrc-runtime\",\n      \"task\": \"T-13053\",\n      \"scopeRef\": \"agent:cody:project:hrc-runtime:task:T-13053\",\n      \"generation\": 2,\n      \"seqFrom\": 21,\n      \"seqTo\": 29,\n      \"startedAt\": \"2026-11-01T00:00:00.000Z\",\n      \"completedAt\": \"2026-11-01T01:02:00.000Z\",\n      \"terminalStatus\": \"interrupted\",\n      \"messageCount\": 2,\n      \"truncated\": false,\n      \"userText\": \"kestrel question\",\n      \"finalText\": \"kestrel \\t answer\\n 2\",\n      \"midText\": \"mid\",\n      \"score\": 4.776064369139357,\n      \"snippet\": \"[kestrel] question\",\n      \"scopeGenerationCount\": 2\n    }\n  ],\n  \"index\": {\n    \"turnsIndexed\": 1004,\n    \"lastEventId\": 0,\n    \"ledgerMaxEventId\": 0,\n    \"lagEvents\": 0,\n    \"invocationsReindexed\": 0\n  }\n}\n",
+      "stderr": "",
+      "requests": [
+        {
+          "query": "kestrel",
+          "scopeRef": "agent:cody:project:hrc-runtime:task:T-13053",
+          "limit": 20,
+          "candidateLimit": 300
+        }
+      ]
+    }
+  },
+  {
+    "argv": [
+      "kestrel",
+      "--target",
+      "agent:cody:project:hrc-runtime:task:T-13053"
+    ],
+    "result": {
+      "code": 0,
+      "stdout": "cody@hrc-runtime:T-13053   (2 generations)\n  rt-a  gen 1   2026-11-01 01:00   2 hits   best seq 1..9\n    [kestrel] question\n    hrc monitor transcript rt-a --seq 1..9\n  rt-b  gen 2   2026-11-01 01:02   1 hit   best seq 21..29\n    [kestrel] question\n    hrc monitor transcript rt-b --seq 21..29\nindex: 1,004 turns, behind by 0 events\n",
+      "stderr": "",
+      "requests": [
+        {
+          "query": "kestrel",
+          "scopeRef": "agent:cody:project:hrc-runtime:task:T-13053",
+          "limit": 20,
+          "candidateLimit": 300
+        }
+      ]
+    }
+  },
+  {
+    "argv": [
+      "kestrel",
+      "--target",
+      "agent:cody:project:hrc-runtime:task:T-13053",
+      "--json"
+    ],
+    "result": {
+      "code": 0,
+      "stdout": "{\n  \"mode\": \"discovery\",\n  \"hits\": [\n    {\n      \"turnRowid\": 1,\n      \"invocationId\": \"inv-rt-a\",\n      \"runtimeId\": \"rt-a\",\n      \"agent\": \"cody\",\n      \"project\": \"hrc-runtime\",\n      \"task\": \"T-13053\",\n      \"scopeRef\": \"agent:cody:project:hrc-runtime:task:T-13053\",\n      \"generation\": 1,\n      \"seqFrom\": 1,\n      \"seqTo\": 9,\n      \"startedAt\": \"2026-11-01T00:00:00.000Z\",\n      \"completedAt\": \"2026-11-01T01:00:00.000Z\",\n      \"terminalStatus\": \"completed\",\n      \"messageCount\": 2,\n      \"truncated\": false,\n      \"userText\": \"kestrel question\",\n      \"finalText\": \"kestrel \\t answer\\n 0\",\n      \"midText\": \"mid\",\n      \"score\": 4.776064369139357,\n      \"snippet\": \"[kestrel] question\",\n      \"scopeGenerationCount\": 2\n    },\n    {\n      \"turnRowid\": 2,\n      \"invocationId\": \"inv-rt-a\",\n      \"runtimeId\": \"rt-a\",\n      \"agent\": \"cody\",\n      \"project\": \"hrc-runtime\",\n      \"task\": \"T-13053\",\n      \"scopeRef\": \"agent:cody:project:hrc-runtime:task:T-13053\",\n      \"generation\": 1,\n      \"seqFrom\": 11,\n      \"seqTo\": 19,\n      \"startedAt\": \"2026-11-01T00:00:00.000Z\",\n      \"completedAt\": \"2026-11-01T01:01:00.000Z\",\n      \"terminalStatus\": \"failed\",\n      \"messageCount\": 2,\n      \"truncated\": false,\n      \"userText\": \"kestrel question\",\n      \"finalText\": \"kestrel \\t answer\\n 1\",\n      \"midText\": \"mid\",\n      \"score\": 4.776064369139357,\n      \"snippet\": \"[kestrel] question\",\n      \"scopeGenerationCount\": 2\n    },\n    {\n      \"turnRowid\": 3,\n      \"invocationId\": \"inv-rt-b\",\n      \"runtimeId\": \"rt-b\",\n      \"agent\": \"cody\",\n      \"project\": \"hrc-runtime\",\n      \"task\": \"T-13053\",\n      \"scopeRef\": \"agent:cody:project:hrc-runtime:task:T-13053\",\n      \"generation\": 2,\n      \"seqFrom\": 21,\n      \"seqTo\": 29,\n      \"startedAt\": \"2026-11-01T00:00:00.000Z\",\n      \"completedAt\": \"2026-11-01T01:02:00.000Z\",\n      \"terminalStatus\": \"interrupted\",\n      \"messageCount\": 2,\n      \"truncated\": false,\n      \"userText\": \"kestrel question\",\n      \"finalText\": \"kestrel \\t answer\\n 2\",\n      \"midText\": \"mid\",\n      \"score\": 4.776064369139357,\n      \"snippet\": \"[kestrel] question\",\n      \"scopeGenerationCount\": 2\n    }\n  ],\n  \"index\": {\n    \"turnsIndexed\": 1004,\n    \"lastEventId\": 0,\n    \"ledgerMaxEventId\": 0,\n    \"lagEvents\": 0,\n    \"invocationsReindexed\": 0\n  }\n}\n",
+      "stderr": "",
+      "requests": [
+        {
+          "query": "kestrel",
+          "scopeRef": "agent:cody:project:hrc-runtime:task:T-13053",
+          "limit": 20,
+          "candidateLimit": 300
+        }
+      ]
+    }
+  },
+  {
+    "argv": [
+      "kestrel",
+      "--target",
+      "session:agent:cody:project:hrc-runtime:task:T-13053/lane:main"
+    ],
+    "result": {
+      "code": 0,
+      "stdout": "cody@hrc-runtime:T-13053   (2 generations)\n  rt-a  gen 1   2026-11-01 01:00   2 hits   best seq 1..9\n    [kestrel] question\n    hrc monitor transcript rt-a --seq 1..9\n  rt-b  gen 2   2026-11-01 01:02   1 hit   best seq 21..29\n    [kestrel] question\n    hrc monitor transcript rt-b --seq 21..29\nindex: 1,004 turns, behind by 0 events\n",
+      "stderr": "",
+      "requests": [
+        {
+          "query": "kestrel",
+          "scopeRef": "agent:cody:project:hrc-runtime:task:T-13053",
+          "limit": 20,
+          "candidateLimit": 300
+        }
+      ]
+    }
+  },
+  {
+    "argv": [
+      "kestrel",
+      "--target",
+      "session:agent:cody:project:hrc-runtime:task:T-13053/lane:main",
+      "--json"
+    ],
+    "result": {
+      "code": 0,
+      "stdout": "{\n  \"mode\": \"discovery\",\n  \"hits\": [\n    {\n      \"turnRowid\": 1,\n      \"invocationId\": \"inv-rt-a\",\n      \"runtimeId\": \"rt-a\",\n      \"agent\": \"cody\",\n      \"project\": \"hrc-runtime\",\n      \"task\": \"T-13053\",\n      \"scopeRef\": \"agent:cody:project:hrc-runtime:task:T-13053\",\n      \"generation\": 1,\n      \"seqFrom\": 1,\n      \"seqTo\": 9,\n      \"startedAt\": \"2026-11-01T00:00:00.000Z\",\n      \"completedAt\": \"2026-11-01T01:00:00.000Z\",\n      \"terminalStatus\": \"completed\",\n      \"messageCount\": 2,\n      \"truncated\": false,\n      \"userText\": \"kestrel question\",\n      \"finalText\": \"kestrel \\t answer\\n 0\",\n      \"midText\": \"mid\",\n      \"score\": 4.776064369139357,\n      \"snippet\": \"[kestrel] question\",\n      \"scopeGenerationCount\": 2\n    },\n    {\n      \"turnRowid\": 2,\n      \"invocationId\": \"inv-rt-a\",\n      \"runtimeId\": \"rt-a\",\n      \"agent\": \"cody\",\n      \"project\": \"hrc-runtime\",\n      \"task\": \"T-13053\",\n      \"scopeRef\": \"agent:cody:project:hrc-runtime:task:T-13053\",\n      \"generation\": 1,\n      \"seqFrom\": 11,\n      \"seqTo\": 19,\n      \"startedAt\": \"2026-11-01T00:00:00.000Z\",\n      \"completedAt\": \"2026-11-01T01:01:00.000Z\",\n      \"terminalStatus\": \"failed\",\n      \"messageCount\": 2,\n      \"truncated\": false,\n      \"userText\": \"kestrel question\",\n      \"finalText\": \"kestrel \\t answer\\n 1\",\n      \"midText\": \"mid\",\n      \"score\": 4.776064369139357,\n      \"snippet\": \"[kestrel] question\",\n      \"scopeGenerationCount\": 2\n    },\n    {\n      \"turnRowid\": 3,\n      \"invocationId\": \"inv-rt-b\",\n      \"runtimeId\": \"rt-b\",\n      \"agent\": \"cody\",\n      \"project\": \"hrc-runtime\",\n      \"task\": \"T-13053\",\n      \"scopeRef\": \"agent:cody:project:hrc-runtime:task:T-13053\",\n      \"generation\": 2,\n      \"seqFrom\": 21,\n      \"seqTo\": 29,\n      \"startedAt\": \"2026-11-01T00:00:00.000Z\",\n      \"completedAt\": \"2026-11-01T01:02:00.000Z\",\n      \"terminalStatus\": \"interrupted\",\n      \"messageCount\": 2,\n      \"truncated\": false,\n      \"userText\": \"kestrel question\",\n      \"finalText\": \"kestrel \\t answer\\n 2\",\n      \"midText\": \"mid\",\n      \"score\": 4.776064369139357,\n      \"snippet\": \"[kestrel] question\",\n      \"scopeGenerationCount\": 2\n    }\n  ],\n  \"index\": {\n    \"turnsIndexed\": 1004,\n    \"lastEventId\": 0,\n    \"ledgerMaxEventId\": 0,\n    \"lagEvents\": 0,\n    \"invocationsReindexed\": 0\n  }\n}\n",
+      "stderr": "",
+      "requests": [
+        {
+          "query": "kestrel",
+          "scopeRef": "agent:cody:project:hrc-runtime:task:T-13053",
+          "limit": 20,
+          "candidateLimit": 300
+        }
+      ]
+    }
+  },
+  {
+    "argv": [
+      "kestrel",
+      "--target",
+      "cody@hrc-runtime:T-13053"
+    ],
+    "result": {
+      "code": 0,
+      "stdout": "cody@hrc-runtime:T-13053   (2 generations)\n  rt-a  gen 1   2026-11-01 01:00   2 hits   best seq 1..9\n    [kestrel] question\n    hrc monitor transcript rt-a --seq 1..9\n  rt-b  gen 2   2026-11-01 01:02   1 hit   best seq 21..29\n    [kestrel] question\n    hrc monitor transcript rt-b --seq 21..29\nindex: 1,004 turns, behind by 0 events\n",
+      "stderr": "",
+      "requests": [
+        {
+          "query": "kestrel",
+          "scopeRef": "agent:cody:project:hrc-runtime:task:T-13053",
+          "limit": 20,
+          "candidateLimit": 300
+        }
+      ]
+    }
+  },
+  {
+    "argv": [
+      "kestrel",
+      "--target",
+      "cody@hrc-runtime:T-13053",
+      "--json"
+    ],
+    "result": {
+      "code": 0,
+      "stdout": "{\n  \"mode\": \"discovery\",\n  \"hits\": [\n    {\n      \"turnRowid\": 1,\n      \"invocationId\": \"inv-rt-a\",\n      \"runtimeId\": \"rt-a\",\n      \"agent\": \"cody\",\n      \"project\": \"hrc-runtime\",\n      \"task\": \"T-13053\",\n      \"scopeRef\": \"agent:cody:project:hrc-runtime:task:T-13053\",\n      \"generation\": 1,\n      \"seqFrom\": 1,\n      \"seqTo\": 9,\n      \"startedAt\": \"2026-11-01T00:00:00.000Z\",\n      \"completedAt\": \"2026-11-01T01:00:00.000Z\",\n      \"terminalStatus\": \"completed\",\n      \"messageCount\": 2,\n      \"truncated\": false,\n      \"userText\": \"kestrel question\",\n      \"finalText\": \"kestrel \\t answer\\n 0\",\n      \"midText\": \"mid\",\n      \"score\": 4.776064369139357,\n      \"snippet\": \"[kestrel] question\",\n      \"scopeGenerationCount\": 2\n    },\n    {\n      \"turnRowid\": 2,\n      \"invocationId\": \"inv-rt-a\",\n      \"runtimeId\": \"rt-a\",\n      \"agent\": \"cody\",\n      \"project\": \"hrc-runtime\",\n      \"task\": \"T-13053\",\n      \"scopeRef\": \"agent:cody:project:hrc-runtime:task:T-13053\",\n      \"generation\": 1,\n      \"seqFrom\": 11,\n      \"seqTo\": 19,\n      \"startedAt\": \"2026-11-01T00:00:00.000Z\",\n      \"completedAt\": \"2026-11-01T01:01:00.000Z\",\n      \"terminalStatus\": \"failed\",\n      \"messageCount\": 2,\n      \"truncated\": false,\n      \"userText\": \"kestrel question\",\n      \"finalText\": \"kestrel \\t answer\\n 1\",\n      \"midText\": \"mid\",\n      \"score\": 4.776064369139357,\n      \"snippet\": \"[kestrel] question\",\n      \"scopeGenerationCount\": 2\n    },\n    {\n      \"turnRowid\": 3,\n      \"invocationId\": \"inv-rt-b\",\n      \"runtimeId\": \"rt-b\",\n      \"agent\": \"cody\",\n      \"project\": \"hrc-runtime\",\n      \"task\": \"T-13053\",\n      \"scopeRef\": \"agent:cody:project:hrc-runtime:task:T-13053\",\n      \"generation\": 2,\n      \"seqFrom\": 21,\n      \"seqTo\": 29,\n      \"startedAt\": \"2026-11-01T00:00:00.000Z\",\n      \"completedAt\": \"2026-11-01T01:02:00.000Z\",\n      \"terminalStatus\": \"interrupted\",\n      \"messageCount\": 2,\n      \"truncated\": false,\n      \"userText\": \"kestrel question\",\n      \"finalText\": \"kestrel \\t answer\\n 2\",\n      \"midText\": \"mid\",\n      \"score\": 4.776064369139357,\n      \"snippet\": \"[kestrel] question\",\n      \"scopeGenerationCount\": 2\n    }\n  ],\n  \"index\": {\n    \"turnsIndexed\": 1004,\n    \"lastEventId\": 0,\n    \"ledgerMaxEventId\": 0,\n    \"lagEvents\": 0,\n    \"invocationsReindexed\": 0\n  }\n}\n",
+      "stderr": "",
+      "requests": [
+        {
+          "query": "kestrel",
+          "scopeRef": "agent:cody:project:hrc-runtime:task:T-13053",
+          "limit": 20,
+          "candidateLimit": 300
+        }
+      ]
+    }
+  },
+  {
+    "argv": [
+      "kestrel",
+      "--target",
+      "host:hsid-a"
+    ],
+    "result": {
+      "code": 2,
+      "stdout": "",
+      "stderr": "hrc: unsupported transcript search target: host:hsid-a\n",
+      "requests": []
+    }
+  },
+  {
+    "argv": [
+      "kestrel",
+      "--target",
+      "host:hsid-a",
+      "--json"
+    ],
+    "result": {
+      "code": 2,
+      "stdout": "",
+      "stderr": "hrc: unsupported transcript search target: host:hsid-a\n",
+      "requests": []
+    }
+  },
+  {
+    "argv": [
+      "kestrel",
+      "--target",
+      "msg:message"
+    ],
+    "result": {
+      "code": 2,
+      "stdout": "",
+      "stderr": "hrc: unsupported transcript search target: msg:message\n",
+      "requests": []
+    }
+  },
+  {
+    "argv": [
+      "kestrel",
+      "--target",
+      "msg:message",
+      "--json"
+    ],
+    "result": {
+      "code": 2,
+      "stdout": "",
+      "stderr": "hrc: unsupported transcript search target: msg:message\n",
+      "requests": []
+    }
+  },
+  {
+    "argv": [
+      "kestrel",
+      "--target",
+      "seq:1"
+    ],
+    "result": {
+      "code": 2,
+      "stdout": "",
+      "stderr": "hrc: unsupported transcript search target: seq:1\n",
+      "requests": []
+    }
+  },
+  {
+    "argv": [
+      "kestrel",
+      "--target",
+      "seq:1",
+      "--json"
+    ],
+    "result": {
+      "code": 2,
+      "stdout": "",
+      "stderr": "hrc: unsupported transcript search target: seq:1\n",
+      "requests": []
+    }
+  },
+  {
+    "argv": [
+      "kestrel",
+      "--target",
+      "unknown:thing"
+    ],
+    "result": {
+      "code": 2,
+      "stdout": "",
+      "stderr": "hrc: unknown selector prefix \"unknown\"\n",
+      "requests": []
+    }
+  },
+  {
+    "argv": [
+      "kestrel",
+      "--target",
+      "unknown:thing",
+      "--json"
+    ],
+    "result": {
+      "code": 2,
+      "stdout": "",
+      "stderr": "hrc: unknown selector prefix \"unknown\"\n",
+      "requests": []
+    }
+  },
+  {
+    "argv": [
+      "kestrel",
+      "--target",
+      "scope:bad"
+    ],
+    "result": {
+      "code": 2,
+      "stdout": "",
+      "stderr": "hrc: ScopeRef must start with \"agent:<agentId>\"\n",
+      "requests": []
+    }
+  },
+  {
+    "argv": [
+      "kestrel",
+      "--target",
+      "scope:bad",
+      "--json"
+    ],
+    "result": {
+      "code": 2,
+      "stdout": "",
+      "stderr": "hrc: ScopeRef must start with \"agent:<agentId>\"\n",
+      "requests": []
+    }
+  },
+  {
+    "argv": [
+      "kestrel",
+      "--target",
+      "scope:"
+    ],
+    "result": {
+      "code": 2,
+      "stdout": "",
+      "stderr": "hrc: scope selector value must not be empty\n",
+      "requests": []
+    }
+  },
+  {
+    "argv": [
+      "kestrel",
+      "--target",
+      "scope:",
+      "--json"
+    ],
+    "result": {
+      "code": 2,
+      "stdout": "",
+      "stderr": "hrc: scope selector value must not be empty\n",
+      "requests": []
+    }
+  },
+  {
+    "argv": [
+      "kestrel",
+      "--target",
+      "host:"
+    ],
+    "result": {
+      "code": 2,
+      "stdout": "",
+      "stderr": "hrc: host selector value must not be empty\n",
+      "requests": []
+    }
+  },
+  {
+    "argv": [
+      "kestrel",
+      "--target",
+      "host:",
+      "--json"
+    ],
+    "result": {
+      "code": 2,
+      "stdout": "",
+      "stderr": "hrc: host selector value must not be empty\n",
+      "requests": []
+    }
+  },
+  {
+    "argv": [
+      "kestrel",
+      "--target",
+      "session:"
+    ],
+    "result": {
+      "code": 2,
+      "stdout": "",
+      "stderr": "hrc: session selector value must not be empty\n",
+      "requests": []
+    }
+  },
+  {
+    "argv": [
+      "kestrel",
+      "--target",
+      "session:",
+      "--json"
+    ],
+    "result": {
+      "code": 2,
+      "stdout": "",
+      "stderr": "hrc: session selector value must not be empty\n",
+      "requests": []
+    }
+  },
+  {
+    "argv": [
+      "kestrel",
+      "--target",
+      "seq:no"
+    ],
+    "result": {
+      "code": 2,
+      "stdout": "",
+      "stderr": "hrc: message sequence must be an integer\n",
+      "requests": []
+    }
+  },
+  {
+    "argv": [
+      "kestrel",
+      "--target",
+      "seq:no",
+      "--json"
+    ],
+    "result": {
+      "code": 2,
+      "stdout": "",
+      "stderr": "hrc: message sequence must be an integer\n",
+      "requests": []
+    }
+  },
+  {
+    "argv": [
+      "kestrel",
+      "--target",
+      "runtime:"
+    ],
+    "result": {
+      "code": 0,
+      "stdout": "cody@hrc-runtime:T-13053   (2 generations)\n  rt-a  gen 1   2026-11-01 01:00   2 hits   best seq 1..9\n    [kestrel] question\n    hrc monitor transcript rt-a --seq 1..9\n  rt-b  gen 2   2026-11-01 01:02   1 hit   best seq 21..29\n    [kestrel] question\n    hrc monitor transcript rt-b --seq 21..29\noutsider@hrc-runtime:T-13053\n  rt-c  gen 1   2026-11-01 01:03   1 hit   best seq 31..39\n    [kestrel] question\n    hrc monitor transcript rt-c --seq 31..39\nindex: 1,004 turns, behind by 0 events\n",
+      "stderr": "",
+      "requests": [
+        {
+          "query": "kestrel",
+          "runtimeId": "",
+          "limit": 20,
+          "candidateLimit": 300
+        }
+      ]
+    }
+  },
+  {
+    "argv": [
+      "kestrel",
+      "--target",
+      "runtime:",
+      "--json"
+    ],
+    "result": {
+      "code": 0,
+      "stdout": "{\n  \"mode\": \"discovery\",\n  \"hits\": [\n    {\n      \"turnRowid\": 1,\n      \"invocationId\": \"inv-rt-a\",\n      \"runtimeId\": \"rt-a\",\n      \"agent\": \"cody\",\n      \"project\": \"hrc-runtime\",\n      \"task\": \"T-13053\",\n      \"scopeRef\": \"agent:cody:project:hrc-runtime:task:T-13053\",\n      \"generation\": 1,\n      \"seqFrom\": 1,\n      \"seqTo\": 9,\n      \"startedAt\": \"2026-11-01T00:00:00.000Z\",\n      \"completedAt\": \"2026-11-01T01:00:00.000Z\",\n      \"terminalStatus\": \"completed\",\n      \"messageCount\": 2,\n      \"truncated\": false,\n      \"userText\": \"kestrel question\",\n      \"finalText\": \"kestrel \\t answer\\n 0\",\n      \"midText\": \"mid\",\n      \"score\": 4.776064369139357,\n      \"snippet\": \"[kestrel] question\",\n      \"scopeGenerationCount\": 2\n    },\n    {\n      \"turnRowid\": 2,\n      \"invocationId\": \"inv-rt-a\",\n      \"runtimeId\": \"rt-a\",\n      \"agent\": \"cody\",\n      \"project\": \"hrc-runtime\",\n      \"task\": \"T-13053\",\n      \"scopeRef\": \"agent:cody:project:hrc-runtime:task:T-13053\",\n      \"generation\": 1,\n      \"seqFrom\": 11,\n      \"seqTo\": 19,\n      \"startedAt\": \"2026-11-01T00:00:00.000Z\",\n      \"completedAt\": \"2026-11-01T01:01:00.000Z\",\n      \"terminalStatus\": \"failed\",\n      \"messageCount\": 2,\n      \"truncated\": false,\n      \"userText\": \"kestrel question\",\n      \"finalText\": \"kestrel \\t answer\\n 1\",\n      \"midText\": \"mid\",\n      \"score\": 4.776064369139357,\n      \"snippet\": \"[kestrel] question\",\n      \"scopeGenerationCount\": 2\n    },\n    {\n      \"turnRowid\": 3,\n      \"invocationId\": \"inv-rt-b\",\n      \"runtimeId\": \"rt-b\",\n      \"agent\": \"cody\",\n      \"project\": \"hrc-runtime\",\n      \"task\": \"T-13053\",\n      \"scopeRef\": \"agent:cody:project:hrc-runtime:task:T-13053\",\n      \"generation\": 2,\n      \"seqFrom\": 21,\n      \"seqTo\": 29,\n      \"startedAt\": \"2026-11-01T00:00:00.000Z\",\n      \"completedAt\": \"2026-11-01T01:02:00.000Z\",\n      \"terminalStatus\": \"interrupted\",\n      \"messageCount\": 2,\n      \"truncated\": false,\n      \"userText\": \"kestrel question\",\n      \"finalText\": \"kestrel \\t answer\\n 2\",\n      \"midText\": \"mid\",\n      \"score\": 4.776064369139357,\n      \"snippet\": \"[kestrel] question\",\n      \"scopeGenerationCount\": 2\n    },\n    {\n      \"turnRowid\": 4,\n      \"invocationId\": \"inv-rt-c\",\n      \"runtimeId\": \"rt-c\",\n      \"agent\": \"outsider\",\n      \"project\": \"hrc-runtime\",\n      \"task\": \"T-13053\",\n      \"scopeRef\": \"agent:outsider:project:hrc-runtime:task:T-13053\",\n      \"generation\": 1,\n      \"seqFrom\": 31,\n      \"seqTo\": 39,\n      \"startedAt\": \"2026-11-01T00:00:00.000Z\",\n      \"completedAt\": \"2026-11-01T01:03:00.000Z\",\n      \"terminalStatus\": \"completed\",\n      \"messageCount\": 2,\n      \"truncated\": false,\n      \"userText\": \"kestrel question\",\n      \"finalText\": \"kestrel \\t answer\\n 3\",\n      \"midText\": \"mid\",\n      \"score\": 4.776064369139357,\n      \"snippet\": \"[kestrel] question\",\n      \"scopeGenerationCount\": 1\n    }\n  ],\n  \"index\": {\n    \"turnsIndexed\": 1004,\n    \"lastEventId\": 0,\n    \"ledgerMaxEventId\": 0,\n    \"lagEvents\": 0,\n    \"invocationsReindexed\": 0\n  }\n}\n",
+      "stderr": "",
+      "requests": [
+        {
+          "query": "kestrel",
+          "runtimeId": "",
+          "limit": 20,
+          "candidateLimit": 300
+        }
+      ]
+    }
+  },
+  {
+    "argv": [
+      "kestrel",
+      "--target",
+      "invocation:"
+    ],
+    "result": {
+      "code": 0,
+      "stdout": "cody@hrc-runtime:T-13053   (2 generations)\n  rt-a  gen 1   2026-11-01 01:00   2 hits   best seq 1..9\n    [kestrel] question\n    hrc monitor transcript rt-a --seq 1..9\n  rt-b  gen 2   2026-11-01 01:02   1 hit   best seq 21..29\n    [kestrel] question\n    hrc monitor transcript rt-b --seq 21..29\noutsider@hrc-runtime:T-13053\n  rt-c  gen 1   2026-11-01 01:03   1 hit   best seq 31..39\n    [kestrel] question\n    hrc monitor transcript rt-c --seq 31..39\nindex: 1,004 turns, behind by 0 events\n",
+      "stderr": "",
+      "requests": [
+        {
+          "query": "kestrel",
+          "invocationId": "",
+          "limit": 20,
+          "candidateLimit": 300
+        }
+      ]
+    }
+  },
+  {
+    "argv": [
+      "kestrel",
+      "--target",
+      "invocation:",
+      "--json"
+    ],
+    "result": {
+      "code": 0,
+      "stdout": "{\n  \"mode\": \"discovery\",\n  \"hits\": [\n    {\n      \"turnRowid\": 1,\n      \"invocationId\": \"inv-rt-a\",\n      \"runtimeId\": \"rt-a\",\n      \"agent\": \"cody\",\n      \"project\": \"hrc-runtime\",\n      \"task\": \"T-13053\",\n      \"scopeRef\": \"agent:cody:project:hrc-runtime:task:T-13053\",\n      \"generation\": 1,\n      \"seqFrom\": 1,\n      \"seqTo\": 9,\n      \"startedAt\": \"2026-11-01T00:00:00.000Z\",\n      \"completedAt\": \"2026-11-01T01:00:00.000Z\",\n      \"terminalStatus\": \"completed\",\n      \"messageCount\": 2,\n      \"truncated\": false,\n      \"userText\": \"kestrel question\",\n      \"finalText\": \"kestrel \\t answer\\n 0\",\n      \"midText\": \"mid\",\n      \"score\": 4.776064369139357,\n      \"snippet\": \"[kestrel] question\",\n      \"scopeGenerationCount\": 2\n    },\n    {\n      \"turnRowid\": 2,\n      \"invocationId\": \"inv-rt-a\",\n      \"runtimeId\": \"rt-a\",\n      \"agent\": \"cody\",\n      \"project\": \"hrc-runtime\",\n      \"task\": \"T-13053\",\n      \"scopeRef\": \"agent:cody:project:hrc-runtime:task:T-13053\",\n      \"generation\": 1,\n      \"seqFrom\": 11,\n      \"seqTo\": 19,\n      \"startedAt\": \"2026-11-01T00:00:00.000Z\",\n      \"completedAt\": \"2026-11-01T01:01:00.000Z\",\n      \"terminalStatus\": \"failed\",\n      \"messageCount\": 2,\n      \"truncated\": false,\n      \"userText\": \"kestrel question\",\n      \"finalText\": \"kestrel \\t answer\\n 1\",\n      \"midText\": \"mid\",\n      \"score\": 4.776064369139357,\n      \"snippet\": \"[kestrel] question\",\n      \"scopeGenerationCount\": 2\n    },\n    {\n      \"turnRowid\": 3,\n      \"invocationId\": \"inv-rt-b\",\n      \"runtimeId\": \"rt-b\",\n      \"agent\": \"cody\",\n      \"project\": \"hrc-runtime\",\n      \"task\": \"T-13053\",\n      \"scopeRef\": \"agent:cody:project:hrc-runtime:task:T-13053\",\n      \"generation\": 2,\n      \"seqFrom\": 21,\n      \"seqTo\": 29,\n      \"startedAt\": \"2026-11-01T00:00:00.000Z\",\n      \"completedAt\": \"2026-11-01T01:02:00.000Z\",\n      \"terminalStatus\": \"interrupted\",\n      \"messageCount\": 2,\n      \"truncated\": false,\n      \"userText\": \"kestrel question\",\n      \"finalText\": \"kestrel \\t answer\\n 2\",\n      \"midText\": \"mid\",\n      \"score\": 4.776064369139357,\n      \"snippet\": \"[kestrel] question\",\n      \"scopeGenerationCount\": 2\n    },\n    {\n      \"turnRowid\": 4,\n      \"invocationId\": \"inv-rt-c\",\n      \"runtimeId\": \"rt-c\",\n      \"agent\": \"outsider\",\n      \"project\": \"hrc-runtime\",\n      \"task\": \"T-13053\",\n      \"scopeRef\": \"agent:outsider:project:hrc-runtime:task:T-13053\",\n      \"generation\": 1,\n      \"seqFrom\": 31,\n      \"seqTo\": 39,\n      \"startedAt\": \"2026-11-01T00:00:00.000Z\",\n      \"completedAt\": \"2026-11-01T01:03:00.000Z\",\n      \"terminalStatus\": \"completed\",\n      \"messageCount\": 2,\n      \"truncated\": false,\n      \"userText\": \"kestrel question\",\n      \"finalText\": \"kestrel \\t answer\\n 3\",\n      \"midText\": \"mid\",\n      \"score\": 4.776064369139357,\n      \"snippet\": \"[kestrel] question\",\n      \"scopeGenerationCount\": 1\n    }\n  ],\n  \"index\": {\n    \"turnsIndexed\": 1004,\n    \"lastEventId\": 0,\n    \"ledgerMaxEventId\": 0,\n    \"lagEvents\": 0,\n    \"invocationsReindexed\": 0\n  }\n}\n",
+      "stderr": "",
+      "requests": [
+        {
+          "query": "kestrel",
+          "invocationId": "",
+          "limit": 20,
+          "candidateLimit": 300
+        }
+      ]
+    }
+  },
+  {
+    "argv": [
+      "kestrel",
+      "--target",
+      "noSuchAgentT13053@hrc-runtime:T-13053"
+    ],
+    "result": {
+      "code": 0,
+      "stdout": "index: 1,004 turns, behind by 0 events\n",
+      "stderr": "",
+      "requests": [
+        {
+          "query": "kestrel",
+          "scopeRef": "agent:noSuchAgentT13053:project:hrc-runtime:task:T-13053",
+          "limit": 20,
+          "candidateLimit": 300
+        }
+      ]
+    }
+  },
+  {
+    "argv": [
+      "kestrel",
+      "--target",
+      "noSuchAgentT13053@hrc-runtime:T-13053",
+      "--json"
+    ],
+    "result": {
+      "code": 0,
+      "stdout": "{\n  \"mode\": \"discovery\",\n  \"hits\": [],\n  \"index\": {\n    \"turnsIndexed\": 1004,\n    \"lastEventId\": 0,\n    \"ledgerMaxEventId\": 0,\n    \"lagEvents\": 0,\n    \"invocationsReindexed\": 0\n  }\n}\n",
+      "stderr": "",
+      "requests": [
+        {
+          "query": "kestrel",
+          "scopeRef": "agent:noSuchAgentT13053:project:hrc-runtime:task:T-13053",
+          "limit": 20,
+          "candidateLimit": 300
+        }
+      ]
+    }
+  },
+  {
+    "argv": [
+      "kestrel",
+      "--limit",
+      "0"
+    ],
+    "result": {
+      "code": 2,
+      "stdout": "",
+      "stderr": "hrc: --limit must be a positive integer\n",
+      "requests": []
+    }
+  },
+  {
+    "argv": [
+      "kestrel",
+      "--limit",
+      "-1"
+    ],
+    "result": {
+      "code": 2,
+      "stdout": "",
+      "stderr": "hrc: --limit must be a positive integer\n",
+      "requests": []
+    }
+  },
+  {
+    "argv": [
+      "kestrel",
+      "--limit",
+      "1.5"
+    ],
+    "result": {
+      "code": 2,
+      "stdout": "",
+      "stderr": "hrc: --limit must be a positive integer\n",
+      "requests": []
+    }
+  },
+  {
+    "argv": [
+      "kestrel",
+      "--limit",
+      "x"
+    ],
+    "result": {
+      "code": 2,
+      "stdout": "",
+      "stderr": "hrc: --limit must be a positive integer\n",
+      "requests": []
+    }
+  },
+  {
+    "argv": [
+      "kestrel",
+      "--limit",
+      ""
+    ],
+    "result": {
+      "code": 2,
+      "stdout": "",
+      "stderr": "hrc: --limit must be a positive integer\n",
+      "requests": []
+    }
+  },
+  {
+    "argv": [
+      "kestrel",
+      "--limit",
+      " 2 "
+    ],
+    "result": {
+      "code": 2,
+      "stdout": "",
+      "stderr": "hrc: --limit must be a positive integer\n",
+      "requests": []
+    }
+  },
+  {
+    "argv": [
+      "kestrel",
+      "--limit",
+      "9007199254740991"
+    ],
+    "result": {
+      "code": 0,
+      "stdout": "cody@hrc-runtime:T-13053   (2 generations)\n  rt-a  gen 1   2026-11-01 01:00   2 hits   best seq 1..9\n    [kestrel] question\n    hrc monitor transcript rt-a --seq 1..9\n  rt-b  gen 2   2026-11-01 01:02   1 hit   best seq 21..29\n    [kestrel] question\n    hrc monitor transcript rt-b --seq 21..29\noutsider@hrc-runtime:T-13053\n  rt-c  gen 1   2026-11-01 01:03   1 hit   best seq 31..39\n    [kestrel] question\n    hrc monitor transcript rt-c --seq 31..39\nindex: 1,004 turns, behind by 0 events\n",
+      "stderr": "",
+      "requests": [
+        {
+          "query": "kestrel",
+          "limit": 9007199254740991,
+          "candidateLimit": 300
+        }
+      ]
+    }
+  },
+  {
+    "argv": [
+      "kestrel",
+      "--limit",
+      "9007199254740992"
+    ],
+    "result": {
+      "code": 2,
+      "stdout": "",
+      "stderr": "hrc: --limit must be a positive integer\n",
+      "requests": []
+    }
+  },
+  {
+    "argv": [
+      "kestrel",
+      "--limit",
+      "9999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999"
+    ],
+    "result": {
+      "code": 2,
+      "stdout": "",
+      "stderr": "hrc: --limit must be a positive integer\n",
+      "requests": []
+    }
+  },
+  {
+    "argv": [
+      "kestrel",
+      "--candidate-limit",
+      "0"
+    ],
+    "result": {
+      "code": 2,
+      "stdout": "",
+      "stderr": "hrc: --candidate-limit must be a positive integer\n",
+      "requests": []
+    }
+  },
+  {
+    "argv": [
+      "kestrel",
+      "--candidate-limit",
+      "-1"
+    ],
+    "result": {
+      "code": 2,
+      "stdout": "",
+      "stderr": "hrc: --candidate-limit must be a positive integer\n",
+      "requests": []
+    }
+  },
+  {
+    "argv": [
+      "kestrel",
+      "--candidate-limit",
+      "1.5"
+    ],
+    "result": {
+      "code": 2,
+      "stdout": "",
+      "stderr": "hrc: --candidate-limit must be a positive integer\n",
+      "requests": []
+    }
+  },
+  {
+    "argv": [
+      "kestrel",
+      "--candidate-limit",
+      "x"
+    ],
+    "result": {
+      "code": 2,
+      "stdout": "",
+      "stderr": "hrc: --candidate-limit must be a positive integer\n",
+      "requests": []
+    }
+  },
+  {
+    "argv": [
+      "kestrel",
+      "--candidate-limit",
+      ""
+    ],
+    "result": {
+      "code": 2,
+      "stdout": "",
+      "stderr": "hrc: --candidate-limit must be a positive integer\n",
+      "requests": []
+    }
+  },
+  {
+    "argv": [
+      "kestrel",
+      "--candidate-limit",
+      " 2 "
+    ],
+    "result": {
+      "code": 2,
+      "stdout": "",
+      "stderr": "hrc: --candidate-limit must be a positive integer\n",
+      "requests": []
+    }
+  },
+  {
+    "argv": [
+      "kestrel",
+      "--candidate-limit",
+      "9007199254740991"
+    ],
+    "result": {
+      "code": 0,
+      "stdout": "cody@hrc-runtime:T-13053   (2 generations)\n  rt-a  gen 1   2026-11-01 01:00   2 hits   best seq 1..9\n    [kestrel] question\n    hrc monitor transcript rt-a --seq 1..9\n  rt-b  gen 2   2026-11-01 01:02   1 hit   best seq 21..29\n    [kestrel] question\n    hrc monitor transcript rt-b --seq 21..29\noutsider@hrc-runtime:T-13053\n  rt-c  gen 1   2026-11-01 01:03   1 hit   best seq 31..39\n    [kestrel] question\n    hrc monitor transcript rt-c --seq 31..39\nindex: 1,004 turns, behind by 0 events\n",
+      "stderr": "",
+      "requests": [
+        {
+          "query": "kestrel",
+          "limit": 20,
+          "candidateLimit": 9007199254740991
+        }
+      ]
+    }
+  },
+  {
+    "argv": [
+      "kestrel",
+      "--candidate-limit",
+      "9007199254740992"
+    ],
+    "result": {
+      "code": 2,
+      "stdout": "",
+      "stderr": "hrc: --candidate-limit must be a positive integer\n",
+      "requests": []
+    }
+  },
+  {
+    "argv": [
+      "kestrel",
+      "--candidate-limit",
+      "9999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999"
+    ],
+    "result": {
+      "code": 2,
+      "stdout": "",
+      "stderr": "hrc: --candidate-limit must be a positive integer\n",
+      "requests": []
+    }
+  },
+  {
+    "argv": [
+      "kestrel",
+      "--since",
+      "nonsense"
+    ],
+    "result": {
+      "code": 2,
+      "stdout": "",
+      "stderr": "hrc: --since must be a duration or ISO-8601 timestamp\n",
+      "requests": []
+    }
+  },
+  {
+    "argv": [
+      "kestrel",
+      "--since",
+      ""
+    ],
+    "result": {
+      "code": 2,
+      "stdout": "",
+      "stderr": "hrc: --since must be a duration or ISO-8601 timestamp\n",
+      "requests": []
+    }
+  },
+  {
+    "argv": [
+      "kestrel",
+      "--since",
+      "1h"
+    ],
+    "result": {
+      "code": 0,
+      "stdout": "index: 1,004 turns, behind by 0 events\n",
+      "stderr": "",
+      "requests": [
+        {
+          "query": "kestrel",
+          "since": "<duration:1h>",
+          "limit": 20,
+          "candidateLimit": 300
+        }
+      ]
+    }
+  },
+  {
+    "argv": [
+      "kestrel",
+      "--since",
+      "2026-02-30"
+    ],
+    "result": {
+      "code": 0,
+      "stdout": "cody@hrc-runtime:T-13053   (2 generations)\n  rt-a  gen 1   2026-11-01 01:00   2 hits   best seq 1..9\n    [kestrel] question\n    hrc monitor transcript rt-a --seq 1..9\n  rt-b  gen 2   2026-11-01 01:02   1 hit   best seq 21..29\n    [kestrel] question\n    hrc monitor transcript rt-b --seq 21..29\noutsider@hrc-runtime:T-13053\n  rt-c  gen 1   2026-11-01 01:03   1 hit   best seq 31..39\n    [kestrel] question\n    hrc monitor transcript rt-c --seq 31..39\nindex: 1,004 turns, behind by 0 events\n",
+      "stderr": "",
+      "requests": [
+        {
+          "query": "kestrel",
+          "since": "2026-03-02T00:00:00.000Z",
+          "limit": 20,
+          "candidateLimit": 300
+        }
+      ]
+    }
+  },
+  {
+    "argv": [
+      "kestrel",
+      "--since",
+      "2026-11-01T00:00:00.123Z"
+    ],
+    "result": {
+      "code": 0,
+      "stdout": "cody@hrc-runtime:T-13053   (2 generations)\n  rt-a  gen 1   2026-11-01 01:00   2 hits   best seq 1..9\n    [kestrel] question\n    hrc monitor transcript rt-a --seq 1..9\n  rt-b  gen 2   2026-11-01 01:02   1 hit   best seq 21..29\n    [kestrel] question\n    hrc monitor transcript rt-b --seq 21..29\noutsider@hrc-runtime:T-13053\n  rt-c  gen 1   2026-11-01 01:03   1 hit   best seq 31..39\n    [kestrel] question\n    hrc monitor transcript rt-c --seq 31..39\nindex: 1,004 turns, behind by 0 events\n",
+      "stderr": "",
+      "requests": [
+        {
+          "query": "kestrel",
+          "since": "2026-11-01T00:00:00.123Z",
+          "limit": 20,
+          "candidateLimit": 300
+        }
+      ]
+    }
+  },
+  {
+    "argv": [
+      "kestrel",
+      "--since",
+      "+010000-01-01"
+    ],
+    "result": {
+      "code": 0,
+      "stdout": "cody@hrc-runtime:T-13053   (2 generations)\n  rt-a  gen 1   2026-11-01 01:00   2 hits   best seq 1..9\n    [kestrel] question\n    hrc monitor transcript rt-a --seq 1..9\n  rt-b  gen 2   2026-11-01 01:02   1 hit   best seq 21..29\n    [kestrel] question\n    hrc monitor transcript rt-b --seq 21..29\noutsider@hrc-runtime:T-13053\n  rt-c  gen 1   2026-11-01 01:03   1 hit   best seq 31..39\n    [kestrel] question\n    hrc monitor transcript rt-c --seq 31..39\nindex: 1,004 turns, behind by 0 events\n",
+      "stderr": "",
+      "requests": [
+        {
+          "query": "kestrel",
+          "since": "+010000-01-01T00:00:00.000Z",
+          "limit": 20,
+          "candidateLimit": 300
+        }
+      ]
+    }
+  },
+  {
+    "argv": [
+      "kestrel",
+      "--since",
+      "-000001-01-01"
+    ],
+    "result": {
+      "code": 0,
+      "stdout": "cody@hrc-runtime:T-13053   (2 generations)\n  rt-a  gen 1   2026-11-01 01:00   2 hits   best seq 1..9\n    [kestrel] question\n    hrc monitor transcript rt-a --seq 1..9\n  rt-b  gen 2   2026-11-01 01:02   1 hit   best seq 21..29\n    [kestrel] question\n    hrc monitor transcript rt-b --seq 21..29\noutsider@hrc-runtime:T-13053\n  rt-c  gen 1   2026-11-01 01:03   1 hit   best seq 31..39\n    [kestrel] question\n    hrc monitor transcript rt-c --seq 31..39\nindex: 1,004 turns, behind by 0 events\n",
+      "stderr": "",
+      "requests": [
+        {
+          "query": "kestrel",
+          "since": "-000001-01-01T00:00:00.000Z",
+          "limit": 20,
+          "candidateLimit": 300
+        }
+      ]
+    }
+  },
+  {
+    "argv": [
+      "kestrel",
+      "--since",
+      "2026-13-01"
+    ],
+    "result": {
+      "code": 2,
+      "stdout": "",
+      "stderr": "hrc: --since must be a duration or ISO-8601 timestamp\n",
+      "requests": []
+    }
+  },
+  {
+    "argv": [
+      "kestrel",
+      "--until",
+      "nonsense"
+    ],
+    "result": {
+      "code": 2,
+      "stdout": "",
+      "stderr": "hrc: --until must be a duration or ISO-8601 timestamp\n",
+      "requests": []
+    }
+  },
+  {
+    "argv": [
+      "kestrel",
+      "--until",
+      ""
+    ],
+    "result": {
+      "code": 2,
+      "stdout": "",
+      "stderr": "hrc: --until must be a duration or ISO-8601 timestamp\n",
+      "requests": []
+    }
+  },
+  {
+    "argv": [
+      "kestrel",
+      "--until",
+      "1h"
+    ],
+    "result": {
+      "code": 2,
+      "stdout": "",
+      "stderr": "hrc: --until must be a duration or ISO-8601 timestamp\n",
+      "requests": []
+    }
+  },
+  {
+    "argv": [
+      "kestrel",
+      "--until",
+      "2026-02-30"
+    ],
+    "result": {
+      "code": 0,
+      "stdout": "index: 1,004 turns, behind by 0 events\n",
+      "stderr": "",
+      "requests": [
+        {
+          "query": "kestrel",
+          "until": "2026-03-02T00:00:00.000Z",
+          "limit": 20,
+          "candidateLimit": 300
+        }
+      ]
+    }
+  },
+  {
+    "argv": [
+      "kestrel",
+      "--until",
+      "2026-11-01T00:00:00.123Z"
+    ],
+    "result": {
+      "code": 0,
+      "stdout": "index: 1,004 turns, behind by 0 events\n",
+      "stderr": "",
+      "requests": [
+        {
+          "query": "kestrel",
+          "until": "2026-11-01T00:00:00.123Z",
+          "limit": 20,
+          "candidateLimit": 300
+        }
+      ]
+    }
+  },
+  {
+    "argv": [
+      "kestrel",
+      "--until",
+      "+010000-01-01"
+    ],
+    "result": {
+      "code": 0,
+      "stdout": "index: 1,004 turns, behind by 0 events\n",
+      "stderr": "",
+      "requests": [
+        {
+          "query": "kestrel",
+          "until": "+010000-01-01T00:00:00.000Z",
+          "limit": 20,
+          "candidateLimit": 300
+        }
+      ]
+    }
+  },
+  {
+    "argv": [
+      "kestrel",
+      "--until",
+      "-000001-01-01"
+    ],
+    "result": {
+      "code": 0,
+      "stdout": "index: 1,004 turns, behind by 0 events\n",
+      "stderr": "",
+      "requests": [
+        {
+          "query": "kestrel",
+          "until": "-000001-01-01T00:00:00.000Z",
+          "limit": 20,
+          "candidateLimit": 300
+        }
+      ]
+    }
+  },
+  {
+    "argv": [
+      "kestrel",
+      "--until",
+      "2026-13-01"
+    ],
+    "result": {
+      "code": 2,
+      "stdout": "",
+      "stderr": "hrc: --until must be a duration or ISO-8601 timestamp\n",
+      "requests": []
+    }
+  },
+  {
+    "argv": [],
+    "result": {
+      "code": 2,
+      "stdout": "",
+      "stderr": "hrc: error: missing required argument 'query'\ncommand: hrc monitor search\nusage: [options] <query>\n",
+      "requests": []
+    }
+  },
+  {
+    "argv": [
+      "--json"
+    ],
+    "result": {
+      "code": 2,
+      "stdout": "",
+      "stderr": "hrc: error: missing required argument 'query'\ncommand: hrc monitor search\nusage: [options] <query>\n",
+      "requests": []
+    }
+  },
+  {
+    "argv": [
+      "--",
+      "--query"
+    ],
+    "result": {
+      "code": 2,
+      "stdout": "",
+      "stderr": "hrc: hrc monitor search requires <query>\n",
+      "requests": []
+    }
+  },
+  {
+    "argv": [
+      ""
+    ],
+    "result": {
+      "code": 2,
+      "stdout": "",
+      "stderr": "hrc: hrc monitor search requires <query>\n",
+      "requests": []
+    }
+  },
+  {
+    "argv": [
+      "answer"
+    ],
+    "result": {
+      "code": 0,
+      "stdout": "cody@hrc-runtime:T-13053   (2 generations)\n  rt-a  gen 1   2026-11-01 01:00   2 hits   best seq 1..9\n    kestrel [answer] 0\n    hrc monitor transcript rt-a --seq 1..9\n  rt-b  gen 2   2026-11-01 01:02   1 hit   best seq 21..29\n    kestrel [answer] 2\n    hrc monitor transcript rt-b --seq 21..29\noutsider@hrc-runtime:T-13053\n  rt-c  gen 1   2026-11-01 01:03   1 hit   best seq 31..39\n    kestrel [answer] 3\n    hrc monitor transcript rt-c --seq 31..39\nindex: 1,004 turns, behind by 0 events\n",
+      "stderr": "",
+      "requests": [
+        {
+          "query": "answer",
+          "limit": 20,
+          "candidateLimit": 300
+        }
+      ]
+    }
+  },
+  {
+    "argv": [
+      "answer",
+      "--target",
+      "rt-a"
+    ],
+    "result": {
+      "code": 0,
+      "stdout": "seq 1..9  01:00  [final]  kestrel [answer] 0\nseq 11..19  01:01  [failed]  kestrel [answer] 1\n",
+      "stderr": "",
+      "requests": [
+        {
+          "query": "answer",
+          "runtimeId": "rt-a",
+          "limit": 20,
+          "candidateLimit": 300
+        }
+      ]
+    }
+  },
+  {
+    "argv": [
+      "filler"
+    ],
+    "result": {
+      "code": 0,
+      "stdout": "(historical)\n  rt-old  gen -   2020-01-01   5 hits   best seq 1..2\n    [filler]\n    hrc monitor transcript rt-old --seq 1..2\nindex: 1,004 turns, behind by 0 events\n",
+      "stderr": "",
+      "requests": [
+        {
+          "query": "filler",
+          "limit": 20,
+          "candidateLimit": 300
+        }
+      ]
+    }
+  },
+  {
+    "argv": [
+      "zzznomatch"
+    ],
+    "result": {
+      "code": 0,
+      "stdout": "index: 1,004 turns, behind by 0 events\n",
+      "stderr": "",
+      "requests": [
+        {
+          "query": "zzznomatch",
+          "limit": 20,
+          "candidateLimit": 300
+        }
+      ]
+    }
+  },
+  {
+    "argv": [
+      "zzznomatch",
+      "--target",
+      "rt-a"
+    ],
+    "result": {
+      "code": 0,
+      "stdout": "",
+      "stderr": "",
+      "requests": [
+        {
+          "query": "zzznomatch",
+          "runtimeId": "rt-a",
+          "limit": 20,
+          "candidateLimit": 300
+        }
+      ]
+    }
+  },
+  {
+    "argv": [
+      "\"kestrel"
+    ],
+    "result": {
+      "code": 2,
+      "stdout": "",
+      "stderr": "hrc: [malformed_request] unparseable query: unparseable query: unmatched double quote\n",
+      "requests": [
+        {
+          "query": "\"kestrel",
+          "limit": 20,
+          "candidateLimit": 300
+        }
+      ]
+    }
+  },
+  {
+    "argv": [
+      "\"\" kestrel"
+    ],
+    "result": {
+      "code": 2,
+      "stdout": "",
+      "stderr": "hrc: [malformed_request] unparseable query: unparseable query: empty phrase\n",
+      "requests": [
+        {
+          "query": "\"\" kestrel",
+          "limit": 20,
+          "candidateLimit": 300
+        }
+      ]
+    }
+  },
+  {
+    "argv": [
+      "kestrel",
+      "--bogus"
+    ],
+    "result": {
+      "code": 2,
+      "stdout": "",
+      "stderr": "hrc: unknown option: --bogus\n",
+      "requests": []
+    }
+  },
+  {
+    "argv": [
+      "kestrel",
+      "--limit"
+    ],
+    "result": {
+      "code": 2,
+      "stdout": "",
+      "stderr": "hrc: error: option '--limit <n>' argument missing\ncommand: hrc monitor search\nusage: [options] <query>\n",
+      "requests": []
+    }
+  },
+  {
+    "argv": [
+      "kestrel",
+      "--target",
+      "rt-a",
+      "--agent",
+      "absent"
+    ],
+    "result": {
+      "code": 0,
+      "stdout": "",
+      "stderr": "",
+      "requests": [
+        {
+          "query": "kestrel",
+          "agent": "absent",
+          "runtimeId": "rt-a",
+          "limit": 20,
+          "candidateLimit": 300
+        }
+      ]
+    }
+  },
+  {
+    "argv": [
+      "kestrel",
+      "--output",
+      "json"
+    ],
+    "result": {
+      "code": 0,
+      "stdout": "{\n  \"mode\": \"discovery\",\n  \"hits\": [\n    {\n      \"turnRowid\": 1,\n      \"invocationId\": \"inv-rt-a\",\n      \"runtimeId\": \"rt-a\",\n      \"agent\": \"cody\",\n      \"project\": \"hrc-runtime\",\n      \"task\": \"T-13053\",\n      \"scopeRef\": \"agent:cody:project:hrc-runtime:task:T-13053\",\n      \"generation\": 1,\n      \"seqFrom\": 1,\n      \"seqTo\": 9,\n      \"startedAt\": \"2026-11-01T00:00:00.000Z\",\n      \"completedAt\": \"2026-11-01T01:00:00.000Z\",\n      \"terminalStatus\": \"completed\",\n      \"messageCount\": 2,\n      \"truncated\": false,\n      \"userText\": \"kestrel question\",\n      \"finalText\": \"kestrel \\t answer\\n 0\",\n      \"midText\": \"mid\",\n      \"score\": 4.776064369139357,\n      \"snippet\": \"[kestrel] question\",\n      \"scopeGenerationCount\": 2\n    },\n    {\n      \"turnRowid\": 2,\n      \"invocationId\": \"inv-rt-a\",\n      \"runtimeId\": \"rt-a\",\n      \"agent\": \"cody\",\n      \"project\": \"hrc-runtime\",\n      \"task\": \"T-13053\",\n      \"scopeRef\": \"agent:cody:project:hrc-runtime:task:T-13053\",\n      \"generation\": 1,\n      \"seqFrom\": 11,\n      \"seqTo\": 19,\n      \"startedAt\": \"2026-11-01T00:00:00.000Z\",\n      \"completedAt\": \"2026-11-01T01:01:00.000Z\",\n      \"terminalStatus\": \"failed\",\n      \"messageCount\": 2,\n      \"truncated\": false,\n      \"userText\": \"kestrel question\",\n      \"finalText\": \"kestrel \\t answer\\n 1\",\n      \"midText\": \"mid\",\n      \"score\": 4.776064369139357,\n      \"snippet\": \"[kestrel] question\",\n      \"scopeGenerationCount\": 2\n    },\n    {\n      \"turnRowid\": 3,\n      \"invocationId\": \"inv-rt-b\",\n      \"runtimeId\": \"rt-b\",\n      \"agent\": \"cody\",\n      \"project\": \"hrc-runtime\",\n      \"task\": \"T-13053\",\n      \"scopeRef\": \"agent:cody:project:hrc-runtime:task:T-13053\",\n      \"generation\": 2,\n      \"seqFrom\": 21,\n      \"seqTo\": 29,\n      \"startedAt\": \"2026-11-01T00:00:00.000Z\",\n      \"completedAt\": \"2026-11-01T01:02:00.000Z\",\n      \"terminalStatus\": \"interrupted\",\n      \"messageCount\": 2,\n      \"truncated\": false,\n      \"userText\": \"kestrel question\",\n      \"finalText\": \"kestrel \\t answer\\n 2\",\n      \"midText\": \"mid\",\n      \"score\": 4.776064369139357,\n      \"snippet\": \"[kestrel] question\",\n      \"scopeGenerationCount\": 2\n    },\n    {\n      \"turnRowid\": 4,\n      \"invocationId\": \"inv-rt-c\",\n      \"runtimeId\": \"rt-c\",\n      \"agent\": \"outsider\",\n      \"project\": \"hrc-runtime\",\n      \"task\": \"T-13053\",\n      \"scopeRef\": \"agent:outsider:project:hrc-runtime:task:T-13053\",\n      \"generation\": 1,\n      \"seqFrom\": 31,\n      \"seqTo\": 39,\n      \"startedAt\": \"2026-11-01T00:00:00.000Z\",\n      \"completedAt\": \"2026-11-01T01:03:00.000Z\",\n      \"terminalStatus\": \"completed\",\n      \"messageCount\": 2,\n      \"truncated\": false,\n      \"userText\": \"kestrel question\",\n      \"finalText\": \"kestrel \\t answer\\n 3\",\n      \"midText\": \"mid\",\n      \"score\": 4.776064369139357,\n      \"snippet\": \"[kestrel] question\",\n      \"scopeGenerationCount\": 1\n    }\n  ],\n  \"index\": {\n    \"turnsIndexed\": 1004,\n    \"lastEventId\": 0,\n    \"ledgerMaxEventId\": 0,\n    \"lagEvents\": 0,\n    \"invocationsReindexed\": 0\n  }\n}\n",
+      "stderr": "",
+      "requests": [
+        {
+          "query": "kestrel",
+          "limit": 20,
+          "candidateLimit": 300
+        }
+      ]
+    }
+  },
+  {
+    "argv": [
+      "kestrel",
+      "--since",
+      "1m"
+    ],
+    "result": {
+      "code": 0,
+      "stdout": "index: 1,004 turns, behind by 0 events\n",
+      "stderr": "",
+      "requests": [
+        {
+          "query": "kestrel",
+          "since": "<duration:1m>",
+          "limit": 20,
+          "candidateLimit": 300
+        }
+      ]
+    }
+  },
+  {
+    "argv": [
+      "kestrel",
+      "--since",
+      "1h"
+    ],
+    "result": {
+      "code": 0,
+      "stdout": "index: 1,004 turns, behind by 0 events\n",
+      "stderr": "",
+      "requests": [
+        {
+          "query": "kestrel",
+          "since": "<duration:1h>",
+          "limit": 20,
+          "candidateLimit": 300
+        }
+      ]
+    }
+  },
+  {
+    "argv": [
+      "kestrel",
+      "--since",
+      "1.5h"
+    ],
+    "result": {
+      "code": 0,
+      "stdout": "index: 1,004 turns, behind by 0 events\n",
+      "stderr": "",
+      "requests": [
+        {
+          "query": "kestrel",
+          "since": "<duration:1.5h>",
+          "limit": 20,
+          "candidateLimit": 300
+        }
+      ]
+    },
+    "intentionalDivergence": "T-13053 C-36148: handler duration grammar",
+    "bunResult": {
+      "code": 2,
+      "stdout": "",
+      "stderr": "hrc: invalid duration: 1.5h (expected e.g. 30s, 5m, 1h)\n",
+      "requests": []
+    }
+  },
+  {
+    "argv": [
+      "kestrel",
+      "--since",
+      "0d"
+    ],
+    "result": {
+      "code": 0,
+      "stdout": "index: 1,004 turns, behind by 0 events\n",
+      "stderr": "",
+      "requests": [
+        {
+          "query": "kestrel",
+          "since": "<duration:0d>",
+          "limit": 20,
+          "candidateLimit": 300
+        }
+      ]
+    },
+    "intentionalDivergence": "T-13053 C-36148: handler duration grammar",
+    "bunResult": {
+      "code": 2,
+      "stdout": "",
+      "stderr": "hrc: invalid duration: 0d (expected e.g. 30s, 5m, 1h)\n",
+      "requests": []
+    }
+  },
+  {
+    "argv": [
+      "kestrel",
+      "--since",
+      "1d"
+    ],
+    "result": {
+      "code": 0,
+      "stdout": "index: 1,004 turns, behind by 0 events\n",
+      "stderr": "",
+      "requests": [
+        {
+          "query": "kestrel",
+          "since": "<duration:1d>",
+          "limit": 20,
+          "candidateLimit": 300
+        }
+      ]
+    },
+    "intentionalDivergence": "T-13053 C-36148: handler duration grammar",
+    "bunResult": {
+      "code": 2,
+      "stdout": "",
+      "stderr": "hrc: invalid duration: 1d (expected e.g. 30s, 5m, 1h)\n",
+      "requests": []
+    }
+  },
+  {
+    "argv": [
+      "kestrel",
+      "--since",
+      "2w"
+    ],
+    "result": {
+      "code": 0,
+      "stdout": "cody@hrc-runtime:T-13053   (2 generations)\n  rt-a  gen 1   2026-11-01 01:00   2 hits   best seq 1..9\n    [kestrel] question\n    hrc monitor transcript rt-a --seq 1..9\n  rt-b  gen 2   2026-11-01 01:02   1 hit   best seq 21..29\n    [kestrel] question\n    hrc monitor transcript rt-b --seq 21..29\noutsider@hrc-runtime:T-13053\n  rt-c  gen 1   2026-11-01 01:03   1 hit   best seq 31..39\n    [kestrel] question\n    hrc monitor transcript rt-c --seq 31..39\nindex: 1,004 turns, behind by 0 events\n",
+      "stderr": "",
+      "requests": [
+        {
+          "query": "kestrel",
+          "since": "<duration:2w>",
+          "limit": 20,
+          "candidateLimit": 300
+        }
+      ]
+    },
+    "intentionalDivergence": "T-13053 C-36148: handler duration grammar",
+    "bunResult": {
+      "code": 2,
+      "stdout": "",
+      "stderr": "hrc: invalid duration: 2w (expected e.g. 30s, 5m, 1h)\n",
+      "requests": []
+    }
+  },
+  {
+    "argv": [
+      "kestrel",
+      "--since",
+      "0.000001m"
+    ],
+    "result": {
+      "code": 0,
+      "stdout": "index: 1,004 turns, behind by 0 events\n",
+      "stderr": "",
+      "requests": [
+        {
+          "query": "kestrel",
+          "since": "<duration:0.000001m>",
+          "limit": 20,
+          "candidateLimit": 300
+        }
+      ]
+    },
+    "intentionalDivergence": "T-13053 C-36148: handler duration grammar",
+    "bunResult": {
+      "code": 2,
+      "stdout": "",
+      "stderr": "hrc: invalid duration: 0.000001m (expected e.g. 30s, 5m, 1h)\n",
+      "requests": []
+    }
+  },
+  {
+    "argv": [
+      "kestrel",
+      "--since",
+      "0.5m"
+    ],
+    "result": {
+      "code": 0,
+      "stdout": "index: 1,004 turns, behind by 0 events\n",
+      "stderr": "",
+      "requests": [
+        {
+          "query": "kestrel",
+          "since": "<duration:0.5m>",
+          "limit": 20,
+          "candidateLimit": 300
+        }
+      ]
+    },
+    "intentionalDivergence": "T-13053 C-36148: handler duration grammar",
+    "bunResult": {
+      "code": 2,
+      "stdout": "",
+      "stderr": "hrc: invalid duration: 0.5m (expected e.g. 30s, 5m, 1h)\n",
+      "requests": []
+    }
+  },
+  {
+    "argv": [
+      "kestrel",
+      "--since",
+      "1.25d"
+    ],
+    "result": {
+      "code": 0,
+      "stdout": "index: 1,004 turns, behind by 0 events\n",
+      "stderr": "",
+      "requests": [
+        {
+          "query": "kestrel",
+          "since": "<duration:1.25d>",
+          "limit": 20,
+          "candidateLimit": 300
+        }
+      ]
+    },
+    "intentionalDivergence": "T-13053 C-36148: handler duration grammar",
+    "bunResult": {
+      "code": 2,
+      "stdout": "",
+      "stderr": "hrc: invalid duration: 1.25d (expected e.g. 30s, 5m, 1h)\n",
+      "requests": []
+    }
+  },
+  {
+    "argv": [
+      "kestrel",
+      "--since",
+      "0.5w"
+    ],
+    "result": {
+      "code": 0,
+      "stdout": "index: 1,004 turns, behind by 0 events\n",
+      "stderr": "",
+      "requests": [
+        {
+          "query": "kestrel",
+          "since": "<duration:0.5w>",
+          "limit": 20,
+          "candidateLimit": 300
+        }
+      ]
+    },
+    "intentionalDivergence": "T-13053 C-36148: handler duration grammar",
+    "bunResult": {
+      "code": 2,
+      "stdout": "",
+      "stderr": "hrc: invalid duration: 0.5w (expected e.g. 30s, 5m, 1h)\n",
+      "requests": []
+    }
+  },
+  {
+    "argv": [
+      "filler",
+      "--json"
+    ],
+    "result": {
+      "code": 0,
+      "stdout": "{\n  \"mode\": \"discovery\",\n  \"hits\": [\n    {\n      \"turnRowid\": 5,\n      \"invocationId\": \"inv-filler-0\",\n      \"runtimeId\": \"rt-old\",\n      \"seqFrom\": 1,\n      \"seqTo\": 2,\n      \"startedAt\": \"2020-01-01\",\n      \"completedAt\": \"2020-01-01\",\n      \"terminalStatus\": \"completed\",\n      \"messageCount\": 1,\n      \"truncated\": false,\n      \"userText\": \"filler\",\n      \"finalText\": \"filler\",\n      \"midText\": \"\",\n      \"score\": 0.000001378063877197326,\n      \"snippet\": \"[filler]\",\n      \"scopeGenerationCount\": 0\n    },\n    {\n      \"turnRowid\": 6,\n      \"invocationId\": \"inv-filler-1\",\n      \"runtimeId\": \"rt-old\",\n      \"seqFrom\": 1,\n      \"seqTo\": 2,\n      \"startedAt\": \"2020-01-01\",\n      \"completedAt\": \"2020-01-01\",\n      \"terminalStatus\": \"completed\",\n      \"messageCount\": 1,\n      \"truncated\": false,\n      \"userText\": \"filler\",\n      \"finalText\": \"filler\",\n      \"midText\": \"\",\n      \"score\": 0.000001378063877197326,\n      \"snippet\": \"[filler]\",\n      \"scopeGenerationCount\": 0\n    },\n    {\n      \"turnRowid\": 7,\n      \"invocationId\": \"inv-filler-2\",\n      \"runtimeId\": \"rt-old\",\n      \"seqFrom\": 1,\n      \"seqTo\": 2,\n      \"startedAt\": \"2020-01-01\",\n      \"completedAt\": \"2020-01-01\",\n      \"terminalStatus\": \"completed\",\n      \"messageCount\": 1,\n      \"truncated\": false,\n      \"userText\": \"filler\",\n      \"finalText\": \"filler\",\n      \"midText\": \"\",\n      \"score\": 0.000001378063877197326,\n      \"snippet\": \"[filler]\",\n      \"scopeGenerationCount\": 0\n    },\n    {\n      \"turnRowid\": 8,\n      \"invocationId\": \"inv-filler-3\",\n      \"runtimeId\": \"rt-old\",\n      \"seqFrom\": 1,\n      \"seqTo\": 2,\n      \"startedAt\": \"2020-01-01\",\n      \"completedAt\": \"2020-01-01\",\n      \"terminalStatus\": \"completed\",\n      \"messageCount\": 1,\n      \"truncated\": false,\n      \"userText\": \"filler\",\n      \"finalText\": \"filler\",\n      \"midText\": \"\",\n      \"score\": 0.000001378063877197326,\n      \"snippet\": \"[filler]\",\n      \"scopeGenerationCount\": 0\n    },\n    {\n      \"turnRowid\": 9,\n      \"invocationId\": \"inv-filler-4\",\n      \"runtimeId\": \"rt-old\",\n      \"seqFrom\": 1,\n      \"seqTo\": 2,\n      \"startedAt\": \"2020-01-01\",\n      \"completedAt\": \"2020-01-01\",\n      \"terminalStatus\": \"completed\",\n      \"messageCount\": 1,\n      \"truncated\": false,\n      \"userText\": \"filler\",\n      \"finalText\": \"filler\",\n      \"midText\": \"\",\n      \"score\": 0.000001378063877197326,\n      \"snippet\": \"[filler]\",\n      \"scopeGenerationCount\": 0\n    }\n  ],\n  \"index\": {\n    \"turnsIndexed\": 1004,\n    \"lastEventId\": 0,\n    \"ledgerMaxEventId\": 0,\n    \"lagEvents\": 0,\n    \"invocationsReindexed\": 0\n  }\n}\n",
+      "stderr": "",
+      "requests": [
+        {
+          "query": "filler",
+          "limit": 20,
+          "candidateLimit": 300
+        }
+      ]
+    }
+  },
+  {
+    "transport": "absent",
+    "argv": [
+      "kestrel"
+    ],
+    "result": {
+      "code": 1,
+      "stdout": "",
+      "stderr": "hrc: HRC daemon socket not found at <proxy>/absent/hrc.sock. Is the HRC server running?\n",
+      "requests": []
+    }
+  },
+  {
+    "transport": "absent",
+    "argv": [
+      "kestrel",
+      "--target",
+      "unknown:thing"
+    ],
+    "result": {
+      "code": 2,
+      "stdout": "",
+      "stderr": "hrc: unknown selector prefix \"unknown\"\n",
+      "requests": []
+    }
+  },
+  {
+    "transport": "absent",
+    "argv": [
+      "kestrel",
+      "--target",
+      "host:hsid-a"
+    ],
+    "result": {
+      "code": 2,
+      "stdout": "",
+      "stderr": "hrc: unsupported transcript search target: host:hsid-a\n",
+      "requests": []
+    }
+  },
+  {
+    "transport": "absent",
+    "argv": [
+      "kestrel",
+      "--target",
+      "scope:agent:cody:project:hrc-runtime:task:T-13053",
+      "--since",
+      "invalid"
+    ],
+    "result": {
+      "code": 2,
+      "stdout": "",
+      "stderr": "hrc: --since must be a duration or ISO-8601 timestamp\n",
+      "requests": []
+    }
+  },
+  {
+    "transport": "absent",
+    "argv": [
+      "kestrel",
+      "--target",
+      "scope:agent:cody:project:hrc-runtime:task:T-13053",
+      "--limit",
+      "0"
+    ],
+    "result": {
+      "code": 2,
+      "stdout": "",
+      "stderr": "hrc: --limit must be a positive integer\n",
+      "requests": []
+    }
+  },
+  {
+    "transport": "closed",
+    "argv": [
+      "kestrel"
+    ],
+    "result": {
+      "code": 1,
+      "stdout": "",
+      "stderr": "hrc: Was there a typo in the url or port?\n",
+      "requests": []
+    }
+  },
+  {
+    "transport": "closed",
+    "argv": [
+      "kestrel",
+      "--target",
+      "unknown:thing"
+    ],
+    "result": {
+      "code": 2,
+      "stdout": "",
+      "stderr": "hrc: unknown selector prefix \"unknown\"\n",
+      "requests": []
+    }
+  },
+  {
+    "transport": "closed",
+    "argv": [
+      "kestrel",
+      "--target",
+      "host:hsid-a"
+    ],
+    "result": {
+      "code": 2,
+      "stdout": "",
+      "stderr": "hrc: unsupported transcript search target: host:hsid-a\n",
+      "requests": []
+    }
+  },
+  {
+    "transport": "closed",
+    "argv": [
+      "kestrel",
+      "--target",
+      "scope:agent:cody:project:hrc-runtime:task:T-13053",
+      "--since",
+      "invalid"
+    ],
+    "result": {
+      "code": 2,
+      "stdout": "",
+      "stderr": "hrc: --since must be a duration or ISO-8601 timestamp\n",
+      "requests": []
+    }
+  },
+  {
+    "transport": "closed",
+    "argv": [
+      "kestrel",
+      "--target",
+      "scope:agent:cody:project:hrc-runtime:task:T-13053",
+      "--limit",
+      "0"
+    ],
+    "result": {
+      "code": 2,
+      "stdout": "",
+      "stderr": "hrc: --limit must be a positive integer\n",
+      "requests": []
+    }
+  }
+]

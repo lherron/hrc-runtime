@@ -59,7 +59,6 @@ describe('consolidated hrc command graph', () => {
       'show',
       'wait',
       'watch',
-      'search',
       'events',
       'transcript',
       'stats',

@@ -42,7 +42,7 @@ def main():
     bun = shutil.which('bun')
     with tempfile.TemporaryDirectory(prefix='n5-metrics-', dir='/tmp') as temp:
         root = Path(temp)
-        cases = [('help', ['runtime', 'list', '--help']), ('failure', ['runtime', 'list', 'extra']), ('postponed', ['monitor', 'search', '--help'])]
+        cases = [('help', ['runtime', 'list', '--help']), ('failure', ['runtime', 'list', 'extra'])]
         if args.runtime_root:
             assert (args.runtime_root / 'hrc.sock').exists()
             assert not str(args.runtime_root.resolve()).startswith(str(Path.home() / 'praesidium/var'))
@@ -59,10 +59,21 @@ def main():
             good = len(observed[0]['records']) == len(observed[1]['records']) == 1
             if good:
                 a, b = observed[0]['records'][0], observed[1]['records'][0]
-                good = normalized(a) == normalized(b) and a['bin'] == 'hrc' and b['bin'] == ('hrc' if name == 'postponed' else 'rusthrc')
+                good = normalized(a) == normalized(b) and a['bin'] == 'hrc' and b['bin'] == 'rusthrc'
                 good = good and b['stdoutBytes'] == len(observed[1]['stdout'].encode()) and b['exitCode'] == observed[1]['exit']
                 good = good and all(math.isfinite(r['ms']) and r['ms'] >= 0 for r in b['rpc'])
             results.append(dict(case=name, oracle=observed[0], subject=observed[1], **{'pass': good}))
+        # Search has no Bun registration after T-13053. Its usage record is native.
+        state = root / 'native-search'
+        env = dict(os.environ, HRC_STATE_DIR=str(state), HRC_RUNTIME_DIR=str(root / 'run'), HRC_METRICS='1')
+        c = subprocess.run([str(args.binary.resolve()), 'monitor', 'search', '--help'], env=env, cwd=ROOT, capture_output=True)
+        usage = records(state)
+        good = c.returncode == 0 and not c.stderr and len(usage) == 1
+        if good:
+            row = usage[0]
+            good = (row['bin'] == 'rusthrc' and row['cmd'] == 'monitor search' and row['flags'] == ['--help']
+                    and row['exitCode'] == 0 and row['stdoutBytes'] == len(c.stdout) and row['rpc'] == [])
+        results.append(dict(case='native search usage record', **{'pass': good}, records=usage))
         state = root / 'retention'
         metrics = state / 'metrics'
         metrics.mkdir(parents=True)

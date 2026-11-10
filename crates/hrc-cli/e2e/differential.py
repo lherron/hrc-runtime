@@ -108,11 +108,11 @@ def main():
             continue
         # T-13010: unknown commands and surviving native-only groups no longer
         # process-replace with Commander. Grade their native usage contract.
-        if argv in (['wat'], ['runtime', 'nonsense'], ['--output', 'json', 'wat'], ['runtime']):
+        if argv in ([], ['wat'], ['runtime', 'nonsense'], ['--output', 'json', 'wat'], ['runtime']):
             child = subprocess.run([str(args.binary.resolve())] + argv, cwd=ROOT, env=env, text=True, capture_output=True, timeout=20)
-            if argv == ['runtime']:
-                node = next(n for n in nodes(surface) if n['path'] == ['runtime'])
-                good = child.returncode == 0 and child.stdout == '' and child.stderr == node['help']
+            if argv in ([], ['runtime']):
+                node = next(n for n in nodes(surface) if n['path'] == argv)
+                good = child.returncode == (2 if not argv else 0) and child.stdout == '' and child.stderr == node['help']
             elif '--output' in argv:
                 error = json.loads(child.stderr)
                 good = child.returncode == 2 and child.stdout == '' and 'unknown command:' in error['error']['message']
@@ -158,12 +158,13 @@ def main():
         'controls.py': 'runtime capture|runtime interrupt|runtime terminate|capture status|session drop-continuation|session rotate|admin surface bind',
         'server_lifecycle.py': 'server stop|server restart',
         'server_start.py': 'server start', 'daemon_entrypoints.py': 'server|server serve',
-        'differential.py': 'admin|admin broker-verify|admin events|admin runs|admin surface|capture|federation|runtime|server tmux|session|session meta|target',
+        'differential.py': '|monitor|admin|admin broker-verify|admin events|admin runs|admin surface|capture|federation|runtime|server tmux|session|session meta|target',
         'status.py': 'server status', 'turn_protocol.py': 'turn',
         'n5b_monitor_reads.py': 'monitor events|monitor transcript|monitor stats|monitor show|monitor session-report',
         'n5b_monitor_wait.py': 'monitor wait', 'n5b_monitor_watch.py': 'monitor watch',
         'n5b_local.py': 'info|doctor|runtime diagnostics|runtime prune|runtime sweep|server subscribers|server tmux status',
         'n5b_admin.py': 'admin broker-verify candidates|admin events drain|admin runs reconcile-active|admin runs sweep-zombies|admin worktrees|admin worktrees audit|admin worktrees prune',
+        'transcript_search.py': 'monitor search',
         'metrics_report.py': 'admin metrics|admin metrics report|admin metrics routes',
         'session_meta_retire.py': 'session meta set|session meta clear|session retitle|federation retire',
     }

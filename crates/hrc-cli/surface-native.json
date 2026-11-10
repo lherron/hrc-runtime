@@ -1329,6 +1329,133 @@
         ],
         "nativeOnly": true
       }
+    },
+    {
+      "parent": [
+        "monitor"
+      ],
+      "commandLine": [
+        "search [options] <query>",
+        "search completed transcript turns across runtimes with the resident BM25 index"
+      ],
+      "node": {
+        "path": [
+          "monitor",
+          "search"
+        ],
+        "name": "search",
+        "aliases": [],
+        "usage": "[options] <query>",
+        "allowExcessArguments": false,
+        "help": "Usage: hrc monitor search [options] <query>\n\nsearch completed transcript turns across runtimes with the resident BM25 index\n\nArguments:\n  query                      bare words (implicit AND) or a double-quoted phrase\n\nOptions:\n  --agent <agent>            filter by exact agent ID\n  --project <project>        filter by exact project ID\n  --task <task>              filter by exact task ID\n  --target <target>          handle, scope, runtime, or invocation target\n  --since <duration-or-iso>  lower completion-time bound\n  --until <iso>              upper completion-time bound\n  --limit <n>                maximum runtime groups or within-runtime hits\n                             (default: \"20\")\n  --candidate-limit <n>      bounded discovery candidates before aggregation\n                             (default: \"300\")\n  --json                     output the full pointer tuples and index stats as\n                             JSON\n  -h, --help                 display help for command\n\nExample: hrc monitor search \"deployment failed\" --project hrc-runtime --limit 10\n\n",
+        "humanHelp": "Usage: hrc monitor search [options] <query>\n\nsearch completed transcript turns across runtimes with the resident BM25 index\n\nArguments:\n  query                      bare words (implicit AND) or a double-quoted phrase\n\nOptions:\n  --agent <agent>            filter by exact agent ID\n  --project <project>        filter by exact project ID\n  --task <task>              filter by exact task ID\n  --target <target>          handle, scope, runtime, or invocation target\n  --since <duration-or-iso>  lower completion-time bound\n  --until <iso>              upper completion-time bound\n  --limit <n>                maximum runtime groups or within-runtime hits\n                             (default: \"20\")\n  --candidate-limit <n>      bounded discovery candidates before aggregation\n                             (default: \"300\")\n  --json                     output the full pointer tuples and index stats as\n                             JSON\n  -h, --help                 display help for command\n\nExample: hrc monitor search \"deployment failed\" --project hrc-runtime --limit 10\n\n",
+        "arguments": [
+          {
+            "name": "query",
+            "required": true,
+            "variadic": false
+          }
+        ],
+        "options": [
+          {
+            "flags": "--agent <agent>",
+            "long": "--agent",
+            "required": true,
+            "optional": false,
+            "mandatory": false,
+            "negate": false
+          },
+          {
+            "flags": "--project <project>",
+            "long": "--project",
+            "required": true,
+            "optional": false,
+            "mandatory": false,
+            "negate": false
+          },
+          {
+            "flags": "--task <task>",
+            "long": "--task",
+            "required": true,
+            "optional": false,
+            "mandatory": false,
+            "negate": false
+          },
+          {
+            "flags": "--target <target>",
+            "long": "--target",
+            "required": true,
+            "optional": false,
+            "mandatory": false,
+            "negate": false
+          },
+          {
+            "flags": "--since <duration-or-iso>",
+            "long": "--since",
+            "required": true,
+            "optional": false,
+            "mandatory": false,
+            "negate": false
+          },
+          {
+            "flags": "--until <iso>",
+            "long": "--until",
+            "required": true,
+            "optional": false,
+            "mandatory": false,
+            "negate": false
+          },
+          {
+            "flags": "--limit <n>",
+            "long": "--limit",
+            "required": true,
+            "optional": false,
+            "mandatory": false,
+            "negate": false,
+            "defaultValue": "20"
+          },
+          {
+            "flags": "--candidate-limit <n>",
+            "long": "--candidate-limit",
+            "required": true,
+            "optional": false,
+            "mandatory": false,
+            "negate": false,
+            "defaultValue": "300"
+          },
+          {
+            "flags": "--json",
+            "long": "--json",
+            "required": false,
+            "optional": false,
+            "mandatory": false,
+            "negate": false
+          },
+          {
+            "flags": "--output <format>",
+            "long": "--output",
+            "required": true,
+            "optional": false,
+            "mandatory": false,
+            "negate": false,
+            "hidden": true,
+            "choices": [
+              "json"
+            ]
+          },
+          {
+            "flags": "--human",
+            "long": "--human",
+            "required": false,
+            "optional": false,
+            "mandatory": false,
+            "negate": false,
+            "hidden": true
+          }
+        ],
+        "children": [],
+        "nativeOnly": true
+      }
     }
   ]
 }

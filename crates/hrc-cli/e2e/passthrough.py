@@ -9,6 +9,7 @@ import json
 import os
 from pathlib import Path
 import shutil
+import sqlite3
 import subprocess
 import sys
 import tempfile
@@ -27,7 +28,7 @@ def main():
     args = p.parse_args()
     args.artifacts.mkdir(parents=True, exist_ok=True)
     results = []
-    with tempfile.TemporaryDirectory(prefix='n5-pass-') as temp:
+    with tempfile.TemporaryDirectory(prefix='n5-pass-', dir='/tmp') as temp:
         root = Path(temp)
         release = root / 'release'
         (release / 'bin').mkdir(parents=True)
@@ -39,7 +40,7 @@ def main():
         link = root / 'rusthrc'
         link.symlink_to(native)
         env = dict(os.environ, HRC_RUNTIME_DIR=str(root / 'run'), HRC_STATE_DIR=str(root / 'state'), NO_COLOR='1', FORCE_COLOR='0', HRC_METRICS='0')
-        cases = [['monitor', 'search'], ['runtime', 'prune', '--wat']]
+        cases = [['runtime', 'prune', '--wat']]
         for argv in cases:
             observed = []
             for command in (['bun', str(args.oracle.resolve())], [str(link)]):
@@ -76,6 +77,20 @@ def main():
                 subject = subprocess.run([str(args.binary.resolve())] + argv, env=no_bun, cwd=ROOT, text=True, capture_output=True, timeout=15)
                 good = subject.returncode == 0 and not subject.stderr and subject.stdout == node[field]
                 results.append(dict(case='native graft parent help without Bun', argv=argv, **{'pass': good}, stdout=subject.stdout, stderr=subject.stderr, exit=subject.returncode))
+        # Search is native now; its missing-query refusal must not require Bun.
+        argv = ['monitor', 'search']
+        subject = subprocess.run([str(link)] + argv, env=no_bun, cwd=ROOT, text=True, capture_output=True)
+        good = subject.returncode == 2 and not subject.stdout and "missing required argument 'query'" in subject.stderr
+        results.append(dict(case='native search grammar without Bun', argv=argv, **{'pass': good}))
+        # Only older-schema dead-ledger recovery still execs Bun (T-13053).
+        # Create a real current store, then remove one migration marker.
+        legacy = root / 'dead ledger $(not shell).sqlite'
+        database_module = ROOT / 'packages/hrc-store-sqlite/src/database.ts'
+        code = 'import {openHrcDatabase} from ' + json.dumps(str(database_module)) + '; openHrcDatabase(process.argv[1]).close();'
+        subprocess.run([bun, '-e', code, str(legacy)], env=env, cwd=ROOT, capture_output=True, check=True)
+        with sqlite3.connect(legacy) as db:
+            db.execute('DELETE FROM hrc_migrations WHERE id=(SELECT max(id) FROM hrc_migrations)')
+        recovery_argv = ['admin', 'events', 'drain', str(legacy), '--source-ref', 'literal $(not shell)']
         # The executable named bun is a process seam, not an oracle for CLI behavior.
         # Its PID must be the rusthrc PID: spawn-and-wait does not satisfy exec.
         shim = root / 'tools'
@@ -83,14 +98,14 @@ def main():
         (shim / 'bun').write_text('#!' + sys.executable + '\nimport os,sys,json\nprint(json.dumps(dict(pid=os.getpid(),argv=sys.argv[1:],stdin=sys.stdin.read())))\nprint("forwarded stderr",file=sys.stderr)\nsys.exit(37)\n')
         (shim / 'bun').chmod(0o755)
         env['PATH'] = str(shim)
-        child = subprocess.Popen([str(link), 'monitor', 'search', 'literal $(not shell)', '-'], env=env, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+        child = subprocess.Popen([str(link)] + recovery_argv, env=env, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
         out, err = child.communicate('exact stdin\n', timeout=10)
         try:
             value = json.loads(out)
         except json.JSONDecodeError:
             value = {}
-        good = child.returncode == 37 and err == 'forwarded stderr\n' and value == dict(pid=child.pid, argv=[str(native.resolve().parents[1] / 'packages/hrc-cli/bin/hrc.js'), 'monitor', 'search', 'literal $(not shell)', '-'], stdin='exact stdin\n')
-        results.append(dict(case='exec identity and literal argv/stdin/stderr/exit', subject=dict(exit=child.returncode, stdout=out, stderr=err), **{'pass': good}))
+        good = child.returncode == 37 and err == 'forwarded stderr\n' and value == dict(pid=child.pid, argv=[str(native.resolve().parents[1] / 'packages/hrc-cli/bin/hrc.js')] + recovery_argv, stdin='exact stdin\n')
+        results.append(dict(case='older-schema recovery exec identity and literal argv/stdin/stderr/exit', subject=dict(exit=child.returncode, stdout=out, stderr=err), **{'pass': good}))
         scope = json.loads((ROOT / 'crates/hrc-cli/command-scope.json').read_text())
         for command in scope['commands']:
             if command['disposition'] != 'POSTPONED' or command['command'] == 'server':
