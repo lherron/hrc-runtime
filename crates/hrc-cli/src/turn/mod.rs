@@ -271,26 +271,40 @@ fn dispatch(
         if wait {
             request["wait"] = true.into();
         }
-        let result = waited(args, opts, client, "steer", request)?;
-        downgrade(&result);
-        if wait
-            || result["admission"] != "admitted"
-            || !result["runId"].is_string()
-            || !result["hostSessionId"].is_string()
-            || !result["generation"].is_number()
-            || result["observation"]["lifecycle"].is_null()
-        {
-            line(&result);
-            if wait {
-                check_failed(args, &result)?;
+        match waited(args, opts, client, "steer", request) {
+            Err(error)
+                if error.domain.as_ref().and_then(|e| e["code"].as_str())
+                    == Some("missing_runtime_intent") =>
+            {
+                // Match steerOrBirth: only an unapplied intent falls through
+                // to the handoff carrying the launch intent resolved above.
+                eprintln!(
+                    "notice: the session has no applied runtime intent; birthing it with the resolved intent"
+                );
             }
-            return Ok(None);
+            result => {
+                let result = result?;
+                downgrade(&result);
+                if wait
+                    || result["admission"] != "admitted"
+                    || !result["runId"].is_string()
+                    || !result["hostSessionId"].is_string()
+                    || !result["generation"].is_number()
+                    || result["observation"]["lifecycle"].is_null()
+                {
+                    line(&result);
+                    if wait {
+                        check_failed(args, &result)?;
+                    }
+                    return Ok(None);
+                }
+                return Ok(Some(Observation {
+                    handoff: json!({"sessionRef":session_ref,"scopeRef":scope.scope,"laneRef":scope.lane,"hostSessionId":result["hostSessionId"],"runtimeId":result.get("runtimeId").unwrap_or(&json!("")),"runId":result["runId"],"generation":result["generation"],"fromSeq":result["observation"]["lifecycle"].get("fromSeq").unwrap_or(&json!(0))}),
+                    catch_up: None,
+                    follow_seat: result["effectiveDoor"] != "enqueue",
+                }));
+            }
         }
-        return Ok(Some(Observation {
-            handoff: json!({"sessionRef":session_ref,"scopeRef":scope.scope,"laneRef":scope.lane,"hostSessionId":result["hostSessionId"],"runtimeId":result.get("runtimeId").unwrap_or(&json!("")),"runId":result["runId"],"generation":result["generation"],"fromSeq":result["observation"]["lifecycle"].get("fromSeq").unwrap_or(&json!(0))}),
-            catch_up: None,
-            follow_seat: result["effectiveDoor"] != "enqueue",
-        }));
     }
     let mut body = json!({"from":from,"to":{"kind":"session","sessionRef":session_ref},"body":opts.body,"runtimeIntent":intent,"createIfMissing":true});
     if new_context(args) {
