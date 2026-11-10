@@ -62,14 +62,11 @@ predicate: >
   metadata writes emit session.metadata.changed rather than the retired
   shim's session.retitled event. Migration preserves the most recently
   updated title per continuity before removing session_titles and its triggers.
-  Known gap, not enforced since the Rust cutover of 2026-10-26: launch
-  metadata from the ASP compile response envelope. The Rust compile path never
-  reads the compile response's sessionMetadata, so a compile carrying metadata
-  does not replace the launch set; the only source='launch' writers are the
-  participant register and attach requests. Operator-set (source='api')
-  metadata through the native session meta set|clear and retitle verbs, the
-  participant launch writes, and the grammar, limits, precedence and change
-  events above remain enforced. No task restores the compile leg.
+  Launch metadata from the ASP compile response envelope is written as the
+  source='launch' layer by the broker's prepare_dispatch on the initial
+  compile and the unpinned retry (T-13180, restoring the compile leg that
+  was not enforced from the Rust cutover of 2026-10-26 until then);
+  participant register and attach also write the launch set.
 authority: wrkq:T-10148 revision 3 specification etag 6, Daedalus architecture approval, 2026-10-03; Lance Herron overrides of review F1 and F2 relayed in EN-22974 and its subsequent etag correction; home-routing amendment approved by Daedalus under wrkq:T-10418 Spec rev 3, task etag 5, 2026-10-06; Daedalus approval of T-11711 title-route retirement amendment submitted in EN-35003 and EN-35006, 2026-10-23; T-12362 explicit local sessions/get observation extension APPROVE on EN-41778, 2026-11-02
 source:
   - wrkq:T-12362
@@ -85,6 +82,8 @@ source:
   - crates/hrc-store/src/metadata.rs
   - crates/hrc-native/src/server/projection/sessions.rs
   - crates/hrc-native/src/server/broker/participants/mod.rs
+  - crates/hrc-native/src/server/broker/broker.rs
+  - crates/hrc-native/e2e/hosted_launch_metadata.py
   - crates/hrc-cli/src/commands/sessions.rs
   - crates/hrc-cli/e2e/session_meta_retire.py
 required_tests:
@@ -97,6 +96,7 @@ required_tests:
   - T-11711 retired POST and DELETE title routes return 404 without mutation; metadata title set and clear update the roster projection
   - T-10148 metadata reads extend t07594-side-effect-free-reads without lifecycle mutation or probes
   - T-10418 sessions/get and metadata share home routing, unknown-authority refusal and retirement fencing gates
+  - python3 crates/hrc-native/e2e/hosted_launch_metadata.py (T-13180 compile-response launch layer)
   - python3 crates/hrc-cli/e2e/session_meta_retire.py --binary <rusthrc> --artifacts <dir> (native session meta set|clear and retitle grammar, output and stored metadata against the frozen golden)
 last_verified: 2026-10-23 T-11711 retirement amendment reviewed against title handlers, metadata repository, CLI and viewer source; caller migration and deletion acceptance pending; 2026-10-06 T-10418 home-routing amendment reviewed against source; original T-10148 implementation, migration and installed acceptance and T-10418 implementation remain pending evidence
 reopen_when: Continuity identity storage, parser ownership, historical identity absence, wire coverage, metadata grammar or limits, registered keys, source precedence, cosmetic versus lifecycle authority, last-writer launch semantics, envelope/plan placement, home-node writes, title migration, retired-route behavior or title mutation interfaces, event atomicity, or read side effects change.
