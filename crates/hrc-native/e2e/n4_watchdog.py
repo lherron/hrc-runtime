@@ -226,8 +226,6 @@ def judge(o, artifacts):
           and open_manifest['launchShape']['argv'][:2] == ['--model', 'opus'], 'prompt-bearing argv and env are redacted, plain flags kept', open_manifest['launchShape'])
     check('open-run:version', open_manifest.get('versions', {}).get('harnessVersion', '').startswith('fake-harness 1.2.3'),
           'the harness answered --version with its first line', open_manifest.get('versions'))
-    for d in o['bundles'].values():
-        pass
     runs = {r['run_id']: r for r in o['runs']}
     check('runs:open-failed', runs['run-w-open-run']['status'] == 'failed' and runs['run-w-open-run']['error_code'] == 'first_turn_missing'
           and runs['run-w-open-run']['completed_at'], 'the open armed run fails first_turn_missing', runs['run-w-open-run'])

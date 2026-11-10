@@ -3,8 +3,7 @@
 The spec is the daemon's own: descriptor.rs `descriptor_hash` and
 `agreement`, compile.rs `canonical`/`neutral_spec`/`neutral_start`
 (hrcpty_substrate.canonical is the same projection). `scratch` and `live`
-are ports of the former participant_descriptor.mjs and
-participant_live_descriptor.mjs builders.
+are ports of the former JavaScript descriptor builders.
 """
 import copy
 import hashlib
