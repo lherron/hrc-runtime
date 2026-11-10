@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
 """N4 gate 1: mail and a reply in both directions between mixed scratch nodes.
 
-Node A and node B each run one owner (bun or native) with federation peers,
-one gate-enforcing binding registry on A, and the unchanged hrc-mail-injector
-pointed at its own node's hrc.sock. Both nodes share one private wrkqd, since
+Node A and node B each run one native owner with federation peers, one
+gate-enforcing binding registry on A, and the unchanged hrc-mail-injector
+pointed at its own node's hrc.sock. The injector is the fleet's production
+peer (bunx hrc-mail-injector, as in n3_injector), not a Bun baseline. Both nodes share one private wrkqd, since
 the mail ledger is wrkq. A seat is born on each node. Then a@A mails b@B, and
 b runs the reply to a; b@B mails a@A, and a runs the reply to b.
 
@@ -94,14 +95,12 @@ def main():
     p = argparse.ArgumentParser()
     for k in ('binary', 'installed-release', 'aspd-socket', 'scratch-root', 'artifacts'):
         p.add_argument('--' + k, type=Path, required=True)
-    p.add_argument('--a-owner', choices=['bun', 'native'], default='bun')
-    p.add_argument('--b-owner', choices=['bun', 'native'], default='native')
     p.add_argument('--injector', default='0.1.0-dev.20261023155744')
     args = p.parse_args()
     args.artifacts.mkdir(parents=True, exist_ok=True)
     real = Path.home() / 'praesidium/var/state/hrc/federation.json'
-    a = Node(args.scratch_root / 'a', args, 'n4a', args.a_owner)
-    b = Node(args.scratch_root / 'b', args, 'n4b', args.b_owner)
+    a = Node(args.scratch_root / 'a', args, 'n4a', 'native')
+    b = Node(args.scratch_root / 'b', args, 'n4b', 'native')
     ports = {k: free_port() for k in ('a_registry', 'a_peer', 'b_peer')}
     token = secrets.token_hex(24)
     a_peer, b_peer = f'http://{TAILNET}:{ports["a_peer"]}', f'http://{TAILNET}:{ports["b_peer"]}'
@@ -112,7 +111,7 @@ def main():
     b.write_config({'nodeId': 'n4b', 'peers': {'n4a': {'endpoint': a_peer, 'registryEndpoint': registry,
                                                         'token': token}},
                     'peerListener': {'bind': b_peer}, 'gate': gate})
-    result = {'aOwner': args.a_owner, 'bOwner': args.b_owner, 'injector': args.injector, 'checks': {}}
+    result = {'injector': args.injector, 'checks': {}}
     try:
         # One private wrkqd (on A's root) is the mail ledger for both nodes.
         a.init_substrate()

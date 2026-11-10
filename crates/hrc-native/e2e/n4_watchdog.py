@@ -1,10 +1,11 @@
 #!/usr/bin/env python3
-"""N4 first-turn watchdog: Bun then native trip the same armed rows.
+"""N4 first-turn watchdog: a native owner trips the armed rows, judged here.
 
 One fixture store holds armed runtime_first_turn_watch rows already past their
-deadline; each owner boots on its own fresh copy with a 1s evaluation interval
-and must trip, stamp, fail the armed run and publish the diagnostic bundle
-exactly as the other does. Cases:
+deadline (rows in the shapes the native broker writes); the owner boots with a
+1s evaluation interval and must trip, stamp, fail the armed run and publish the
+diagnostic bundle. Every expectation below is read off broker/first_turn.rs
+(record_trip, assemble, publish) and acp_bridge.rs. Cases:
   open-run      run still open, invocation spec with prompt-bearing argv and
                 env (redacted), a fake harness answering --version, and a live
                 private tmux pane (captured)
@@ -15,7 +16,7 @@ exactly as the other does. Cases:
   disarmed      disarmed row: untouched
   started       first turn already observed: untouched
 
-The ACP event bridge is enabled on both owners (loopback webhook, declared
+The ACP event bridge is enabled (loopback webhook, declared
 co-resident node): every trip is posted, the webhook refuses each event's
 first attempt with 503, so delivery must retry once; the open run carries a
 dispatch origin that the envelope must name.
@@ -173,6 +174,81 @@ def observe(s, root):
                                    'ORDER BY scope_ref'))
     return out
 
+EXPECT_FAILURES = {
+    # assemble(): unmanaged release always; the rest per what the fixture lacks.
+    'open-run': {'hrcReleaseId': 'unmanaged_release', 'aspContracts': 'unmanaged_release'},
+    'completed-run': {'launchShape': 'spec_projection_unavailable', 'hrcReleaseId': 'unmanaged_release',
+                      'aspContracts': 'unmanaged_release', 'harnessVersion': 'harness_command_unknown',
+                      'paneCapture': 'no_leased_tmux_pane'},
+    'no-runtime': {'runtime': 'runtime_row_absent', 'launchShape': 'spec_projection_unavailable',
+                   'hrcReleaseId': 'unmanaged_release', 'aspContracts': 'unmanaged_release',
+                   'harnessVersion': 'harness_command_unknown', 'paneCapture': 'no_leased_tmux_pane'},
+    'rotated': {'launchShape': 'spec_projection_unavailable', 'hrcReleaseId': 'unmanaged_release',
+                'aspContracts': 'unmanaged_release', 'harnessVersion': 'harness_command_unknown',
+                'paneCapture': 'generation_rotated'},
+}
+
+
+def judge(o, artifacts):
+    checks = []
+    def check(name, passed, reason, got=None):
+        checks.append({'id': name, 'pass': bool(passed), 'reason': reason, 'got': got})
+    tripped = list(EXPECT_FAILURES)
+    by_rt = {w['runtime_id']: w for w in o['watches']}
+    for case in CASES:
+        rt = f'rt-w-{case}'
+        kinds = [e['event_kind'] for e in o['events'] if e['runtime_id'] == rt or e['scope_ref'] == scope(case)]
+        w = by_rt[rt]
+        if case in tripped:
+            check(case + ':events', kinds == ['first_turn_missing', 'first_turn_missing.diagnostics'],
+                  'one trip then one diagnostics event, nothing twice', kinds)
+            trip = next(e for e in o['events'] if e['scope_ref'] == scope(case) and e['event_kind'] == 'first_turn_missing')
+            check(case + ':trip-code', trip['error_code'] == 'first_turn_missing', 'the trip carries error_code first_turn_missing', trip['error_code'])
+            check(case + ':stamped', w['first_turn_missing_tripped_at'] and w['trip_event_seq'] and w['diagnostics_event_seq']
+                  and w['bundle_dir'], 'the watch row is stamped with trip, diagnostics and bundle', w)
+            diag = next(e for e in o['events'] if e['scope_ref'] == scope(case) and e['event_kind'] == 'first_turn_missing.diagnostics')
+            check(case + ':pointer', diag['payload']['tripEventSeq'] == trip['hrc_seq'] and diag['payload']['bundleDir'] == w['bundle_dir']
+                  and diag['payload']['failures'] == EXPECT_FAILURES[case], 'the diagnostics event points at its trip and bundle and names every failure', diag['payload'])
+            b = o['bundles'].get(rt)
+            check(case + ':bundle', b and b['manifest']['failures'] == EXPECT_FAILURES[case] and b['manifest']['schema'] == 'hrc.first-turn-missing-bundle/v1'
+                  and b['manifestTrailingNewline'], 'the bundle manifest names each absent field in failures', b and b['manifest']['failures'])
+            check(case + ':modes', b and b['modes']['.'] == '0o700' and all(m == '0o600' for k, m in b['modes'].items() if k != '.'),
+                  'bundle directory 0700, files 0600', b and b['modes'])
+            check(case + ':pane', b and ((b['pane'] or '').startswith('n4 watchdog pane') if case == 'open-run' else b['pane'] is None)
+                  and b['files'] == (['manifest.json', 'pane.txt'] if case == 'open-run' else ['manifest.json']),
+                  'only the open run with a live pane of its generation captures it', b and b['files'])
+        else:
+            check(case + ':untouched', kinds == [] and not w['first_turn_missing_tripped_at'] and not w['trip_event_seq']
+                  and not w['bundle_dir'], 'a future, disarmed or started watch is never tripped', [kinds, w])
+    open_manifest = o['bundles']['rt-w-open-run']['manifest']
+    shape = json.dumps(open_manifest['launchShape'])
+    check('open-run:redacted', PROMPT not in shape and 'tail' not in open_manifest['launchShape']['argv']
+          and open_manifest['launchShape']['argv'][:2] == ['--model', 'opus'], 'prompt-bearing argv and env are redacted, plain flags kept', open_manifest['launchShape'])
+    check('open-run:version', open_manifest.get('versions', {}).get('harnessVersion', '').startswith('fake-harness 1.2.3'),
+          'the harness answered --version with its first line', open_manifest.get('versions'))
+    for d in o['bundles'].values():
+        pass
+    runs = {r['run_id']: r for r in o['runs']}
+    check('runs:open-failed', runs['run-w-open-run']['status'] == 'failed' and runs['run-w-open-run']['error_code'] == 'first_turn_missing'
+          and runs['run-w-open-run']['completed_at'], 'the open armed run fails first_turn_missing', runs['run-w-open-run'])
+    check('runs:completed-alone', runs['run-w-completed-run']['status'] == 'completed' and runs['run-w-completed-run']['error_code'] is None,
+          'a terminal run is not re-terminated', runs['run-w-completed-run'])
+    check('runs:rotated-failed', runs['run-w-rotated']['status'] == 'failed', 'the rotated case still has an open armed run', runs['run-w-rotated'])
+    for case in ('future', 'disarmed', 'started'):
+        check(f'runs:{case}-open', runs[f'run-w-{case}']['status'] == 'accepted', 'an untripped watch leaves its run alone', runs[f'run-w-{case}'])
+    arts = o['artifacts']
+    check('artifacts', len(arts) == len(tripped) and all(a['artifact_kind'] == 'first-turn-missing-bundle' and a['storage_kind'] == 'file-path' for a in arts),
+          'one bundle artifact row per trip', arts)
+    posts = o['webhook']
+    ids = sorted({p['body']['event_id'] for p in posts})
+    check('webhook:retry-each', len(posts) == 2 * len(ids) and all(sorted(p['attempt'] for p in posts if p['body']['event_id'] == i) == [1, 2] for i in ids),
+          'every bridged event is refused once (503) and delivered on its retry', [(p['body']['event_id'], p['attempt']) for p in posts])
+    check('webhook:count', len(ids) == len(tripped), 'one bridged event per trip', ids)
+    check('webhook:origin', any('EN-n4' in json.dumps(p['body']) for p in posts), 'the open run\'s dispatch origin is named in its envelope')
+    check('emissions', sorted(e['event_id'] for e in o['emissions']) == ids, 'the emissions ledger records exactly the delivered events', o['emissions'])
+    (artifacts / 'checks.json').write_text(json.dumps(checks, indent=1, default=str) + '\n')
+    return [c for c in checks if not c['pass']]
+
 
 def main():
     p = argparse.ArgumentParser()
@@ -203,7 +279,7 @@ def main():
         with sqlite3.connect(s.db_path) as src, sqlite3.connect(frozen) as dst:
             src.backup(dst)
         assert sqlite3.connect(frozen).execute('SELECT COUNT(*) FROM runtime_first_turn_watch').fetchone()[0] == len(CASES)
-        for owner in ('bun', 'native'):
+        for owner in ('native',):
             for suffix in ('', '-wal', '-shm'):
                 Path(str(s.db_path) + suffix).unlink(missing_ok=True)
             shutil.rmtree(s.root / 'run/artifacts', ignore_errors=True)
@@ -220,8 +296,10 @@ def main():
             out[owner] = observe(s, s.root)
             (args.artifacts / owner).mkdir(exist_ok=True)
             (args.artifacts / owner / 'watchdog.json').write_text(json.dumps(out[owner], indent=1) + '\n')
-        print(json.dumps({o: {'events': len(v['events']), 'bundles': len(v['bundles']), 'posts': len(v['webhook'])}
-                          for o, v in out.items()}))
+        failed = judge(out['native'], args.artifacts)
+        print(json.dumps({'suite': 'n4_watchdog', 'failed': failed[:20]}, indent=1))
+        if failed:
+            raise SystemExit(1)
     finally:
         hook.shutdown()
         subprocess.run(['tmux', '-S', str(sock), 'kill-server'], capture_output=True, timeout=5)

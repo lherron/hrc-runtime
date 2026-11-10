@@ -1,8 +1,9 @@
 #!/usr/bin/env python3
-"""N4 operations reads on one frozen store: Bun then native answer the same cases.
+"""N4 operations reads on one frozen store, answered by a native owner and judged here.
 
-A scratch node births one real seat under Bun (so broker_invocation_events
-are genuine), terminates it, and freezes the store. Then each owner answers:
+A scratch node births one real seat (so broker_invocation_events are genuine),
+terminates it, and freezes the store. The ledger fixtures are n4_federation's
+native install/retire statements. Then the owner answers:
 GET /v1/federation/bindings over ledger fixtures (a placement-home skew, a
 default-home note, a retired row that must be skipped), GET
 /v1/runtime-diagnostics over first_turn_missing trip rows (bundle present,
@@ -14,13 +15,12 @@ Failure modes: a skew judged differently, a retired binding scanned, a trip
 or bundle projected with other keys, parseInt edge cases, forensics events
 decoded or ordered differently, and refusal text/status drift.
 
-POST /v1/previews/run compiles real intents (resolved once, under Bun) on both
-owners against the same aspd: with and without a first turn, interactive, a
+POST /v1/previews/run compiles real intents against the real aspd: with and without a first turn, interactive, a
 lane-qualified ref, two selections ASP refuses (compile-not-ok), and the body
 refusals. Dry-run ids, hashes, profile ids, session names, compile ids and
-phase timings are masked by role so the compare still sees every key in order.
-The startup retained-evidence pass is settled first: it lands the terminated
-broker's disposal, which would otherwise race the first owner's reads.
+phase timings are masked by role. The startup retained-evidence pass is
+settled first: it lands the terminated broker's disposal, which would
+otherwise race the reads.
 """
 import argparse
 import json
@@ -30,6 +30,7 @@ import sqlite3
 from urllib.parse import quote
 
 from n3_scratch import Scratch
+from n4_federation import LEDGER_ACTIVE, LEDGER_RETIRE
 
 PROJECT = 'n4-t11872o'
 PROMPT = 'Reply with exactly the word OK and nothing else. No tools.'
@@ -61,7 +62,7 @@ def mask(value):
 
 
 def preview_cases(s):
-    """Preview bodies from intents the Bun owner resolves for real scopes."""
+    """Preview bodies from intents the owner resolves for real scopes."""
     def resolve(name, **extra):
         status, value = s.http('POST', '/v1/declarations/resolve', {'scopeRef': name, **extra})
         assert status == 200, (status, value)
@@ -90,29 +91,104 @@ def preview_cases(s):
     ]
 
 
+FAILED = []
+
+
+def judge(o, ids, artifacts):
+    """Each read's own literals: the fixture rows above and the born seat's ids."""
+    checks = []
+    def check(name, passed, reason):
+        checks.append({'id': name, 'pass': bool(passed), 'reason': reason,
+                       'got': {k: o.get(k, {}).get('status') for k in [name.split('/')[0]] if k in o}})
+    def ok(name, status=200):
+        return o[name]['status'] == status
+    def err(name, status, code):
+        return o[name]['status'] == status and o[name]['body'].get('error', {}).get('code') == code
+    b = o['bindings']['body']
+    check('bindings', ok('bindings') and b['localNodeId'] == 'n4o' and b['scan']['scanned'] == 2 and b['scan']['unreadable'] == []
+          and [x['scopeRef'] for x in b['scan']['skewed']] == [scope('animan', 'primary')]
+          and b['scan']['skewed'][0]['skew'] | {'detail': None} == {'kind': 'task-default-vs-binding', 'taskKey': 'primary',
+                                                                     'taskDefaultNodeId': 'max3', 'boundNodeId': 'n4o', 'detail': None},
+          'two active bindings scanned (the retired one skipped); only the animan primary default (max3) skews from n4o')
+    trips = lambda name: [t['tripEventSeq'] for t in o[name]['body']['trips']]
+    # The overdue rt-armed row trips on the first boot (first_turn.rs armed_due) as hrc_seq 2.
+    armed = o['diagnostics:list']['body']['trips'][0]
+    check('diagnostics:list', ok('diagnostics:list') and trips('diagnostics:list') == [armed['tripEventSeq'], 104, 103, 101]
+          and armed['runtimeId'] == 'rt-armed' and armed['bundleAvailable'] is True,
+          'every trip, newest trippedAt first; the overdue armed row was tripped by the owner itself')
+    check('diagnostics:runtime', ok('diagnostics:runtime') and trips('diagnostics:runtime') == [104, 101], 'one runtime\'s trips across generations')
+    for name in ('diagnostics:runtime-empty', 'diagnostics:runtime-unknown'):
+        check(name, ok(name) and o[name]['body'] == {'ok': True, 'trips': []}, 'an empty or unknown runtime filter matches nothing')
+    t101 = o['diagnostics:trip-bundle']['body']
+    check('diagnostics:trip-bundle', ok('diagnostics:trip-bundle') and t101['trip']['tripEventSeq'] == 101 and t101['trip']['runId'] == 'run-a'
+          and t101['bundle'] == {'schemaVersion': 'n4-fixture', 'files': ['a.log']}, 'a recorded bundle is read back verbatim')
+    nb = o['diagnostics:trip-no-bundle']['body']
+    check('diagnostics:trip-no-bundle', ok('diagnostics:trip-no-bundle') and nb['trip']['bundleAvailable'] is False and nb['bundleError'] == 'no_bundle_recorded'
+          and 'bundleDir' not in nb['trip'] and 'runId' not in nb['trip'], 'no bundle recorded is named, absent fields are absent')
+    mb = o['diagnostics:trip-missing-bundle']['body']
+    check('diagnostics:trip-missing-bundle', ok('diagnostics:trip-missing-bundle') and mb['bundleError'].startswith('ENOENT')
+          and mb['bundleError'].endswith("'<root>/bundles/missing/manifest.json'") and 'bundle' not in mb, 'a recorded but missing bundle names the read error')
+    check('diagnostics:trip-prefix', o['diagnostics:trip-prefix'] == o['diagnostics:trip-bundle'], 'trip=101abc parses as 101 (parseInt)')
+    for name, trip in (('diagnostics:trip-word', 'abc'), ('diagnostics:trip-unknown', '999')):
+        check(name, err(name, 404, 'unknown_runtime') and o[name]['body']['error']['detail'] == {'trip': trip}, 'an unknown trip is 404 unknown_runtime')
+    check('diagnostics:trip-blank', o['diagnostics:trip-blank'] == o['diagnostics:list'], 'a blank trip is the unfiltered list')
+    for name in ('forensics:none', 'forensics:both'):
+        check(name, err(name, 400, 'malformed_request'), 'exactly one of targetId or sourceRef')
+    check('forensics:unknown', err('forensics:unknown', 400, 'invalid_selector'), 'an unknown target is invalid_selector')
+    for name, kind, target in (('forensics:invocation', 'invocation', ids['invocation']), ('forensics:runtime', 'runtime', ids['runtime'])):
+        v = o[name]['body']
+        seqs = [e['seq'] for e in v['events']]
+        check(name, ok(name) and v['targetKind'] == kind and v['targetId'] == target and v['runtimeIds'] == [ids['runtime']]
+              and v['invocationIds'] == [ids['invocation']] and seqs and seqs == list(range(1, len(seqs) + 1))
+              and all(e['invocationId'] == ids['invocation'] for e in v['events']) and v['events'][0]['type'] == 'lifecycle.policy.accepted'
+              and isinstance(v['events'][0]['payload'], dict), 'the born seat\'s broker ledger, decoded, in seq order from 1')
+    check('forensics:trimmed', o['forensics:trimmed'] == o['forensics:runtime'], 'a padded targetId is trimmed')
+    v = o['forensics:source']['body']
+    check('forensics:source', ok('forensics:source') and v['targetKind'] == 'source_ref' and v['targetId'] == ids['source']
+          and (ids['source'] != 'none' or v['events'] == []), 'a sourceRef selects its own events (none recorded here)')
+    nodes = o['fedruntimes:local']['body']['nodes']
+    check('fedruntimes:local', ok('fedruntimes:local') and [n['nodeId'] for n in nodes] == ['n4o'] and nodes[0]['state'] == 'answered'
+          and [(r['runtimeId'], r['status'], r['transport']) for r in nodes[0]['runtimes']] == [(ids['runtime'], 'terminated', 'hrcpty')],
+          'the local projection includes the terminated seat by default')
+    check('fedruntimes:not-all', ok('fedruntimes:not-all') and o['fedruntimes:not-all']['body']['nodes'][0]['runtimes'] == [], 'all=false drops terminal runtimes')
+    for name in ('preview:prompted', 'preview:bare', 'preview:interactive', 'preview:lane-ref'):
+        v = o[name]['body']
+        check(name, ok(name) and v['controllerKind'] == 'harness-broker' and v['execution']['driver'] == 'claude-code-hrcpty'
+              and v['selection']['harness'] == 'claude-hrcpty' and v['compileId'] == '<compileId>'
+              and (v.get('primingPrompt') == PROMPT) == (name in ('preview:prompted', 'preview:lane-ref')),
+              'a real compile; the prompt appears only when the intent carries one')
+    check('preview:lane-ref:same', o['preview:lane-ref'] == o['preview:prompted'], 'a lane-qualified sessionRef compiles the same plan')
+    for name in ('preview:refused-model', 'preview:refused-pairing'):
+        d = o[name]['body'].get('error', {}).get('detail', {})
+        check(name, err(name, 503, 'runtime_unavailable') and d.get('code') == 'compile-not-ok' and d.get('failingPhase') == 'admission'
+              and d.get('rejectedBy') == 'producer', 'ASP\'s refusal is surfaced as compile-not-ok at admission')
+    for name, field in (('preview:not-object', 'intent'), ('preview:no-intent', 'intent'), ('preview:no-harness', 'intent'),
+                        ('preview:no-ref', 'sessionRef'), ('preview:blank-ref', 'sessionRef')):
+        check(name, err(name, 400, 'malformed_request') and o[name]['body']['error']['detail'] == {'field': field}, 'body refusals name their field')
+    (artifacts / 'checks.json').write_text(json.dumps(checks, indent=1) + '\n')
+    FAILED.extend(c for c in checks if not c['pass'])
+    return FAILED
+
+
 def main():
     p = argparse.ArgumentParser()
     p.add_argument('--binary', type=Path, required=True)
-    p.add_argument('--installed-release', type=Path, required=True)
+    p.add_argument('--installed-release', type=Path)
     p.add_argument('--aspd-socket', type=Path, required=True)
     p.add_argument('--scratch-root', type=Path, required=True)
     p.add_argument('--artifacts', type=Path, required=True)
     args = p.parse_args()
     s = Scratch(args.scratch_root, args.installed_release, args.aspd_socket, args.binary, args.artifacts,
                 project_id=PROJECT)
-    out = {'bun': {}, 'native': {}}
+    out = {'native': {}}
     try:
         s.init_substrate()
         s.root.joinpath('federation.json').write_text(json.dumps({'nodeId': 'n4o', 'peers': {}}))
         now = '2026-10-26T10:00:00.000Z'
-        store = s.release / 'packages/hrc-store-sqlite/src/index.ts'
-        script = (f'const s=await import({json.dumps(str(store))});const a=process.argv.slice(1);'
-                  'const db=s.openHrcDatabase(a[0]);const l=s.createPlacementLedgerRepository(db.sqlite);'
-                  'for(const x of [a[1],a[2]])l.installActive({scopeRef:x,homeNodeId:"n4o",updatedAt:a[4]});'
-                  'l.installActive({scopeRef:a[3],homeNodeId:"n4o",updatedAt:a[4]});'
-                  'l.retire({scopeRef:a[3],expectedHomeNodeId:"n4o",reason:"n4 fixture",retiredAt:a[4]});db.close()')
-        s.command('store:ledger', ['bun', '-e', script, s.db_path, scope('animan', 'primary'),
-                                   scope('tabularasa', 'skewless'), scope('animan', 'retired'), now])
+        with sqlite3.connect(s.db_path) as db:
+            for x in (scope('animan', 'primary'), scope('tabularasa', 'skewless'), scope('animan', 'retired')):
+                db.execute(LEDGER_ACTIVE, (x, 'n4o', now, now))
+            db.execute(LEDGER_RETIRE, (now, 'n4 fixture', now, scope('animan', 'retired'), 'n4o'))
         bundle = s.root / 'bundles/trip-1'
         bundle.mkdir(parents=True)
         bundle.joinpath('manifest.json').write_text(json.dumps({'schemaVersion': 'n4-fixture', 'files': ['a.log']}))
@@ -127,7 +203,7 @@ def main():
                 ('rt-armed', 1, 'hsid-c', scope('hunter', 'c'), 'main', None, None, 'tmux', now, now, None, None, None, None, None, None, None, now, now),
             ]
             db.executemany(f'INSERT INTO runtime_first_turn_watch ({cols}) VALUES ({",".join("?" * 19)})', rows)
-        proc = s.up('bun', 'birth')
+        proc = s.up('native', 'birth')
         born = s.command('cold-start', ['hrc', 'start', scope('tabularasa', 'forensics'), '--json', '-p', PROMPT])
         runtime, run = born['runtime']['runtimeId'], born['runtime']['runId']
         s.wait_completed(run)
@@ -138,8 +214,8 @@ def main():
         s.down(proc)
         # The terminated broker's disposal arrives as retained evidence that
         # the next owner's startup pass projects; settle it before reading.
-        proc = s.up('bun', 'settle')
-        settle_log = args.artifacts / 'bun-settle.log'
+        proc = s.up('native', 'settle')
+        settle_log = next(args.artifacts.glob('*settle*.log'))
         s.wait(lambda: 'retained_evidence.pass_complete' in settle_log.read_text(), timeout=60,
                what='startup retained-evidence pass')
         s.down(proc)
@@ -169,7 +245,7 @@ def main():
             ('fedruntimes:not-all', '/v1/federation/runtimes?all=false'),
         ]
         previews = None
-        for owner in ('bun', 'native'):
+        for owner in ('native',):
             proc = s.up(owner, 'reads')
             for name, path in cases:
                 status, value = s.http('GET', path)
@@ -184,7 +260,9 @@ def main():
             (args.artifacts / owner).mkdir(exist_ok=True)
             (args.artifacts / owner / 'ops.json').write_text(
                 json.dumps(json.loads(json.dumps(observations).replace(str(s.root), '<root>')), indent=1) + '\n')
-        print(json.dumps({o: len(c) for o, c in out.items()}))
+        failed = judge(json.loads(json.dumps(out['native']).replace(str(s.root), '<root>')),
+                       {'runtime': runtime, 'invocation': invocation, 'source': source}, args.artifacts)
+        print(json.dumps({'suite': 'n4_ops', 'cases': len(out['native']), 'failed': failed[:20]}, indent=1))
     finally:
         (args.artifacts / 'steps.json').write_text(json.dumps(s.steps, indent=1) + '\n')
         s.cleanup('agent:')
@@ -192,3 +270,5 @@ def main():
 
 if __name__ == '__main__':
     main()
+    if FAILED:
+        raise SystemExit(1)
