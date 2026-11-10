@@ -89,10 +89,6 @@ pub fn agents_root() -> Option<String> {
     Path::new(&convention).exists().then_some(convention)
 }
 
-fn inside(child: &Path, parent: &Path) -> bool {
-    child.starts_with(parent)
-}
-
 fn git_root(start: &Path) -> Option<PathBuf> {
     let mut dir = start.to_path_buf();
     loop {
@@ -105,15 +101,13 @@ fn git_root(start: &Path) -> Option<PathBuf> {
     }
 }
 
-/// placement-conventions.ts `findProjectMarker` (agents-root boundary only).
-pub fn find_project_marker(start: &Path, agents_root: Option<&str>) -> Option<PathBuf> {
+/// placement-conventions.ts `findProjectMarker`, without its agents-root
+/// boundary (T-13111): the agents root is itself a repository and wrkq
+/// project, and the CLI and ASP infer it for the same cwd.
+pub fn find_project_marker(start: &Path) -> Option<PathBuf> {
     let mut dir = resolve(&cwd(), &start.to_string_lossy());
-    let boundary = agents_root.map(|r| resolve(&cwd(), r));
     let git = git_root(&dir);
     loop {
-        if boundary.as_ref().is_some_and(|b| inside(&dir, b)) {
-            return None;
-        }
         if dir.join(MARKER).exists() {
             return Some(dir);
         }
@@ -124,7 +118,7 @@ pub fn find_project_marker(start: &Path, agents_root: Option<&str>) -> Option<Pa
             return None;
         }
     }
-    git.filter(|g| !boundary.as_ref().is_some_and(|b| inside(g, b)))
+    git
 }
 
 fn basename(path: &Path) -> String {
@@ -135,7 +129,7 @@ fn basename(path: &Path) -> String {
 
 /// placement-conventions.ts `inferProjectIdFromCwd`.
 pub fn infer_project_id(cwd: &str) -> Option<String> {
-    find_project_marker(Path::new(cwd), agents_root().as_deref()).map(|d| basename(&d))
+    find_project_marker(Path::new(cwd)).map(|d| basename(&d))
 }
 
 /// project-registry.ts `findWrkqProjectEntry`.
@@ -203,7 +197,7 @@ fn sibling_root(project: &str, cwd: &str, agent_root: Option<&str>) -> Option<Pa
     candidates
         .iter()
         .filter(|candidate| candidate.is_dir())
-        .find_map(|candidate| find_project_marker(candidate, None))
+        .find_map(|candidate| find_project_marker(candidate))
 }
 
 /// task-id.ts `ownerTaskTokens`: `T-\d+` with digit-run edges.
