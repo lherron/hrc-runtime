@@ -782,7 +782,6 @@ pub(crate) mod tests {
             owner_writes: Default::default(),
             transcript: Default::default(),
             runtime,
-            bun_passthrough: None,
             federation,
             front: false,
             state,

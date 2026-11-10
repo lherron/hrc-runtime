@@ -11,8 +11,7 @@ async fn main() -> anyhow::Result<()> {
         );
         return Ok(());
     }
-    // The explicit role flags (--front, --bun-socket) are Rust-only, so they are
-    // recognized before the CLI declaration (server/front.rs).
+    // Retired forwarding flags are refused before the CLI declaration.
     let role = if args.first().is_some_and(|a| a == "server") {
         match server::front_invocation(&args) {
             Ok(role) => role,

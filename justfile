@@ -756,6 +756,12 @@ launchd-install injector-version:
       echo "[launchd] REFUSED: ${server_plist} runs a rusthrc owner; launchd-install would render it back to Bun. Nothing was changed" >&2
       exit 1
     fi
+    # Protect a node that somebody still fronted by hand; its private listener
+    # must not be rendered as a second public socket owner.
+    if [[ -f "$HOME/Library/LaunchAgents/com.praesidium.rusthrc-server.plist" ]]; then
+      echo '[launchd] REFUSED: a retired front-door plist is installed; remove that topology before launchd-install' >&2
+      exit 1
+    fi
     # Installed plists can carry node-local env the repo template lacks (max3's
     # hrc-server holds its aspd socket, node id, ingest port and kicker flag
     # there). A render would silently drop them and break the node, so refuse
@@ -763,9 +769,8 @@ launchd-install injector-version:
     refused=0
     for src in "$repo"/launchd/*.plist; do
       label="$(basename "$src" .plist)"
-      # The injector and the T-11822 front door have their own renderers
-      # (install-mail-injector-launchd, front-door-enable).
-      [[ "$label" == com.praesidium.hrc-mail-injector || "$label" == com.praesidium.rusthrc-server ]] && continue
+      # The injector has its own renderer.
+      [[ "$label" == com.praesidium.hrc-mail-injector ]] && continue
       dst="$HOME/Library/LaunchAgents/${label}.plist"
       [[ -f "$dst" ]] || continue
       sed -e "s|/Users/lherron|$(esc "$HOME")|g" "$src" > "$dst.next"
@@ -782,15 +787,10 @@ launchd-install injector-version:
     fi
     for src in "$repo"/launchd/*.plist; do
       label="$(basename "$src" .plist)"
-      # The injector and the T-11822 front door have their own renderers
-      # (install-mail-injector-launchd, front-door-enable).
-      [[ "$label" == com.praesidium.hrc-mail-injector || "$label" == com.praesidium.rusthrc-server ]] && continue
+      # The injector has its own renderer.
+      [[ "$label" == com.praesidium.hrc-mail-injector ]] && continue
       dst="$HOME/Library/LaunchAgents/${label}.plist"
       sed -e "s|/Users/lherron|$(esc "$HOME")|g" "$src" > "$dst.next"
-      # A fronted node keeps Bun on its private socket (T-11822, front-door-enable).
-      if [[ "$label" == com.praesidium.hrc-server && -f "$HOME/Library/LaunchAgents/com.praesidium.rusthrc-server.plist" ]]; then
-        bun "$repo/scripts/front-door.ts" listen-args add "$dst.next" "$(bun "$repo/scripts/front-door.ts" bun-socket "$dst.next")"
-      fi
       plutil -lint "$dst.next" >/dev/null
       install -m 0644 "$dst.next" "$dst"
       rm "$dst.next"
@@ -819,132 +819,6 @@ launchd-uninstall:
       launchctl bootout "$domain/$label" 2>/dev/null || true
       rm -f "$HOME/Library/LaunchAgents/${label}.plist"
     done
-
-# T-11822 front door. A fronted node runs rusthrc on the public hrc.sock and Bun,
-# still the execution owner, on <runtime>/hrc-bun.sock in the same runtime and
-# state dirs. Enable and disable each cost one HRC restart (brokers reattach),
-# so only a Mable seat with restart authority on this node runs them; the stop
-# is authorized daemon-side from the caller's runtime. Both edit the installed
-# plists in place and keep a .pre-front-door copy of Bun's.
-
-# Put this node behind the rusthrc front door.
-front-door-enable reason *stop-flags:
-    #!/usr/bin/env bash
-    set -euo pipefail
-    repo="$(git rev-parse --show-toplevel)"
-    domain="gui/$(id -u)"
-    agents="$HOME/Library/LaunchAgents"
-    server_plist="$agents/com.praesidium.hrc-server.plist"
-    front_plist="$agents/com.praesidium.rusthrc-server.plist"
-    fail() { echo "[front-door] $*" >&2; exit 1; }
-    [[ -f "$server_plist" ]] || fail "no installed $server_plist"
-    [[ "$(bash "$repo/scripts/hrc-owner.sh" kind "$server_plist")" == bun ]] ||
-      fail "$server_plist runs a rusthrc owner (T-11893); the front door fronts a Bun owner only"
-    [[ ! -f "$front_plist" ]] || fail "already fronted ($front_plist exists); see just front-door-status"
-    rusthrc="$(plutil -extract EnvironmentVariables.HOME raw -o - "$server_plist")/.bun/bin/rusthrc"
-    # The probe exits non-zero by design, so match its output, not a pipeline.
-    probe="$("$rusthrc" server --front 2>&1 || true)"
-    [[ "$probe" == *'--front requires --bun-socket'* ]] ||
-      fail "$rusthrc does not know the front role; install a release that does first"
-    bun_socket="$(bun "$repo/scripts/front-door.ts" bun-socket "$server_plist")"
-    public="$(dirname "$bun_socket")/hrc.sock"
-    bun "$repo/scripts/front-door.ts" render "$repo/launchd/com.praesidium.rusthrc-server.plist" "$front_plist.next" "$server_plist"
-    cp "$server_plist" "$server_plist.pre-front-door"
-    bun "$repo/scripts/front-door.ts" listen-args add "$server_plist" "$bun_socket"
-    hrc server stop --reason '{{ reason }}' {{ stop-flags }}
-    just _front-door-wait-unloaded com.praesidium.hrc-server
-    just _front-door-bootstrap "$server_plist"
-    just _front-door-wait-health "$bun_socket"
-    mv "$front_plist.next" "$front_plist"
-    if command -v praesidium-adopt >/dev/null; then praesidium-adopt "$front_plist"; fi
-    just _front-door-bootstrap "$front_plist"
-    just _front-door-wait-health "$public"
-    listen="$(curl -sf --unix-socket "$public" http://localhost/v1/status | jq -r .listenSocketPath)"
-    [[ "$listen" == "$bun_socket" ]] || fail "status through $public reports listenSocketPath=$listen"
-    echo "[front-door] fronted: rusthrc on $public, Bun on $bun_socket. Confirm broker.warmup.complete attached == total in hrc-server.log."
-
-# Take this node out of front-door mode: Bun back on hrc.sock, rusthrc job removed.
-front-door-disable reason *stop-flags:
-    #!/usr/bin/env bash
-    set -euo pipefail
-    repo="$(git rev-parse --show-toplevel)"
-    domain="gui/$(id -u)"
-    agents="$HOME/Library/LaunchAgents"
-    server_plist="$agents/com.praesidium.hrc-server.plist"
-    front_plist="$agents/com.praesidium.rusthrc-server.plist"
-    fail() { echo "[front-door] $*" >&2; exit 1; }
-    [[ -f "$front_plist" ]] || fail "not fronted ($front_plist missing)"
-    [[ "$(bash "$repo/scripts/hrc-owner.sh" kind "$server_plist")" == bun ]] ||
-      fail "$server_plist runs a rusthrc owner (T-11893); front-door-disable would rewrite it as Bun"
-    bun_socket="$(bun "$repo/scripts/front-door.ts" bun-socket "$server_plist")"
-    public="$(dirname "$bun_socket")/hrc.sock"
-    if curl -sf --unix-socket "$bun_socket" http://localhost/v1/health >/dev/null; then
-      # Through the front, so the daemon authorizes the caller as usual.
-      hrc server stop --reason '{{ reason }}' {{ stop-flags }}
-      just _front-door-wait-unloaded com.praesidium.hrc-server
-    else
-      echo "[front-door] Bun is not answering on $bun_socket; booting its job out directly" >&2
-      launchctl bootout "$domain/com.praesidium.hrc-server" 2>/dev/null || true
-    fi
-    launchctl bootout "$domain/com.praesidium.rusthrc-server" 2>/dev/null || true
-    just _front-door-wait-unloaded com.praesidium.rusthrc-server
-    rm -f "$front_plist"
-    bun "$repo/scripts/front-door.ts" listen-args remove "$server_plist"
-    just _front-door-bootstrap "$server_plist"
-    just _front-door-wait-health "$public"
-    listen="$(curl -sf --unix-socket "$public" http://localhost/v1/status | jq -r '.listenSocketPath // .socketPath')"
-    [[ "$listen" == "$public" ]] || fail "status reports listenSocketPath=$listen"
-    echo "[front-door] direct: Bun on $public. Confirm broker.warmup.complete attached == total in hrc-server.log."
-
-# Show whether this node is fronted and what each socket answers.
-front-door-status:
-    #!/usr/bin/env bash
-    set -uo pipefail
-    repo="$(git rev-parse --show-toplevel)"
-    domain="gui/$(id -u)"
-    server_plist="$HOME/Library/LaunchAgents/com.praesidium.hrc-server.plist"
-    bun_socket="$(bun "$repo/scripts/front-door.ts" bun-socket "$server_plist")"
-    public="$(dirname "$bun_socket")/hrc.sock"
-    if [[ -f "$HOME/Library/LaunchAgents/com.praesidium.rusthrc-server.plist" ]]; then echo "mode: fronted"; else echo "mode: direct"; fi
-    for label in com.praesidium.hrc-server com.praesidium.rusthrc-server; do
-      state="$(launchctl print "$domain/$label" 2>/dev/null | awk -F'= ' '/^\tstate/ {print $2; exit}')"
-      echo "$label: ${state:-not loaded}"
-    done
-    for sock in "$public" "$bun_socket"; do
-      if curl -sf --unix-socket "$sock" http://localhost/v1/health >/dev/null; then echo "$sock: healthy"; else echo "$sock: no answer"; fi
-    done
-    curl -sf --unix-socket "$public" http://localhost/v1/status | jq '{socketPath, listenSocketPath}' 2>/dev/null || true
-
-[private]
-_front-door-wait-unloaded label:
-    #!/usr/bin/env bash
-    for _ in $(seq 1 90); do
-      launchctl print "gui/$(id -u)/{{ label }}" >/dev/null 2>&1 || exit 0
-      sleep 1
-    done
-    echo "[front-door] {{ label }} still loaded after 90s" >&2
-    exit 1
-
-# bootstrap right after a bootout can fail once with I/O error 5; retry.
-[private]
-_front-door-bootstrap plist:
-    #!/usr/bin/env bash
-    for attempt in 1 2 3 4 5; do
-      launchctl bootstrap "gui/$(id -u)" '{{ plist }}' && exit 0
-      sleep 2
-    done
-    echo "[front-door] launchctl bootstrap {{ plist }} failed" >&2
-    exit 1
-
-[private]
-_front-door-wait-health socket:
-    #!/usr/bin/env bash
-    for _ in $(seq 1 120); do
-      curl -sf --unix-socket '{{ socket }}' http://localhost/v1/health >/dev/null && exit 0
-      sleep 1
-    done
-    echo "[front-door] nothing healthy on {{ socket }} after 120s" >&2
-    exit 1
 
 # Install/reload the node-local classifier; Mable activates, key comes from env.
 install-turn-attention-launchd version:

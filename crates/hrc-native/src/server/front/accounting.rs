@@ -377,14 +377,7 @@ impl Entry {
         }
         v
     }
-    pub fn observe(mut self, accounting: Arc<Accounting>, response: Response) -> Response {
-        if response
-            .extensions()
-            .get::<super::proxy::BunResponse>()
-            .is_some()
-        {
-            self.served_by = "bun";
-        }
+    pub fn observe(self, accounting: Arc<Accounting>, response: Response) -> Response {
         let ms = self.started.elapsed().as_secs_f64() * 1000.0;
         let now = Utc::now();
         let status = response.status().as_u16();

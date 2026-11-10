@@ -151,7 +151,7 @@ mod self_restart;
 pub use front::Role;
 use owner::Owner;
 
-use anyhow::{Context, Result, bail};
+use anyhow::{Context, Result};
 use axum::{
     Json, Router,
     body::to_bytes,
@@ -205,7 +205,6 @@ struct Server {
     /// Resident transcript index follower (tick serialization, repair count).
     transcript: transcript::State,
     runtime: PathBuf,
-    bun_passthrough: Option<PathBuf>,
     /// federation.json identity, peers and registry client (resolved at boot).
     federation: federation::Node,
     /// Front-door role: only front::is_front_safe routes are served natively.
@@ -452,16 +451,7 @@ async fn dispatch_inner(server: &Shared, request: Request, local_only: bool) -> 
     if !implemented(&method, uri.path())
         || (server.front && !front::is_front_safe(&method, uri.path()))
     {
-        let response = proxy::forward(
-            server.bun_passthrough.as_deref(),
-            method.clone(),
-            uri.clone(),
-            headers,
-            request.into_body(),
-        )
-        .await
-        .unwrap_or_else(IntoResponse::into_response);
-        return response;
+        return proxy::not_served(&method, &uri);
     }
     // URLSearchParams.get returns the first occurrence and decodes malformed
     // UTF-8 lossily; Axum's HashMap extractor uses different semantics.

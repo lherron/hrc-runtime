@@ -2,7 +2,7 @@
 """Ops-only HRC wire E2E (2026-11-02, praesidium-kernel r1.9 / T-12360).
 Private real daemon, stub broker, private wrkqd. Proves six owner operations,
 stale fences, discovery without HRC types/documents, startup/stop ordering,
-lock failure isolation and front-mode exclusion. Projection/attach coverage
+lock failure isolation and retired front-mode refusal. Projection/attach coverage
 moved to praesidium-kernel and campaign T-12361; no live service is modified.
 """
 from foundation import daemon_env
@@ -404,22 +404,15 @@ def main():
                     failed=log[failed] if failed >= 0 else None, status=code)
             r.check('6.clean-stop-without-kernel', r.down(daemon) == 0)
 
-        # == 7. a front starts no kernel ======================================
-        bun = root / 'run/fake-bun.sock'
-        listener = socket.socket(socket.AF_UNIX)
-        listener.bind(str(bun))
-        listener.listen(4)
+        # == 7. retired front options fail before opening either listener =====
         log_path = args.artifacts / 'daemon-front.log'
         with log_path.open('w') as out:
-            front = subprocess.Popen([str(binary), 'server', '--front', '--bun-socket', str(bun)], env=daemon_env(r.env),
-                                     cwd=root / PROJECT, stdout=out, stderr=out, start_new_session=True)
-            r.wait(lambda: '"server.listening"' in log_path.read_text() or front.poll() is not None, 20, 'front listening')
-            text = log_path.read_text()
-            r.check('7.front-has-no-kernel', front.poll() is None and '"role":"front"' in text and 'kernel.' not in text
-                    and not kernel.exists(), log=text[-2000:])
-            front.send_signal(signal.SIGTERM)
-            front.wait(timeout=30)
-        listener.close()
+            refused = subprocess.run([str(binary), 'server', '--front', '--bun-socket', str(root / 'run/fake-bun.sock')],
+                                     env=daemon_env(r.env), cwd=root / PROJECT, stdout=out, stderr=out, timeout=20)
+        text = log_path.read_text()
+        r.check('7.retired-front-refused-without-kernel', refused.returncode != 0 and '--front is retired' in text
+                and '"server.listening"' not in text and 'kernel.' not in text
+                and not kernel.exists() and not (root / 'run/hrc.sock').exists(), log=text[-2000:])
     except BaseException as error:  # noqa: BLE001
         failure = repr(error)
         r.check('harness', False, error=failure)

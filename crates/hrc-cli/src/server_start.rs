@@ -1,5 +1,5 @@
 //! Start honors the public socket's launchd owner before considering a local
-//! unsupervised native daemon. F's two jobs are ordered execution owner first.
+//! unsupervised native daemon.
 use crate::{Error, Result, client::runtime_root, js, parse::Parsed};
 use serde_json::Value;
 use std::{
@@ -9,14 +9,12 @@ use std::{
 };
 
 const LEGACY_LABEL: &str = "com.praesidium.hrc-server";
-const FRONT_LABEL: &str = "com.praesidium.rusthrc-server";
 struct Job {
     label: String,
     target: String,
     plist: PathBuf,
     loaded: bool,
     environment: Option<Value>,
-    arguments: Vec<String>,
 }
 fn tool(program: &str, args: &[&str]) -> crate::process::Run {
     crate::process::run(program, args)
@@ -55,43 +53,28 @@ fn jobs() -> Vec<Job> {
     let home = std::env::var_os("HOME")
         .map(PathBuf::from)
         .unwrap_or_default();
-    [
-        std::env::var("HRC_LAUNCHD_LABEL").unwrap_or_else(|_| LEGACY_LABEL.into()),
-        FRONT_LABEL.into(),
-    ]
-    .into_iter()
-    .map(|label| {
-        let target = format!("{domain}/{label}");
-        let loaded = tool("launchctl", &["print", &target]).status == Some(0);
-        let plist = home
-            .join("Library/LaunchAgents")
-            .join(format!("{label}.plist"));
-        let environment = if plist.exists() {
-            plist_value(&plist, "EnvironmentVariables")
-        } else {
-            None
-        };
-        let arguments = if plist.exists() {
-            plist_value(&plist, "ProgramArguments")
-                .and_then(|v| v.as_array().cloned())
-                .unwrap_or_default()
-                .iter()
-                .filter_map(Value::as_str)
-                .map(str::to_owned)
-                .collect()
-        } else {
-            vec![]
-        };
-        Job {
-            label,
-            target,
-            plist,
-            loaded,
-            environment,
-            arguments,
-        }
-    })
-    .collect()
+    [std::env::var("HRC_LAUNCHD_LABEL").unwrap_or_else(|_| LEGACY_LABEL.into())]
+        .into_iter()
+        .map(|label| {
+            let target = format!("{domain}/{label}");
+            let loaded = tool("launchctl", &["print", &target]).status == Some(0);
+            let plist = home
+                .join("Library/LaunchAgents")
+                .join(format!("{label}.plist"));
+            let environment = if plist.exists() {
+                plist_value(&plist, "EnvironmentVariables")
+            } else {
+                None
+            };
+            Job {
+                label,
+                target,
+                plist,
+                loaded,
+                environment,
+            }
+        })
+        .collect()
 }
 fn stranded(job: &Job) -> Error {
     let mut keys = job
@@ -212,58 +195,11 @@ pub(super) fn prepare(args: &Parsed<'_>) -> Result<bool> {
         )));
     }
     let jobs = jobs();
-    let front = jobs.iter().find(|job| job.label == FRONT_LABEL);
-    let front_mode = front.is_some_and(|job| job.loaded || (job.plist.exists() && governs(job)));
     // Any declared but unloaded governing owner blocks unsupervised startup.
     for job in &jobs {
         if !job.loaded && job.plist.exists() && governs(job) {
             return Err(stranded(job));
         }
-    }
-    if front_mode {
-        let bun = jobs.first().filter(|job| job.loaded).ok_or_else(|| {
-            Error::usage("front-door mode requires the loaded Bun execution-owner job")
-        })?;
-        let front = front.filter(|job| job.loaded).ok_or_else(|| {
-            Error::usage("front-door mode requires the loaded rusthrc front-door job")
-        })?;
-        let private = bun
-            .arguments
-            .iter()
-            .enumerate()
-            .find_map(|(i, arg)| {
-                if arg == "--listen-socket" {
-                    bun.arguments.get(i + 1).cloned()
-                } else {
-                    arg.strip_prefix("--listen-socket=").map(str::to_owned)
-                }
-            })
-            .map(PathBuf::from)
-            .unwrap_or_else(|| runtime_root().join("hrc-bun.sock"));
-        if !private.is_absolute() || private == runtime_root().join("hrc.sock") {
-            return Err(Error::usage(
-                "front-door Bun execution owner must declare an absolute private --listen-socket",
-            ));
-        }
-        kickstart(bun)?;
-        if !wait_until(timeout, || socket_up(&private)) {
-            return Err(Error::usage(format!(
-                "Bun execution owner did not become responsive within {}ms on {}",
-                js::number(timeout),
-                private.display()
-            )));
-        }
-        kickstart(front)?;
-        if !wait_until(timeout, || {
-            crate::server_status::collect_with_tmux(false)["running"] == true
-        }) {
-            return Err(Error::usage(format!(
-                "front-door public socket did not become healthy within {}ms",
-                js::number(timeout)
-            )));
-        }
-        eprintln!("hrc: daemon started via launchd ({})", front.target);
-        return Ok(false);
     }
     if let Some(owner) = jobs.iter().find(|job| job.loaded) {
         kickstart(owner)?;

@@ -179,12 +179,13 @@ installed_release() {
   printf '%s %s %s\n' "$src" "$id" "$commit"
 }
 
-# A native-capable rusthrc names --bun-socket in this refusal.
+# Native rusthrc build identity outlives daemon role flags and works without
+# a release manifest (including cargo builds); older native releases expose it too.
 knows_native_roles() {
   [[ -x "$1" ]] || return 1
   local probe
-  probe="$("$1" server --front 2>&1 || true)"
-  [[ "$probe" == *'--front requires --bun-socket'* ]]
+  probe="$("$1" --build-info 2>/dev/null)" || return 1
+  jq -e '.owner == "rusthrc" and (.sourceCommit | type == "string" and test("^[0-9a-fA-F]{40}$"))' <<<"$probe" >/dev/null 2>&1
 }
 
 # Copy the installed release to $OWNER_ROOT (which neither `just install` nor

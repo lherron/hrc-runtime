@@ -133,17 +133,6 @@ pub async fn serve(role: Role) -> Result<()> {
     } else {
         Store::open(&state.join("state.sqlite"))?
     };
-    // front::invocation validated the path; only the front needs Bun up now.
-    // The native pass-through forwards lazily (502 runtime_unavailable).
-    let bun_passthrough = role.bun_socket().map(PathBuf::from);
-    if let Role::Front { bun_socket } = &role
-        && let Err(error) = std::os::unix::net::UnixStream::connect(bun_socket)
-    {
-        bail!(
-            "--bun-socket {} is unreachable: {error}",
-            bun_socket.display()
-        );
-    }
     // Node identity resolves before ownership: a malformed federation config
     // refuses loudly rather than letting the daemon come up as the wrong node.
     let federation = federation::Node::new(
@@ -163,11 +152,6 @@ pub async fn serve(role: Role) -> Result<()> {
     let mut term = signal(SignalKind::terminate())?;
     let mut int = signal(SignalKind::interrupt())?;
     let listener = UnixListener::bind(&owner.socket)?;
-    if let Some(target) = &bun_passthrough
-        && target.canonicalize().ok() == owner.socket.canonicalize().ok()
-    {
-        bail!("Bun pass-through socket must not be the native listener");
-    }
     fs::set_permissions(&owner.socket, fs::Permissions::from_mode(0o600))?;
     let accounting = accounting::Accounting::new();
     if !front {
@@ -199,7 +183,6 @@ pub async fn serve(role: Role) -> Result<()> {
         literal: Mutex::new(HashMap::new()),
         attached: Mutex::new(HashMap::new()),
         runtime,
-        bun_passthrough,
         federation,
         front,
         state,
@@ -218,7 +201,6 @@ pub async fn serve(role: Role) -> Result<()> {
         kernel::start(&server).await
     };
     let role = if server.front { "front" } else { "native" };
-    let bun_socket = server.bun_passthrough.clone();
     let owned = server.clone();
     let closing = server.clone();
     let final_owner = server.clone();
@@ -227,7 +209,7 @@ pub async fn serve(role: Role) -> Result<()> {
         "info",
         "server",
         "server.listening",
-        json!({"pid":std::process::id(),"socketPath":owner.socket,"owner":"rusthrc","role":role,"bunSocket":bun_socket}),
+        json!({"pid":std::process::id(),"socketPath":owner.socket,"owner":"rusthrc","role":role}),
     );
     let (shutdown_started, mut shutdown_began) = tokio::sync::oneshot::channel();
     let serving = axum::serve(listener, app)

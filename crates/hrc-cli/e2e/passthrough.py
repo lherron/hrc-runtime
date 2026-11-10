@@ -62,7 +62,7 @@ def main():
                 subject = subprocess.run([str(args.binary.resolve())] + argv, env=no_bun, cwd=ROOT, text=True, capture_output=True)
                 appendix = (ROOT / 'crates/hrc-cli/server-help.txt').read_text()
                 good = expected.returncode == subject.returncode == 0 and not subject.stderr and subject.stdout == expected.stdout + appendix
-                good = good and all(flag in appendix for flag in ('--front', '--bun-socket', '--listen-socket'))
+                good = good and '--listen-socket' in appendix and '--front' not in appendix and '--bun-socket' not in appendix
                 results.append(dict(case='Rust daemon help without Bun', argv=argv, **{'pass': good}, stdout=subject.stdout, stderr=subject.stderr, exit=subject.returncode))
         # Native grafts are part of the shipped help contract even when the
         # parent's command action is still postponed to Bun.
