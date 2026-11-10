@@ -368,3 +368,117 @@ fn annotation_ops_are_declared_unfenced_writes() {
         );
     }
 }
+
+// T-13271 (c2 card contract rev 5.2; Lance "go for reco", mable@hrc-runtime rulings EN-50845): seat.send's
+// optional `delivery: steer` passes Lance's c2 answers to HRC's existing steer route. Failure cases: an absent
+// `delivery` changes the literal body; a steer carries a fence or enter, or reaches HRC with one; the
+// idempotency key is rewritten (the same requestId through ACP and the pane must be one submission); the steer
+// reply is reshaped or held to the literal readback rule.
+// The literal body exactly as hrc-runtime 8cf968ef sends it (captured from the unchanged code).
+const LITERAL_BASELINE: &str = r#"{"selector":{"sessionRef":"agent:a:project:p:task:t/lane:main"},"text":"hi","enter":true,"fences":{"expectedHostSessionId":"hs","expectedGeneration":2}}"#;
+
+#[test]
+fn absent_delivery_sends_the_same_literal_body() {
+    let owner = Scripted::new(vec![ok(
+        json!({"delivered":true,"sessionRef":SEAT,"hostSessionId":"hs","generation":2,"runtimeId":"rt","runId":"run-1"}),
+    )]);
+    let send = SeatSend::parse(
+        json!({"session_ref":SEAT,"host_session_id":"hs","expected_generation":2,"text":"hi"}),
+    )
+    .unwrap();
+    let receipt = send.run(&owner).unwrap();
+    assert_eq!(
+        receipt,
+        json!({"session_ref":SEAT,"host_session_id":"hs","generation":2,"runtime_id":"rt","run_id":"run-1"})
+    );
+    let calls = owner.calls();
+    assert_eq!(calls[0].1, "/v1/literal-input/by-selector");
+    assert_eq!(
+        serde_json::to_string(calls[0].2.as_ref().unwrap()).unwrap(),
+        LITERAL_BASELINE
+    );
+    println!(
+        "LITERAL_BODY={}",
+        serde_json::to_string(calls[0].2.as_ref().unwrap()).unwrap()
+    );
+}
+
+#[test]
+fn steer_posts_the_four_fields_and_returns_hrcs_reply_unchanged() {
+    let reply = json!({"admission":"admitted","effectiveDoor":"steer","runId":"run-9","hostSessionId":"hs",
+        "generation":3,"runtimeId":"rt","submissionId":"sub-1","replayed":false,"stage":"accepted"});
+    let owner = Scripted::new(vec![ok(reply.clone())]);
+    let send = SeatSend::parse(
+        json!({"session_ref":SEAT,"text":"1. Go? — Go.","delivery":"steer",
+        "principal_ref":"agent:lance","idempotency_key":"req-1"}),
+    )
+    .unwrap();
+    assert_eq!(send.run(&owner).unwrap(), reply);
+    let calls = owner.calls();
+    assert_eq!(
+        (calls[0].0.as_str(), calls[0].1.as_str()),
+        ("POST", "/v1/submissions/steer")
+    );
+    assert_eq!(
+        calls[0].2,
+        Some(
+            json!({"target":SEAT,"body":"1. Go? — Go.","origin":{"principalRef":"agent:lance"},"idempotencyKey":"req-1"})
+        )
+    );
+    println!(
+        "STEER_BODY={}",
+        serde_json::to_string(calls[0].2.as_ref().unwrap()).unwrap()
+    );
+
+    // A rejected admission has no runId; it is HRC's answer and passes through, not a readback failure.
+    let rejected = json!({"admission":"rejected","disposition":{"type":"rejected","reason":"guarded"},"reason":"guarded","submissionId":"sub-2"});
+    let owner = Scripted::new(vec![ok(rejected.clone())]);
+    let send = SeatSend::parse(json!({"session_ref":SEAT,"text":"x","delivery":"steer","principal_ref":"agent:lance","idempotency_key":"req-2"})).unwrap();
+    assert_eq!(send.run(&owner).unwrap(), rejected);
+    // An explicit `enqueue` is the literal path.
+    let owner = Scripted::new(vec![ok(
+        json!({"delivered":true,"sessionRef":SEAT,"hostSessionId":"hs","generation":2,"runtimeId":"rt"}),
+    )]);
+    SeatSend::parse(json!({"session_ref":SEAT,"host_session_id":"hs","expected_generation":2,"text":"hi","delivery":"enqueue"})).unwrap().run(&owner).unwrap();
+    assert_eq!(
+        serde_json::to_string(owner.calls()[0].2.as_ref().unwrap()).unwrap(),
+        LITERAL_BASELINE
+    );
+}
+
+#[test]
+fn steer_refuses_fences_enter_and_missing_fields_before_any_owner_call() {
+    let base = json!({"session_ref":SEAT,"text":"x","delivery":"steer","principal_ref":"agent:lance","idempotency_key":"k"});
+    for (extra, want) in [
+        (json!({"host_session_id":"hs"}), "fences nor enter"),
+        (json!({"expected_generation":2}), "fences nor enter"),
+        (json!({"enter":true}), "fences nor enter"),
+        (json!({"enter":false}), "fences nor enter"),
+    ] {
+        let mut args = base.clone();
+        args.as_object_mut()
+            .unwrap()
+            .extend(extra.as_object().unwrap().clone());
+        let refused = SeatSend::parse(args).unwrap_err();
+        assert_eq!(refused.code, "invalid_input");
+        assert!(refused.message.contains(want), "{}", refused.message);
+    }
+    for missing in ["principal_ref", "idempotency_key", "text"] {
+        let mut args = base.clone();
+        args.as_object_mut().unwrap().remove(missing);
+        assert_eq!(
+            SeatSend::parse(args).unwrap_err().code,
+            "invalid_input",
+            "{missing}"
+        );
+    }
+    // The literal path still requires both fences.
+    assert_eq!(
+        SeatSend::parse(json!({"session_ref":SEAT,"text":"hi"}))
+            .unwrap_err()
+            .code,
+        "invalid_input"
+    );
+    assert_eq!(SeatSend::parse(json!({"session_ref":SEAT,"text":"hi","delivery":"bogus","host_session_id":"hs","expected_generation":2})).unwrap_err().code, "invalid_input");
+    // Parse is the only gate: nothing above reached an owner.
+}

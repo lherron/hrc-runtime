@@ -22,6 +22,7 @@ const OWNER_ROUTES: &[(&str, &str)] = &[
     ("POST", "/v1/literal-input/by-selector"),
     ("POST", "/v1/runtimes/start"),
     ("POST", "/v1/sessions/restart"),
+    ("POST", "/v1/submissions/steer"),
     ("PUT", "/v1/sessions/annotations"),
     ("POST", "/v1/sessions/annotations/act"),
     ("POST", "/v1/sessions/annotations/delete"),
