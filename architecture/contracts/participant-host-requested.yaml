@@ -22,8 +22,13 @@ predicate: >
   both resume checks. A later refusal point for a held address uses the
   same helper. On a qualifying refusal HRC appends participant.host_requested
   with payload scopeRef, laneRef, reservationId, door and requestedAt. Door
-  is turn, turn-lazy, ensure or resume. The event carries no session or
-  runtime and changes no session activity or runtime state. An in-memory
+  is turn, turn-lazy, ensure or resume. The event belongs to no seat session
+  or runtime. Its required ledger attribution uses the fixed non-seat
+  host_session_id hrc-participant and generation 0, with no runtime_id and
+  the addressed scope and lane in scope_ref and lane_ref. It never uses the
+  retained seat session's identity. This follows the store.migrated sentinel
+  convention while satisfying the ledger's NOT NULL session and generation
+  columns. The knock changes no session activity or runtime state. An in-memory
   limit admits at most one knock per reservation per thirty seconds; restart
   may admit an extra. Append failure is logged and preserves the refusal.
   All refusals retain their status, code, reason and retryability.
@@ -45,10 +50,12 @@ predicate: >
   migration. This is display-only: eviction, continuation, binding retention,
   explicit reservation release and knock behavior are unchanged. Kernel and
   board projections are outside this contract.
-authority: Daedalus approval of T-13086 specification r2 submitted in wrkc:EN-49738, 2026-11-10; supersedes rejected r1 proposal in EN-49735 without changing its underlying participant lifecycle law
+authority: Daedalus approval of T-13086 specification r2 submitted in wrkc:EN-49738, 2026-11-10; r2.1 sentinel attribution correction authorized by Mable in EN-49789 and reported in EN-49790 after the first acceptance run exposed the NOT NULL constraint; supersedes rejected r1 proposal in EN-49735 without changing its underlying participant lifecycle law
 source:
   - wrkq:T-13086
   - wrkc:EN-49738
+  - wrkc:EN-49789
+  - wrkc:EN-49790
   - architecture/records/invariants/hrc-runtime.participant-session-lifecycle.yaml
   - architecture/records/invariants/hrc-runtime.bounded-lifecycle-event-observation.yaml
   - crates/hrc-native/src/server/turns/control.rs
@@ -60,6 +67,8 @@ source:
   - crates/hrc-store/src/participants/succession.rs
   - crates/hrc-store/src/targets.rs
   - crates/hrc-store/src/lib.rs
+  - crates/hrc-store/src/migrate/baseline.sql
+  - crates/hrc-store/src/migrate/mod.rs
   - crates/hrc-store/src/events.rs
   - crates/hrc-native/src/server/projection/streams.rs
 validation_scope: >
@@ -70,5 +79,5 @@ validation_scope: >
   admission and rejection on HRC-owned termination; and installed scratch
   participant observation through a real mail delivery attempt. This is
   design approval, not evidence that any gate has passed.
-last_verified: 2026-11-10 r2 source-grounded design review; implementation and acceptance pending, no builds or tests run by the reviewer
+last_verified: 2026-11-10 r2 design review plus r2.1 factual correction verified against baseline.sql NOT NULL columns and activity trigger and migrate/mod.rs sentinel attribution; acceptance remains pending, no builds or tests run by the reviewer
 reopen_when: Knock eligibility or refusal coverage, event payload or attribution, rate limit, refusal preservation, host-start authority, parked disposition ownership or clearing, or the existing stream contract changes.
