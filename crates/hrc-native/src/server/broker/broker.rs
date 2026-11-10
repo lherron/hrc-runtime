@@ -376,7 +376,7 @@ pub async fn birth(server: &Shared, birth: Birth<'_>) -> Result<Value, ApiError>
             .request("invocation.start", params)
             .await
             .inspect_err(|error| {
-                attempt.rejected = error.downcast_ref::<rpc::ErrorReply>().is_some();
+                attempt.refusal = error.downcast_ref::<rpc::ErrorReply>().map(|e| e.0.clone());
                 attempt.error = error.to_string();
             })?;
         Ok::<_, ApiError>((client, events, hello, allocation, started, attach_pending))
@@ -385,7 +385,7 @@ pub async fn birth(server: &Shared, birth: Birth<'_>) -> Result<Value, ApiError>
     let (client, events, hello, allocation, started, attach_pending) = match launched {
         Ok(launched) => launched,
         Err(error) => {
-            release_failed_start(server, &record, &attempt).await;
+            release_failed_start(server, &record, &attempt, &error).await;
             return Err(error);
         }
     };
@@ -476,7 +476,7 @@ struct StartAttempt {
     client: Option<JsonRpc>,
     graph_committed: bool,
     start_sent: bool,
-    rejected: bool,
+    refusal: Option<Value>,
     error: String,
 }
 
@@ -484,15 +484,20 @@ struct StartAttempt {
 /// holds no native invocation and is HRC's to reclaim, released only while the
 /// operation is still prepared or this attempt committed its start graph.
 /// Once invocation.start was sent the outcome is recorded (markAspdStartOutcome);
-/// an uncertain start keeps its lease, while a broker error reply is a known
-/// rejection with no invocation behind it, so that lease is reclaimed too.
-async fn release_failed_start(server: &Shared, record: &Value, attempt: &StartAttempt) {
+/// an uncertain start keeps its lease. An error reply settles this attempt's
+/// graph and reclaims its lease, but may have produced durable broker evidence.
+async fn release_failed_start(
+    server: &Shared,
+    record: &Value,
+    attempt: &StartAttempt,
+    error: &ApiError,
+) {
     let operation = record["operationId"].as_str().unwrap_or_default();
     if let Some(client) = &attempt.client {
         client.close();
     }
     if attempt.start_sent {
-        let outcome = if attempt.rejected {
+        let outcome = if attempt.refusal.is_some() {
             "rejected"
         } else {
             "uncertain"
@@ -510,8 +515,22 @@ async fn release_failed_start(server: &Shared, record: &Value, attempt: &StartAt
                 json!({"operationId":operation,"error":error.to_string()}),
             );
         }
-        if !attempt.rejected {
+        if attempt.refusal.is_none() {
             return;
+        }
+        if attempt.graph_committed {
+            match settle_refused_start(server, record, attempt.refusal.as_ref().unwrap(), error) {
+                Ok(true) => server.ledger_committed(),
+                Ok(false) => return,
+                Err(error) => {
+                    controller::log(
+                        "error",
+                        "broker start refusal settlement failed",
+                        json!({"operationId":operation,"error":error.to_string()}),
+                    );
+                    return;
+                }
+            }
         }
     } else if !attempt.graph_committed {
         let status = server.store.lock().unwrap().operation_status(operation);
@@ -520,6 +539,25 @@ async fn release_failed_start(server: &Shared, record: &Value, attempt: &StartAt
         }
     }
     let paths = &record["hosting"]["paths"];
+    // Hosting paths are frozen beneath our runtime root. Never tear down an
+    // external endpoint if the stored preparation is inconsistent.
+    if [
+        "btmuxSocketPath",
+        "hrcptySocketPath",
+        "brokerIpcSocketPath",
+        "observerSocketPath",
+    ]
+    .iter()
+    .filter_map(|key| paths[*key].as_str())
+    .any(|path| !Path::new(path).starts_with(&server.runtime))
+    {
+        controller::log(
+            "warn",
+            "broker failed-start teardown outside runtime root",
+            json!({"operationId":operation}),
+        );
+        return;
+    }
     if let Some(socket) = paths["btmuxSocketPath"].as_str()
         && let Err(error) = tmux(socket, &["kill-server"]).await
     {
@@ -538,14 +576,104 @@ async fn release_failed_start(server: &Shared, record: &Value, attempt: &StartAt
             json!({"runtimeId":record["runtimeId"],"error":error.to_string()}),
         );
     }
-    if let Some(ipc) = paths["brokerIpcSocketPath"].as_str() {
-        let _ = fs::remove_file(ipc);
+    // Keep the ledger, index and diagnostics, including events committed
+    // before a post-registration start failure. Only dead sockets are removed.
+    for key in [
+        "brokerIpcSocketPath",
+        "hrcptySocketPath",
+        "observerSocketPath",
+    ] {
+        if let Some(socket) = paths[key].as_str() {
+            let _ = fs::remove_file(socket);
+        }
     }
     controller::log(
         "info",
         "broker.lease.released_never_started",
         json!({"runtimeId":record["runtimeId"],"operationId":operation,"startSent":attempt.start_sent}),
     );
+}
+
+/// A positive start refusal owns only the exact graph this birth committed.
+/// No controller consumer was installed; buffered events cannot race this
+/// transaction. Keep their ledger and frozen reader identity for retained
+/// recovery, which cannot reopen this run's terminal.
+fn settle_refused_start(
+    server: &Shared,
+    record: &Value,
+    refusal: &Value,
+    error: &ApiError,
+) -> Result<bool> {
+    use crate::server::projection::{db, events, turns};
+    use rusqlite::params;
+    let id = &record["admission"]["identity"];
+    let runtime = string(id, "runtimeId")?;
+    let operation = string(id, "operationId")?;
+    let invocation = string(id, "invocationId")?;
+    let store = server.store.lock().unwrap();
+    let tx = store.sqlite.unchecked_transaction()?;
+    let Some(rt) = db::runtime(&tx, runtime)? else {
+        return Ok(false);
+    };
+    let Some(inv) = db::invocation(&tx, invocation)? else {
+        return Ok(false);
+    };
+    if rt.status != "starting"
+        || rt.controller_kind.as_deref() != Some("harness-broker")
+        || controller::is_external_lifecycle_owner(&rt)
+        || rt.active_operation_id.as_deref() != Some(operation)
+        || rt.active_invocation_id.as_deref() != Some(invocation)
+        || rt.active_run_id.as_deref() != id["runId"].as_str()
+        || inv.runtime_id != runtime
+        || inv.operation_id != operation
+        || inv.invocation_state != "starting"
+        || store.operation_status(operation)?.as_deref() != Some("starting")
+    {
+        return Ok(false);
+    }
+    let now = hrc_store::timestamp();
+    let reason = "broker_start_refused";
+    let code = if error.code == "internal_error" {
+        "broker_start_failed"
+    } else {
+        error.code
+    };
+    let message = refusal["message"].as_str().unwrap_or(&error.message);
+    let ev = events::Ev {
+        ts: now.clone(),
+        host_session_id: rt.host_session_id.clone(),
+        scope_ref: rt.scope_ref.clone(),
+        lane_ref: rt.lane_ref.clone(),
+        generation: rt.generation,
+        runtime_id: Some(runtime.into()),
+        run_id: id["runId"].as_str().map(str::to_owned),
+        transport: Some(rt.transport.clone()),
+        error_code: Some(code.into()),
+        ..Default::default()
+    };
+    let payload = json!({"reason":reason,"operationId":operation,"invocationId":invocation,"error":{"code":code,"message":message,"brokerRpcCode":refusal["code"]}});
+    if let Some(run) = id["runId"].as_str() {
+        let changed = tx.execute("UPDATE runs SET status='failed',completed_at=?,updated_at=?,error_code=?,error_message=? WHERE run_id=? AND runtime_id=? AND operation_id=? AND invocation_id=? AND status='accepted' AND completed_at IS NULL", params![now,now,code,message,run,runtime,operation,invocation])?;
+        if changed > 0 {
+            events::append(&tx, "turn.failed", &ev, &payload)?;
+        }
+    }
+    tx.execute("UPDATE broker_invocations SET invocation_state='disposed',lifecycle_terminal_reason=?,updated_at=? WHERE invocation_id=?",params![reason,now,invocation])?;
+    tx.execute("UPDATE runtime_operations SET status='failed',completed_at=?,updated_at=?,error_code=?,error_message=? WHERE operation_id=?",params![now,now,code,message,operation])?;
+    let mut state = rt.state_object();
+    state["status"] = "terminated".into();
+    state["terminalReason"] = reason.into();
+    state["updatedAt"] = now.clone().into();
+    state["startRefusal"] = payload.clone();
+    state["executionRelease"] = record["executionRelease"].clone();
+    state["executionRelease"]["source"] = "aspd".into();
+    state["executionRelease"]["worker"]["executable"] = record["hosting"]["executable"].clone();
+    state["broker"] = json!({"eventLedgerPath":record["hosting"]["paths"]["eventLedgerPath"]});
+    tx.execute("UPDATE runtimes SET status='terminated',status_changed_at=?,updated_at=?,lifecycle_terminal_reason=?,active_run_id=NULL,active_operation_id=NULL,active_invocation_id=NULL,runtime_state_json=? WHERE runtime_id=?",params![now,now,reason,state.to_string(),runtime])?;
+    turns::disarm_first_turn(&tx, runtime, rt.generation, reason, &now);
+    events::append(&tx, "runtime.terminated", &ev, &payload)?;
+    tx.commit()?;
+    Ok(true)
 }
 
 async fn launch_carried_submission(
