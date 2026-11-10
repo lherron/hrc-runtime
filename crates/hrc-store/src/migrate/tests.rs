@@ -153,8 +153,10 @@ fn fresh_stores_have_creation_pragmas_and_distinct_incarnations() {
     let (a, b) = (Dir::new(), Dir::new());
     for dir in [&a, &b] {
         assert_eq!(
-            migrate(&dir.db(), &[], &actor()).unwrap(),
-            Outcome::Created { forward: vec![] }
+            migrate(&dir.db(), FORWARD, &actor()).unwrap(),
+            Outcome::Created {
+                forward: FORWARD.iter().map(|m| m.id.to_owned()).collect()
+            }
         );
         let c = conn(&dir.db());
         let pragma = |p: &str| -> String {
@@ -167,7 +169,7 @@ fn fresh_stores_have_creation_pragmas_and_distinct_incarnations() {
         assert_eq!(pragma("auto_vacuum"), "Integer(2)");
         assert_eq!(pragma("page_size"), "Integer(4096)");
         assert_eq!(pragma("journal_mode"), "Text(\"wal\")");
-        assert_eq!(ids(&dir.db()), set(&[]));
+        assert_eq!(ids(&dir.db()), set(&FORWARD.iter().collect::<Vec<_>>()));
         crate::Store::open(&dir.db()).expect("this build admits a store it created");
     }
     let (ia, ib) = (incarnation(&a.db()), incarnation(&b.db()));
@@ -178,7 +180,10 @@ fn fresh_stores_have_creation_pragmas_and_distinct_incarnations() {
         .query_row("SELECT count(*) FROM hrc_events", [], |r| r.get(0))
         .unwrap();
     assert_eq!(attributed, 0);
-    assert_eq!(migrate(&a.db(), &[], &actor()).unwrap(), Outcome::Current);
+    assert_eq!(
+        migrate(&a.db(), FORWARD, &actor()).unwrap(),
+        Outcome::Current
+    );
 }
 
 #[test]
@@ -283,8 +288,8 @@ fn failed_upgrade_rolls_back_the_whole_pending_set() {
     assert!(!table_exists(&db, "test_half_done"));
     assert_eq!(sequence(&db, "hrc_events"), events);
     assert_eq!(sequence(&db, "broker_invocation_events"), broker);
-    // A build carrying neither migration (this one) admits it.
-    crate::Store::open(&db).expect("previous release admits the store");
+    // A build carrying neither migration finds it current.
+    assert_eq!(migrate(&db, &[], &actor()).unwrap(), Outcome::Current);
 }
 
 /// Control for the rebuild path: the same rebuild, undeclared, fails under

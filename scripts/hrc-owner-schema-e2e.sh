@@ -7,13 +7,16 @@
 #   scripts/hrc-owner-schema-e2e.sh <repo> <bins-dir> <out-dir>
 #
 # <bins-dir> holds three rusthrc builds of the same commit:
-#   rusthrc-base  the forward registry empty (the commit under test)
-#   rusthrc-ok    + test-only 0132_t13056_scratch_ok (creates a table)
-#   rusthrc-fail  + test-only 0132_t13056_scratch_fail (creates a table, then fails)
-# Build the two test-only variants by editing `FORWARD` in
-# crates/hrc-store/src/migrate/mod.rs to one entry each, never committed (the
-# T-13056 artifact dir has the build helper used); the ids must sort after the
-# registry's real head.
+#   rusthrc-base  the registry before the step under test
+#   rusthrc-ok    + the step under test, id $E2E_OK_ID (its last forward id)
+#   rusthrc-fail  + a step that creates table t13056_scratch, then fails, id
+#                 $E2E_FAIL_ID
+# The defaults are T-13056's test-only pair over an empty registry
+# (0132_t13056_scratch_ok/_fail). T-13059 ran it with base = FORWARD emptied,
+# ok = the shipped registry (0132_reconcile_live_stores), fail = the shipped
+# registry + 0133_t13059_scratch_fail. Variants are built by editing `FORWARD`
+# in crates/hrc-store/src/migrate/mod.rs, never committed; the T-13056 and
+# T-13059 artifact dirs have the build helpers used.
 #
 # Isolation: HOME is a scratch dir for the recipe, the owner script and the
 # daemon, so every default the script derives from HOME (plist, owner root,
@@ -36,6 +39,8 @@ mkdir -p "$out"
 out="$(cd "$out" && pwd -P)"
 real_just="$(command -v just)"
 sha="$(git -C "$repo" rev-parse HEAD)"
+ok_id="${E2E_OK_ID:-0132_t13056_scratch_ok}"
+fail_id="${E2E_FAIL_ID:-0132_t13056_scratch_fail}"
 for b in base ok fail; do
   [[ "$("$bins/rusthrc-$b" --build-info | jq -r .sourceCommit)" == "$sha" ]] || { echo "rusthrc-$b is not built from $sha" >&2; exit 2; }
 done
@@ -238,6 +243,7 @@ install_release base
 owner stage --expect-commit "$sha" >>"$transcript" 2>&1
 hrc server restart --node scratch --force --reason setup >>"$transcript" 2>&1
 pid0="$(daemon_pid)"
+base_ids="$(ids "$DB" | wc -l | tr -d ' ')"
 record setup_daemon_on_scratch_store "$([[ -n "$pid0" && "$(opened_db "$pid0")" == "$DB" ]] && echo 1 || echo 0)" \
   "$(jq -cn --arg pid "$pid0" --arg opened "$(opened_db "$pid0")" --arg db "$DB" '{pid: $pid, opened: $opened, expected: $db}')"
 
@@ -283,7 +289,7 @@ fail_path="$(log_since "$mark" | jq -r 'select(.event == "store.migration_failed
 ids_after="$(ids "$DB" | shasum | cut -c1-12)"
 table="$(count "$DB" "SELECT count(*) FROM sqlite_master WHERE name='t13056_scratch'")"
 record failing_migration_fails_the_deploy_naming_the_cause "$([[ $rc != 0 && "$ids_before" == "$ids_after" && "$table" == 0 && "$fails" -ge 2 && "$fail_path" == "$DB" ]] &&
-  grep -q 'store.migration_failed: 0132_t13056_scratch_fail' "$root/deploy.err" && ! grep -q '_node-readback' "$JUSTLOG" 2>/dev/null && echo 1 || echo 0)" \
+  grep -qF "store.migration_failed: $fail_id" "$root/deploy.err" && ! grep -q '_node-readback' "$JUSTLOG" 2>/dev/null && echo 1 || echo 0)" \
   "$(jq -cn --argjson rc "$rc" --arg before "$ids_before" --arg after "$ids_after" --arg table "$table" --arg fails "$fails" --arg path "$fail_path" \
     --arg err "$(grep 'boot-check' "$root/deploy.err" | head -2)" \
     '{exit: $rc, migrationSetUnchanged: ($before == $after), testTable: $table, failedBoots: $fails, failedPath: $path, report: $err}')"
@@ -341,15 +347,15 @@ bk="$(backups)"
 bk_n="$(printf '%s\n' "$bk" | grep -c . || true)"
 bk_check="$( [[ -n "$bk" ]] && q "$bk" 'PRAGMA quick_check' || echo none)"
 bk_ids="$( [[ -n "$bk" ]] && ids "$bk" | wc -l | tr -d ' ' || echo 0)"
-bk_has_new="$( [[ -n "$bk" ]] && ids "$bk" | grep -c 0132 || true)"
-store_has_new="$(ids "$DB" | grep -c '^0132_t13056_scratch_ok$' || true)"
+bk_has_new="$( [[ -n "$bk" ]] && ids "$bk" | grep -cxF "$ok_id" || true)"
+store_has_new="$(ids "$DB" | grep -cxF "$ok_id" || true)"
 events_after="$(count "$DB" "SELECT count(*) FROM hrc_events WHERE event_kind='store.migrated'")"
 seq_after="$(count "$DB" "SELECT seq FROM sqlite_sequence WHERE name='hrc_events'")"
 inc_after="$(count "$DB" 'SELECT ledger_incarnation_id FROM hrc_event_ledger_metadata')"
 boot_migrated="$(log_since "$mark" | jq -c 'select(.event == "store.migrated") | .data' | tail -1)"
 listen_after="$(log_since "$mark" | jq -r 'select(.event == "store.migrated" or .event == "server.listening") | .event' | paste -sd, -)"
 readback="$(owner schema-state --exe "$OWNER_EXE" 2>/dev/null)"
-record pending_backup_then_daemon_migrates_at_boot "$([[ $rc == 0 && "$bk_n" == 1 && "$bk_check" == ok && "$bk_ids" == 109 && "$bk_has_new" == 0 && "$store_has_new" == 1 &&
+record pending_backup_then_daemon_migrates_at_boot "$([[ $rc == 0 && "$bk_n" == 1 && "$bk_check" == ok && "$bk_ids" == "$base_ids" && "$bk_has_new" == 0 && "$store_has_new" == 1 &&
   "$events_after" == $((events_before + 1)) && "$inc_before" == "$inc_after" && "$seq_after" -gt "$seq_before" && "$(jq -r .path <<<"$boot_migrated")" == "$DB" &&
   "$listen_after" == store.migrated,server.listening* && "$readback" == current && "$(opened_db "$pid_b")" == "$DB" ]] &&
   grep -q 'pruned older backup' "$root/deploy.out" && grep -q '_node-readback scratch scratch' "$JUSTLOG" && echo 1 || echo 0)" \
@@ -361,7 +367,7 @@ record pending_backup_then_daemon_migrates_at_boot "$([[ $rc == 0 && "$bk_n" == 
       readback: $readback, daemonOpened: $opened}')"
 
 # ---- D: ahead: refused before the backup ------------------------------------
-say "D: ahead (a build without 0132 on the migrated store)"
+say "D: ahead (a build without $ok_id on the migrated store)"
 install_release base
 before_link="$(current_release)"; before_pid="$(daemon_pid)"; bk_before="$(backups)"
 : >"$JUSTLOG"

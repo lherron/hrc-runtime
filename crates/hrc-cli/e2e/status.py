@@ -20,6 +20,7 @@ import socketserver
 import threading
 
 from metrics_isolation import isolated_suite
+import frozen_oracle
 
 ROOT = Path(__file__).resolve().parents[3]
 # Only clock observations can vary between the two sequential diagnostic calls.
@@ -33,7 +34,7 @@ NORMALIZATION = {
 
 
 def normalized(item):
-    item = dict(item)
+    item = frozen_oracle.project(item)  # the Rust forward registry (frozen_oracle.py)
     for stream in ('stdout', 'stderr'):
         for name, pattern in NORMALIZATION.items():
             item[stream] = re.sub(pattern, '<timestamp>' if name == 'timestamps' else r'\1<clock>', item[stream])
@@ -171,10 +172,10 @@ def main():
                     continue
                 if scenario in ('checkpointed-wal', 'live-wal') and flags:
                     schema = json.loads(observed[1]['stdout'])['schema']
-                    assert schema['readable'] and schema['storeVersion'] == migrations[-1] and not schema['pending'], 'Rust must read live-WAL migration records'
+                    assert schema['readable'] and schema['storeVersion'] == migrations[-1] and schema['pending'] == frozen_oracle.FORWARD_IDS, 'Rust must read live-WAL migration records'
                 if scenario == 'checkpointed-wal':
                     if not flags:
-                        assert observed[1]['exit'] == 1 and f'store schema: {migrations[-1]} (matches this release)' in observed[1]['stdout'], 'Rust must read the complete checkpointed schema'
+                        assert observed[1]['exit'] == 1 and f'store schema: {migrations[-1]} (matches this release)' in frozen_oracle.text(observed[1]['stdout']), 'Rust must read the complete checkpointed schema'
                     results.append(dict(case='checkpointed-wal:' + ('json' if flags else 'human'), status='UNSUPPORTED', reason='Bun server status reports schema unreadable on a checkpointed WAL-header store with no -wal/-shm sidecars; Rust reads the schema and creates the SQLite coordination files.', oracle=observed[0], subject=observed[1]))
                     continue
                 results.append(dict(case=scenario + (':json' if flags else ':human'), oracle=observed[0], subject=observed[1], **{'pass': normalized(observed[0]) == normalized(observed[1])}))

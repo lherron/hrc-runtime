@@ -1,8 +1,10 @@
 //! Rust owns HRC schema migration (T-12840 r3). A fresh store gets the
-//! baseline at `0131_runtime_live_indexes` and the 109 legacy ids; an existing
-//! store at the legacy set plus a prefix of [`FORWARD`] gets the rest of the
-//! forward registry. Only the owner at boot and `rusthrc store migrate` call
-//! [`own_and_migrate`]; every other open admits or refuses, never migrates.
+//! baseline at `0131_runtime_live_indexes`, the 109 legacy ids and every
+//! [`FORWARD`] step; an existing store at the legacy set plus a prefix of
+//! [`FORWARD`] gets the rest of the forward registry. Only the owner at boot
+//! and `rusthrc store migrate` call [`own_and_migrate`]; every other open
+//! admits or refuses, never migrates.
+mod forward;
 mod legacy;
 mod owner;
 pub use legacy::LEGACY_IDS;
@@ -27,9 +29,13 @@ pub struct Forward {
     pub apply: fn(&Connection) -> anyhow::Result<()>,
 }
 
-/// The forward registry, in order. Empty until the first real forward
-/// migration (A4), which waits for every Bun live-store opener to retire.
-pub const FORWARD: &[Forward] = &[];
+/// The forward registry, in order. No TypeScript opener admits a store
+/// that holds any of these (T-12840 r3 section 6).
+pub const FORWARD: &[Forward] = &[Forward {
+    id: "0132_reconcile_live_stores",
+    rebuild: false,
+    apply: forward::m0132_reconcile_live_stores,
+}];
 
 /// Who moved the store, recorded in the `store.migrated` row of an upgrade.
 pub struct Actor {

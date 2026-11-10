@@ -287,6 +287,12 @@ predicate: >
   remain explicit compatibility consumers. T-12840 transfers schema ownership
   to Rust. hrc-store owns a baseline at 0131_runtime_live_indexes, the frozen
   109 legacy ids and an ordered forward registry beginning after that baseline.
+  Its first step, 0132_reconcile_live_stores (T-13059), brings live stores to
+  the baseline: placement_ledger joins the graph and the daemon creates no
+  schema, max3's two missing messages indexes are created, and the dead
+  runs.dispatch_request_hash column is dropped. Column order on runs and
+  broker_invocation_events still differs on some nodes and is not rebuilt,
+  since every reader names its columns.
   The TypeScript migration graph freezes; build admission no longer derives
   from TypeScript, and native store creation, upgrades and the Rust gate need
   no Bun process. Fresh stores use the complete baseline with page size 4096,

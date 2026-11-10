@@ -14,6 +14,7 @@ import subprocess
 import tempfile
 
 from metrics_isolation import isolated_suite
+import frozen_oracle
 
 ROOT = Path(__file__).resolve().parents[3]
 # Declared normalization: created IDs and timestamps can change between calls.
@@ -115,6 +116,7 @@ def main():
             item = {'exit': child.returncode, 'stdout': child.stdout, 'stderr': child.stderr}
             observed.append(item)
         def normalize(item):
+            item = frozen_oracle.project(item)  # the Rust forward registry (frozen_oracle.py)
             return {k: re.sub(NORMALIZATION['timestamps'], '<timestamp>', v) if isinstance(v, str) else v for k, v in item.items()}
         expected = dict(observed[0])
         if name in {f'help:{path}:{view}' for path in ('server', 'server serve') for view in ('agent', 'human')}:
