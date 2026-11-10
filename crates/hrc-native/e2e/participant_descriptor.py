@@ -67,6 +67,11 @@ def _seal(d):
     return d
 
 
+def seal(d):
+    """Recompute specHash, startRequestHash and descriptorHash after editing the spec."""
+    return _seal(copy.deepcopy(d))
+
+
 def _correlation(joined):
     i = joined['identity']
     return {'requestId': i['requestId'], 'operationId': i['operationId'], 'hostSessionId': joined['hostSessionId'],

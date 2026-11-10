@@ -1,9 +1,18 @@
 #!/usr/bin/env python3
-"""Foundry restart register shape, against real Bun/native scratch HTTP owners.
+"""Foundry restart register shape, against a native scratch HTTP owner.
 
 Failures: untyped responses, unsafe predecessor replacement, duplicate successors,
 wrong continuation, lost retirement receipts/intent, binding/session lineage drift.
 Endpoints deliberately absent: no fake broker claims host death or recovery.
+
+Seeds are the native writers' own statements: the predecessor is joined and
+attached through the owner's routes (descriptor from participant_descriptor.scratch);
+its continuation is projection/state.rs's UPDATE; the invalidation barrier is the
+session.continuation_dropped event turns/context.rs appends (n3_events.append_events);
+the busy runtime and open run are broker.rs's inserts. Every case is judged here:
+status, reply status, cardinality, lineage, retirement, continuation selection,
+startup recovery and request-bounded clocks (formerly the parity comparator's
+per-owner checks), plus the T-12279 bridge-continuation ruling.
 """
 import argparse
 import json
@@ -11,6 +20,10 @@ from pathlib import Path
 import sqlite3
 import time
 from n4_federation import Node
+from n3_events import append_events
+import participant_descriptor
+import datetime
+import re
 
 TABLES = ('participant_address_reservations', 'participant_registrations',
           'participant_host_bindings', 'participant_registration_attempts',
@@ -24,13 +37,67 @@ def snapshot(node):
         rows['events'] = [dict(r) for r in db.execute("SELECT event_kind,host_session_id,scope_ref,lane_ref,generation,payload_json FROM hrc_events WHERE scope_ref!='server:hrc' ORDER BY hrc_seq")]
         return rows
 
+UUID = re.compile(r'[a-z][a-z-]*-[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}')
+CLOCK = re.compile(r'\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d\.\d{3}Z')
+NAMES = ['foundry-continue','foundry-fresh','wrong-predecessor','missing-predecessor','bridge','pre-attach-implicit',
+         'pre-attach-explicit','pre-attach-own','legacy-arris','no-durable-endpoint','retired-only','reuse-disabled',
+         'continuation-invalidated','declaration-mismatch','active-runs','recover-intent','bridge-fresh','bridge-disabled',
+         'bridge-invalidated']
+
+
+def clocks(value):
+    if isinstance(value, dict): return set().union(set(), *(clocks(v) for v in value.values()))
+    if isinstance(value, list): return set().union(set(), *(clocks(v) for v in value))
+    return set(CLOCK.findall(value)) if isinstance(value, str) else set()
+
+
+def judge(rows, artifacts):
+    """Each branch's own literals (the former comparator's per-owner checks)."""
+    checks = []
+    def check(name, passed, reason): checks.append({'id':name, 'pass':bool(passed), 'reason':reason})
+    check('required-cases', [r['case'] for r in rows]==[l for n in NAMES for l in (n, n+'-retry')], 'every branch and retry present exactly once')
+    seen = set()
+    for row in rows:
+        name = row['case'].removesuffix('-retry')
+        refused = name in ('wrong-predecessor','missing-predecessor') or row['case']=='declaration-mismatch-retry'
+        pending = name in ('no-durable-endpoint','retired-only')
+        own = name=='pre-attach-own'
+        bridge = name in ('bridge','legacy-arris','bridge-fresh','bridge-disabled','bridge-invalidated')
+        success = not refused and not pending
+        d = row['durable']; body = row['body']
+        check(row['case']+':status', row['status']==(409 if refused else 200), 'typed HTTP status follows the replacement gate')
+        check(row['case']+':typed', isinstance(body,dict) and body.get('status')==('rejected' if refused else 'pending' if pending else 'registered'), 'every branch returns the join envelope')
+        attempts = 2 if (success and not own) or row['case']=='declaration-mismatch-retry' else 1
+        check(row['case']+':cardinality', len(d['participant_registration_attempts'])==attempts and len(d['participant_registrations'])==1, 'one successor at most, including on retry')
+        if success and not own:
+            check(row['case']+':sessions', len(d['sessions'])==(1 if bridge else 2), 'bridge retains its session; host replacement increments generation')
+            if not bridge:
+                check(row['case']+':lineage', d['sessions'][0]['status']=='archived' and d['sessions'][1]['prior_host_session_id']==d['sessions'][0]['host_session_id'], 'session lineage survives retirement')
+                check(row['case']+':retirement', d['participant_host_bindings'][0]['state']=='RETIRED' and d['participant_registration_attempts'][0]['recovery_disposition']=='abandoned', 'predecessor is durably retired before the successor')
+            reason = body.get('continuation',{}).get('reason') if isinstance(body,dict) else None
+            expected = {'foundry-continue':'carried','foundry-fresh':'participant_fresh','legacy-arris':'continuation_invalidated',
+                        'reuse-disabled':'reuse_disabled','continuation-invalidated':'continuation_invalidated','bridge':'carried',
+                        'bridge-fresh':'participant_fresh','bridge-disabled':'reuse_disabled','bridge-invalidated':'continuation_invalidated'}.get(name)
+            if expected: check(row['case']+':selection', reason==expected, 'continuation selection follows the declaration and durable barriers')
+        if name=='active-runs':
+            check(row['case']+':settled', bool(d['runs']) and all(r['status']=='failed' and r['error_code']=='runtime_unavailable' for r in d['runs']), 'the replaced runtime owns no open run')
+        if name=='recover-intent':
+            check(row['case']+':startup-recovery', row.get('startupRecovered') is True, 'startup resumes durable intent before any retry request')
+        new = clocks(d)|clocks(body)
+        for clock in new-seen-clocks(row['seed']):
+            at = datetime.datetime.fromisoformat(clock.replace('Z','+00:00')).timestamp()
+            check(row['case']+':clock:'+clock, row['before']-.01<=at<=row['after']+.01, 'new durable clocks are written within the request')
+        seen.update(new)
+    (artifacts/'checks.json').write_text(json.dumps(checks,indent=2)+'\n')
+    return [c for c in checks if not c['pass']]
+
 
 def main():
     p = argparse.ArgumentParser()
-    for key in ('binary', 'installed-release', 'aspd-socket', 'scratch-root', 'artifacts'):
+    for key in ('binary', 'scratch-root', 'artifacts'):
         p.add_argument('--'+key, type=Path, required=True)
-    p.add_argument('--owners', default='bun,native')
-    p.add_argument('--bridge-continuation', action='store_true', help='assert T-12279 native continuation ruling')
+    p.add_argument('--installed-release', type=Path, help='accepted and ignored')
+    p.add_argument('--aspd-socket', type=Path, default=Path('/nonexistent'), help='accepted and ignored')
     a = p.parse_args()
     a.binary = a.binary.resolve()
     assert not a.scratch_root.exists()
@@ -42,17 +109,18 @@ def main():
             'workspaceCwd':str(node.project), 'socketPath':str(node.root/'old.sock')}
     proc = None
     try:
-        proc = node.up('bun', a.binary, 'seed')
+        proc = node.up('native', a.binary, 'seed')
         status, joined, _ = node.http('POST','/v1/participants/register',base)
         assert status == 200 and joined['status']=='registered', joined
         with sqlite3.connect(node.db) as src, sqlite3.connect(node.root/'minted.sqlite') as dst: src.backup(dst)
-        descriptor = json.loads(node.run('descriptor', ['bun', Path(__file__).with_name('participant_descriptor.mjs'), node.release, node.root], json.dumps(joined)))
+        descriptor = participant_descriptor.scratch(joined, node.root)
         attach = {k:joined['identity'][k] for k in ('registrationId','attemptId','attachEpoch')}
         attach.update(socketPath=base['socketPath'], descriptor=descriptor)
         status, attached, _ = node.http('POST','/v1/participants/attach',attach)
         assert status==200 and attached['status']=='attached',attached
         node.down(proc); proc=None
-        node.bun_store('continuation', "const db=openHrcDatabase(a[0]);db.sessions.updateContinuation(a[1],{provider:'pi',key:'foundry-conversation'},'2026-10-26T18:00:00.000Z');db.close()", node.db, joined['hostSessionId'])
+        node.sql(node.db, [('UPDATE sessions SET continuation_json = ?, continuation_reuse_disabled = 0, updated_at = ? WHERE host_session_id = ?',
+                            (json.dumps({'provider':'pi','key':'foundry-conversation'}), '2026-10-26T18:00:00.000Z', joined['hostSessionId']))])
         with sqlite3.connect(node.db) as db:
             db.execute("UPDATE participant_registration_attempts SET establishment_work_state='exhausted',establishment_attempt_count=5,establishment_next_attempt_at=NULL")
         with sqlite3.connect(node.db) as src, sqlite3.connect(node.root/'seed.sqlite') as dst: src.backup(dst)
@@ -71,15 +139,14 @@ def main():
                  ('reuse-disabled', body, 'disabled'),
                  ('continuation-invalidated', body, 'invalidated'),
                  ('declaration-mismatch', body, 'seed'), ('active-runs',body,'runs'), ('recover-intent',body,'recover')]
-        if a.bridge_continuation:
-            plans += [
+        plans += [
                  ('bridge-fresh', dict(body,hostIncarnationId=base['hostIncarnationId'],continuation='fresh'), 'seed'),
                  ('bridge-disabled', dict(body,hostIncarnationId=base['hostIncarnationId']), 'disabled'),
                  ('bridge-invalidated', dict(body,hostIncarnationId=base['hostIncarnationId']), 'invalidated')
-            ]
+        ]
         results = {}
         retired_seed = None
-        for owner in a.owners.split(','):
+        for owner in ('native',):
             observed=[]
             for name, request, variant in plans:
                 source='minted' if variant in ('minted','legacy') else 'seed'
@@ -93,7 +160,7 @@ def main():
                     if variant=='retired':db.execute("UPDATE participant_host_bindings SET state='RETIRED',disposition_reason='fixture-retired'")
                     if variant=='disabled':db.execute('UPDATE sessions SET continuation_reuse_disabled=1')
                 if variant=='invalidated':
-                    node.bun_store('barrier', "const db=openHrcDatabase(a[0]);db.hrcEvents.append({ts:'2026-10-26T18:00:00.000Z',hostSessionId:a[1],scopeRef:a[2],laneRef:'main',generation:1,category:'session',eventKind:'session.continuation_dropped',payload:{}});db.close()",node.db,joined['hostSessionId'],base['requestedSessionRef'])
+                    append_events(node.db,[{'ts':'2026-10-26T18:00:00.000Z','hostSessionId':joined['hostSessionId'],'scopeRef':base['requestedSessionRef'],'laneRef':'main','generation':1,'category':'session','eventKind':'session.continuation_dropped','payload':{}}])
                 if variant=='recover':
                     assert retired_seed is not None
                     old=retired_seed['participant_registration_attempts'][0]
@@ -105,7 +172,12 @@ def main():
                         db.execute("UPDATE participant_host_bindings SET state='RETIRING',retirement_receipt_json=?",(retired_seed['participant_host_bindings'][0]['retirement_receipt_json'],))
                 proc=node.up(owner,a.binary,name)
                 if variant=='runs':
-                    node.bun_store('active-runtime', "const db=openHrcDatabase(a[0]);const now=new Date().toISOString();db.runtimes.insert({runtimeId:a[1],hostSessionId:a[2],scopeRef:a[3],laneRef:'main',generation:1,transport:'sdk',status:'busy',supportsInflightInput:false,activeRunId:'run-succession',runtimeStateJson:{status:'busy',probe:'preserved'},createdAt:now,updatedAt:now});db.sqlite.query(\"INSERT INTO runs(run_id,host_session_id,runtime_id,scope_ref,lane_ref,generation,transport,status,accepted_at,updated_at,execution_format) VALUES ('run-succession',?,?,?,'main',1,'headless','accepted',?,?,'format1')\").run(a[2],a[1],a[3],now,now);db.close()",node.db,prior['runtimeId'],joined['hostSessionId'],base['requestedSessionRef'])
+                    now=datetime.datetime.now(datetime.timezone.utc).isoformat(timespec='milliseconds').replace('+00:00','Z')
+                    node.sql(node.db,[
+                        ("INSERT INTO runtimes(runtime_id,host_session_id,scope_ref,lane_ref,generation,transport,status,supports_inflight_input,active_run_id,created_at,updated_at,status_changed_at,controller_kind,runtime_state_json) VALUES (?,?,?,'main',1,'sdk','busy',0,'run-succession',?,?,?,'harness-broker',?)",
+                         (prior['runtimeId'],joined['hostSessionId'],base['requestedSessionRef'],now,now,now,json.dumps({'status':'busy','probe':'preserved'}))),
+                        ("INSERT INTO runs(run_id,host_session_id,runtime_id,scope_ref,lane_ref,generation,transport,status,accepted_at,updated_at,execution_format) VALUES ('run-succession',?,?,?,'main',1,'headless','accepted',?,?,'format1')",
+                         (joined['hostSessionId'],prior['runtimeId'],base['requestedSessionRef'],now,now))])
                 recovered = None
                 if variant=='recover':
                     for _ in range(60):
@@ -117,7 +189,7 @@ def main():
                     current_request=dict(request,continuation='fresh') if name=='declaration-mismatch' and label.endswith('-retry') else request
                     t=time.time();status,reply,_=node.http('POST','/v1/participants/register',current_request)
                     observed.append({'case':label,'request':current_request,'status':status,'body':reply,'before':t,'after':time.time(),'durable':snapshot(node),'seed':before,'startupRecovered':recovered})
-                    if a.bridge_continuation and owner=='native' and name.startswith('bridge'):
+                    if name.startswith('bridge'):
                         assert status == 200 and reply['status'] == 'registered', reply
                         assert reply['identity']['runtimeId'] == prior['runtimeId'], reply
                         selection = reply['continuation']
@@ -128,12 +200,15 @@ def main():
                             reason = {'bridge-fresh':'participant_fresh', 'bridge-disabled':'reuse_disabled',
                                       'bridge-invalidated':'continuation_invalidated'}[name]
                             assert selection['carried'] is False and selection['reason'] == reason, reply
-                    if owner=='bun' and label=='foundry-continue':retired_seed=snapshot(node)
+                    if label=='foundry-continue':retired_seed=snapshot(node)
                 node.down(proc);proc=None
             results[owner]=observed
             directory=a.artifacts/owner;directory.mkdir(exist_ok=True)
             (directory/'observations.json').write_text(json.dumps(observed,indent=2)+'\n')
-        print(json.dumps({o:[(r['case'],r['status'],r['body'].get('status') if isinstance(r['body'],dict) else r['body']) for r in rows] for o,rows in results.items()}))
+        failed = judge(results['native'], a.artifacts)
+        print(json.dumps({'suite':'participant-succession','cases':len(results['native']),'failed':failed[:20]},indent=1))
+        if failed:
+            raise SystemExit(1)
     finally:
         if proc:node.down(proc)
         (a.artifacts/'steps.json').write_text(json.dumps(node.steps,indent=2)+'\n')

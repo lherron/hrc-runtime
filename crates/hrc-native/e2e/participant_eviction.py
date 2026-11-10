@@ -8,12 +8,12 @@ placement or continuation changed. Broker-side credential revocation is unsuppor
 import argparse
 import json
 import hashlib
-import shutil
 from pathlib import Path
 import sqlite3
 import subprocess
 from n2_scratch import Scratch
 from n2_participant import register, rows
+import participant_descriptor
 
 
 def main():
@@ -26,8 +26,6 @@ def main():
     s = Scratch(args.scratch_root, args.installed_release, args.aspd_socket,
                 args.binary, args.artifacts, project_id='n2-t12619')
     source_binary = s.binary
-    s.binary = (s.root/'rusthrc').resolve()
-    shutil.copy2(source_binary, s.binary)
     prefix = 'agent:tabularasa:project:n2-t12619:task:'
     held, report = {}, {'binary':{'source':str(source_binary),'sha256':hashlib.sha256(s.binary.read_bytes()).hexdigest()}}
     log = (s.artifacts/'broker.log').open('w')
@@ -41,13 +39,11 @@ def main():
             joined = register(s, scope, case, single=False)
             identity = joined['identity']
             rid = identity['runtimeId']
-            descriptor = s.command('descriptor', ['bun', Path(__file__).with_name('participant_descriptor.mjs'),
-                s.release, s.root], stdin=json.dumps(joined))
+            descriptor = participant_descriptor.scratch(joined, s.root)
             spec = descriptor['harnessInvocation']['startRequest']['spec']
             spec['driver']['kind'] = spec['harness']['driver'] = descriptor['brokerDriver'] = 'noop-driver'
             descriptor['brokerTerminal'] = {'host':'tmux'}
-            descriptor = s.command('rehash', ['bun', Path(__file__).with_name('participant_eviction_broker.mjs'),
-                'descriptor', args.broker_module, s.release], stdin=json.dumps(descriptor))
+            descriptor = participant_descriptor.seal(descriptor)
             endpoint = s.root/(door+'.sock')
             broker = subprocess.Popen(['bun', str(Path(__file__).with_name('participant_eviction_broker.mjs')),
                 'run', str(args.broker_module), '--transport','unix','--socket',str(endpoint),
