@@ -1,7 +1,5 @@
-//! `admin worktrees audit` (worktree-prune.ts `cmdAdminWorktreesPrune` with
-//! `dryRun: true`): never removes anything, so the apply-only branches of the
-//! Bun audit are absent here.
-use super::{database_path, store_error};
+//! Completed-task linked worktree audit and non-force removal (T-13050).
+use crate::client::Daemon;
 use crate::js;
 use crate::process::{Run, run};
 use crate::{Error, Result, parse::Parsed};
@@ -148,43 +146,41 @@ struct Occupancy {
     cwd: Option<String>,
 }
 
-/// Store-owned runtime/identity rows; invocation projections supply cwd.
+/// Daemon-owned, paginated occupancy projection. Older daemons must refuse,
+/// rather than silently discard the cwd part of the safety check.
 fn live_occupancies() -> Result<Vec<Occupancy>> {
-    super::assert_schema_current(&database_path())?;
-    let store = hrc_store::Store::open_readonly(&database_path()).map_err(store_error!())?;
     let mut occupancies = vec![];
-    for runtime in store.runtimes().map_err(store_error!())? {
+    let mut runtimes = Daemon::diagnostic()?.runtimes(vec![
+        ("all".into(), "true".into()),
+        ("omitState".into(), "true".into()),
+        ("worktreeOccupancy".into(), "true".into()),
+    ])?;
+    // Bun listAll orders by created_at/runtime_id, whereas the socket list
+    // prioritizes statuses. Preserve the first occupant named in its report.
+    runtimes.sort_by(|a, b| {
+        (a["createdAt"].as_str(), a["runtimeId"].as_str())
+            .cmp(&(b["createdAt"].as_str(), b["runtimeId"].as_str()))
+    });
+    for runtime in runtimes {
         let runtime_id = runtime["runtimeId"].as_str().unwrap_or_default().to_owned();
         let status = runtime["status"].as_str().unwrap_or_default().to_owned();
         if DEAD_RUNTIME_STATUSES.contains(&status.as_str()) {
             continue;
         }
-        let identity = store
-            .stored_identity(
-                runtime["scopeRef"].as_str().unwrap_or_default(),
-                runtime["laneRef"].as_str().unwrap_or_default(),
-            )
-            .map_err(store_error!())?
-            .unwrap_or(Value::Null);
-        let list = store
-            .invocation_projections(&runtime_id)
-            .map_err(store_error!())?;
-        let chosen = list
-            .iter()
-            .find(|(id, _)| runtime["activeInvocationId"].as_str() == Some(id.as_str()))
-            .or(list.last());
-        let cwd = chosen
-            .and_then(|(_, projection)| projection.as_deref())
-            .filter(|p| !p.is_empty())
-            .and_then(|p| serde_json::from_str::<Value>(p).ok())
-            .and_then(|p| p["process"]["cwd"].as_str().map(str::to_owned))
-            .filter(|cwd| !cwd.is_empty());
+        if !runtime["worktreeOccupancy"].is_object() {
+            return Err(Error::failure(
+                "HRC daemon does not serve worktree occupancy; activate a compatible daemon before pruning",
+            ));
+        }
         occupancies.push(Occupancy {
             runtime_id,
             status,
-            project_id: identity["projectId"].as_str().map(str::to_owned),
-            task_id: identity["taskId"].as_str().map(str::to_owned),
-            cwd,
+            project_id: runtime["identity"]["projectId"].as_str().map(str::to_owned),
+            task_id: runtime["identity"]["taskId"].as_str().map(str::to_owned),
+            cwd: runtime["worktreeOccupancy"]["cwd"]
+                .as_str()
+                .filter(|s| !s.is_empty())
+                .map(str::to_owned),
         });
     }
     Ok(occupancies)
@@ -258,9 +254,15 @@ fn project_root(project: &Value) -> Option<String> {
     Some(resolve(&[&search, &js::display(relative)]))
 }
 
+// Same explicit owner path as the platform recipes (20ce0810/T-12651).
+fn wrkq(args: &[&str]) -> Run {
+    let owner = expand_home("~/.local/bin/wrkq");
+    crate::process::run_bounded(&owner, args, std::time::Duration::from_secs(15))
+}
+
 fn projects() -> Result<Vec<Value>> {
     let label = "wrkq projects failed";
-    let result = run("wrkq", &["projects", "--json"]);
+    let result = wrkq(&["projects", "--json"]);
     if result.status != Some(0) {
         return Err(Error::failure(format!("{label}: {}", diagnostic(&result))));
     }
@@ -274,7 +276,7 @@ fn projects() -> Result<Vec<Value>> {
 /// worktree-prune.ts `defaultTaskReader`: a genuine miss is `None`, any other
 /// failure is infrastructure and must not read as task state.
 fn task_state(task: &str) -> std::result::Result<Option<Value>, String> {
-    let result = run("wrkq", &["cat", task, "--json"]);
+    let result = wrkq(&["cat", task, "--json"]);
     if result.status != Some(0) {
         if result.stderr.to_lowercase().contains("task not found") {
             return Ok(None);
@@ -315,7 +317,12 @@ fn parse_porcelain(output: &str) -> Vec<Worktree> {
     worktrees
 }
 
-pub(super) fn audit(args: &Parsed<'_>) -> Result<()> {
+pub(super) fn command(args: &Parsed<'_>, audit: bool) -> Result<()> {
+    if !audit && args.flag("dry-run") && args.flag("yes") {
+        return Err(Error::failure("--dry-run and --yes are mutually exclusive"));
+    }
+    let apply = !audit && args.flag("yes");
+    let mode = if apply { "apply" } else { "dry-run" };
     let project_filter = args.value("project").filter(|p| !p.is_empty());
     let root_override = args.value("root").filter(|r| !r.is_empty());
     let projects = match (project_filter, root_override) {
@@ -513,27 +520,61 @@ pub(super) fn audit(args: &Parsed<'_>) -> Result<()> {
                 ],
             );
             match merged.status {
-                Some(1) => results.push(skip(
-                    "worktree HEAD is not merged into canonical HEAD".into(),
-                )),
-                Some(0) => results.push(result(
+                Some(1) => {
+                    results.push(skip(
+                        "worktree HEAD is not merged into canonical HEAD".into(),
+                    ));
+                    continue;
+                }
+                Some(0) => {}
+                _ => {
+                    results.push(error(format!(
+                        "cannot verify merge ancestry: {}",
+                        diagnostic(&merged)
+                    )));
+                    continue;
+                }
+            }
+            if !apply {
+                results.push(result(
                     path,
                     branch,
                     &tokens,
                     "would-prune",
                     "completed, clean, and merged; branch will be preserved".into(),
-                )),
-                _ => results.push(error(format!(
-                    "cannot verify merge ancestry: {}",
-                    diagnostic(&merged)
-                ))),
+                ));
+                continue;
             }
+            // Match Bun's final occupancy recheck. Git performs the final dirty
+            // check; deliberately omit --force and preserve every branch ref.
+            if let Some(runtime) = occupying(&live_occupancies()?, &id, path, &tokens) {
+                results.push(skip(format!(
+                    "live runtime {} ({}) occupied the worktree before removal",
+                    runtime.runtime_id, runtime.status
+                )));
+                continue;
+            }
+            let removed = run("git", &["-C", &root, "worktree", "remove", path]);
+            if removed.status != Some(0) {
+                results.push(error(format!(
+                    "git refused worktree removal: {}",
+                    diagnostic(&removed)
+                )));
+                continue;
+            }
+            results.push(result(
+                path,
+                branch,
+                &tokens,
+                "pruned",
+                "removed linked worktree; branch preserved".into(),
+            ));
         }
     }
 
     let count = |d: &str| results.iter().filter(|r| r["disposition"] == d).count();
     let report = json!({
-        "mode": "dry-run",
+        "mode": mode,
         "projectsInspected": inspected,
         "summary": {
             "matched": results.len(),
@@ -543,7 +584,12 @@ pub(super) fn audit(args: &Parsed<'_>) -> Result<()> {
             "errors": count("error"),
         },
     });
-    let (would_prune, skipped, errors) = (count("would-prune"), count("skipped"), count("error"));
+    let (would_prune, pruned, skipped, errors) = (
+        count("would-prune"),
+        count("pruned"),
+        count("skipped"),
+        count("error"),
+    );
     if args.flag("json") {
         let mut ordered = Map::new();
         ordered.insert("mode".into(), report["mode"].clone());
@@ -556,7 +602,7 @@ pub(super) fn audit(args: &Parsed<'_>) -> Result<()> {
         crate::print_json(&Value::Object(ordered));
         return Ok(());
     }
-    let mut lines = vec!["worktree prune (dry-run)".to_owned()];
+    let mut lines = vec![format!("worktree prune ({mode})")];
     for r in &results {
         let tasks = r["taskIds"].as_array().filter(|t| !t.is_empty()).map(|t| {
             format!(
@@ -574,7 +620,7 @@ pub(super) fn audit(args: &Parsed<'_>) -> Result<()> {
         ));
     }
     lines.push(format!(
-        "summary: projects={inspected} matched={} would-prune={would_prune} pruned=0 skipped={skipped} errors={errors}",
+        "summary: projects={inspected} matched={} would-prune={would_prune} pruned={pruned} skipped={skipped} errors={errors}",
         results.len()
     ));
     crate::cli_print!("{}\n", lines.join("\n"));

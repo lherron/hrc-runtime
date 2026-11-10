@@ -79,8 +79,8 @@
     },
     {
       "command": "admin worktrees",
-      "disposition": "POSTPONED",
-      "implementation": "bun"
+      "disposition": "IMPLEMENT",
+      "implementation": "native"
     },
     {
       "command": "admin worktrees audit",
@@ -89,8 +89,8 @@
     },
     {
       "command": "admin worktrees prune",
-      "disposition": "POSTPONED",
-      "implementation": "bun"
+      "disposition": "IMPLEMENT",
+      "implementation": "native"
     },
     {
       "command": "attach",

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""admin runs/broker-verify/events-drain/worktrees-audit: Bun oracle vs rusthrc.
+"""admin runs/broker-verify/events-drain: Bun oracle vs rusthrc; native worktree reads.
 (admin metrics moved to metrics_report.py when its Bun CLI was deleted, T-13047.)
 
 Failure modes: run repair parses Commander's view
@@ -20,6 +20,7 @@ import shutil
 import sqlite3
 import subprocess
 import tempfile
+import time
 
 from metrics_isolation import isolated_suite
 from n5b_common import Runner, normalize, scratch_env
@@ -416,23 +417,52 @@ def main():
     runner.case(['admin', 'events', 'drain', '--source-ref', 'x'])
     runner.case(['admin', 'events', 'drain', 'a', 'b', '--source-ref', 'x'])
 
-    # -- admin worktrees audit -------------------------------------------------------
+    # -- native worktrees (Bun implementation retired in T-13050) ----------------------
+    # The one-time apply differential is in T-13050's artifact directory, outside
+    # verify. This manual suite exercises native reads against an isolated owner.
     alpha = worktree_fixture(store, fix / 'wt', seat)
-    wt_env = scratch_env(args.runtime_root, fix / 'wt' / 'state', WRKQ_DB=str(fix / 'wt' / 'wrkq.db'),
-                         HRC_PROJECT_SEARCH_ROOTS=f' {fix / "wt" / "search"} :/nowhere')
-    audit = ['admin', 'worktrees', 'audit']
-    for flags in ([], ['--json'], ['--output', 'json'], ['--project', 'alpha'], ['--project', 'alpha', '--json'],
-                  ['--project', 'delta'], ['--project', 'epsilon'], ['--project', 'nope'],
-                  ['--project', 'alpha', '--root', str(alpha)], ['--project', 'zeta', '--root', str(alpha), '--json'],
-                  ['--project', 'x', '--root', str(fix / 'wt' / 'missing')], ['--project', 'x', '--root', '.'],
-                  ['--project', 'x', '--root', 'crates/../crates/'], ['--root', str(alpha)], ['--project', ''], ['extra']):
-        runner.case(audit + flags, env=wt_env)
-    unmigrated = dict(wt_env, WRKQ_DB=str(fix / 'wt' / 'unmigrated.db'))
-    runner.case(audit, name='[wrkq refuses] admin worktrees audit', env=unmigrated)
-    runner.case(audit + ['--project', 'alpha', '--root', str(alpha)], name='[wrkq refuses cat] audit --project alpha --root', env=unmigrated)
-    runner.case(audit + ['--project', 'alpha', '--root', str(alpha), '--json'], name='[wrkq refuses cat] audit --json', env=unmigrated)
-    runner.case(audit + ['--project', 'alpha'], name='[no store] audit --project alpha',
-                env=dict(wt_env, HRC_STATE_DIR=str(fix / 'wt' / 'no-state')))
+    wt_run = fix / 'wt-run'
+    wt_run.mkdir()
+    wt_env = scratch_env(wt_run, fix / 'wt' / 'state', WRKQ_DB=str(fix / 'wt' / 'wrkq.db'),
+                         HRC_WRKQ_DB=str(fix / 'wt' / 'wrkq.db'))
+    with sqlite3.connect(fix / 'wt' / 'state' / 'state.sqlite') as db:
+        db.execute("UPDATE runtimes SET status='dead',runtime_state_json='{}'")
+    daemon_env = {k: v for k, v in wt_env.items() if not k.startswith(
+        ('HARNESS', 'TMUX', 'AGENT', 'ASP_', 'CLAUDE', 'CODEX', 'XPC_'))}
+    daemon_env['HRC_LAUNCHD_LABEL'] = 'scratch.worktrees.t13050'
+    with (fix / 'wt-serve.log').open('w') as log:
+        daemon = subprocess.Popen([str(args.binary.resolve()), 'server', 'serve'], env=daemon_env,
+                                  stdin=subprocess.DEVNULL, stdout=log, stderr=log)
+        try:
+            for _ in range(100):
+                if (wt_run / 'hrc.sock').exists():
+                    break
+                assert daemon.poll() is None, (fix / 'wt-serve.log').read_text()
+                time.sleep(.1)
+            assert (wt_run / 'hrc.sock').exists()
+            # Startup legitimately stales inert fixture substrates; restore the
+            # declared read fixtures after boot, with current activity stamps.
+            with sqlite3.connect(fix / 'wt' / 'state' / 'state.sqlite') as db:
+                for wt_rid, status in [('rt-wt-cwd', 'ready'), ('rt-wt-ident', 'busy'), ('rt-wt-last', 'ready')]:
+                    db.execute("UPDATE runtimes SET status=?,last_activity_at=strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE runtime_id=?", (status, wt_rid))
+            for verb in ('audit', 'prune'):
+                argv = ['admin', 'worktrees', verb, '--project', 'alpha', '--root', str(alpha), '--json']
+                observed = runner.observe(argv, True, wt_env)
+                report = json.loads(observed['stdout'])
+                good = observed['exit'] == 0 and report['mode'] == 'dry-run' and report['summary'] == dict(
+                    matched=13, wouldPrune=2, pruned=0, skipped=11, errors=0)
+                runner.results.append(dict(case='native worktrees '+verb, argv=argv, subject=observed, **{'pass':good}))
+            argv = ['admin', 'worktrees', 'prune', '--project', 'alpha', '--root', str(alpha), '--yes', '--json']
+            absent = runner.observe(argv, True, dict(wt_env, HRC_RUNTIME_DIR=str(fix / 'absent-run')))
+            runner.results.append(dict(case='missing daemon refuses apply', argv=argv, subject=absent,
+                                       **{'pass':absent['exit'] == 1 and (fix / 'wt' / 'alpha-wt' / 'w1').exists()}))
+        finally:
+            daemon.terminate()
+            try:
+                daemon.wait(timeout=10)
+            except subprocess.TimeoutExpired:
+                daemon.kill()
+                daemon.wait()
 
     # -- the seat is untouched -------------------------------------------------------
     after = seat_snapshot(store, rid, host)

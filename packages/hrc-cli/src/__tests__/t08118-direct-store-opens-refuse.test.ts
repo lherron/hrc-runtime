@@ -1,14 +1,6 @@
 import { Database } from 'bun:sqlite'
 import { afterAll, afterEach, beforeEach, describe, expect, it, spyOn } from 'bun:test'
-import {
-  mkdirSync,
-  mkdtempSync,
-  readFileSync,
-  readdirSync,
-  rmSync,
-  statSync,
-  writeFileSync,
-} from 'node:fs'
+import { mkdtempSync, readFileSync, readdirSync, rmSync, statSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 
@@ -27,7 +19,6 @@ import { cmdEventsDrain } from '../events-drain'
 import { cmdMonitorShow } from '../monitor-show'
 import { cmdMonitorWait } from '../monitor/wait-command'
 import { cmdMonitorWatch } from '../monitor/watch-command'
-import { pruneCompletedTaskWorktrees } from '../worktree-prune'
 import { startOldEngineDaemon } from './old-engine-daemon.js'
 
 // File-local fake: cmdMonitorShow calls discoverSocket() outside its try, so
@@ -177,34 +168,6 @@ describe('T-08118 the remaining direct-open commands refuse a behind store', () 
     )
     expect(storeMigrationIds(dbPath)).not.toContain(REPLAYABLE_MIGRATION)
   })
-
-  it('hrc worktree prune', async () => {
-    const { dbPath } = behindStateRoot()
-    const projectRoot = mkdtempSync(join(tmpdir(), 'hrc-t08118-wt-'))
-    cleanups.push(() => rmSync(projectRoot, { recursive: true, force: true }))
-    mkdirSync(join(projectRoot, '.git'), { recursive: true })
-    const worktreePath = join(projectRoot, 'wt-T-08118')
-    mkdirSync(worktreePath, { recursive: true })
-    writeFileSync(join(worktreePath, '.git'), `gitdir: ${join(projectRoot, '.git')}\n`)
-
-    await expectSchemaRefusal(() =>
-      pruneCompletedTaskWorktrees(
-        { projectId: 'demo', projectRoot },
-        {
-          run: (_command, args) =>
-            args.includes('list')
-              ? {
-                  status: 0,
-                  stdout: `worktree ${projectRoot}\nbranch refs/heads/main\n\nworktree ${worktreePath}\nbranch refs/heads/clod-T-08118\n\n`,
-                  stderr: '',
-                }
-              : { status: 0, stdout: '', stderr: '' },
-          readTask: (taskId) => ({ id: taskId, state: 'completed' }) as never,
-        }
-      )
-    )
-    expect(storeMigrationIds(dbPath)).not.toContain(REPLAYABLE_MIGRATION)
-  })
 })
 
 /**
@@ -240,7 +203,7 @@ describe('T-08118 conformance: no hrc-cli source opens the store migrating', () 
     expect(offenders).toEqual([])
     // A guard that passes because it inspected nothing is not a guard: the
     // call sites it is meant to police must actually be present.
-    expect(seen.length).toBeGreaterThanOrEqual(6)
+    expect(seen.length).toBeGreaterThanOrEqual(5)
   })
 })
 
@@ -351,6 +314,6 @@ describe('T-08118 the refusing-commands list names real commands', () => {
     // real command path is worse than no list: it sends them to
     // "hrc: unknown command".
     expect(unresolved).toEqual([])
-    expect(DIRECT_STORE_OPEN_COMMANDS.length).toBe(4)
+    expect(DIRECT_STORE_OPEN_COMMANDS.length).toBe(3)
   })
 })

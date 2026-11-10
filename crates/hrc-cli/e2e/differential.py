@@ -149,7 +149,7 @@ def main():
         'n5b_monitor_reads.py': 'monitor events|monitor transcript|monitor stats|monitor show|monitor session-report',
         'n5b_monitor_wait.py': 'monitor wait', 'n5b_monitor_watch.py': 'monitor watch',
         'n5b_local.py': 'info|doctor|runtime diagnostics|runtime prune|runtime sweep|server subscribers|server tmux status',
-        'n5b_admin.py': 'admin broker-verify candidates|admin events drain|admin runs reconcile-active|admin runs sweep-zombies|admin worktrees audit',
+        'n5b_admin.py': 'admin broker-verify candidates|admin events drain|admin runs reconcile-active|admin runs sweep-zombies|admin worktrees|admin worktrees audit|admin worktrees prune',
         'metrics_report.py': 'admin metrics|admin metrics report|admin metrics routes',
     }
     suites = {command: suite for suite, commands in families.items() for command in commands.split('|')}
@@ -196,8 +196,6 @@ def main():
                 row.update(suite='n5b_monitor_wait.py', reason='Native filtered lifecycle reads, high-water cursors, task predicates and row projection.')
             elif '/monitor/' in path or path.endswith('/monitor-show.ts'):
                 row.update(suite='n5b_monitor_wait.py' if '/wait-' in path else 'n5b_monitor_watch.py' if '/watch-' in path else 'n5b_monitor_reads.py', reason='Native direct-store monitor projection through hrc-store.')
-            elif path.endswith('/worktree-prune.ts'):
-                row.update(suite='n5b_admin.py', reason='Native worktrees audit reads occupancy; apply/prune stays postponed.')
             elif '/hrc-capture-verifier/' in path and (item['kind'] == 'direct-store-open' or symbol == 'listCandidates.rows'):
                 row.update(suite='n5b_admin.py', reason='Native broker-verify candidates uses the readonly store; full verification stays postponed.')
             else:

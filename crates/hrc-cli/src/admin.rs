@@ -18,7 +18,8 @@ pub(crate) fn dispatch(path: &str, args: &Parsed<'_>) -> Option<Result<()>> {
         "admin runs reconcile-active" => run_repair::command("reconcile-active"),
         "admin broker-verify candidates" => broker_verify::candidates(args),
         "admin events drain" => events_drain::command(args),
-        "admin worktrees audit" => worktrees::audit(args),
+        "admin worktrees audit" => worktrees::command(args, true),
+        "admin worktrees prune" => worktrees::command(args, false),
         _ => return None,
     })
 }
@@ -85,52 +86,4 @@ fn sqlite_message(text: &str) -> String {
         .and_then(|rest| rest.split_once(": "))
         .map_or(text, |(_, message)| message)
         .to_owned()
-}
-
-/// hrc-store-sqlite `assertStoreSchemaCurrent`, the refusal every non-owning
-/// Bun open makes before reading a store this release has not migrated.
-fn assert_schema_current(path: &std::path::Path) -> Result<()> {
-    let (store_version, pending) = if path.exists() {
-        let state = hrc_store::read_schema_state(path);
-        if state["readable"] != true {
-            return Err(Error::failure(state["error"].as_str().unwrap_or_default()));
-        }
-        let pending: Vec<String> = state["pending"]
-            .as_array()
-            .into_iter()
-            .flatten()
-            .filter_map(|p| p.as_str().map(str::to_owned))
-            .collect();
-        (state["storeVersion"].as_str().map(str::to_owned), pending)
-    } else {
-        // Bun's open creates the empty file first; the refusal is the same.
-        (
-            None,
-            hrc_store::migration_ids().map(str::to_owned).collect(),
-        )
-    };
-    if pending.is_empty() {
-        return Ok(());
-    }
-    let release = hrc_store::migration_ids().next_back().unwrap_or("none");
-    Err(Error::failure(match store_version {
-        None => format!(
-            "store has no HRC schema (0 of {} migrations applied); it is not an HRC store, or no daemon has ever opened it. Refusing to create one from a non-owning open",
-            pending.len()
-        ),
-        Some(version) => {
-            let behind = if version == release {
-                format!(
-                    "store schema {release} is missing {} migration(s) this release carries",
-                    pending.len()
-                )
-            } else {
-                format!("store schema {version} is behind this release's {release}")
-            };
-            format!(
-                "{behind}; the daemon has not been restarted since install — run `hrc server restart` (pending: {})",
-                pending.join(", ")
-            )
-        }
-    }))
 }

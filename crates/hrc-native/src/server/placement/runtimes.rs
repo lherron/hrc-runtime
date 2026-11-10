@@ -122,6 +122,7 @@ fn hydrate_page(
     db: &hrc_store::Store,
     rows: &mut [Value],
     omit_state: bool,
+    worktree_occupancy: bool,
 ) -> Result<(), ApiError> {
     for row in rows {
         let id = row["runtimeId"].as_str().unwrap();
@@ -132,6 +133,27 @@ fn hydrate_page(
         }
         .ok_or_else(|| anyhow::anyhow!("runtime disappeared during pagination"))?;
         attach_identity(db, row);
+        if worktree_occupancy {
+            let invocations = db.invocation_projections(row["runtimeId"].as_str().unwrap())?;
+            let chosen = invocations
+                .iter()
+                .find(|(id, _)| row["activeInvocationId"].as_str() == Some(id.as_str()))
+                .or(invocations.last());
+            let cwd = chosen
+                .and_then(|(_, p)| p.as_deref())
+                .and_then(|p| serde_json::from_str::<Value>(p).ok())
+                .and_then(|p| {
+                    p["process"]["cwd"]
+                        .as_str()
+                        .filter(|s| !s.is_empty())
+                        .map(str::to_owned)
+                });
+            let mut occupancy = json!({});
+            if let Some(cwd) = cwd {
+                occupancy["cwd"] = cwd.into();
+            }
+            row["worktreeOccupancy"] = occupancy;
+        }
     }
     Ok(())
 }
@@ -240,6 +262,7 @@ pub fn query(
     // Opt-in lean rows: runtimeStateJson is never read, parsed or returned
     // (T-12417). praesidium-kernel deletes the field on arrival.
     let omit_state = omit_state(q)?;
+    let worktree_occupancy = boolean(q, "worktreeOccupancy")?.unwrap_or(false);
     let explicit_all = boolean(q, "all")?;
     let all = explicit_all.unwrap_or(mode == Terminal::Include);
     // Recent: the live set plus terminal rows active since `recent_since`.
@@ -391,7 +414,7 @@ pub fn query(
         None
     };
     if paginate {
-        hydrate_page(&db, &mut rows, omit_state)?;
+        hydrate_page(&db, &mut rows, omit_state, worktree_occupancy)?;
     }
     let mut trips=db.sqlite.prepare("SELECT runtime_id,first_turn_missing_tripped_at,trip_event_seq,generation,bundle_dir FROM runtime_first_turn_watch WHERE first_turn_missing_tripped_at IS NOT NULL ORDER BY first_turn_missing_tripped_at ASC").map_err(anyhow::Error::from)?;
     let trips = trips

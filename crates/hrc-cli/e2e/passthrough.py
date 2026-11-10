@@ -39,7 +39,7 @@ def main():
         link = root / 'rusthrc'
         link.symlink_to(native)
         env = dict(os.environ, HRC_RUNTIME_DIR=str(root / 'run'), HRC_STATE_DIR=str(root / 'state'), NO_COLOR='1', FORCE_COLOR='0', HRC_METRICS='0')
-        cases = [['session', 'meta', 'set'], ['session', 'meta', 'clear'], ['session', 'retitle'], ['monitor', 'search'], ['federation', 'retire'], ['admin', 'worktrees', 'prune', '--help'], ['runtime', 'prune', '--wat']]
+        cases = [['session', 'meta', 'set'], ['session', 'meta', 'clear'], ['session', 'retitle'], ['monitor', 'search'], ['federation', 'retire'], ['runtime', 'prune', '--wat']]
         for argv in cases:
             observed = []
             for command in (['bun', str(args.oracle.resolve())], [str(link)]):

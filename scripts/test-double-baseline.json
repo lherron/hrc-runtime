@@ -2,7 +2,6 @@
   "nonconforming": {
     "packages/hrc-cli/src/__tests__/fake-daemon.ts": 2,
     "packages/hrc-cli/src/__tests__/t06613-target-locate-federation.test.ts": 1,
-    "packages/hrc-cli/src/__tests__/worktree-prune.test.ts": 1,
     "packages/hrc-cli/src/turn/__tests__/stacked-summary.test.ts": 1,
     "packages/hrc-cli/src/turn/__tests__/task-state.test.ts": 1,
     "packages/hrc-server/src/__tests__/broker-claimed-lease-reaping.test.ts": 1,

@@ -3,7 +3,6 @@ import { type Command, Option } from 'commander'
 
 import { cmdPeek, cmdSend, cmdSummon } from '../target/live-commands.js'
 import { cmdTurn } from '../turn/commands/turn.js'
-import { cmdAdminWorktreesPrune } from '../worktree-prune.js'
 import {
   assertNoUnknownOptions,
   rawArgvForVerb,
@@ -148,6 +147,7 @@ Semantics:
     .command('runs')
     .description('repair run records (sweep zombies, reconcile active)')
 
+  // Build-time declarations for the native-only operator maintenance commands.
   const adminWorktrees = admin
     .command('worktrees')
     .description('audit and prune completed-task linked worktrees')
@@ -158,10 +158,6 @@ Semantics:
     .option('--project <id>', 'inspect one registered project')
     .option('--root <path>', 'override its canonical root (requires --project)')
     .option('--json', 'output as JSON')
-    .action(async (...actionArgs: unknown[]) => {
-      const cmd = actionArgs[actionArgs.length - 1] as Command
-      cmdAdminWorktreesPrune({ ...cmd.opts(), dryRun: true })
-    })
 
   adminWorktrees
     .command('prune')
@@ -171,10 +167,6 @@ Semantics:
     .option('--dry-run', 'preview without removing worktrees (default)')
     .option('--yes', 'remove eligible worktrees without force; branches are preserved')
     .option('--json', 'output as JSON')
-    .action(async (...actionArgs: unknown[]) => {
-      const cmd = actionArgs[actionArgs.length - 1] as Command
-      cmdAdminWorktreesPrune(cmd.opts())
-    })
 
   adminRuns
     .command('sweep-zombies')

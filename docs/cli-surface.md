@@ -225,7 +225,11 @@ server pages. The
 `hrc ls runtimes` orientation alias accepts the same filters.
 At the HTTP layer, `GET /v1/runtimes` defaults to 100 rows, accepts
 `limit=1..500`, and returns an opaque continuation in
-`x-hrc-next-cursor` for the next request's `cursor` query parameter.
+`x-hrc-next-cursor` for the next request's `cursor` query parameter. Operator-only worktree audit/prune requests
+`worktreeOccupancy=true` with `all=true&omitState=true`. Each selected row then
+carries a `worktreeOccupancy` object, with `cwd` from the active invocation or
+last invocation by creation time/id when available. Older daemons lacking that
+object on live rows refuse native pruning; the CLI never opens the store.
 
 `runtime inspect <runtimeId> [--probe] [--json]` preserves nested `hrc` and
 `broker` authority views; the broker view retains its `broker` or `hrc-derived`
