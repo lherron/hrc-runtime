@@ -419,7 +419,9 @@ async fn follow(server: &Shared, runtime_id: &str, socket: &Path) -> Result<()> 
             let db = server.store.lock().unwrap();
             db::runtime(&db.sqlite, runtime_id)?.is_some_and(|rt| rt.active_run_id.is_some())
         };
-        if active {
+        // An HRC terminate (including context invalidation) owns settlement
+        // and its terminal event. The child exit it causes is not death.
+        if active && !controller::is_terminating(server, runtime_id) {
             super::lease::reconcile_liveness(server, runtime_id).await?;
         }
     }
