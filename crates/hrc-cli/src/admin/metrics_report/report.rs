@@ -1,10 +1,15 @@
 //! `admin metrics report` (metrics-report.ts).
 use super::records::{Cli, Record, Server, parse_record};
-use super::{cutoff, file_could_contain_window, file_lines, metrics_dir, parse_limit, rows, stats};
+use super::{
+    cutoff, file_could_contain_window, for_each_line, metrics_dir, parse_limit, rows, stats,
+};
 use crate::js::{self, json_number as num, locale_cmp};
 use crate::{Error, Result, parse::Parsed};
 use serde_json::{Map, Value, json};
-use std::{cmp::Ordering, collections::HashMap};
+use std::{
+    cmp::Ordering,
+    collections::{BinaryHeap, HashMap},
+};
 
 fn sort_numbers(samples: &[f64]) -> Vec<f64> {
     let mut sorted = samples.to_vec();
@@ -105,22 +110,22 @@ pub(in crate::admin) fn report(args: &Parsed<'_>) -> Result<()> {
     }
     selected.sort();
 
-    let (mut cli, mut server, mut counters, mut launches, mut spans) =
-        (vec![], vec![], vec![], vec![], vec![]);
+    let (mut cli, mut counters, mut launches, mut spans) = (vec![], vec![], vec![], vec![]);
+    let mut server = ServerFold::new(largest_limit);
     for name in &selected {
-        for line in file_lines(&dir.path.join(name)) {
-            if js::trim(&line).is_empty() {
-                continue;
+        for_each_line(&dir.path.join(name), |line| {
+            if js::trim(line).is_empty() {
+                return;
             }
-            let Ok(value) = serde_json::from_str::<Value>(&line) else {
-                continue;
+            let Ok(value) = serde_json::from_str::<Value>(line) else {
+                return;
             };
             let Some((ts, record)) = parse_record(&value) else {
-                continue;
+                return;
             };
             let at = js::parse_date(&ts);
             if at.is_nan() || at < cutoff {
-                continue;
+                return;
             }
             match record {
                 Record::Cli(r) => cli.push(r),
@@ -129,20 +134,13 @@ pub(in crate::admin) fn report(args: &Parsed<'_>) -> Result<()> {
                 Record::Launch(r) => launches.push(r),
                 Record::Span(r) => spans.push(r),
             }
-        }
+        });
     }
 
     let cli_rpc_ids: std::collections::HashSet<&str> = cli
         .iter()
         .flat_map(|r| r.rpc.iter().map(|rpc| rpc.id.as_str()))
         .collect();
-    let mut server_by_req: HashMap<&str, f64> = HashMap::new();
-    for record in &server {
-        if let Some(id) = record.req_id.as_deref().filter(|id| !id.is_empty()) {
-            *server_by_req.entry(id).or_insert(0.) += record.ms;
-        }
-    }
-
     let mut commands = Groups::new();
     for record in &cli {
         commands.push(record.command.clone(), record);
@@ -159,31 +157,15 @@ pub(in crate::admin) fn report(args: &Parsed<'_>) -> Result<()> {
         })
         .collect();
 
-    let mut routes = Groups::new();
-    for record in &server {
-        let listener = record
-            .listener
-            .as_ref()
-            .map(|l| format!("{l} "))
-            .unwrap_or_default();
-        routes.push(
-            format!("{listener}{} {}", record.method, record.route),
-            record,
-        );
-    }
-    let mut routes: Vec<(String, Vec<&Server>)> = routes.order;
+    let mut routes = server.routes;
     routes.sort_by(|a, b| locale_cmp(&a.0, &b.0));
     let routes: Vec<Value> = routes
         .into_iter()
         .map(|(route, group)| {
-            let sampled = group.iter().filter(|r| r.weight > 1.).count();
-            let (p50, p95, max) =
-                weighted_percentile_stats(&group.iter().map(|r| (r.ms, r.weight)).collect::<Vec<_>>());
-            let total = group.iter().fold(0., |t, r| r.sized().map_or(t, |b| t + b * r.weight));
-            let biggest = group.iter().fold(0., |m: f64, r| r.sized().map_or(m, |b| m.max(b)));
-            let mut row = json!({"route":route,"count":num(group.iter().fold(0., |t, r| t + r.weight)),"ms":stats(p50,p95,max),"bytes":{"total":num(total),"max":num(biggest)}});
-            if sampled > 0 {
-                row["sampled"] = sampled.into();
+            let (p50, p95, max) = weighted_percentile_stats(&group.samples);
+            let mut row = json!({"route":route,"count":num(group.count),"ms":stats(p50,p95,max),"bytes":{"total":num(group.total),"max":num(group.biggest)}});
+            if group.sampled > 0 {
+                row["sampled"] = group.sampled.into();
             }
             row
         })
@@ -237,7 +219,7 @@ pub(in crate::admin) fn report(args: &Parsed<'_>) -> Result<()> {
             let server_ms = r
                 .rpc
                 .iter()
-                .fold(0., |t, rpc| t + server_by_req.get(rpc.id.as_str()).copied().unwrap_or(0.));
+                .fold(0., |t, rpc| t + server.ms_by_req.get(rpc.id.as_str()).copied().unwrap_or(0.));
             json!({"command":r.command,"ts":r.ts,"durMs":num(r.dur),"serverMs":num(server_ms),"transportMs":num(rpc_ms - server_ms),"renderMs":num(r.dur - rpc_ms)})
         })
         .collect();
@@ -247,29 +229,23 @@ pub(in crate::admin) fn report(args: &Parsed<'_>) -> Result<()> {
         .iter()
         .map(|r| json!({"command":r.command,"ts":r.ts,"durMs":num(r.dur),"stdoutBytes":num(r.out)}))
         .collect();
-    let mut sized: Vec<(&Server, f64)> = server
-        .iter()
-        .filter_map(|r| r.sized().map(|b| (r, b)))
-        .collect();
-    sized.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(Ordering::Equal));
-    let largest_server: Vec<Value> = sized[..take(largest_limit, sized.len())]
-        .iter()
-        .map(|(r, bytes)| {
-            let mut row = json!({"route":format!("{} {}", r.method, r.route),"ts":r.ts,"ms":num(r.ms),"bytes":num(*bytes)});
-            if let Some(id) = &r.req_id {
-                row["reqId"] = id.clone().into();
+    let mut largest: Vec<Largest> = server.largest.into_vec();
+    largest.sort();
+    let largest_server: Vec<Value> = largest
+        .into_iter()
+        .map(|r| {
+            let mut row = json!({"route":r.route,"ts":r.ts,"ms":num(r.ms),"bytes":num(r.bytes)});
+            if let Some(id) = r.req_id {
+                row["reqId"] = id.into();
             }
             row
         })
         .collect();
     let uncorrelated = server
+        .weight_by_req
         .iter()
-        .filter(|r| {
-            r.req_id
-                .as_deref()
-                .is_none_or(|id| id.is_empty() || !cli_rpc_ids.contains(id))
-        })
-        .fold(0., |t, r| t + r.weight);
+        .filter(|(id, _)| !cli_rpc_ids.contains(id.as_str()))
+        .fold(server.weight_without_req, |t, (_, w)| t + w);
 
     let report = json!({
         "diagnostics": {"metricsDirExists": dir.exists, "filesScanned": selected.len()},
@@ -422,4 +398,127 @@ fn print_report(report: &Value) {
         s(&report["uncorrelatedServerCount"])
     );
     crate::cli_print!("{out}");
+}
+
+/// What `report` keeps of the server records, folded as each day file streams
+/// rather than held (a native day file is ~700k requests): per-route latency
+/// samples and sums accumulated in record order, as the JavaScript reduces
+/// did; the largest payloads; request-id joins.
+struct ServerFold {
+    routes: Vec<(String, RouteFold)>,
+    index: HashMap<String, usize>,
+    largest: BinaryHeap<Largest>,
+    largest_limit: usize,
+    seq: u64,
+    ms_by_req: HashMap<String, f64>,
+    /// Integer sample weights: their sums are exact in any order.
+    weight_by_req: HashMap<String, f64>,
+    weight_without_req: f64,
+}
+#[derive(Default)]
+struct RouteFold {
+    samples: Vec<(f64, f64)>,
+    count: f64,
+    total: f64,
+    biggest: f64,
+    sampled: usize,
+}
+/// A largest-payload candidate. Orders as the report lists them, bytes
+/// descending and then first seen (a stable sort), so the heap's maximum is
+/// the candidate to drop.
+struct Largest {
+    bytes: f64,
+    seq: u64,
+    route: String,
+    ts: String,
+    ms: f64,
+    req_id: Option<String>,
+}
+impl Ord for Largest {
+    fn cmp(&self, other: &Self) -> Ordering {
+        other
+            .bytes
+            .partial_cmp(&self.bytes)
+            .unwrap_or(Ordering::Equal)
+            .then(self.seq.cmp(&other.seq))
+    }
+}
+impl PartialOrd for Largest {
+    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
+        Some(self.cmp(other))
+    }
+}
+impl PartialEq for Largest {
+    fn eq(&self, other: &Self) -> bool {
+        self.cmp(other) == Ordering::Equal
+    }
+}
+impl Eq for Largest {}
+
+impl ServerFold {
+    fn new(largest_limit: f64) -> Self {
+        Self {
+            routes: vec![],
+            index: HashMap::new(),
+            largest: BinaryHeap::new(),
+            largest_limit: largest_limit as usize,
+            seq: 0,
+            ms_by_req: HashMap::new(),
+            weight_by_req: HashMap::new(),
+            weight_without_req: 0.,
+        }
+    }
+    fn push(&mut self, record: Server) {
+        let listener = record
+            .listener
+            .as_ref()
+            .map(|l| format!("{l} "))
+            .unwrap_or_default();
+        let key = format!("{listener}{} {}", record.method, record.route);
+        let slot = match self.index.get(&key) {
+            Some(slot) => *slot,
+            None => {
+                self.index.insert(key.clone(), self.routes.len());
+                self.routes.push((key, RouteFold::default()));
+                self.routes.len() - 1
+            }
+        };
+        let group = &mut self.routes[slot].1;
+        group.samples.push((record.ms, record.weight));
+        group.count += record.weight;
+        if record.weight > 1. {
+            group.sampled += 1;
+        }
+        let sized = record.sized();
+        if let Some(bytes) = sized {
+            group.total += bytes * record.weight;
+            group.biggest = group.biggest.max(bytes);
+        }
+        match record.req_id.as_deref().filter(|id| !id.is_empty()) {
+            Some(id) => {
+                *self.ms_by_req.entry(id.to_owned()).or_insert(0.) += record.ms;
+                *self.weight_by_req.entry(id.to_owned()).or_insert(0.) += record.weight;
+            }
+            None => self.weight_without_req += record.weight,
+        }
+        self.seq += 1;
+        if let Some(bytes) = sized
+            && self.largest_limit > 0
+        {
+            let candidate = Largest {
+                bytes,
+                seq: self.seq,
+                route: format!("{} {}", record.method, record.route),
+                ts: record.ts,
+                ms: record.ms,
+                req_id: record.req_id,
+            };
+            if self.largest.len() < self.largest_limit {
+                self.largest.push(candidate);
+            } else if self.largest.peek().is_some_and(|worst| candidate < *worst) {
+                self.largest.pop();
+                self.largest.push(candidate);
+            }
+        }
+    }
 }

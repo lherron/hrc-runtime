@@ -16,7 +16,7 @@ cardo-host = { git = "https://github.com/lherron/cardo", rev = "0dd6203856203854
 cardo-runtime-tokio = { git = "https://github.com/lherron/cardo", rev = "0dd6203856203854b97de3e9e3793c7a41cd4020" }
 serde = { version = "1", features = ["derive"] }
 # Record JSON is fingerprinted in its own key order (collective_history.rs).
-serde_json = { version = "1", features = ["preserve_order", "raw_value"] }
+serde_json = { version = "1", features = ["preserve_order", "raw_value", "float_roundtrip"] }
 reqwest = { version = "0.12", default-features = false, features = ["blocking", "json"] }
 chrono = { version = "0.4", default-features = false, features = ["clock"] }
 crossbeam-channel = "0.5"

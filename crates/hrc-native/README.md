@@ -334,9 +334,11 @@ python3 crates/hrc-native/e2e/front_door.py --rusthrc crates/target/debug/rusthr
 Every main-listener request, including pass-through traffic and refusals, uses
 Bun's normalized route labels, client strata and weighted metric schema in
 `<stateRoot>/metrics/rusthrc-server-<day>.ndjson`, with `servedBy` identifying
-`native` or `bun`. Rust prunes only its own filename prefix. The writer flushes asynchronously and
-on clean shutdown, bounds the queue, caps each day at 128 MiB, and retains 14
-days by file mtime. L3 logs write every completed non-stream request and
+`native` or `bun`. The writer flushes asynchronously and
+on clean shutdown, bounds the queue, and caps each day at 128 MiB. Once a UTC day
+it prunes every writer's dated day file (`<writer>-YYYY-MM-DD.ndjson`: its own,
+the CLI's `cli-*`, a stopped Bun daemon's `server-*`, `script-*`) older than 14
+days by file mtime; other names are never touched. L3 logs write every completed non-stream request and
 stream open/close events. `HRC_METRICS=0` disables metrics as it does in Bun.
 The exact-route inventory is generated from Bun source
 at build time. `e2e/accounting.py` compares a real Bun/native request mix through

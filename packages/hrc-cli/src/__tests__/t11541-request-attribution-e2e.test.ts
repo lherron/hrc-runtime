@@ -5,8 +5,8 @@
  * caller and the event ingest listener must each land in the server metric
  * stream AND the daemon log under the same `client` (`<name>/<version>` from
  * User-Agent) and `listener`; every completed non-stream request writes
- * a line and streams log open/close; and `hrc admin metrics routes` must
- * report weighted counts that match both the raw file and the truth.
+ * a line and streams log open/close. (The `hrc admin metrics routes` rollup is
+ * native since T-13047: crates/hrc-cli/e2e/metrics_report.py.)
  * Never the live daemon.
  *
  * Failure modes: var/wrkq-artifacts/T-11541/failure-modes.md.
@@ -162,18 +162,8 @@ async function waitForRecords(scratch: Scratch, predicate: (records: RawRecord[]
   )
 }
 
-type RollupRow = {
-  listener?: string
-  method?: string
-  route?: string
-  client?: string
-  count: number
-  records: number
-  errors: number
-}
-
 describe('T-11541 caller-attributed request metrics (scratch daemon)', () => {
-  it('attributes CLI, SDK, raw and ingest callers and rolls them up with weighted counts', async () => {
+  it('attributes CLI, SDK, raw and ingest callers with weighted counts', async () => {
     const scratch = await makeScratch()
     await startDaemon(scratch)
 
@@ -320,92 +310,5 @@ describe('T-11541 caller-attributed request metrics (scratch daemon)', () => {
       expect(loggedClients).toContain(client)
       expect(clients).toContain(client)
     }
-
-    // The rollup reads the same day files and reports the same weighted counts.
-    const rollup = await hrc(scratch, [
-      'admin',
-      'metrics',
-      'routes',
-      '--since',
-      '1h',
-      '--by',
-      'route,client',
-      '--json',
-    ])
-    expect(rollup.stderr).toBe('')
-    expect(rollup.exitCode).toBe(0)
-    const report = JSON.parse(rollup.stdout) as { rows: RollupRow[]; by: string[] }
-    expect(report.by).toEqual(['route', 'client'])
-    const row = (client: string, route: string, listener = 'main') =>
-      report.rows.find(
-        (candidate) =>
-          candidate.client === client &&
-          candidate.route === route &&
-          candidate.listener === listener
-      )
-    expect(row('t11541-sdk/1.0', '/v1/health')?.count).toBe(sdkWeight)
-    expect(row('t11541-sdk/1.0', '/v1/health')?.records).toBe(sdkRecords.length)
-    expect(row(cliClient ?? '', '/v1/status')?.count).toBeGreaterThanOrEqual(1)
-    expect(row(`Bun/${Bun.version}`, '/v1/health')?.count).toBe(1)
-    expect(row('t11541-raw/1', '/v1/runtimes/:runtimeId/seat')?.errors).toBe(1)
-    expect(row('hrc-server/t11541', '/v1/ingest', 'ingest')?.count).toBe(1)
-
-    // By client alone: one row per caller, summed over its routes.
-    const byClient = await hrc(scratch, [
-      'admin',
-      'metrics',
-      'routes',
-      '--since',
-      '1h',
-      '--by',
-      'client',
-      '--json',
-    ])
-    expect(byClient.exitCode).toBe(0)
-    const clientRows = (JSON.parse(byClient.stdout) as { rows: RollupRow[] }).rows
-    const sdkTotal = records
-      .filter((record) => record.client === 't11541-sdk/1.0')
-      .reduce((sum, record) => sum + (record.sampleWeight ?? 1), 0)
-    expect(clientRows.find((candidate) => candidate.client === 't11541-sdk/1.0')?.count).toBe(
-      sdkTotal
-    )
-    expect(clientRows.every((candidate) => candidate.route === undefined)).toBe(true)
-
-    // --idle lists registered routes nobody called; a called route is not idle.
-    const idle = await hrc(scratch, [
-      'admin',
-      'metrics',
-      'routes',
-      '--since',
-      '1h',
-      '--idle',
-      '--json',
-    ])
-    expect(idle.exitCode).toBe(0)
-    const idleRows = (
-      JSON.parse(idle.stdout) as {
-        idle: { listener: string; route: string; method: string }[]
-      }
-    ).idle
-    expect(idleRows).toContainEqual({
-      listener: 'main',
-      method: 'POST',
-      route: '/v1/runtimes/sweep',
-    })
-    expect(idleRows).toContainEqual({
-      listener: 'main',
-      method: 'GET',
-      route: '/v1/presentation/runtimes',
-    })
-    expect(idleRows).toContainEqual({
-      listener: 'peer',
-      method: 'POST',
-      route: '/v1/federation/locate',
-    })
-    expect(
-      idleRows.some(
-        (candidate) => candidate.listener === 'main' && candidate.route === '/v1/health'
-      )
-    ).toBe(false)
   }, 60_000)
 })

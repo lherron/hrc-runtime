@@ -4393,7 +4393,8 @@
                   "hidden": true
                 }
               ],
-              "children": []
+              "children": [],
+              "nativeOnly": true
             },
             {
               "path": [
@@ -4482,9 +4483,11 @@
                   "hidden": true
                 }
               ],
-              "children": []
+              "children": [],
+              "nativeOnly": true
             }
-          ]
+          ],
+          "nativeOnly": true
         }
       ]
     },

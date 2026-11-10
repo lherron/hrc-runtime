@@ -1,7 +1,7 @@
 //! `admin metrics routes` (metrics-routes.ts).
 use super::records::parse_server;
 use super::{
-    cutoff, file_could_contain_window, file_lines, invalid_date, metrics_dir, rows, stats,
+    cutoff, file_could_contain_window, for_each_line, invalid_date, metrics_dir, rows, stats,
 };
 use crate::js::{self, json_number as num, locale_cmp};
 use crate::{Error, Result, parse::Parsed};
@@ -21,16 +21,19 @@ struct Accumulator {
     count: f64,
     records: u64,
     errors: f64,
-    /// 0.1ms-resolution latency histogram, insertion ordered.
-    ms: Vec<(f64, f64)>,
+    /// 0.1ms-resolution latency histogram: value bits to weight.
+    ms: HashMap<u64, f64>,
     first_seen: String,
     last_seen: String,
 }
 
-fn weighted_percentile(histogram: &[(f64, f64)], total: f64, percent: f64) -> f64 {
+fn weighted_percentile(histogram: &HashMap<u64, f64>, total: f64, percent: f64) -> f64 {
     let rank = ((percent / 100.) * total).max(1.);
     let mut seen = 0.;
-    let mut values = histogram.to_vec();
+    let mut values: Vec<(f64, f64)> = histogram
+        .iter()
+        .map(|(bits, weight)| (f64::from_bits(*bits), *weight))
+        .collect();
     values.sort_by(|a, b| a.0.partial_cmp(&b.0).unwrap_or(Ordering::Equal));
     for (value, weight) in &values {
         seen += weight;
@@ -64,10 +67,11 @@ pub(in crate::admin) fn routes(args: &Parsed<'_>) -> Result<()> {
     let cutoff = cutoff(args.value("since").unwrap_or("7d"))?;
     let cutoff_iso = js::iso_string(cutoff).ok_or_else(invalid_date)?;
     let (by_route, by_client) = (by.contains(&"route"), by.contains(&"client"));
+    let idle = args.flag("idle");
     let dir = metrics_dir();
     let mut names = vec![];
     for name in &dir.names {
-        if name.starts_with("server-") && file_could_contain_window(name, cutoff)? {
+        if file_could_contain_window(name, cutoff)? {
             names.push(name.clone());
         }
     }
@@ -79,52 +83,58 @@ pub(in crate::admin) fn routes(args: &Parsed<'_>) -> Result<()> {
     let mut seen_routes = std::collections::HashSet::new();
     let mut records_scanned = 0u64;
     for name in &names {
-        for line in file_lines(&dir.path.join(name)) {
+        for_each_line(&dir.path.join(name), |line| {
             if !line.contains("\"kind\":\"server\"") {
-                continue;
+                return;
             }
-            let Some(record) = serde_json::from_str::<Value>(&line)
+            let Some(record) = serde_json::from_str::<Value>(line)
                 .ok()
                 .and_then(|v| parse_server(&v))
             else {
-                continue;
+                return;
             };
             if record.ts.as_str() < cutoff_iso.as_str() {
-                continue;
+                return;
             }
             let record_listener = record.listener.as_deref().unwrap_or("main");
             if listener.is_some_and(|l| l != record_listener) {
-                continue;
+                return;
             }
             records_scanned += 1;
-            seen_routes.insert(format!(
-                "{record_listener} {} {}",
-                record.method, record.route
-            ));
-            let mut key = Map::new();
+            if idle {
+                seen_routes.insert(format!(
+                    "{record_listener} {} {}",
+                    record.method, record.route
+                ));
+            }
+            let client = record.client.as_deref().unwrap_or("unattributed");
+            // The group's identity; its JSON key is built once, with the group.
+            let mut id = String::new();
             if by_route {
-                key.insert("listener".into(), record_listener.into());
-                key.insert("method".into(), record.method.clone().into());
-                key.insert("route".into(), record.route.clone().into());
+                for part in [record_listener, &record.method, &record.route] {
+                    id.push_str(part);
+                    id.push('\0');
+                }
             }
             if by_client {
-                key.insert(
-                    "client".into(),
-                    record
-                        .client
-                        .clone()
-                        .unwrap_or_else(|| "unattributed".into())
-                        .into(),
-                );
+                id.push_str(client);
             }
-            let id = Value::Object(key.clone()).to_string();
             let slot = *index.entry(id).or_insert_with(|| {
+                let mut key = Map::new();
+                if by_route {
+                    key.insert("listener".into(), record_listener.into());
+                    key.insert("method".into(), record.method.clone().into());
+                    key.insert("route".into(), record.route.clone().into());
+                }
+                if by_client {
+                    key.insert("client".into(), client.into());
+                }
                 groups.push(Accumulator {
                     key,
                     count: 0.,
                     records: 0,
                     errors: 0.,
-                    ms: vec![],
+                    ms: HashMap::new(),
                     first_seen: record.ts.clone(),
                     last_seen: record.ts.clone(),
                 });
@@ -137,24 +147,23 @@ pub(in crate::admin) fn routes(args: &Parsed<'_>) -> Result<()> {
                 group.errors += record.weight;
             }
             let ms = js::math_round(record.ms * 10.) / 10.;
-            match group.ms.iter_mut().find(|(value, _)| *value == ms) {
-                Some(bucket) => bucket.1 += record.weight,
-                None => group.ms.push((ms, record.weight)),
-            }
+            *group.ms.entry(ms.to_bits()).or_default() += record.weight;
             if record.ts < group.first_seen {
                 group.first_seen = record.ts.clone();
             }
             if record.ts > group.last_seen {
                 group.last_seen = record.ts.clone();
             }
-        }
+        });
     }
 
     let mut rows: Vec<(f64, Value)> = groups
         .into_iter()
         .map(|g| {
             let mut row = g.key.clone();
-            let max = g.ms.iter().fold(f64::NEG_INFINITY, |m, (v, _)| m.max(*v));
+            let max =
+                g.ms.keys()
+                    .fold(f64::NEG_INFINITY, |m, v| m.max(f64::from_bits(*v)));
             row.insert("count".into(), num(g.count));
             row.insert("records".into(), g.records.into());
             row.insert("errors".into(), num(g.errors));
@@ -189,7 +198,7 @@ pub(in crate::admin) fn routes(args: &Parsed<'_>) -> Result<()> {
         "by": by,
         "rows": rows.into_iter().map(|r| r.1).collect::<Vec<_>>(),
     });
-    if args.flag("idle") {
+    if idle {
         let field = |v: &Value, k: &str| v[k].as_str().unwrap_or_default().to_owned();
         let mut idle: Vec<Value> = inventory
             .iter()

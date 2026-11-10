@@ -39,7 +39,7 @@ def main():
         link = root / 'rusthrc'
         link.symlink_to(native)
         env = dict(os.environ, HRC_RUNTIME_DIR=str(root / 'run'), HRC_STATE_DIR=str(root / 'state'), NO_COLOR='1', FORCE_COLOR='0', HRC_METRICS='0')
-        cases = [['session', 'meta', 'set'], ['session', 'meta', 'clear'], ['session', 'retitle'], ['monitor', 'search'], ['federation', 'retire'], ['admin', 'worktrees', 'prune', '--help'], ['admin', 'metrics', '--help'], ['runtime', 'prune', '--wat'], ['admin', 'metrics', 'report', '--json']]
+        cases = [['session', 'meta', 'set'], ['session', 'meta', 'clear'], ['session', 'retitle'], ['monitor', 'search'], ['federation', 'retire'], ['admin', 'worktrees', 'prune', '--help'], ['runtime', 'prune', '--wat']]
         for argv in cases:
             observed = []
             for command in (['bun', str(args.oracle.resolve())], [str(link)]):
@@ -67,7 +67,7 @@ def main():
         # Native grafts are part of the shipped help contract even when the
         # parent's command action is still postponed to Bun.
         surface = json.loads((ROOT / 'crates/hrc-cli/surface.json').read_text())
-        for path in ([], ['session']):
+        for path in ([], ['session'], ['admin'], ['admin', 'metrics']):
             node = surface
             for name in path:
                 node = next(child for child in node['children'] if child['name'] == name)

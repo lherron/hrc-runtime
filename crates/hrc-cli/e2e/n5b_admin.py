@@ -1,10 +1,8 @@
 #!/usr/bin/env python3
-"""admin metrics/runs/broker-verify/events-drain/worktrees-audit: Bun oracle vs rusthrc.
+"""admin runs/broker-verify/events-drain/worktrees-audit: Bun oracle vs rusthrc.
+(admin metrics moved to metrics_report.py when its Bun CLI was deleted, T-13047.)
 
-Failure modes: metrics rollups drift on JS number semantics (percentile ranks,
-toFixed ties, Math.round halves, Number() limits, Date range), files outside the
-day window are read, malformed records are counted, route sort ties break
-differently, the idle inventory goes stale; run repair parses Commander's view
+Failure modes: run repair parses Commander's view
 instead of the raw argv Bun reads (first --older-than wins, --output json stays
 human) or mutates on a non-TTY without --yes; broker-verify drops the exact-scope
 filter, the 50-row limit or tie order; drain opens the live store, sends a wire
@@ -22,15 +20,11 @@ import shutil
 import sqlite3
 import subprocess
 import tempfile
-from datetime import datetime, timedelta, timezone
 
 from metrics_isolation import isolated_suite
 from n5b_common import Runner, normalize, scratch_env
 
 NORMALIZATION = {
-    # metrics routes: the window start is computed from the wall clock.
-    'routes_cutoff_human': (r'(Request metrics since )-?\+?\d{4,6}-\d\d-\d\dT\d\d:\d\d:\d\d\.\d{3}Z', r'\1<cutoff>'),
-    'routes_cutoff_json': (r'("since": ")-?\+?\d{4,6}-\d\d-\d\dT\d\d:\d\d:\d\d\.\d{3}Z(")', r'\1<cutoff>\2'),
     # drain: dead letters and server log lines are stamped when written.
     'dead_lettered_at': (r'("deadLetteredAt": ")\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d\.\d{3}Z(")', r'\1<ts>\2'),
     'server_log_ts': (r'(\{"ts":")\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d\.\d{3}Z(","level")', r'\1<ts>\2'),
@@ -42,10 +36,6 @@ SWEEP_ERROR_CODES = {
     'runtime_dead_with_active_run', 'runtime_ready_with_active_run', 'runtime_process_exited_with_active_run',
     'runtime_unavailable_with_active_run', 'runtime_busy_timeout_with_active_run',
 }
-
-
-def iso(t):
-    return t.astimezone(timezone.utc).strftime('%Y-%m-%dT%H:%M:%S.') + f'{t.microsecond // 1000:03d}Z'
 
 
 def sh(*args, cwd=None, env=None, check=True):
@@ -89,88 +79,6 @@ def store_copy(store, dest):
     src.execute(f"VACUUM INTO '{dest}'")
     src.close()
     return sqlite3.connect(dest)
-
-
-# -- metrics fixture --------------------------------------------------------------
-
-def metrics_fixture(root, now):
-    """Day files around a 7d window, with every record shape the readers judge."""
-    day = lambda d: (now - timedelta(days=d)).strftime('%Y-%m-%d')
-    ts = lambda **kw: iso(now - timedelta(**kw))
-    cli = lambda cmd, dur, out, rpc=(), bin='hrc', at=None: dict(v=1, kind='cli', ts=at or ts(hours=1), bin=bin, cmd=cmd, durMs=dur, stdoutBytes=out, rpc=list(rpc))
-    rpc = lambda i, ms, path='/v1/runtimes', status=200, nbytes=10: dict(id=i, path=path, method='GET', ms=ms, status=status, bytes=nbytes)
-    srv = lambda route, ms, status=200, **kw: dict(v=1, kind='server', ts=kw.pop('at', ts(hours=2)), route=route, method=kw.pop('method', 'GET'), ms=ms, status=status, **kw)
-    files = {}
-    files[f'cli-{day(0)}.ndjson'] = [
-        cli('monitor events', 19.944208, 140553, [rpc('r1', 3.25), rpc('r2', 1.5)]),
-        cli('monitor events', 63.659125, 1200, [rpc('r3', 10)]),
-        cli('monitor events', 5, 0),
-        cli('monitor Events', 7.5, 33),
-        cli('a-b', 1, 1), cli('a_b', 2, 2), cli('ab', 3, 3), cli('a.b', 4, 4), cli('A b', 5, 5),
-        cli('send', 65.739667, 1355, bin='hrcchat'),
-        cli('server status', 0.1 + 0.2, 7),
-        dict(v=1.0, kind='cli', ts=ts(hours=3), bin='hrc', cmd='float version', durMs=2, stdoutBytes=2, rpc=[]),
-        cli('bad rpc', 1, 1, [dict(id='x', path='/p', method='GET', ms=-1, status=200, bytes=1)]),
-        dict(v=1, kind='cli', ts=ts(hours=1), bin='other', cmd='skip', durMs=1, stdoutBytes=1, rpc=[]),
-        dict(v=1, kind='cli', ts=ts(hours=1), bin='hrc', cmd='neg', durMs=-1, stdoutBytes=1, rpc=[]),
-        dict(v=1, kind='cli', ts='not a date', bin='hrc', cmd='bad ts', durMs=1, stdoutBytes=1, rpc=[]),
-        dict(v=1, kind='launch', ts=ts(hours=1), bin='hrc', cmd='start', startupMs=812.5,
-             phases=[dict(phase='resolve', ms=10), dict(phase='attach', ms=700.25)]),
-        dict(v=1, kind='launch', ts=ts(hours=1), bin='hrc', cmd='start', startupMs=901,
-             phases=[dict(phase='resolve', ms=12), dict(phase='attach', ms=650)]),
-        dict(v=1, kind='launch', ts=ts(hours=1), bin='hrcchat', cmd='run', startupMs=44, phases=[dict(phase='resolve', ms=10)]),
-        dict(v=1, kind='launch', ts=ts(hours=1), bin='hrc', cmd='bad phases', startupMs=1, phases=[dict(phase=3, ms=1)]),
-    ]
-    files[f'cli-{day(2)}.ndjson'] = [cli(f'monitor stats', i * 1.25, i * 100, at=ts(days=2, hours=1)) for i in range(1, 22)]
-    # Name inside the window, records on both sides of the cutoff.
-    files[f'cli-{day(7)}.ndjson'] = [
-        cli('edge in', 9, 9, at=ts(days=7, hours=-2)),
-        cli('edge out', 9, 9, at=ts(days=7, hours=2)),
-    ]
-    files[f'cli-{day(9)}.ndjson'] = [cli('old file', 1, 1, at=ts(hours=1))]
-    files[f'server-{day(0)}.ndjson'] = [
-        srv('/v1/runtimes', 27.48674999998184, bytes=9659, reqId='r1', client='hrc-cli/1'),
-        srv('/v1/runtimes', 0.25, bytes=10, reqId='r2', client='hrc-cli/1', at=ts(hours=5)),
-        srv('/v1/runtimes', 0.15, status=503, bytes=20, client='hrc-cli/2'),
-        srv('/v1/runtimes', 0.05, stream=True, bytes=99999, client='hrc-cli/2'),
-        srv('/v1/sessions/by-host/:hostSessionId', 1.0, bytes=5, sampleWeight=31),
-        srv('/v1/sessions/by-host/:hostSessionId', 4.0, status=404, bytes=5),
-        srv('/v1/status', 8.877666000000033, sampleWeight=3, bytes=2003, reqId='r3'),
-        srv('/v1/ingest', 2.5, method='POST', listener='ingest', bytes=12, client='hrc-server/0.5'),
-        srv('/v1/runs', 1.2, listener='peer', bytes=77, client='peer-x'),
-        srv('/v1/runs', 3.3, bytes=78),
-        srv('/v1/bindings', 0.75, listener='registry'),
-        srv('/v1/skip', 1, listener='bogus'),
-        srv('/v1/skip', 1, sampleWeight=1.5),
-        srv('/v1/skip', 1, stream=False),
-        srv('/v1/skip', 1, reqId=7),
-        dict(v=1, kind='counter', ts=ts(hours=1), name='ledger.blob_miss', value=2),
-        dict(v=1, kind='counter', ts=ts(hours=1), name='ledger.blob_miss', value=0.5),
-        dict(v=1, kind='counter', ts=ts(hours=1), name='metrics.dropped', value=7),
-        dict(v=1, kind='counter', ts=ts(hours=1), name='other', value=7),
-        dict(v=1, kind='launch_span', ts=ts(hours=1), phase='broker-start-total', runtimeId='rt-1', ms=966.4),
-        dict(v=1, kind='launch_span', ts=ts(hours=1), phase='broker-start-total', transport='headless', runtimeId='rt-2', ms=120),
-        dict(v=1, kind='launch_span', ts=ts(hours=1), phase='precompile', transport='interactive', runtimeId='rt-3', ms=120),
-        dict(v=1, kind='launch_span', ts=ts(hours=1), phase='bad', transport='tcp', runtimeId='rt-4', ms=1),
-    ]
-    files[f'server-{day(1)}.ndjson'] = [
-        srv('/v1/runtimes', 36.21704200000386, bytes=1883, client='hrc-cli/1', at=ts(days=1)),
-        srv('/v1/events', 0.95, bytes=1, at=ts(days=1, hours=1)),
-    ]
-    raw = {name: '\n'.join(json.dumps(r, separators=(',', ':')) for r in rows) + '\n' for name, rows in files.items()}
-    raw[f'cli-{day(0)}.ndjson'] += '\nnot json\n   \n[1,2]\nnull\n{"v":1,"kind":"cli"}\r\n'
-    raw[f'server-{day(1)}.ndjson'] = raw[f'server-{day(1)}.ndjson'].replace('\n', '\r\n')
-    full = root / 'full' / 'metrics'
-    full.mkdir(parents=True)
-    for name, text in raw.items():
-        (full / name).write_text(text)
-    (full / 'cli-2026-1-1.ndjson').write_text(raw[f'cli-{day(0)}.ndjson'])
-    (full / 'notes.txt').write_text('ignored\n')
-    (full / f'server-{day(3)}.ndjson').mkdir()  # selected and counted, unreadable
-    (root / 'empty' / 'metrics').mkdir(parents=True)
-    (root / 'nodir').mkdir(parents=True)
-    (root / 'file').mkdir(parents=True)
-    (root / 'file' / 'metrics').write_text('not a directory\n')
 
 
 # -- broker-verify fixture ----------------------------------------------------------
@@ -376,39 +284,6 @@ def main():
         subject = runner.observe(argv, True, env)
         ok = normalize(oracle, runner.normalization) == normalize(subject, runner.normalization)
         runner.results.append(dict(case=name or ' '.join(argv), argv=argv, oracle=oracle, subject=subject, **{'pass': ok}))
-
-    # -- admin metrics report / routes ---------------------------------------------
-    now = datetime.now(timezone.utc)
-    metrics_fixture(fix / 'metrics', now)
-    mstate = fix / 'mstate'
-
-    def metrics_variant(variant):
-        def setup():
-            shutil.rmtree(mstate, ignore_errors=True)
-            shutil.copytree(fix / 'metrics' / variant, mstate, symlinks=True)
-        return setup
-    menv = scratch_env(args.runtime_root, mstate)
-    report_flags = [[], ['--json'], ['--ndjson'], ['--output', 'json'], ['--since', '1d'], ['--since', '2d', '--json'],
-                    ['--since', '30d'], ['--since', '1.5h'], ['--since', '0s'], ['--since', '10000000d', '--json'],
-                    ['--since', ' 3d '], ['--since', 'bogus'], ['--since', 'bogus', '--output', 'json'], ['--since', '-1d'],
-                    ['--since', '999999999999d'], ['--since', '9' * 400 + 'd'], ['--since', ''],
-                    ['--slowest', '0'], ['--slowest', '2', '--json'], ['--slowest', '1.5'], ['--slowest', '-1'],
-                    ['--slowest', 'abc'], ['--slowest', ''], ['--slowest', '0x3'], ['--slowest', ' 4 '], ['--slowest', '1e1'],
-                    ['--slowest', 'Infinity'], ['--slowest', '9007199254740993'], ['--largest', '3', '--ndjson'],
-                    ['--largest', '-0'], ['--json', '--ndjson'], ['--ndjson', '--output', 'json']]
-    for flags in report_flags:
-        fresh(['admin', 'metrics', 'report'] + flags, metrics_variant('full'), menv)
-    route_flags = [[], ['--json'], ['--by', 'client'], ['--by', 'route,client', '--json'], ['--by', 'client, route'],
-                   ['--by', 'route,route'], ['--by', ''], ['--by', 'foo'], ['--by', 'route,'], ['--listener', 'main'],
-                   ['--listener', 'ingest', '--json'], ['--listener', 'peer'], ['--listener', 'registry'], ['--listener', 'nope'],
-                   ['--idle'], ['--idle', '--listener', 'peer'], ['--idle', '--json'], ['--idle', '--by', 'client'],
-                   ['--since', '2d'], ['--since', '1h'], ['--since', 'bogus'], ['--since', '999999999999d'],
-                   ['--since', '100000000d', '--json'], ['--output', 'json']]
-    for flags in route_flags:
-        fresh(['admin', 'metrics', 'routes'] + flags, metrics_variant('full'), menv)
-    for variant in ('empty', 'nodir', 'file'):
-        for argv in (['report'], ['report', '--json'], ['report', '--since', '999999999999d'], ['routes'], ['routes', '--json', '--idle']):
-            fresh(['admin', 'metrics'] + argv, metrics_variant(variant), menv, name=f'[{variant}] admin metrics {" ".join(argv)}')
 
     # -- admin runs sweep-zombies / reconcile-active (live scratch daemon) ------------
     missing_daemon = scratch_env(fix / 'no-daemon', args.state_root)

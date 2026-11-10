@@ -176,25 +176,28 @@ pub(crate) fn parse<'a>(surface: &'a Value, args: &[String]) -> Result<Parsed<'a
         && parsed.node["arguments"].as_array().unwrap().is_empty()
         && !parsed.positionals.is_empty()
     {
-        let mut names = vec!["help".to_owned()];
-        for child in parsed.node["children"].as_array().unwrap() {
-            names.push(child["name"].as_str().unwrap().to_owned());
-            names.extend(
-                child["aliases"]
+        // Commander's implicit `help [command]`: help for one named child, one
+        // level down; without a known child, Bun's unknown-command refusal.
+        if parsed.positionals[0] == "help" {
+            let named = parsed.positionals.get(1).and_then(|name| {
+                parsed.node["children"]
                     .as_array()
                     .unwrap()
                     .iter()
-                    .filter_map(Value::as_str)
-                    .map(str::to_owned),
-            );
+                    .find(|n| {
+                        n["name"] == *name
+                            || n["aliases"].as_array().unwrap().iter().any(|a| a == name)
+                    })
+            });
+            let Some(child) = named else {
+                return Err(Error::usage("unknown command: help — did you mean 'help'?"));
+            };
+            parsed.node = child;
+            parsed.help = true;
+            parsed.positionals.clear();
+        } else {
+            return Err(unknown_command(&parsed));
         }
-        names.sort();
-        names.dedup();
-        return Err(Error::usage(format!(
-            "unknown command: {}. Available commands: {}",
-            parsed.positionals[0],
-            names.join(", ")
-        )));
     }
     if parsed.flag("agent") && parsed.flag("human") {
         return Err(Error::usage("--agent and --human are mutually exclusive"));
@@ -352,4 +355,27 @@ fn suggest_option(root: &Value, node: &Value, unknown: &str) -> Option<String> {
         .into_iter()
         .find(|flag| flag.trim_start_matches('-') == *name)
         .map(str::to_owned)
+}
+
+/// Commander's refusal of a token that names no child of a group.
+fn unknown_command(parsed: &Parsed<'_>) -> Error {
+    let mut names = vec!["help".to_owned()];
+    for child in parsed.node["children"].as_array().unwrap() {
+        names.push(child["name"].as_str().unwrap().to_owned());
+        names.extend(
+            child["aliases"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .filter_map(Value::as_str)
+                .map(str::to_owned),
+        );
+    }
+    names.sort();
+    names.dedup();
+    Error::usage(format!(
+        "unknown command: {}. Available commands: {}",
+        parsed.positionals[0],
+        names.join(", ")
+    ))
 }

@@ -157,16 +157,19 @@ def main():
         expired=directory/'rusthrc-server-2000-01-01.ndjson';expired.write_text('old')
         recent=directory/'rusthrc-server-2000-01-02.ndjson';recent.write_text('recent mtime')
         calendar_invalid=directory/'rusthrc-server-2000-99-99.ndjson';calendar_invalid.write_text('pattern still matches')
-        unrelated=directory/'other-2000-01-01.ndjson';unrelated.write_text('keep')
+        # Retention covers every writer's dated day files (T-13047): a stopped
+        # writer's files (Bun's server-*, a node's script-*) age out too.
+        other_writer=directory/'other-2000-01-01.ndjson';other_writer.write_text('another writer')
         bun_owned=directory/'server-2000-01-01.ndjson';bun_owned.write_bytes(b'Bun-owned canary')
-        for file in (expired,calendar_invalid,unrelated,bun_owned):os.utime(file,(time.time()-15*86400,)*2)
-        bun_before=(bun_owned.read_bytes(),bun_owned.stat().st_mtime_ns)
+        not_metrics=[directory/'notes-2000-01-01.txt',directory/'rusthrc-server.ndjson',directory/'-2000-01-01.ndjson']
+        for file in not_metrics:file.write_text('not a dated metrics file')
+        for file in (expired,calendar_invalid,other_writer,bun_owned,*not_metrics):os.utime(file,(time.time()-15*86400,)*2)
         socket=up('native-cap')
         assert call(socket,'GET','/v1/health','n1-cap')['status']==200
         time.sleep(1.2)
-        assert (bun_owned.read_bytes(),bun_owned.stat().st_mtime_ns)==bun_before
         assert cap.stat().st_size==128*1024*1024
-        assert not expired.exists() and not calendar_invalid.exists() and recent.exists() and unrelated.exists()
+        assert not any(f.exists() for f in (expired,calendar_invalid,other_writer,bun_owned)) and recent.exists()
+        assert all(f.exists() for f in not_metrics)
     finally:
         for proc in reversed(owners):
             if proc.poll() is None:proc.send_signal(signal.SIGTERM);proc.wait(timeout=20)

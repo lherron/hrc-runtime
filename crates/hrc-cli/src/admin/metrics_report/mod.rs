@@ -1,5 +1,7 @@
-//! `admin metrics report|routes`: rollups of the local metric day files
-//! (hrc-cli metrics-report.ts, metrics-routes.ts, register-metrics.ts).
+//! `admin metrics report|routes`: rollups of every writer's local metric day
+//! files. Ported from the Bun CLI (metrics-report.ts, metrics-routes.ts,
+//! register-metrics.ts, deleted in T-13047); its frozen differential is
+//! e2e/metrics_report.py.
 mod records;
 mod report;
 mod routes;
@@ -8,7 +10,11 @@ use super::{malformed, state_root};
 use crate::js::{self, json_number as num};
 use crate::{Error, Result};
 use serde_json::{Value, json};
-use std::{fs, path::PathBuf};
+use std::{
+    fs,
+    io::{BufRead, BufReader},
+    path::{Path, PathBuf},
+};
 
 pub(super) use report::report;
 pub(super) use routes::routes;
@@ -63,27 +69,12 @@ fn invalid_date() -> Error {
     Error::failure("Invalid Date")
 }
 
-/// `fileCouldContainWindow`: a `cli-`/`server-` day file dated on or after the
-/// cutoff's UTC day.
+/// `fileCouldContainWindow`, widened to every writer's day files (T-12304):
+/// one dated on or after the cutoff's UTC day.
 fn file_could_contain_window(name: &str, cutoff: f64) -> Result<bool> {
-    let Some(date) = name
-        .strip_prefix("cli-")
-        .or_else(|| name.strip_prefix("server-"))
-        .and_then(|rest| rest.strip_suffix(".ndjson"))
-    else {
+    let Some(date) = hrc_common::metrics::day_file_date(name) else {
         return Ok(false);
     };
-    let shape = date.len() == 10
-        && date.bytes().enumerate().all(|(i, b)| {
-            if i == 4 || i == 7 {
-                b == b'-'
-            } else {
-                b.is_ascii_digit()
-            }
-        });
-    if !shape {
-        return Ok(false);
-    }
     let iso = js::iso_string(cutoff).ok_or_else(invalid_date)?;
     Ok(date >= &iso[..10])
 }
@@ -110,17 +101,30 @@ fn metrics_dir() -> MetricsDir {
     }
 }
 
-/// readline over a day file; an unreadable file yields nothing.
-fn file_lines(path: &PathBuf) -> Vec<String> {
-    fs::read(path)
-        .map(|bytes| {
-            String::from_utf8_lossy(&bytes)
-                .replace("\r\n", "\n")
-                .split(['\n', '\r'])
-                .map(str::to_owned)
-                .collect()
-        })
-        .unwrap_or_default()
+/// readline over a day file, streamed: `\r\n`, `\n` and a lone `\r` end a
+/// line, so a day file of any size holds one line in memory at a time. An
+/// unreadable file, or one that fails mid-read, yields what was read.
+fn for_each_line(path: &Path, mut each: impl FnMut(&str)) {
+    let Ok(file) = fs::File::open(path) else {
+        return;
+    };
+    let mut reader = BufReader::with_capacity(1 << 20, file);
+    let mut buffer = Vec::new();
+    loop {
+        buffer.clear();
+        match reader.read_until(b'\n', &mut buffer) {
+            Ok(0) | Err(_) => return,
+            Ok(_) => {}
+        }
+        let mut chunk = buffer.as_slice();
+        if let Some(rest) = chunk.strip_suffix(b"\n") {
+            chunk = rest.strip_suffix(b"\r").unwrap_or(rest);
+        }
+        let text = String::from_utf8_lossy(chunk);
+        for line in text.split('\r') {
+            each(line);
+        }
+    }
 }
 
 fn v1(value: &Value, kind: &str) -> bool {

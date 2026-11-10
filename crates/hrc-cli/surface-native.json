@@ -1091,6 +1091,244 @@
         "children": [],
         "nativeOnly": true
       }
+    },
+    {
+      "parent": [
+        "admin"
+      ],
+      "commandLine": [
+        "metrics [options]",
+        "inspect local HRC performance metrics"
+      ],
+      "node": {
+        "path": [
+          "admin",
+          "metrics"
+        ],
+        "name": "metrics",
+        "aliases": [],
+        "usage": "[options] [command]",
+        "allowExcessArguments": false,
+        "help": "Usage: hrc admin metrics [options] [command]\n\ninspect local HRC performance metrics\n\nOptions:\n  -h, --help        display help for command\n\nCommands:\n  report [options]  report CLI and server latency and payload metrics\n  routes [options]  request counts per route and caller across every daemon\n                    listener (read-only)\n  help [command]    display help for command\n",
+        "humanHelp": "Usage: hrc admin metrics [options] [command]\n\ninspect local HRC performance metrics\n\nOptions:\n  -h, --help        display help for command\n\nCommands:\n  report [options]  report CLI and server latency and payload metrics\n  routes [options]  request counts per route and caller across every daemon\n                    listener (read-only)\n  help [command]    display help for command\n",
+        "arguments": [],
+        "options": [
+          {
+            "flags": "--output <format>",
+            "long": "--output",
+            "required": true,
+            "optional": false,
+            "mandatory": false,
+            "negate": false,
+            "hidden": true,
+            "choices": [
+              "json"
+            ]
+          },
+          {
+            "flags": "--agent",
+            "long": "--agent",
+            "required": false,
+            "optional": false,
+            "mandatory": false,
+            "negate": false,
+            "hidden": true
+          },
+          {
+            "flags": "--human",
+            "long": "--human",
+            "required": false,
+            "optional": false,
+            "mandatory": false,
+            "negate": false,
+            "hidden": true
+          }
+        ],
+        "children": [
+          {
+            "path": [
+              "admin",
+              "metrics",
+              "report"
+            ],
+            "name": "report",
+            "aliases": [],
+            "usage": "[options]",
+            "allowExcessArguments": false,
+            "help": "Usage: hrc admin metrics report [options]\n\nreport CLI and server latency and payload metrics\n\nOptions:\n  --since <duration>  include records within this duration (default: \"7d\")\n  --slowest <n>       number of slowest CLI invocations (default: \"10\")\n  --largest <n>       number of largest payload records (default: \"10\")\n  --json              output one structured JSON object\n  --ndjson            output one NDJSON object per row\n  -h, --help          display help for command\n",
+            "humanHelp": "Usage: hrc admin metrics report [options]\n\nreport CLI and server latency and payload metrics\n\nOptions:\n  --since <duration>  include records within this duration (default: \"7d\")\n  --slowest <n>       number of slowest CLI invocations (default: \"10\")\n  --largest <n>       number of largest payload records (default: \"10\")\n  --json              output one structured JSON object\n  --ndjson            output one NDJSON object per row\n  -h, --help          display help for command\n",
+            "arguments": [],
+            "options": [
+              {
+                "flags": "--since <duration>",
+                "long": "--since",
+                "required": true,
+                "optional": false,
+                "mandatory": false,
+                "negate": false,
+                "defaultValue": "7d"
+              },
+              {
+                "flags": "--slowest <n>",
+                "long": "--slowest",
+                "required": true,
+                "optional": false,
+                "mandatory": false,
+                "negate": false,
+                "defaultValue": "10"
+              },
+              {
+                "flags": "--largest <n>",
+                "long": "--largest",
+                "required": true,
+                "optional": false,
+                "mandatory": false,
+                "negate": false,
+                "defaultValue": "10"
+              },
+              {
+                "flags": "--json",
+                "long": "--json",
+                "required": false,
+                "optional": false,
+                "mandatory": false,
+                "negate": false
+              },
+              {
+                "flags": "--ndjson",
+                "long": "--ndjson",
+                "required": false,
+                "optional": false,
+                "mandatory": false,
+                "negate": false
+              },
+              {
+                "flags": "--output <format>",
+                "long": "--output",
+                "required": true,
+                "optional": false,
+                "mandatory": false,
+                "negate": false,
+                "hidden": true,
+                "choices": [
+                  "json"
+                ]
+              },
+              {
+                "flags": "--agent",
+                "long": "--agent",
+                "required": false,
+                "optional": false,
+                "mandatory": false,
+                "negate": false,
+                "hidden": true
+              },
+              {
+                "flags": "--human",
+                "long": "--human",
+                "required": false,
+                "optional": false,
+                "mandatory": false,
+                "negate": false,
+                "hidden": true
+              }
+            ],
+            "children": [],
+            "nativeOnly": true
+          },
+          {
+            "path": [
+              "admin",
+              "metrics",
+              "routes"
+            ],
+            "name": "routes",
+            "aliases": [],
+            "usage": "[options]",
+            "allowExcessArguments": false,
+            "help": "Usage: hrc admin metrics routes [options]\n\nrequest counts per route and caller across every daemon listener (read-only)\n\nOptions:\n  --since <duration>  include records within this duration (default: \"7d\")\n  --by <dimensions>   group rows by route, client, or route,client (default:\n                      \"route\")\n  --listener <name>   only one listener: main, ingest, peer or registry\n  --idle              also list registered routes with no request in the window\n  --json              output one structured JSON object\n  -h, --help          display help for command\n",
+            "humanHelp": "Usage: hrc admin metrics routes [options]\n\nrequest counts per route and caller across every daemon listener (read-only)\n\nOptions:\n  --since <duration>  include records within this duration (default: \"7d\")\n  --by <dimensions>   group rows by route, client, or route,client (default:\n                      \"route\")\n  --listener <name>   only one listener: main, ingest, peer or registry\n  --idle              also list registered routes with no request in the window\n  --json              output one structured JSON object\n  -h, --help          display help for command\n",
+            "arguments": [],
+            "options": [
+              {
+                "flags": "--since <duration>",
+                "long": "--since",
+                "required": true,
+                "optional": false,
+                "mandatory": false,
+                "negate": false,
+                "defaultValue": "7d"
+              },
+              {
+                "flags": "--by <dimensions>",
+                "long": "--by",
+                "required": true,
+                "optional": false,
+                "mandatory": false,
+                "negate": false,
+                "defaultValue": "route"
+              },
+              {
+                "flags": "--listener <name>",
+                "long": "--listener",
+                "required": true,
+                "optional": false,
+                "mandatory": false,
+                "negate": false
+              },
+              {
+                "flags": "--idle",
+                "long": "--idle",
+                "required": false,
+                "optional": false,
+                "mandatory": false,
+                "negate": false
+              },
+              {
+                "flags": "--json",
+                "long": "--json",
+                "required": false,
+                "optional": false,
+                "mandatory": false,
+                "negate": false
+              },
+              {
+                "flags": "--output <format>",
+                "long": "--output",
+                "required": true,
+                "optional": false,
+                "mandatory": false,
+                "negate": false,
+                "hidden": true,
+                "choices": [
+                  "json"
+                ]
+              },
+              {
+                "flags": "--agent",
+                "long": "--agent",
+                "required": false,
+                "optional": false,
+                "mandatory": false,
+                "negate": false,
+                "hidden": true
+              },
+              {
+                "flags": "--human",
+                "long": "--human",
+                "required": false,
+                "optional": false,
+                "mandatory": false,
+                "negate": false,
+                "hidden": true
+              }
+            ],
+            "children": [],
+            "nativeOnly": true
+          }
+        ],
+        "nativeOnly": true
+      }
     }
   ]
 }

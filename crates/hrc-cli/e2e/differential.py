@@ -144,12 +144,13 @@ def main():
         'controls.py': 'runtime capture|runtime interrupt|runtime terminate|capture status|session drop-continuation|session rotate|admin surface bind',
         'server_lifecycle.py': 'server stop|server restart',
         'server_start.py': 'server start', 'daemon_entrypoints.py': 'server|server serve',
-        'differential.py': 'admin broker-verify|admin events|admin runs|admin surface|capture|runtime|server tmux|target',
+        'differential.py': 'admin|admin broker-verify|admin events|admin runs|admin surface|capture|runtime|server tmux|target',
         'status.py': 'server status', 'turn_protocol.py': 'turn',
         'n5b_monitor_reads.py': 'monitor events|monitor transcript|monitor stats|monitor show|monitor session-report',
         'n5b_monitor_wait.py': 'monitor wait', 'n5b_monitor_watch.py': 'monitor watch',
         'n5b_local.py': 'info|doctor|runtime diagnostics|runtime prune|runtime sweep|server subscribers|server tmux status',
-        'n5b_admin.py': 'admin broker-verify candidates|admin events drain|admin metrics report|admin metrics routes|admin runs reconcile-active|admin runs sweep-zombies|admin worktrees audit',
+        'n5b_admin.py': 'admin broker-verify candidates|admin events drain|admin runs reconcile-active|admin runs sweep-zombies|admin worktrees audit',
+        'metrics_report.py': 'admin metrics|admin metrics report|admin metrics routes',
     }
     suites = {command: suite for suite, commands in families.items() for command in commands.split('|')}
     decisions = {item['command']: item for item in scope['commands']}

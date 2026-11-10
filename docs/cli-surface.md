@@ -131,9 +131,10 @@ and `hrc admin worktrees audit|prune`. The admin cellar also owns low-level
 surface binding, `admin broker-verify candidates`,
 `admin events drain`, `admin metrics report`, `admin metrics routes` (weighted
 request counts per route and caller across every daemon listener, `--by
-route,client`, `--idle` for registered routes nobody called), and the ASP
-toolchain status
-(`admin status`).
+route,client`, `--idle` for registered routes nobody called). Both reports read
+every writer's day files in `<stateRoot>/metrics` (`rusthrc-server-*`,
+`server-*`, `cli-*`, `script-*`), taking each record by its `kind`. The cellar also
+shows the ASP toolchain status (`admin status`).
 
 ## `monitor show | watch | wait | events | transcript | stats`
 

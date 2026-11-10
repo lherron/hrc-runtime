@@ -9,8 +9,8 @@
     },
     {
       "command": "admin",
-      "disposition": "POSTPONED",
-      "implementation": "bun"
+      "disposition": "IMPLEMENT",
+      "implementation": "native"
     },
     {
       "command": "admin broker-verify",
@@ -34,8 +34,8 @@
     },
     {
       "command": "admin metrics",
-      "disposition": "POSTPONED",
-      "implementation": "bun"
+      "disposition": "IMPLEMENT",
+      "implementation": "native"
     },
     {
       "command": "admin metrics report",

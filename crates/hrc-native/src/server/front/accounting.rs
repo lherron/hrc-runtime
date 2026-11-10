@@ -182,21 +182,10 @@ impl Writer {
             if let Ok(files) = fs::read_dir(&self.root) {
                 for file in files.flatten() {
                     let name = file.file_name().to_string_lossy().into_owned();
-                    let valid = name
-                        .strip_prefix(FILE_PREFIX)
-                        .and_then(|suffix| suffix.strip_suffix(".ndjson"))
-                        .is_some_and(|day| {
-                            day.len() == 10
-                                && day.as_bytes().iter().enumerate().all(|(i, byte)| {
-                                    if i == 4 || i == 7 {
-                                        *byte == b'-'
-                                    } else {
-                                        byte.is_ascii_digit()
-                                    }
-                                })
-                        });
-                    if valid
-                        && name != format!("{FILE_PREFIX}{today}.ndjson")
+                    // Every writer's day files, not only this daemon's: a
+                    // writer that stopped (the Bun daemon's `server-*`, a
+                    // node's `script-*`) leaves files nobody else sweeps.
+                    if hrc_common::metrics::day_file_date(&name).is_some_and(|day| day != today)
                         && file
                             .metadata()
                             .and_then(|m| m.modified())

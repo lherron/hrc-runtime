@@ -21,7 +21,8 @@ T-11945 comment C-32046 records the pre-deletion triage and its evidence.
 | `continuity.py` | Bun creates real continuity and metadata via public APIs. Both CLI binaries (requires explicit scratch/capture inputs; retained qualification) | keep-manual |
 | `controls.py` | Real owned-seat control commands. No production roots or foreign mutations. (requires explicit scratch/capture inputs; retained qualification) | keep-manual |
 | `launch.py` | Managed launch grammar and previews against an explicit scratch daemon. (requires explicit scratch/capture inputs; retained qualification) | keep-manual |
-| `n5b_admin.py` | admin metrics/runs/broker-verify/events-drain/worktrees-audit: Bun oracle vs rusthrc. (requires explicit scratch/capture inputs; retained qualification) | keep-manual |
+| `n5b_admin.py` | admin runs/broker-verify/events-drain/worktrees-audit: Bun oracle vs rusthrc. (requires explicit scratch/capture inputs; retained qualification) | keep-manual |
+| `metrics_report.py` | admin metrics report/routes: native vs the frozen Bun-verified golden (`fixtures/metrics-golden.json`; `--record` re-verifies against Bun), and every writer's day files read once. | keep-manual |
 | `n5b_local.py` | server subscribers, server tmux status, runtime diagnostics/sweep/prune, (requires explicit scratch/capture inputs; retained qualification) | keep-manual |
 | `n5b_monitor_pty.py` | monitor output under a real PTY: TTY format defaults, chalk color, width. (requires explicit scratch/capture inputs; retained qualification) | keep-manual |
 | `n5b_monitor_reads.py` | monitor events/transcript/stats/show/session-report against a real owned seat. (requires explicit scratch/capture inputs; retained qualification) | keep-manual |

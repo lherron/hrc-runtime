@@ -83,7 +83,6 @@ describe('consolidated hrc command graph', () => {
       'surface',
       'broker-verify',
       'events',
-      'metrics',
     ])
     expect(visibleChildren(child(child(program, 'admin'), 'worktrees'))).toEqual(['audit', 'prune'])
   })
