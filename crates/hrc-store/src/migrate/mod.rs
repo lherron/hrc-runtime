@@ -182,6 +182,42 @@ fn run(
     upgrade(&conn, &pending, actor).map(|applied| Outcome::Upgraded { applied })
 }
 
+/// What the runner would do to `db`, read-only and without the store lock:
+/// `Ok(None)` for no file or an empty database (it would create one),
+/// `Ok(Some(pending ids))` otherwise, or the refusal it would raise. The
+/// deploy path's `schema-state` and its backup decision read this.
+pub fn reading(db: &Path, registry: &[Forward]) -> Result<Option<Vec<&'static str>>, MigrateError> {
+    Ok(plan(db, registry)?.map(|pending| pending.iter().map(|m| m.id).collect()))
+}
+
+/// Online backup of `db` to the new file `dest` with `VACUUM INTO`, through a
+/// read-only connection: one consistent snapshot, committed WAL included,
+/// taken while the owner keeps serving, and no write to `db`. The copy must
+/// pass `quick_check`, or it is removed. Used by the deploy path before a
+/// migrating restart (T-13056); no store lock, since the owner holds it.
+pub fn backup(db: &Path, dest: &Path) -> anyhow::Result<()> {
+    anyhow::ensure!(db.is_file(), "no store at {}", db.display());
+    anyhow::ensure!(!dest.exists(), "{} already exists", dest.display());
+    let conn = Connection::open_with_flags(db, OpenFlags::SQLITE_OPEN_READ_ONLY)
+        .with_context(|| format!("open {}", db.display()))?;
+    conn.busy_timeout(Duration::from_secs(30))?;
+    let dest_text = dest.to_str().context("backup path is not UTF-8")?;
+    let copied = conn
+        .execute("VACUUM INTO ?1", [dest_text])
+        .map(drop)
+        .with_context(|| format!("VACUUM INTO {}", dest.display()))
+        .and_then(|()| {
+            let copy = Connection::open_with_flags(dest, OpenFlags::SQLITE_OPEN_READ_ONLY)?;
+            let check: String = copy.query_row("PRAGMA quick_check", [], |r| r.get(0))?;
+            anyhow::ensure!(check == "ok", "backup failed quick_check: {check}");
+            Ok(())
+        });
+    if copied.is_err() {
+        let _ = std::fs::remove_file(dest);
+    }
+    copied
+}
+
 /// `None` for a store to create (no file, or an empty database); otherwise
 /// the pending forward steps, or the refusal.
 fn plan<'a>(db: &Path, registry: &'a [Forward]) -> Result<Option<Vec<&'a Forward>>, MigrateError> {

@@ -56,28 +56,54 @@ async fn main() -> anyhow::Result<()> {
     Ok(())
 }
 
-/// `rusthrc store migrate <path>`: one JSON line on stdout or stderr.
+const STORE_USAGE: &str = "usage: rusthrc store migrate <path> | rusthrc store state <path> | rusthrc store backup <path> <dest>";
+
+/// `rusthrc store migrate <path>`, `store state <path>` and `store backup <path> <dest>`: one JSON
+/// line on stdout or stderr.
 fn store_verb(args: &[String]) -> i32 {
     use hrc_store::migrate::{self, Actor, MigrateError, Outcome, StoreOwned};
+    if let [_, verb, path, dest] = args
+        && verb == "backup"
+        && !path.starts_with('-')
+        && !dest.starts_with('-')
+    {
+        let (db, dest) = (std::path::Path::new(path), std::path::Path::new(dest));
+        return match migrate::backup(db, dest) {
+            Ok(()) => {
+                println!("{}", serde_json::json!({"ok":true,"path":db,"backup":dest}));
+                0
+            }
+            Err(error) => {
+                eprintln!(
+                    "{}",
+                    serde_json::json!({"ok":false,"path":db,"backup":dest,"error":{"code":"store_backup_failed","message":format!("{error:#}")}})
+                );
+                1
+            }
+        };
+    }
     let [_, verb, path] = args else {
-        eprintln!("usage: rusthrc store migrate <path>");
+        eprintln!("{STORE_USAGE}");
         return 2;
     };
-    if verb != "migrate" {
-        eprintln!("usage: rusthrc store migrate <path>");
+    if verb != "migrate" && verb != "state" {
+        eprintln!("{STORE_USAGE}");
         return 2;
     }
-    // The verb has no options. `--help` used to be taken as the path and
+    // The verbs have no options. `--help` used to be taken as the path and
     // created a store named `--help`; a path that starts with `-` is `./-x`.
     if path == "-h" || path == "--help" {
-        println!("usage: rusthrc store migrate <path>");
+        println!("{STORE_USAGE}");
         return 0;
     }
     if path.starts_with('-') {
-        eprintln!("usage: rusthrc store migrate <path>");
+        eprintln!("{STORE_USAGE}");
         return 2;
     }
     let db = std::path::Path::new(path);
+    if verb == "state" {
+        return store_state(db);
+    }
     match migrate::own_and_migrate(db, migrate::FORWARD, &Actor::current(), |_| {}) {
         Ok((_owner, outcome)) => {
             let (name, applied) = match outcome {
@@ -104,6 +130,39 @@ fn store_verb(args: &[String]) -> i32 {
             1
         }
     }
+}
+
+/// `rusthrc store state <path>`: what this build's runner would do to the
+/// store, read through the runner's own read-only classification, without the
+/// store lock and without creating anything (T-13056). Exit 0 only for
+/// `current` and `pending`, the two states a deploy may proceed from.
+fn store_state(db: &std::path::Path) -> i32 {
+    use hrc_store::migrate::{self, MigrateError};
+    let release = hrc_store::migration_ids().next_back().unwrap_or("none");
+    let line = match migrate::reading(db, migrate::FORWARD) {
+        Ok(None) => serde_json::json!({"state":"absent","path":db,"releaseVersion":release}),
+        Ok(Some(pending)) => serde_json::json!({
+            "state": if pending.is_empty() { "current" } else { "pending" },
+            "path": db, "releaseVersion": release, "pending": pending,
+        }),
+        Err(MigrateError::Ahead { unknown }) => {
+            serde_json::json!({"state":"ahead","path":db,"releaseVersion":release,"unknown":unknown})
+        }
+        Err(MigrateError::BelowBaseline { missing }) => serde_json::json!({
+            "state":"below_baseline","path":db,"releaseVersion":release,"missing":missing,
+        }),
+        Err(MigrateError::NotHrcStore) => {
+            serde_json::json!({"state":"not_hrc","path":db,"releaseVersion":release})
+        }
+        Err(error) => serde_json::json!({
+            "state":"unreadable","path":db,"releaseVersion":release,"error":format!("{error}"),
+        }),
+    };
+    println!("{line}");
+    i32::from(!matches!(
+        line["state"].as_str(),
+        Some("current" | "pending")
+    ))
 }
 
 /// A daemon/front failure is one JSON line on stderr, never anyhow's plain text.

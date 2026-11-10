@@ -175,11 +175,11 @@ The `hrc` and `rusthrc` commands both select the installed native CLI.
 resolve to the current installed binary; `bun`, `foreign`, or `missing` is drift.
 Deploy readback refuses drift before checking daemon health.
 
-A node's HRC owner is Bun (explicit
-`~/.bun/install/hrc-runtime-current/packages/hrc-cli/src/cli.ts server serve`) or the native rusthrc
-owner (T-11893). Both run under the one label `com.praesidium.hrc-server`;
-`scripts/hrc-owner.sh kind` reads which from the installed plist and the
-`OWNER` column of `just fleet-status` reads it from the running binary. A
+A node's HRC owner is the native rusthrc owner (T-11893; every node since
+2026-10-26, forward-fix only) under the label `com.praesidium.hrc-server`;
+`scripts/hrc-owner.sh kind` checks the installed plist and the `OWNER` column
+of `just fleet-status` reads the running binary. The one-time Bun-to-rusthrc
+switch (`just switch-owner-rusthrc`) was deleted in T-13056. A
 rusthrc owner execs `~/praesidium/var/hrc-owner/bin/rusthrc`, a fixed, real
 copy of a staged installed release, signed by the node identity when one is
 configured so that macOS TCC grants survive releases (T-12224;
@@ -187,42 +187,36 @@ configured so that macOS TCC grants survive releases (T-12224;
 `just refresh-owner-exe <node>` still execs the release link
 `~/praesidium/var/hrc-owner/hrc-runtime-current/bin/rusthrc`.
 
-- **Deploy.** The `deploy-*` recipes work on either owner. On a rusthrc owner,
-  `just install` alone changes nothing that runs, so the lane stages the new
-  release (`hrc-owner.sh stage`, which also prunes old staged releases; see
-  `docs/state-retention.md`) before the restart. If the installed release
-  has pending migrations, the lane first runs the existing schema activation
-  door with `--dry-run`, then `--prepare-only`: it backs up SQLite through its
-  backup API into the owner's state `backups/`, applies migrations with the
-  installed Bun store, verifies the schema, and stages the release. The invoking
-  Mable seat then restarts that node through federation and performs the normal
-  release, schema and broker warmup readback. Preparation never restarts from
-  the credentialless SSH shell. A schema ahead of the release or an unreadable
-  schema refuses deployment. `scripts/hrc-owner-schema-e2e.py` exercises this
-  door against a private store using an installed release.
+- **Deploy.** On a rusthrc owner, `just install` alone changes nothing that
+  runs, so the lane stages the new release (`hrc-owner.sh stage`, which also
+  prunes old staged releases; see `docs/state-retention.md`) before the
+  restart. A node whose plist is not a rusthrc owner refuses the deploy.
+- **Schema** (T-12840 §3-4, T-13056). The daemon migrates its own store at
+  boot, under the store lock and before it binds; no other process writes the
+  store. The lane reads `hrc-owner.sh schema-state` first, with the installed
+  release's own `rusthrc store state` (read-only, no store lock, never creates):
+  `current` and `pending` proceed, anything else (`ahead`, `below_baseline`,
+  `not_hrc`, `absent`, `unreadable`) refuses before any backup or stage. On
+  `pending`, stage first takes an online backup with `rusthrc store backup`
+  (`VACUUM INTO`, read-only, `quick_check`) to
+  `backups/pre-activate-<stamp>-<pid>.sqlite` while the old daemon still serves,
+  refusing when the volume lacks the store and WAL plus 2 GiB, and keeps only that
+  newest backup. The invoking Mable seat then restarts the node, and
+  `hrc-owner.sh boot-check` reads the boots after the restart from the owner log:
+  any `store.migration_failed` fails the deploy naming the failing id and the
+  number of failed boots (launchd's retries), and otherwise the store must read
+  `current` for the running exe. A failed migration leaves the store at its
+  previous set; recover by deploying the previous release. Nothing pending takes
+  no backup. The keep-manual scratch e2e is `scripts/hrc-owner-schema-e2e.sh`.
 - **Turn attention.** The subscriber is `bunx hrc-turn-attention@<version>`, not
   part of the owner release. Activate a change with `just publish` plus
   `just install-turn-attention-launchd <version>`, or with `just deploy-max3`,
   which re-points it to latest.
-- **Switch.** `just switch-owner-rusthrc <node>` is read-only: it prints the
-  preflight report and the rendered plist diff against the node's Bun plist. Add
-  `apply` to switch. First deploy the node to the target under Bun. Apply then
-  does these steps in order:
-  1. If the store is behind, restart Bun so it migrates.
-  2. Stage the release.
-  3. `hrc server stop --node` (a restart would respawn launchd's loaded Bun
-     definition).
-  4. Swap the plist in, keeping the Bun plist as `.bun-owner`.
-  5. Bootstrap the job and run the deploy readback.
-
-  The stop is authorized daemon-side, so only a Mable primary can apply.
-- **Readback** (`_node-readback`, shared by deploy and switch) also requires
+- **Readback** (`_node-readback`) also requires
   this boot's `broker.warmup.complete` with `attached == total` in the log the
   plist names.
 - `launchd-install`, `front-door-enable` and `front-door-disable` refuse on a
   rusthrc owner: each would render the plist back to Bun.
-- To roll back, boot the job out, `install -m 0644 <plist>.bun-owner <plist>`,
-  then bootstrap it.
 
 ## hrcdev — the Tart VM (max3)
 

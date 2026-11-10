@@ -5,14 +5,13 @@ How a build becomes the installed `hrc` and the running daemon: `just install` b
 `~/.bun/install/hrc-runtime-current` (the CLI); on an owner node `scripts/hrc-owner.sh stage` copies that
 release into `~/praesidium/var/hrc-owner/hrc-runtime-releases/` and repoints
 `var/hrc-owner/hrc-runtime-current` (the daemon); the daemon runs it only after a restart. Code:
-`scripts/atomic-install.ts`, `scripts/hrc-owner.sh` (`stage`, `log-path`, `activate`),
+`scripts/atomic-install.ts`, `scripts/hrc-owner.sh` (`stage`, `log-path`, `schema-state`, `log-mark`, `boot-check`),
 `scripts/install-dirty-guard.ts`, `scripts/install-policy.ts`, `scripts/lib/install-source-scope.ts`,
 `scripts/lib/native-release.ts` (cargo builds of `rusthrc` and `hrc-pty`), `packages/hrc-core/src/release-prune.ts`
 (the install prune), `crates/hrc-common/src/release.rs` + `crates/hrc-native/src/server/front/release.rs`
 (the daemon's release capture), `crates/hrc-cli/src/server_status.rs`. Bun only:
 `packages/hrc-server/src/release-provenance.ts`, `scripts/front-door.ts`. Docs: `docs/atomic-install.md`,
-`~/praesidium/build_deploy_guide.md`, `justfile` (`install`, `deploy-*`, `fleet-status`, `switch-owner-rusthrc`,
-`refresh-owner-exe`).
+`~/praesidium/build_deploy_guide.md`, `justfile` (`install`, `deploy-*`, `fleet-status`, `refresh-owner-exe`).
 
 ## Sub-features
 
@@ -24,10 +23,12 @@ release into `~/praesidium/var/hrc-owner/hrc-runtime-releases/` and repoints
   since 54c56b7c; ad-hoc signed `Identifier=rusthrc-<hash>`, 2026-11-09). The embedded kernel runs inside the owner rusthrc and shares its
   release and lifetime; the T-12019 separate-kernel install gate retired in T-12141.
 - The owner tree (T-11930, 16dde77a): launchd `com.praesidium.hrc-server` runs `praesidium-launch
-  ~/praesidium/var/hrc-owner/hrc-runtime-current/bin/rusthrc server serve`. `hrc-owner.sh stage` refuses unless
-  the store schema is current (source-only, 2026-11-09: hrc-owner.sh:213-215). `hrc-owner.sh schema-state` is a
-  read-only probe (opens the plist's `state.sqlite` `readonly: true`) printing `current|pending|ahead`: `current`,
-  rc 0 on 2026-11-09 (T-12756); `just deploy-*` branches on it (source-only: justfile:1372-1386). The T-12224 fixed exe
+  ~/praesidium/var/hrc-owner/hrc-runtime-current/bin/rusthrc server serve`. `hrc-owner.sh stage` proceeds on a
+  `current` or `pending` store and backs the store up first when `pending` (T-13056). `hrc-owner.sh schema-state
+  [--exe <rusthrc>]` is a read-only probe through the installed release's own `rusthrc store state` (the
+  runner's read-only classification, no lock, never creates) printing `current|pending|ahead|below_baseline|
+  not_hrc|absent|unreadable`; `just deploy-*` proceeds only on `current|pending`. A build that predates `store
+  state` is read through its `server status` schema, `current` only when nothing is pending. The T-12224 fixed exe
   `var/hrc-owner/bin/rusthrc` exists but the plist does not use it; it is byte-identical to the release bin
   (`cmp`, `TeamIdentifier=not set`; 2026-11-02, T-12291). Both `current` manifests were identical
   (release-20261102082222127-69529, 9861ae0e, installedAt 08:23:34Z).
@@ -54,24 +55,25 @@ release into `~/praesidium/var/hrc-owner/hrc-runtime-releases/` and repoints
   live process, and prints `[stage] release prune: …` or `… skipped: <reason>; nothing deleted`
   (hrc-owner.sh:250-301). The tree went from 53 (2026-11-02) to 17 (2026-11-09, 2.8 GB): the newest 5 plus 12
   older ones, each named by ≥1 live process argv (`T-12756/06-install-release/drive.txt`).
-- `hrc-owner.sh activate` writes a `pre-activate-*.sqlite` backup that passes `quick_check` before migrating and
-  deletes older ones; its `-shm`/`-wal` siblings stay behind (one 25 GB backup plus both siblings in
+- `hrc-owner.sh stage` on a `pending` store writes a `pre-activate-*.sqlite` backup with `rusthrc store backup`
+  (`VACUUM INTO`, read-only, passes `quick_check`) after a free-space check (store + WAL + 2 GiB), and deletes
+  older ones (T-13056); the daemon then migrates at boot. Backups written by the retired Bun `activate` left `-shm`/`-wal` siblings behind (one 25 GB backup plus both siblings in
   `var/state/hrc/backups/` on 2026-11-09). The daemon ages backups nightly and reports `.data.backupsRemoved` in
   `retention.report` (feature 7, T-13046).
 - The front door (T-11822) is obsolete on owner nodes: `front-door-enable|disable` and `launchd-install`
   refuse a rusthrc owner (source-only, 2026-11-09: justfile:756, :842, :878). `just
   front-door-status` probes `hrc-bun.sock` ("no answer", 2026-11-02, T-12291) and prints `mode: direct` because
   it only tests for a rusthrc-server plist (source-only, 2026-11-09: justfile:908): read it as "not fronted".
-- **Needs operator, never driven by this skill:** `just install`, `hrc-owner.sh stage|activate|refresh-plist`,
-  `just switch-owner-rusthrc`, `just refresh-owner-exe`, `just publish`, `just deploy-*` (stages only when
-  `DEPLOY_RESTART_NEEDED=1` and `schema-state` is `current`; `pending` runs activate `--dry-run` then
-  `--prepare-only`; source-only, 2026-11-09: justfile:1346, :1365-1386), `just launchd-install|uninstall`,
+- **Needs operator, never driven by this skill:** `just install`, `hrc-owner.sh stage|boot-check|refresh-plist`,
+  `just refresh-owner-exe`, `just publish`, `just deploy-*` (stages only when `DEPLOY_RESTART_NEEDED=1` and
+  `schema-state` is `current` or `pending`, then restarts and runs `boot-check`, which fails on
+  `store.migration_failed` since the restart; T-13056), `just launchd-install|uninstall`,
   `just front-door-enable|disable`, `~/.bun/bin/hrc server restart`. Install-then-restart on an owner node is install →
   `hrc-owner.sh stage` → a Mable-primary restart, then `.release.releaseId` = both `current` links at the new
   sourceCommit; write it down as an operator step.
-- Only Bun migrates: a native daemon refuses a missing store ("schema: cannot open existing Bun store",
-  2026-11-02, T-12291, `01-server-health`); `hrc-owner.sh activate --expect-commit` migrates with Bun's
-  `openHrcDatabase`, then stages and restarts (source-only, 2026-11-09: hrc-owner.sh:457-492).
+- Only the daemon migrates, at boot under the store lock (T-12840 §3, T-12854); the Bun `hrc-owner.sh activate`
+  door and the Bun-to-rusthrc switch were deleted in T-13056. Scratch proof:
+  `scripts/hrc-owner-schema-e2e.sh` (keep-manual; `~/praesidium/var/wrkq-artifacts/T-13056`).
 
 ## How to get to it
 

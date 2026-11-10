@@ -152,9 +152,10 @@ next reconcile.
 
 ## Pre-activate store backups
 
-`hrc-owner.sh activate --expect-commit` writes a full copy of the store to
-`backups/pre-activate-<UTC stamp>-<pid>.sqlite` beside `state.sqlite` (2–25 GiB)
-and deletes older ones. The daemon ages out what remains first in each nightly maintenance run, so a
+`hrc-owner.sh stage`, when the installed release has migrations pending, writes
+a full copy of the store to `backups/pre-activate-<UTC stamp>-<pid>.sqlite`
+beside `state.sqlite` (2–25 GiB) with `rusthrc store backup` and deletes older
+ones (T-13056; the daemon then migrates at boot). The daemon ages out what remains first in each nightly maintenance run, so a
 node with no activation for weeks still gets the space back (T-12695, T-13046).
 
 A backup goes when it is at least 7 days old, measured from the later of its

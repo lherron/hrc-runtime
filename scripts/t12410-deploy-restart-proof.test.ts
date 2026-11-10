@@ -32,6 +32,8 @@ case "$*" in
   *'-- kind') echo rusthrc ;;
   *'-- schema-state') echo current ;;
   *'-- stage '*) echo staged ;;
+  *'-- log-mark') echo 0 ;;
+  *'-- boot-check 0') echo booted ;;
   *) printf '%s\\n' 'DEPLOY_RESTART_NEEDED=1' 'DEPLOY_TARGET_SHA=${sha}' 'DEPLOY_ASPD_SHA=${aspSha}' 'DEPLOY_ASPD_RELEASE=asp-test' ;;
 esac
 `

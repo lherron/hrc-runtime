@@ -39,7 +39,6 @@ describe('T-08559 install and canonical publication boundary', () => {
     expect(readback.slice(0, publishAt)).toContain(
       '[[ "$expected_node" == max3 ]] || fail \'only max3 may perform canonical HRC publication\''
     )
-    expect(recipeBody('switch-owner-rusthrc')).toContain('"" no-publish')
     const fleet = recipeBody('deploy-fleet')
     expect(fleet).toContain('"max3" "max3" "$hrc_sha"')
     expect(fleet.indexOf('"max3" "max3" "$hrc_sha"')).toBeLessThan(

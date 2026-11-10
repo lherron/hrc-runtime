@@ -395,77 +395,6 @@ deploy-fleet restart="wait":
     just _deploy-node "hrcdev" "hrcdev" "$hrc_sha" "$aspd_sha" "$injector" "{{ restart }}" "no-publish"
     just fleet-status
 
-# A node's HRC owner is Bun or the native rusthrc owner (T-11893), both under the
-# launchd label com.praesidium.hrc-server; scripts/hrc-owner.sh reads which from
-# the installed plist. The deploy lane works on either. This recipe is the
-# one-time Bun -> rusthrc switch of a node, run from the invoking seat:
-#   render  read-only: preflight + the rendered plist diff against the node's Bun plist
-#   apply   migrate on Bun if the store is behind, stage the release, then
-#           `hrc server stop --node` (authorized daemon-side), swap the plist in,
-#           bootstrap the owner, and run the deploy readback
-# Deploy the node to the target under Bun first (just deploy-<node>); the switch
-# stages the node's installed release and refuses any other.
-
-# Switch a node's HRC owner from Bun to rusthrc (mode=render is read-only)
-switch-owner-rusthrc node mode="render" ref="@max3" restart="wait":
-    #!/usr/bin/env bash
-    set -euo pipefail
-    node='{{ node }}'
-    case "$node" in
-      max3) ssh_target=max3 ;;
-      svc) ssh_target=mini ;;
-      hrcdev) ssh_target=hrcdev ;;
-      *) echo "switch-owner-rusthrc: unknown node ${node} (max3, svc, hrcdev)" >&2; exit 2 ;;
-    esac
-    case '{{ mode }}' in render | apply) ;; *) echo 'switch-owner-rusthrc: mode must be render or apply' >&2; exit 2 ;; esac
-    case '{{ restart }}' in
-      wait) flags=(--wait --wait-timeout-ms 300000) ;;
-      force) flags=(--force) ;;
-      *) echo 'switch-owner-rusthrc: restart must be wait or force' >&2; exit 2 ;;
-    esac
-    sha='{{ ref }}'
-    [[ "$sha" == '@max3' ]] && sha="$(just _max3-source-commit)"
-    [[ "$sha" =~ ^[0-9a-f]{40}$ ]] || sha="$(git rev-parse --verify "${sha}^{commit}")"
-    owner_script='{{ justfile_directory() }}/scripts/hrc-owner.sh'
-    on_node() { ssh -o BatchMode=yes -o ConnectTimeout=10 "$ssh_target" bash -s -- "$@" < "$owner_script"; }
-    value() { sed -n "s/^$1=//p" <<<"$report" | tail -1; }
-    echo "[switch-${node}] target ${sha}"
-
-    report="$(on_node preflight "$node" "$sha")"
-    printf '%s\n' "$report"
-    if [[ "$(value SWITCH_OWNER)" == rusthrc ]]; then
-      [[ '{{ mode }}' == render ]] && exit 0
-      echo "[switch-${node}] already a rusthrc owner; reading back"
-    else
-      if grep -q '^SWITCH_BLOCKER=' <<<"$report"; then
-        echo "[switch-${node}] blocked; nothing was changed" >&2
-        exit 1
-      fi
-      if [[ '{{ mode }}' == render ]]; then
-        echo "[switch-${node}] render only; nothing was changed. Apply: just switch-owner-rusthrc ${node} apply ${sha}"
-        exit 0
-      fi
-      # Only Bun migrates, so a store behind this release is brought up by
-      # restarting Bun onto it before native is allowed near it.
-      if [[ "$(value SWITCH_SCHEMA)" == pending* ]]; then
-        echo "[switch-${node}] store is behind ${sha}; restarting Bun so it migrates"
-        hrc server restart --node "$node" "${flags[@]}" --reason "switch ${node} owner: migrate on Bun ${sha} first"
-        report="$(on_node preflight "$node" "$sha")"
-        [[ "$(value SWITCH_SCHEMA)" == current* ]] || {
-          printf '%s\n' "$report" >&2
-          echo "[switch-${node}] store schema is still not current after the Bun restart" >&2
-          exit 1
-        }
-      fi
-      on_node prepare "$node" "$sha"
-      # A swapped plist takes effect only through bootout + bootstrap; a restart
-      # respawns launchd's loaded (Bun) definition. The daemon authorizes the stop
-      # and boots its own job out (T-09861).
-      hrc server stop --node "$node" "${flags[@]}" --reason "switch ${node} owner Bun -> rusthrc ${sha}"
-      on_node activate
-    fi
-    just _node-readback "$ssh_target" "$node" "$sha" "$(value SWITCH_ASPD_SHA)" "$(value SWITCH_ASPD_RELEASE)" "" no-publish
-
 # T-12224: a rusthrc owner plist that still execs the release link
 # (hrc-runtime-current/bin/rusthrc) is moved to the fixed signed copy
 # ~/praesidium/var/hrc-owner/bin/rusthrc, which keeps one macOS TCC identity
@@ -1245,25 +1174,21 @@ _deploy-node ssh-target expected-node target-ref="origin/main" aspd-ref="origin/
       # A rusthrc owner (T-11893) execs a staged copy of the release, not the
       # install, so `just install` alone changes nothing it runs. Stage the
       # release the install just made; the restart then relaunches from it.
+      # Schema (T-12840 §3-4, T-13056): the daemon migrates its own store at
+      # boot. schema-state reads the store with the installed release's own
+      # rusthrc, read-only; stage backs the store up when that reading is
+      # pending, and boot-check reads the boots after the restart back.
       owner_script='{{ justfile_directory() }}/scripts/hrc-owner.sh'
-      owner="$(ssh -o BatchMode=yes -o ConnectTimeout=10 "{{ ssh-target }}" bash -s -- kind < "$owner_script")"
-      if [[ "$owner" == rusthrc ]]; then
-        schema="$(ssh -o BatchMode=yes -o ConnectTimeout=10 "{{ ssh-target }}" \
-          bash -s -- schema-state < "$owner_script")"
-        case "$schema" in
-          current)
-            ssh -o BatchMode=yes -o ConnectTimeout=10 "{{ ssh-target }}" \
-              bash -s -- stage --expect-commit "$target_sha" < "$owner_script" ;;
-          pending)
-            # The remote shell has no runtime credential. Prepare through the
-            # schema activation door; this invoking seat owns the restart below.
-            ssh -o BatchMode=yes -o ConnectTimeout=10 "{{ ssh-target }}" \
-              bash -s -- activate --expect-commit "$target_sha" --dry-run < "$owner_script"
-            ssh -o BatchMode=yes -o ConnectTimeout=10 "{{ ssh-target }}" \
-              bash -s -- activate --expect-commit "$target_sha" --prepare-only < "$owner_script" ;;
-          *) echo "deploy-{{ expected-node }}: installed schema is ${schema}; refusing activation" >&2; exit 1 ;;
-        esac
-      fi
+      on_node() { ssh -o BatchMode=yes -o ConnectTimeout=10 "{{ ssh-target }}" bash -s -- "$@" < "$owner_script"; }
+      owner="$(on_node kind)"
+      [[ "$owner" == rusthrc ]] || { echo "deploy-{{ expected-node }}: owner is ${owner}, not rusthrc" >&2; exit 1; }
+      schema="$(on_node schema-state)"
+      case "$schema" in
+        current | pending) on_node stage --expect-commit "$target_sha" ;;
+        *) echo "deploy-{{ expected-node }}: installed schema is ${schema}; refusing the deploy before any backup or stage" >&2; exit 1 ;;
+      esac
+      log_mark="$(on_node log-mark)"
+      [[ "$log_mark" =~ ^[0-9]+$ ]] || { echo "deploy-{{ expected-node }}: owner log mark is not a byte count: ${log_mark}" >&2; exit 1; }
       case '{{ restart }}' in
         wait) restart_flags=(--wait --wait-timeout-ms 300000) ;;
         force) restart_flags=(--force) ;;
@@ -1271,8 +1196,16 @@ _deploy-node ssh-target expected-node target-ref="origin/main" aspd-ref="origin/
       esac
       # Max3 warmup took 33s on 2026-11-03, exceeding the CLI's 30s default.
       # Keep the healthy/new-process proof bounded while allowing broker recovery.
-      hrc server restart --node '{{ expected-node }}' "${restart_flags[@]}" \
-        --proof-timeout-ms 120000 --reason "deploy {{ expected-node }} to ${target_sha}"
+      # A boot that fails its migration exits before binding, so the restart
+      # proof times out; boot-check then names store.migration_failed from the
+      # owner log instead of leaving a bare health timeout.
+      if ! hrc server restart --node '{{ expected-node }}' "${restart_flags[@]}" \
+        --proof-timeout-ms 120000 --reason "deploy {{ expected-node }} to ${target_sha}"; then
+        on_node boot-check "$log_mark" || true
+        echo "deploy-{{ expected-node }}: restart to ${target_sha} failed" >&2
+        exit 1
+      fi
+      on_node boot-check "$log_mark"
     fi
 
     just _node-readback "{{ ssh-target }}" "{{ expected-node }}" "$target_sha" "$aspd_sha" "$aspd_release" "$injector" "{{ publication }}"
@@ -1285,7 +1218,7 @@ _deploy-node ssh-target expected-node target-ref="origin/main" aspd-ref="origin/
     bash scripts/retire-nightly-prune.sh
     RETIRE
 
-# Read a node back after a deploy or an owner switch: healthy with a live pid,
+# Read a node back after a deploy: healthy with a live pid,
 # the expected node, release identity (sourceCommit, running == installed) for
 # its owner kind, aspd, launchd ownership with the plist environment, and
 # brokers reattached; then optional publication and the injector (an empty

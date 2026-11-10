@@ -1,35 +1,34 @@
 #!/usr/bin/env bash
-# The HRC owner of a node: Bun (explicit hrc-cli entrypoint) or the native
-# rusthrc owner (T-11893). Both run under the one launchd label
-# com.praesidium.hrc-server; only ProgramArguments and the log paths differ.
+# The HRC owner of a node: the native rusthrc owner (T-11893) under the launchd
+# label com.praesidium.hrc-server. Every node has run it since 2026-10-26.
 #
-#   hrc-owner.sh kind [plist]                      print bun | rusthrc
+#   hrc-owner.sh kind [plist]                      print rusthrc (fails on any other plist)
 #   hrc-owner.sh log-path [plist]                  the owner's StandardOutPath
-#   hrc-owner.sh schema-state                     installed release vs owner store, read-only
-#   hrc-owner.sh render <bun-plist> <out>          owner plist from an installed Bun plist
+#   hrc-owner.sh schema-state [--exe <rusthrc>]    the owner store against the installed release
+#                                                  (or <rusthrc>), read-only: current | pending |
+#                                                  ahead | below_baseline | not_hrc | absent | unreadable
 #   hrc-owner.sh stage --expect-commit <sha> [--dry-run]
-#                                                  copy the installed release to the owner root and
-#                                                  its rusthrc (signed when configured) to the fixed exe,
-#                                                  then prune old staged releases
-#   hrc-owner.sh preflight <node> <sha>            read-only switch report (KEY=value lines)
-#   hrc-owner.sh prepare <node> <sha>              stage + render the owner plist to <plist>.rusthrc-owner.next
-#   hrc-owner.sh activate --expect-commit <sha> [--expect-pending <id,id>] [--reason <text>] [--dry-run|--prepare-only]
-#                                                  migrate the store, stage, request authorized restart, verify
-#                                                  prepare-only backs up/migrates/stages; invoking seat restarts remotely
-#   hrc-owner.sh activate                          after the stop: swap the plist in, bootstrap, wait for health
+#                                                  back the store up when the release has migrations
+#                                                  pending, copy the installed release to the owner
+#                                                  root and its rusthrc (signed when configured) to
+#                                                  the fixed exe, then prune old staged releases
+#   hrc-owner.sh log-mark                          the owner log's byte length, taken before a restart
+#   hrc-owner.sh boot-check <mark>                 after a restart: fail on store.migration_failed
+#                                                  since <mark>, else require the store current for
+#                                                  the running exe
 #   hrc-owner.sh refresh-plist [--dry-run]         a rusthrc owner plist that still execs the old
 #                                                  release-link path: point it at the fixed exe
 #   hrc-owner.sh bootstrap                         after the stop: bootstrap the installed plist, wait for health
 #
-# The deploy and switch recipes pipe this file to a node over ssh
+# The deploy recipes pipe this file to a node over ssh
 # (`ssh host bash -s -- <cmd> ... < scripts/hrc-owner.sh`), so a node does not
-# need this commit checked out to be switched.
+# need this commit checked out, and nothing here may read a file from a checkout.
 #
-# Schema activation requests a restart through HRC (Mable primary only).
-# The separate plist switch takes effect only
-# through a bootout + bootstrap: `hrc server restart` respawns launchd's LOADED
-# definition. The invoking seat does the authorized `hrc server stop --node`;
-# `activate` then bootstraps the job that stop booted out.
+# Schema (T-12840 §3-4, T-13056): the daemon migrates its store at boot, under
+# the store lock, before it binds. Nothing in this script writes the store. A
+# release with migrations pending gets an online backup at stage, while the old
+# daemon still serves; the invoking seat then restarts the node, and boot-check
+# reads the outcome back from the owner log and the store.
 set -euo pipefail
 
 LABEL=com.praesidium.hrc-server
@@ -65,79 +64,12 @@ owner_kind() {
   while read -r arg; do
     case "${arg##*/}" in
       rusthrc) echo rusthrc; return ;;
-      hrc | cli.ts | hrc.js) echo bun; return ;;
     esac
   done < <(program_args "$plist")
-  fail "$plist runs neither hrc nor rusthrc: $(program_args "$plist" | paste -sd ' ' -)"
+  fail "$plist does not run rusthrc: $(program_args "$plist" | paste -sd ' ' -)"
 }
 
 plist_value() { plutil -extract "$2" raw -o - "$1" 2>/dev/null; }
-
-# The owner plist is the installed Bun plist with three changes: ProgramArguments
-# execs the staged rusthrc (any launcher shim in front of `hrc` is kept, a bare
-# `bun` interpreter is dropped), HRC_LAUNCHD_LABEL is declared, and both logs
-# go to rusthrc-owner.log beside the Bun log. Everything else (env, label,
-# ExitTimeOut, peer-listener settings) is the node's own and is kept. The edit
-# is textual so the diff stays reviewable, then checked semantically.
-render() {
-  local src="$1" out="$2" log_dir new_args
-  [[ "$(owner_kind "$src")" == bun ]] || fail "$src is not a Bun owner plist"
-  [[ "$(plist_value "$src" Label)" == "$LABEL" ]] || fail "$src is not labelled $LABEL"
-  local -a args=() kept=()
-  local i hrc_at=-1
-  # bash 3.2 (macOS /bin/bash, what `ssh host bash -s` gets on svc): no mapfile.
-  while IFS= read -r i; do args+=("$i"); done < <(program_args "$src")
-  for i in "${!args[@]}"; do
-    [[ "${args[$i]##*/}" == hrc || "${args[$i]}" == */hrc-cli/src/cli.ts || "${args[$i]}" == */hrc-cli/bin/hrc.js ]] && { hrc_at=$i; break; }
-  done
-  # A fronted Bun (T-11822) carries --listen-socket; the switch is for a direct one.
-  [[ "${args[*]:hrc_at+1}" == 'server serve' ]] ||
-    fail "$src runs '${args[*]}', expected <hrc> server serve (a fronted node? run just front-door-disable first)"
-  for ((i = 0; i < hrc_at; i++)); do
-    [[ "${args[$i]##*/}" == bun ]] || kept+=("${args[$i]}")
-  done
-  new_args="$(printf '%s\n' ${kept[@]+"${kept[@]}"} "$OWNER_EXE" server serve)"
-  log_dir="$(dirname "$(plist_value "$src" StandardOutPath)")"
-  [[ "$log_dir" == /* ]] || fail "$src declares no absolute StandardOutPath"
-
-  # Through ENVIRON: BSD awk rejects a newline inside a -v value.
-  OWNER_ARGS="$new_args" OWNER_LOG="$log_dir/rusthrc-owner.log" OWNER_LABEL="$LABEL" awk '
-    BEGIN { args = ENVIRON["OWNER_ARGS"]; logpath = ENVIRON["OWNER_LOG"]; label = ENVIRON["OWNER_LABEL"] }
-    function indent(s) { match(s, /^[ \t]*/); return substr(s, 1, RLENGTH) }
-    function emit_label(ind) { print ind "<key>HRC_LAUNCHD_LABEL</key>"; print ind "<string>" label "</string>" }
-    # ProgramArguments: replace the array body.
-    in_args && /<\/array>/ { n = split(args, a, "\n"); for (j = 1; j <= n; j++) print arg_ind "<string>" a[j] "</string>"; in_args = 0 }
-    in_args { if (arg_ind == "") arg_ind = indent($0); next }
-    want_args && /<array>/ { want_args = 0; in_args = 1; print; next }
-    /<key>ProgramArguments<\/key>/ { want_args = 1 }
-    # Logs: the <string> after either key.
-    want_log && /<string>/ { sub(/<string>.*<\/string>/, "<string>" logpath "</string>"); want_log = 0 }
-    /<key>Standard(Error|Out)Path<\/key>/ { want_log = 1 }
-    # HRC_LAUNCHD_LABEL: set it if present, else insert in key order.
-    in_env && /<key>HRC_LAUNCHD_LABEL<\/key>/ { have_label = 1 }
-    in_env && have_label == 1 && /<string>/ && !/<key>/ { sub(/<string>.*<\/string>/, "<string>" label "</string>"); have_label = 2 }
-    in_env && !have_label && match($0, /<key>[^<]*<\/key>/) {
-      k = substr($0, RSTART + 5, RLENGTH - 11)
-      if (k > "HRC_LAUNCHD_LABEL") { emit_label(indent($0)); have_label = 2 }
-      last_ind = indent($0)
-    }
-    in_env && /<\/dict>/ { if (!have_label) { emit_label(last_ind); have_label = 2 } in_env = 0 }
-    want_env && /<dict>/ { want_env = 0; in_env = 1 }
-    /<key>EnvironmentVariables<\/key>/ { want_env = 1 }
-    { print }
-  ' "$src" > "$out.tmp"
-  plutil -lint -s "$out.tmp" || fail "rendered plist does not lint"
-
-  # Semantic check: apart from the three intended edits, the plists are identical.
-  local expect got
-  expect="$(plutil -convert json -o - "$src" | jq -S --arg exe "$OWNER_EXE" --arg log "$log_dir/rusthrc-owner.log" \
-    --arg label "$LABEL" --argjson args "$(jq -Rn '[inputs]' <<<"$new_args")" \
-    '.ProgramArguments = $args | .StandardOutPath = $log | .StandardErrorPath = $log
-     | .EnvironmentVariables.HRC_LAUNCHD_LABEL = $label')"
-  got="$(plutil -convert json -o - "$out.tmp" | jq -S .)"
-  [[ "$expect" == "$got" ]] || { diff <(echo "$expect") <(echo "$got") >&2 || true; fail "render changed more than the owner keys"; }
-  mv "$out.tmp" "$out"
-}
 
 # Run the installed release's rusthrc against this node's store, read-only (the
 # schema read opens the DB read-only; status is a GET), with the plist's roots.
@@ -149,22 +81,37 @@ owner_status_json() {
     "$exe" server status --json 2>/dev/null || true
 }
 
-schema_json() {
-  local out
-  out="$(owner_status_json "$1")"
-  jq -c '.schema // {}' <<<"$out" 2>/dev/null || echo '{}'
+# The store the owner opens: the plist's absolute HRC_STATE_DIR.
+owner_db() {
+  local dir
+  dir="$(plist_value "$PLIST" EnvironmentVariables.HRC_STATE_DIR)" || fail "$PLIST declares no HRC_STATE_DIR"
+  [[ "$dir" == /* ]] || fail "$PLIST HRC_STATE_DIR is not absolute: $dir"
+  printf '%s/state.sqlite\n' "$dir"
 }
 
-# current | pending | ahead | unreadable. Only Bun migrates, and native refuses
-# a store whose migration set differs from its own, in either direction.
-schema_state() {
-  local s
-  s="$(schema_json "$1")"
-  if [[ "$(jq -r '.readable // false' <<<"$s")" != true ]]; then echo unreadable
-  elif [[ "$(jq -r '.schemaAhead // false' <<<"$s")" == true ]]; then echo ahead
-  elif [[ "$(jq -r '(.pending // [1]) | length' <<<"$s")" != 0 ]]; then echo pending
-  else echo current
+# One JSON reading {state, ...} of the owner store by <rusthrc>'s own build:
+# `rusthrc store state`, the runner's read-only classification (no store lock,
+# never creates). A build that predates the verb (exit 2, usage) is read
+# through its own read-only status schema instead, so a release staged for a
+# rollback still gets an answer; that reading cannot see an ahead store, so it
+# is current only when readable with nothing pending and unreadable otherwise.
+native_reading() {
+  local exe="$1" db out rc=0
+  [[ -x "$exe" ]] || fail "no rusthrc at $exe"
+  db="$(owner_db)"
+  out="$("$exe" store state "$db" 2>/dev/null)" || rc=$?
+  if jq -ce 'select(type == "object" and (.state | type == "string"))' <<<"$out" 2>/dev/null; then
+    return
   fi
+  if ((rc == 2)) && [[ -z "$out" ]]; then
+    jq -c --arg db "$db" '.schema // {} |
+      if .readable == true and (.pending | type == "array") and (.pending | length) == 0
+      then {state: "current", path: $db, releaseVersion, via: "server status (build predates store state)"}
+      else {state: "unreadable", path: $db, via: "server status (build predates store state)", schema: .} end' \
+      <<<"$(owner_status_json "$exe")" 2>/dev/null && return
+  fi
+  jq -cn --arg db "$db" --arg exe "$exe" --arg out "$out" --argjson rc "$rc" \
+    '{state: "unreadable", path: $db, error: "\($exe) store state gave no reading (exit \($rc)): \($out)"}'
 }
 
 installed_release() {
@@ -211,9 +158,23 @@ stage() {
   [[ -z "$expect" || "$commit" == "$expect" ]] ||
     fail "installed release is $commit, expected $expect (install the target first)"
   knows_native_roles "$src/bin/rusthrc" || fail "$src/bin/rusthrc is missing or does not know the native daemon roles"
-  state="$(schema_state "$src/bin/rusthrc")"
-  [[ "$state" == current ]] ||
-    fail "store schema is $state for $id: $(schema_json "$src/bin/rusthrc"). Only Bun migrates: put the .bun-owner plist back, start Bun on this release, then switch again"
+  # The daemon migrates at boot (T-12840 §3). Pending migrations get the
+  # online backup here, before anything is copied, so a migrating restart
+  # never runs without one and a release with nothing pending never takes one.
+  local reading
+  reading="$(native_reading "$src/bin/rusthrc")"
+  state="$(jq -r .state <<<"$reading")"
+  case "$state" in
+    current) echo "[stage] store schema current for $id" ;;
+    pending)
+      echo "[stage] store schema pending for $id: $(jq -c .pending <<<"$reading"); the daemon applies them at its next boot"
+      if ((dry)); then
+        echo "[stage] would back up $(owner_db) with VACUUM INTO before staging"
+      else
+        backup_store "$(owner_db)" "$src/bin/rusthrc"
+      fi ;;
+    *) fail "store schema is $state for $id: $reading; nothing staged" ;;
+  esac
 
   local dest="$OWNER_ROOT/hrc-runtime-releases/$id"
   if [[ -d "$dest" ]]; then
@@ -394,227 +355,74 @@ commit_owner_exe() {
   echo "[stage] $OWNER_EXE <- $src"
 }
 
-# Read-only. Prints the rendered diff and KEY=value lines the switch recipe
-# reads; every reason the switch cannot proceed is one SWITCH_BLOCKER line.
-preflight() {
-  local node="$1" sha="$2" status kind src id commit exe state tmp release
-  blocker() { echo "SWITCH_BLOCKER=$*"; }
-  status="$(hrc server status --json 2>/dev/null)" || { blocker 'HRC daemon is not healthy'; return; }
-  [[ "$(jq -r '.node.nodeId // ""' <<<"$status")" == "$node" ]] ||
-    { blocker "expected node $node, found $(jq -r '.node.nodeId // "unknown"' <<<"$status")"; return; }
-  echo "SWITCH_ASPD_SHA=$(jq -r '.api.aspd.release.sourceCommit // ""' <<<"$status")"
-  echo "SWITCH_ASPD_RELEASE=$(jq -r '.api.aspd.release.releaseId // ""' <<<"$status")"
-  kind="$(owner_kind)"
-  echo "SWITCH_OWNER=$kind"
-  if [[ "$kind" == rusthrc ]]; then
-    echo "[preflight] $PLIST already runs rusthrc; nothing to switch"
-    return
-  fi
-  [[ ! -f "$HOME/Library/LaunchAgents/com.praesidium.rusthrc-server.plist" ]] ||
-    blocker 'node is fronted (com.praesidium.rusthrc-server.plist); run just front-door-disable first'
-  echo "SWITCH_BUN_RUNNING=$(jq -r '.release.hrcBuild.sourceCommit // ""' <<<"$status")"
-  echo "SWITCH_BUN_RUNNING_EQUALS_INSTALLED=$(jq -r '.release.runningEqualsInstalled // false' <<<"$status")"
-  if ! release="$(installed_release 2>/dev/null)"; then
-    blocker "no atomic installed release at $INSTALLED_LINK"; return
-  fi
-  read -r src id commit <<<"$release"
-  echo "SWITCH_INSTALLED=$id $commit"
-  [[ "$commit" == "$sha" ]] || blocker "installed release is $commit, expected $sha (run just deploy-$node first)"
-  exe="$src/bin/rusthrc"
-  if knows_native_roles "$exe"; then
-    state="$(schema_state "$exe")"
-    echo "SWITCH_SCHEMA=$state $(schema_json "$exe")"
-    case "$state" in
-      current | pending) ;;
-      *) blocker "store schema is $state against $id" ;;
-    esac
-  else
-    blocker "$exe is missing or does not know the native daemon roles (install a release that ships it)"
-  fi
-  tmp="$(mktemp "${TMPDIR:-/tmp}/rusthrc-owner.XXXXXX")"
-  if (render "$PLIST" "$tmp"); then
-    echo "[preflight] rendered owner plist vs installed $PLIST:"
-    diff -u "$PLIST" "$tmp" | sed "s|$tmp|<rendered rusthrc owner>|" || true
-  else
-    blocker 'owner plist did not render'
-  fi
-  rm -f "$tmp"
-}
-
-prepare() {
-  local node="$1" sha="$2" report
-  report="$(preflight "$node" "$sha")"
-  echo "$report"
-  grep -q '^SWITCH_OWNER=bun$' <<<"$report" || fail "$PLIST is not a Bun owner"
-  ! grep -q '^SWITCH_BLOCKER=' <<<"$report" || fail 'preflight has blockers'
-  grep -q '^SWITCH_SCHEMA=current' <<<"$report" || fail 'store schema is not current; migrate on Bun first'
-  stage --expect-commit "$sha"
-  render "$PLIST" "$PLIST.rusthrc-owner.next"
-  echo "[prepare] staged; owner plist rendered to $PLIST.rusthrc-owner.next (the loaded Bun job is untouched)"
-}
-
-# Inline so this script still works when piped to a node via ssh bash -s.
-# The installed package owns migration; the wrapper is never used for readback.
-activation_migrations() {
-  bun run - "$@" <<'JS'
-import { Database } from 'bun:sqlite'
-const [rel, path, mode, expected] = process.argv.slice(2)
-const m = await import(`${rel}/packages/hrc-store-sqlite/dist/migrations.js`)
-function report() {
-  const ro = new Database(path, { readonly: true })
-  try {
-    const applied = m.appliedMigrationIds(ro)
-    const known = new Set(m.phase1Migrations.map(x => x.id))
-    return { storeVersion: applied.at(-1), releaseVersion: m.releaseSchemaVersion(),
-      pending: m.pendingMigrationIds(ro), schemaAhead: applied.some(id => !known.has(id)) }
-  } finally { ro.close() }
-}
-const before = report()
-if (mode === 'state') {
-  console.log(before.schemaAhead ? 'ahead' : before.pending.length ? 'pending' : 'current')
-  process.exit(0)
-}
-console.log(JSON.stringify({ path, before }))
-const pending = [...before.pending].sort()
-if (before.schemaAhead || !pending.length ||
-    (expected !== undefined && JSON.stringify(pending) !== JSON.stringify(expected.split(',').sort()))) {
-  throw new Error('unexpected pending set or schema ahead; nothing changed')
-}
-if (mode === 'apply') {
-  const { openHrcDatabase } = await import(`${rel}/packages/hrc-store-sqlite/dist/database.js`)
-  const store = openHrcDatabase(path)
-  store.close()
-  const after = report()
-  console.log(JSON.stringify({ path, after }))
-  if (after.pending.length || after.schemaAhead || after.storeVersion !== after.releaseVersion) {
-    throw new Error('migration readback is not current; stage/restart skipped')
-  }
-}
-JS
-}
-
-activate_schema() {
-  local expect="" pending="" has_pending=0 reason="" release src id commit env_json db log since status warm attempt
-  local dry=0 prepare_only=0 backup
-  while (($#)); do
-    case "$1" in
-      --expect-commit|--expect-pending|--reason)
-        [[ $# -ge 2 && -n "$2" && "$2" != --* ]] || fail "activate: $1 requires a value; nothing changed"
-        case "$1" in
-          --expect-commit) expect="$2" ;;
-          --expect-pending) pending="$2"; has_pending=1 ;;
-          --reason) reason="$2" ;;
-        esac
-        shift 2 ;;
-      --dry-run) dry=1; shift ;;
-      --prepare-only) prepare_only=1; shift ;;
-      *) fail "activate: unknown argument $1; nothing changed" ;;
-    esac
-  done
-  [[ "$expect" =~ ^[0-9a-f]{40}$ ]] || fail 'activate requires --expect-commit <full sha>; nothing changed'
-  release="$(installed_release)" || return 1
-  read -r src id commit <<<"$release"
-  [[ "$commit" == "$expect" ]] || fail "installed release is $commit, expected $expect; nothing changed"
-  [[ "$(owner_kind)" == rusthrc ]] || fail 'activate requires a rusthrc owner; nothing changed'
-  knows_native_roles "$src/bin/rusthrc" || fail 'installed release lacks native roles; nothing changed'
-  env_json="$(plutil -extract EnvironmentVariables json -o - "$PLIST")"
-  # Scope every CLI/schema read to the same store the owner will open.
-  local HRC_STATE_DIR HRC_RUNTIME_DIR
-  HRC_STATE_DIR="$(jq -er '.HRC_STATE_DIR | select(type == "string" and startswith("/"))' <<<"$env_json")" || fail 'no absolute owner state root; nothing changed'
-  HRC_RUNTIME_DIR="$(jq -er '.HRC_RUNTIME_DIR | select(type == "string" and startswith("/"))' <<<"$env_json")" || fail 'no absolute owner runtime root; nothing changed'
-  export HRC_STATE_DIR HRC_RUNTIME_DIR
-  db="$HRC_STATE_DIR/state.sqlite"
-  log="$(plist_value "$PLIST" StandardOutPath)"
-  [[ -f "$db" && -r "$log" ]] || fail "store or owner log unavailable ($db, $log); nothing changed"
-  echo "[activate] db=$db release=$id sourceCommit=$commit"
-  local -a expected_args=()
-  if ((has_pending)); then expected_args=("$pending"); fi
-  activation_migrations "$src" "$db" report ${expected_args[@]+"${expected_args[@]}"} || fail 'migration preflight failed; nothing changed'
-  if ((dry)); then
-    echo '[activate] dry run: would back up, migrate and stage; no changes made'
-    return
-  fi
-  backup="$HRC_STATE_DIR/backups/pre-activate-$(date -u +%Y%m%dT%H%M%SZ)-$$.sqlite"
-  # SQLite's backup API includes committed WAL pages; copying the live DB does not.
-  python3 - "$db" "$backup" <<'PY'
-import pathlib, sqlite3, sys
-source, target = map(pathlib.Path, sys.argv[1:])
-target.parent.mkdir(parents=True, exist_ok=True)
-with sqlite3.connect(f'file:{source}?mode=ro', uri=True) as src:
-    with sqlite3.connect(target) as dst:
-        src.backup(dst)
-        if dst.execute('PRAGMA quick_check').fetchall() != [('ok',)]:
-            raise SystemExit('activation backup failed SQLite quick_check')
-target.chmod(0o600)
-PY
-  echo "[activate] backup=$backup"
-  # Retention: the backup just written (quick_check ok) is this activation's
-  # rollback point; older pre-activate copies are a full store each (2–25 GiB)
-  # and roll back nothing current, so only the newest is kept. The nightly state
-  # retention job ages that one out after 7 days (T-12695, docs/state-retention.md).
-  local old
-  for old in "$HRC_STATE_DIR"/backups/pre-activate-*.sqlite; do
+# Online backup before a migrating restart, taken while the old daemon still
+# serves (T-12840 §4), by the release's own `rusthrc store backup`: VACUUM INTO
+# through a read-only connection, one consistent snapshot with committed WAL,
+# checked with quick_check; no process but the daemon writes the store. (macOS
+# sqlite3 cannot do it: it fails to open a WAL store whose -shm is absent, as
+# it is while the daemon is down.) The name keeps the prefix the daemon's nightly
+# retention ages at 7 days (ledger_prune/retention.rs, docs/state-retention.md).
+# Refuses, before writing, unless the backups volume has room for the store and
+# its WAL plus 2 GiB, so a backup never fills the disk under the live daemon.
+BACKUP_HEADROOM_KIB=$((2 * 1024 * 1024))
+backup_store() {
+  local db="$1" exe="$2" dir backup size wal=0 need avail old
+  [[ -f "$db" ]] || fail "no store at $db; nothing staged"
+  dir="$(dirname "$db")/backups"
+  mkdir -p "$dir" || fail "cannot create $dir; nothing staged"
+  backup="$dir/pre-activate-$(date -u +%Y%m%dT%H%M%SZ)-$$.sqlite"
+  size="$(stat -f %z "$db")"
+  [[ -f "$db-wal" ]] && wal="$(stat -f %z "$db-wal")"
+  need=$(((size + wal) / 1024 + BACKUP_HEADROOM_KIB))
+  avail="$(df -Pk "$dir" | awk 'NR == 2 { print $4 }')"
+  [[ "$avail" =~ ^[0-9]+$ ]] || fail "cannot read the free space of $dir; nothing staged"
+  ((avail >= need)) ||
+    fail "backup needs ${need} KiB free in $dir (store ${size} B + WAL ${wal} B + 2 GiB headroom), ${avail} KiB available; nothing staged"
+  echo "[stage] backup: $exe store backup (VACUUM INTO) $backup (store ${size} B, WAL ${wal} B, ${avail} KiB free)"
+  "$exe" store backup "$db" "$backup" >/dev/null || fail "backup of $db failed; nothing staged"
+  chmod 600 "$backup"
+  echo "[stage] backup=$backup (quick_check ok)"
+  # The backup just written is this migration's rollback point; older copies
+  # are a full store each (2-25 GiB) and roll back nothing current.
+  for old in "$dir"/pre-activate-*.sqlite; do
     [[ -f "$old" && "$old" != "$backup" ]] || continue
-    rm -f -- "$old" && echo "[activate] pruned older backup $old"
+    rm -f -- "$old" && echo "[stage] pruned older backup $old"
   done
-  [[ -n "$reason" ]] || reason="activate schema bump at $expect"
-  echo "[activate] migrate -> stage -> restart (restart requires mable@<project>:primary)"
-  activation_migrations "$src" "$db" apply ${expected_args[@]+"${expected_args[@]}"}
-  stage --expect-commit "$expect"
-  if ((prepare_only)); then
-    echo "[activate] prepared sourceCommit=$commit; invoking Mable seat must restart and read back this node"
-    return
-  fi
-  if ! hrc server restart --force --reason "$reason"; then
-    fail 'restart failed; migration and stage already applied. HRC permits restart only from an authorized Mable primary seat (or Lance); ask mable@hrc-runtime:primary to finish activation'
-  fi
-  for attempt in $(seq 1 60); do
-    status="$(hrc server status --json 2>/dev/null || true)"
-    if jq -e --arg sha "$expect" '
-      .release.hrcBuild.sourceCommit == $sha and .release.runningEqualsInstalled == true and
-      .api.startedAt != null and (.api.startedAt | type == "string") and
-      .schema.readable == true and (.schema.releaseVersion | type == "string") and
-      .schema.storeVersion == .schema.releaseVersion and .schema.pending == [] and
-      .schema.schemaAhead == false' >/dev/null 2>&1 <<<"$status"; then
-      echo "$status" | jq -c '{sourceCommit:.release.hrcBuild.sourceCommit, schema}'
-      break
-    fi
-    [[ "$attempt" != 60 ]] || fail 'post-restart release/schema readback failed'
-    sleep 1
-  done
-  # Bound warmup to the verified process start.
-  since="$(jq -r .api.startedAt <<<"$status")"
-  for _ in $(seq 1 120); do
-    warm="$(jq -Rc --arg since "$since" 'fromjson? | select(.event == "broker.warmup.complete" and .ts >= $since)' "$log" | tail -1)"
-    if [[ -n "$warm" ]]; then
-      echo "$warm"
-      jq -e '.data | (.attached | type == "number") and (.total | type == "number") and
-        .attached == .total and (.byCategory | type == "object") and
-        (.byCategory | del(.attached) | [.[]] | all(. == 0))' >/dev/null <<<"$warm" || fail 'broker warmup incomplete'
-      echo "[activate] ok release=$id sourceCommit=$commit"
-      return
-    fi
-    sleep 1
-  done
-  fail "no broker.warmup.complete from this activation in $log"
 }
 
-activate() {
-  local domain target
-  domain="gui/$(id -u)"
-  target="$domain/$LABEL"
-  [[ -f "$PLIST.rusthrc-owner.next" ]] || fail "no rendered $PLIST.rusthrc-owner.next; run prepare first"
-  wait_unloaded
-  ! pgrep -f '/bin/hrc server serve' >/dev/null || fail "a Bun owner is still running: $(pgrep -fl '/bin/hrc server serve')"
-  cp -p "$PLIST" "$PLIST.bun-owner"
-  install -m 0644 "$PLIST.rusthrc-owner.next" "$PLIST"
-  rm "$PLIST.rusthrc-owner.next"
-  if command -v praesidium-adopt >/dev/null; then praesidium-adopt "$PLIST"; fi
-  echo "[activate] $PLIST now runs $OWNER_EXE; Bun plist kept as $PLIST.bun-owner"
-  bootstrap_owner || {
-    echo "[activate] roll back to Bun: launchctl bootout $target; install -m 0644 $PLIST.bun-owner $PLIST; launchctl bootstrap $domain $PLIST" >&2
+log_mark() {
+  local log
+  log="$(plist_value "$PLIST" StandardOutPath)" || fail "$PLIST declares no StandardOutPath"
+  if [[ -f "$log" ]]; then stat -f %z "$log"; else echo 0; fi
+}
+
+# After a restart: the boots since <mark> in the owner log, then the store as
+# the running exe reads it. A boot that failed its migration logs
+# store.migration_failed and exits before binding; launchd retries it, so each
+# retry is another such line. The store then still holds its previous set.
+boot_check() {
+  local mark="${1:-}" log size since failed last exits reading state migrated
+  [[ "$mark" =~ ^[0-9]+$ ]] || fail "boot-check requires the byte mark from log-mark"
+  log="$(plist_value "$PLIST" StandardOutPath)" || fail "$PLIST declares no StandardOutPath"
+  size=0
+  [[ -f "$log" ]] && size="$(stat -f %z "$log")"
+  ((size >= mark)) || mark=0 # rotated since the mark: read what there is
+  since="$(tail -c "+$((mark + 1))" "$log" 2>/dev/null | jq -Rc 'fromjson? | select(type == "object")' 2>/dev/null || true)"
+  failed="$(jq -c 'select(.event == "store.migration_failed")' <<<"$since")"
+  if [[ -n "$failed" ]]; then
+    last="$(tail -1 <<<"$failed")"
+    echo "[boot-check] FAIL store.migration_failed: $(jq -r '"\(.data.id): \(.data.error)"' <<<"$last") (path $(jq -r .data.path <<<"$last"))" >&2
+    echo "[boot-check] $(wc -l <<<"$failed" | tr -d ' ') boot(s) since the restart failed their migration and exited before binding; launchd keeps retrying this release. The store holds its previous migration set, which the previous release admits: install and stage that release, then restart. Log: $log" >&2
     exit 1
-  }
+  fi
+  exits="$(jq -c 'select(.event == "server.exit")' <<<"$since")"
+  [[ -z "$exits" ]] || echo "[boot-check] $(wc -l <<<"$exits" | tr -d ' ') server.exit since the restart; last: $(tail -1 <<<"$exits" | jq -c .data)" >&2
+  migrated="$(jq -c 'select(.event == "store.migrated") | .data' <<<"$since" | tail -1)"
+  [[ -z "$migrated" ]] || echo "[boot-check] store.migrated $migrated"
+  reading="$(native_reading "$OWNER_EXE")"
+  state="$(jq -r .state <<<"$reading")"
+  [[ "$state" == current ]] || fail "store is $state for the running exe $OWNER_EXE: $reading"
+  echo "[boot-check] ok: store current for $OWNER_EXE ($(jq -r .releaseVersion <<<"$reading"))"
 }
 
 # Wait for the job a stop booted out to unload, then bootstrap the installed
@@ -706,17 +514,18 @@ case "$cmd" in
   kind) owner_kind "$@" ;;
   log-path) plist_value "${1:-$PLIST}" StandardOutPath ;;
   schema-state)
-    release="$(installed_release)"
-    read -r src id commit <<<"$release"
-    env_json="$(plutil -extract EnvironmentVariables json -o - "$PLIST")"
-    db="$(jq -er '.HRC_STATE_DIR | select(type == "string" and startswith("/"))' <<<"$env_json")/state.sqlite"
-    activation_migrations "$src" "$db" state ;;
-  render) render "$@" ;;
+    case "$#:${1:-}" in
+      0:) release="$(installed_release)"; read -r src _ _ <<<"$release"; exe="$src/bin/rusthrc" ;;
+      2:--exe) exe="$2" ;;
+      *) fail "usage: schema-state [--exe <rusthrc>]" ;;
+    esac
+    reading="$(native_reading "$exe")"
+    echo "[hrc-owner] schema by $exe: $reading" >&2
+    jq -r .state <<<"$reading" ;;
   stage) stage "$@" ;;
-  preflight) preflight "$@" ;;
-  prepare) prepare "$@" ;;
-  activate) if (($#)); then activate_schema "$@"; else activate; fi ;;
+  log-mark) log_mark ;;
+  boot-check) boot_check "$@" ;;
   refresh-plist) refresh_plist "$@" ;;
   bootstrap) wait_unloaded; bootstrap_owner ;;
-  *) echo "usage: $0 kind|log-path|schema-state|render|stage|preflight|prepare|activate|refresh-plist|bootstrap ..." >&2; exit 2 ;;
+  *) echo "usage: $0 kind|log-path|schema-state|stage|log-mark|boot-check|refresh-plist|bootstrap ..." >&2; exit 2 ;;
 esac

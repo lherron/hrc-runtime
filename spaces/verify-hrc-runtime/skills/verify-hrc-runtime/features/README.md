@@ -36,7 +36,7 @@ Also not mapped, from the live surface on 2026-10-05 (T-10350), rechecked 2026-1
 - `hrc-pty` itself (each release's `bin/hrc-pty`): the native seat supervisor. Features 2 and 8 drive it through
   `hrc`; its own `ops` socket verbs (status, shutdown) are not driven (never send `shutdown`).
 - `admin events drain` (a dead container's ledger): operator repair on real state.
-- `hrc-owner.sh stage|activate|refresh-plist`, `just switch-owner-rusthrc`, `just refresh-owner-exe`: owner
+- `hrc-owner.sh stage|boot-check|refresh-plist`, `just refresh-owner-exe`: owner
   operator steps (feature 6), never driven. `just front-door-*` is obsolete on a rusthrc owner node: enable and
   disable refuse it.
 
