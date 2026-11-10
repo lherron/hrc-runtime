@@ -295,6 +295,13 @@ def registry_cases(endpoint, token):
 # federation/mod.rs install_active: the native placement-ledger install statement.
 LEDGER_ACTIVE = ("INSERT INTO placement_ledger (scope_ref, home_node_id, state, retired_at, retirement_reason, created_at, updated_at) "
                  "VALUES (?, ?, 'active', NULL, NULL, ?, ?)")
+# retirement.rs: retire the active row.
+LEDGER_RETIRE = ("UPDATE placement_ledger SET state='retired',retired_at=?,retirement_reason=?,updated_at=? "
+                 "WHERE scope_ref=? AND home_node_id=? AND state='active'")
+# registry_listener.rs: establish a binding; designate a birth (epoch 1, live).
+REGISTRY_ESTABLISH = 'INSERT INTO binding_registry (scope_ref, home_node_id, created_at, updated_at) VALUES (?, ?, ?, ?)'
+REGISTRY_DESIGNATE = ('INSERT INTO birth_designation (scope_ref, designation_epoch, home_node_id, provenance, birth_envelope_id, '
+                      "sender_scope_ref, designated_at, state, superseded_by, superseded_at) VALUES (?, 1, ?, ?, ?, ?, ?, 'live', NULL, NULL)")
 
 
 def scope(task):
@@ -310,17 +317,14 @@ def seed_native(a, b, now):
     B boots once natively so its owner creates the binding registry schema.
     """
     active = LEDGER_ACTIVE
-    retire = ("UPDATE placement_ledger SET state='retired',retired_at=?,retirement_reason=?,updated_at=? "
-              "WHERE scope_ref=? AND home_node_id=? AND state='active'")
+    retire = LEDGER_RETIRE
     # A's placement ledger: local, retired and ledger-foreign scopes.
     a.sql(a.db, [(active, (scope('local'), 'n4a', now, now)), (active, (scope('retired'), 'n4a', now, now)),
                  (retire, (now, 'n4 fixture', now, scope('retired'), 'n4a')),
                  (active, (scope('ledger-foreign'), 'n4b', now, now))])
     b.down(b.up('native', b.binary, 'schema'))
     registry = b.root / 'federation/binding-registry.sqlite'
-    establish = 'INSERT INTO binding_registry (scope_ref, home_node_id, created_at, updated_at) VALUES (?, ?, ?, ?)'
-    designate = ('INSERT INTO birth_designation (scope_ref, designation_epoch, home_node_id, provenance, birth_envelope_id, '
-                 "sender_scope_ref, designated_at, state, superseded_by, superseded_at) VALUES (?, 1, ?, ?, ?, ?, ?, 'live', NULL, NULL)")
+    establish, designate = REGISTRY_ESTABLISH, REGISTRY_DESIGNATE
     # B's registry: foreign (B), registry-local (A), and an unborn designation for A.
     b.sql(registry, [(establish, (scope('registry-foreign'), 'n4b', now, now)),
                      (establish, (scope('registry-local'), 'n4a', now, now)),

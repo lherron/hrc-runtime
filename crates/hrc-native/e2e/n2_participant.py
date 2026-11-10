@@ -4,6 +4,9 @@
 Failure modes: projection before activation, missing replay/live stream or ACK,
 duplicate events on replay, clean process exit classified as a crash, and HRC
 tearing down the independently owned broker on owner shutdown.
+Modes: epr (above), delivery (every door pending/active/absorbing) and respawn
+(same-incarnation advance and its three refusals). Each run is judged by its
+own invariants (judge_*); the descriptor is participant_descriptor.live.
 """
 
 import argparse
@@ -15,6 +18,8 @@ import time
 import uuid
 from pathlib import Path
 from n2_scratch import Scratch
+from n2_turns import ledger_problems
+import participant_descriptor
 
 
 class Rpc:
@@ -142,7 +147,9 @@ def attach(
         "agent": {"id": "tabularasa"},
         "identity": identity,
         "placement": pl,
-        "requested": {"presentation": False},
+        # harness claude (claude-code-tmux): native participant establishment
+        # realizes a tmux presentation or none, never the claude-hrcpty surface.
+        "requested": {"presentation": False, "harness": "claude"},
         "materialization": {"initialPrompt": declaration["intent"]["initialPrompt"]},
         "hrcPolicy": {},
         "correlation": {"scopeRef": scope, **identity},
@@ -156,19 +163,7 @@ def attach(
     assert compiled["ok"], compiled
     record["compileRequest"] = request
     record["compiled"] = compiled
-    generated = subprocess.run(
-        [
-            "bun",
-            str(Path(__file__).with_name("participant_live_descriptor.mjs")),
-            str(s.release),
-        ],
-        input=json.dumps({"joined": joined, "compiled": compiled}),
-        env=s.env,
-        capture_output=True,
-        text=True,
-        check=True,
-    )
-    d = json.loads(generated.stdout)
+    d = participant_descriptor.live(joined, compiled)
     record["descriptor"] = d
     endpoint = s.root / endpoint_name
     ledger = s.root / (
@@ -376,7 +371,7 @@ def delivery(s, args, scope, record, brokerlog, held):
     for door, word in (("steer", "STEER"), ("turn", "DISPATCH"), ("literal", "LITERAL")):
         status, reply = deliver(s, scope, host, door, word, True)
         record["active"][door] = [status, reply]
-        # Recorded, not asserted: the compare judges every door, so a red
+        # Recorded here, judged after the workflow (judge_delivery), so a red
         # owner still reports each case rather than only the first.
         if door == "literal" and status == 200 and reply.get("runId"):
             s.wait_completed(reply["runId"], 300)
@@ -534,12 +529,129 @@ def respawn(s, args, prefix, record, brokerlog, held):
     s.down(owner)
 
 
+# -- the verdict: each workflow's own invariants (lifted from the retired
+# owner comparison; only its owner-equality view checks are gone) ---------
+DOORS = ("steer", "turn", "literal")
+RESPAWN_CASES = ("advance", "epoch-not-advancing", "predecessor-not-absorbed", "different-binding")
+RESPAWN_REFUSALS = {
+    "epoch-not-advancing": "participant runtime bookkeeping conflicts with the committed attempt:"
+    " attachEpoch 2 does not advance the runtime's committed epoch 2",
+    "predecessor-not-absorbed": "participant runtime advance lacks an absorbing same-binding predecessor",
+    "different-binding": "participant runtime advance lacks an absorbing same-binding predecessor",
+}
+
+
+def _fail(failures, name, passed, detail=""):
+    if not passed:
+        failures.append({"check": name, "detail": detail})
+
+
+def judge_epr(d):
+    f = []
+    final = dict(d["final"], brokerLedger=d["ledger"])
+    problems = ledger_problems(final)
+    _fail(f, "broker-ledger", not problems, problems)
+    inv, runtime = final["broker_invocations"][0], final["runtimes"][0]
+    events = final["hrc_events"]
+    activation = [e for e in events if e["event_kind"] == "runtime.ensured"]
+    terminated = [e for e in events if e["event_kind"] == "runtime.terminated"]
+    exited = [e for e in d["ledger"] if e["type"] == "invocation.exited"]
+    _fail(f, "staged-release", len(activation) == 1 and d["afterInitial"]["broker_invocations"][0]["last_projected_seq"] >= 4,
+          "exactly one activation and replay of the real ensure/start/ready ledger")
+    _fail(f, "activation-before-turns", len(activation) == 1 and all(
+        e["hrc_seq"] > activation[0]["hrc_seq"] for e in events if e["event_kind"].startswith("turn.")))
+    _fail(f, "live-turns", len([e for e in d["afterLive"]["hrc_events"] if e["event_kind"] == "turn.completed"]) == 2,
+          "two real turns project before owner shutdown")
+    _fail(f, "one-writer", len(final["runtimes"]) == len(final["broker_invocations"]) == 1 and not final["runs"])
+    _fail(f, "external-stop", d["externalStop"] == {"accepted": True, "state": "exited"}, d["externalStop"])
+    _fail(f, "clean-terminal", len(exited) == len(terminated) == 1
+          and json.loads(terminated[0]["payload_json"]) == {"reason": "external_participant_exit",
+                                                             "invocationId": inv["invocation_id"], "seq": exited[0]["seq"]}
+          and terminated[0]["transport"] == "headless" and terminated[0]["run_id"] is None
+          and runtime["lifecycle_terminal_reason"] == "external_participant_exit" and runtime["active_run_id"] is None,
+          [terminated, runtime["lifecycle_terminal_reason"]])
+    _fail(f, "not-a-crash", not [e for e in events if e["event_kind"] == "runtime.crashed"])
+    _fail(f, "broker-survives", d["brokerAliveAfterShutdown"] is True)
+    head = max(e["seq"] for e in d["ledger"])
+    _fail(f, "broker-ack", d["finalSnapshot"]["currentSeq"] == head
+          and json.loads(runtime["runtime_state_json"])["brokerReplay"]["ackedThroughSeq"] == head)
+    for name, prepared in (("attach", True), ("retry", False)):
+        status, body = d[name]
+        _fail(f, name, status == 200 and body.get("prepared") is prepared and all(
+            body[k] == d["joined"]["identity"][k] for k in ("registrationId", "attemptId", "attachEpoch")), [status, body])
+    attempt = final["participant_registration_attempts"][0]
+    _fail(f, "attempt-terminal", attempt["state"] == "TERMINAL" and attempt["establishment_work_state"] == "completed",
+          [attempt["state"], attempt["establishment_work_state"]])
+    return f
+
+
+def judge_delivery(d):
+    f = []
+    runtime = d["runtimeId"]
+    for door in DOORS:
+        status, body = d["pending"][door]
+        reason = (body.get("error") or {}).get("detail", {}).get("reason")
+        _fail(f, "pending:" + door, status == 503 and (
+            reason == "participant_attachment_pending" if door != "literal"
+            else body["error"]["message"] == "no live literal-capable runtime is currently bound"), body)
+        status, body = d["active"][door]
+        _fail(f, "active:" + door, status == 200 and body.get("runtimeId") == runtime and body.get("runId"), body)
+        status, body = d["absorbing"][door]
+        reason = (body.get("error") or {}).get("detail", {}).get("reason")
+        _fail(f, "absorbing:" + door, status == 503 and reason == "participant_attempt_absorbing", body)
+    _fail(f, "pending:no-birth", not d["pendingRows"]["runtimes"] and not d["pendingRows"]["runs"])
+    runs = d["activeRows"]["runs"]
+    _fail(f, "active:one-writer", len(d["final"]["runtimes"]) == 1 and len(runs) == len(DOORS)
+          and all(r["runtime_id"] == runtime and r["status"] == "completed" for r in runs),
+          [(r["runtime_id"], r["status"]) for r in runs])
+    _fail(f, "broker-survives", d["brokerAliveAfterShutdown"] is True)
+    traces = [json.loads(e["payload_json"]) for e in d["final"]["hrc_events"] if e["event_kind"] == "submission.admission"]
+    _fail(f, "admission-traces", len(traces) == 8, len(traces))
+    return f
+
+
+def judge_respawn(d):
+    f = []
+    final = d.get("final") or d["observed"]
+    for name in RESPAWN_CASES:
+        c = d["cases"].get(name)
+        if not c or "respawn" not in c:
+            _fail(f, name + ":bridged", False, "case did not reach the respawn")
+            continue
+        first, (status, body) = c["first"], c["respawn"]
+        second = body["identity"]
+        _fail(f, name + ":bridged", status == 200 and second["runtimeId"] == first["runtimeId"]
+              and second["attachEpoch"] == 2 and body["hostSessionId"] == first["hostSessionId"], c["respawn"])
+        runtime = next(r for r in final["runtimes"] if r["runtime_id"] == first["runtimeId"])
+        attempt = next(a for a in final["participant_registration_attempts"] if a["attempt_id"] == second["attemptId"])
+        if name == "advance":
+            committed = json.loads(runtime["runtime_state_json"])["participantRegistration"]
+            _fail(f, "advance:established", attempt["state"] == "ACTIVE" and attempt["establishment_work_state"] == "completed"
+                  and runtime["status"] != "terminated" and runtime["active_invocation_id"] == second["invocationId"]
+                  and runtime["active_operation_id"] == second["operationId"]
+                  and committed["attemptId"] == second["attemptId"] and committed["attachEpoch"] == 2,
+                  [attempt["state"], attempt["establishment_work_state"], runtime["status"]])
+            status, reply = c.get("delivery") or [None, {}]
+            runs = {r["run_id"]: r for r in final["runs"]}
+            _fail(f, "advance:delivered", status == 200 and reply.get("runtimeId") == first["runtimeId"]
+                  and reply.get("startIdentity", {}).get("invocationId") == second["invocationId"]
+                  and runs.get(reply.get("runId"), {}).get("status") == "completed", reply)
+        else:
+            _fail(f, name + ":refused", attempt["establishment_work_state"] == "exhausted"
+                  and attempt["establishment_attempt_count"] == 1
+                  and attempt["establishment_last_error"] == RESPAWN_REFUSALS[name]
+                  and runtime["active_invocation_id"] == first["invocationId"],
+                  {k: attempt[k] for k in ("establishment_work_state", "establishment_attempt_count", "establishment_last_error")})
+    return f
+
+
 def main():
     p = argparse.ArgumentParser()
-    p.add_argument("--owner", choices=["bun", "native"], required=True)
+    p.add_argument("--owner", choices=["native"], default="native")
     p.add_argument("--mode", choices=["epr", "delivery", "respawn"], default="epr")
-    for key in ("binary", "installed-release", "aspd-socket", "scratch-root", "artifacts"):
+    for key in ("binary", "aspd-socket", "scratch-root", "artifacts"):
         p.add_argument("--" + key, type=Path, required=True)
+    p.add_argument("--installed-release", type=Path, help="accepted and ignored")
     args = p.parse_args()
     s = Scratch(
         args.scratch_root,
@@ -561,6 +673,9 @@ def main():
             respawn(s, args, prefix, record, brokerlog, held)
         else:
             (delivery if args.mode == "delivery" else epr)(s, args, scope, record, brokerlog, held)
+        failures = {"epr": judge_epr, "delivery": judge_delivery, "respawn": judge_respawn}[args.mode](record)
+        record["failures"] = failures
+        assert not failures, failures
         record["pass"] = True
     finally:
         record["observed"] = rows(s)

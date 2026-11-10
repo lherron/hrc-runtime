@@ -1,5 +1,9 @@
 #!/usr/bin/env python3
 """Actual participant-owned bootstrap broker, real ASP compile, blank claude profile.
+The compile selects harness `claude` (driver claude-code-tmux): the default
+claude-hrcpty driver needs an hrcpty terminal surface, and native participant
+establishment realizes only a tmux presentation or none (establishment.rs).
+The descriptor is built by participant_descriptor.live (descriptor.rs spec).
 Failures: fake ready on join, wrong/flexible identity, duplicate ensure, lost events,
 foreign roots, missing durable graph, ACK before N2, broker killed on owner shutdown.
 """
@@ -7,11 +11,12 @@ import argparse,json,os,signal,socket,sqlite3,subprocess,time,uuid
 from pathlib import Path
 from http.client import HTTPException
 from foundation import daemon_env, UnixHTTP
+import participant_descriptor
 p=argparse.ArgumentParser()
-for k in ['binary','bun-release','scratch-root','artifacts','aspd-socket']:p.add_argument('--'+k,type=Path,required=True)
+for k in ['binary','scratch-root','artifacts','aspd-socket']:p.add_argument('--'+k,type=Path,required=True)
+p.add_argument('--installed-release',type=Path,help='accepted and ignored')
 a=p.parse_args();root=a.scratch_root.absolute();assert not root.exists();root.mkdir(parents=True);a.artifacts.mkdir(parents=True,exist_ok=True)
 assert not any(os.environ.get(k) for k in ['CLAUDECODE','CLAUDE_CODE_ENTRYPOINT','CODEX_SANDBOX'])
-release=a.bun_release.resolve();assert release.parent.name!='hrc-runtime-releases'
 base=dict(os.environ,ASP_HOME=str(root/'asp-home'),HRC_ASPD_SOCKET=str(a.aspd_socket),HRC_ACP_WEBHOOK_URL='',HRC_WRKQ_DB=str(root/'wrkq.db'),WRKQ_DB=str(root/'wrkq.db'))
 for k in ['HRC_SESSION_REF','HRC_RUNTIME_ID','HRC_RUN_ID','HRC_HOST_SESSION_ID','HRC_EVENT_FORWARD_URL','HRC_EVENT_INGEST_TCP_PORT','HRC_EVENT_FORWARD_SOURCE_REF','WRKQ_DB_PATH','WRKQ_DB_PATH_FILE','WRKQD_UNIX','WRKQD_TOKEN','WRKQD_TOKEN_FILE','WRKQD_NODE_TOKENS','WRKQD_NODE_TOKENS_FILE','HRC_BUN_PASSTHROUGH_SOCKET']:base.pop(k,None)
 project=root/'n1-t11818';project.mkdir()
@@ -34,12 +39,12 @@ def rows():
  with sqlite3.connect('file:'+str(Path(base['HRC_STATE_DIR'])/'state.sqlite')+'?mode=ro',uri=True) as db:
   db.row_factory=sqlite3.Row
   return {t:[dict(r) for r in db.execute('SELECT * FROM '+t)] for t in ['participant_registrations','participant_registration_attempts','participant_host_bindings','sessions','continuities','runtimes','runtime_operations','broker_invocations','hrc_events']}
-for kind in ['bun','native']:
+for kind in ['native']:
  side=root/kind;side.mkdir();base.update(HRC_RUNTIME_DIR=str(side/'run'),HRC_STATE_DIR=str(side/'state'),HRC_EVENT_INGEST_SOCKET=str(side/'run/ingest.sock'))
  Path(base['HRC_RUNTIME_DIR']).joinpath('btmux').mkdir(parents=True);Path(base['HRC_STATE_DIR']).mkdir();subprocess.run([str(a.binary.resolve()), 'store', 'migrate', str(side/'state/state.sqlite')],env=base,capture_output=True,check=True)
  log=(a.artifacts/(kind+'.log')).open('w');brokerlog=(a.artifacts/(kind+'-broker.log')).open('w');broker=None;owner=None;record={}
  try:
-  argv=[str(a.binary.resolve()),'server'] if kind=='native' else ['bun',str(release/'packages/hrc-cli/src/cli.ts'),'server','serve']
+  argv=[str(a.binary.resolve()),'server']
   owner=subprocess.Popen(argv,cwd=project,env=daemon_env(base),stdout=log,stderr=log)
   for _ in range(300):
    assert owner.poll() is None,kind+' owner exited'
@@ -56,10 +61,10 @@ for kind in ['bun','native']:
   assert status==200,declaration
   identity={k:joined['identity'][k] for k in ['requestId','operationId','runtimeId','invocationId']};identity.update(hostSessionId=joined['hostSessionId'],generation=joined['generation'],traceId='trace-'+str(uuid.uuid4()))
   pl=declaration['intent']['placement'];pl['correlation']={'sessionRef':{'scopeRef':scope,'laneRef':'main'},**identity};pl['dispatchEnv']={'AGENT_SCOPE_REF':scope,'ASP_SCOPE_REF':scope,'HRC_SESSION_REF':scope+'/lane:main','AGENT_HOST_SESSION_ID':joined['hostSessionId'],'HRC_HOST_SESSION_ID':joined['hostSessionId'],'HRC_RUNTIME_DIR':base['HRC_RUNTIME_DIR'],'HRC_STATE_DIR':base['HRC_STATE_DIR'],'HRC_MAIL_STOP_SOCKET':str(side/'run/hrc.sock'),'WRKQ_DB':str(root/'wrkq.db'),'WRKQ_DB_PATH':'','WRKQ_DB_PATH_FILE':''}
-  request={'schemaVersion':'agent-runtime-compile-request/v2','agent':{'id':'tabularasa'},'identity':identity,'placement':pl,'requested':{'presentation':False},'materialization':{'initialPrompt':declaration['intent']['initialPrompt']},'hrcPolicy':{},'correlation':{'scopeRef':scope,**identity}}
+  request={'schemaVersion':'agent-runtime-compile-request/v2','agent':{'id':'tabularasa'},'identity':identity,'placement':pl,'requested':{'presentation':False,'harness':'claude'},'materialization':{'initialPrompt':declaration['intent']['initialPrompt']},'hrcPolicy':{},'correlation':{'scopeRef':scope,**identity}}
   rpc=Rpc(a.aspd_socket);record['aspHello']=rpc.call('aspc.hello',{'clientInfo':{'name':'hrc-server'},'protocolVersions':['aspc/0.1']});compiled=rpc.call('aspc.compileHarnessInvocation',{'compileRequest':request});rpc.close();assert compiled['ok'],compiled
   record['compileRequest']=request;record['compiled']=compiled
-  generated=subprocess.run(['bun',str(Path(__file__).with_name('participant_live_descriptor.mjs')),str(release)],input=json.dumps({'joined':joined,'compiled':compiled}),env=base,capture_output=True,text=True,check=True);d=json.loads(generated.stdout);record['descriptor']=d
+  d=participant_descriptor.live(joined,compiled);record['descriptor']=d
   endpoint=side/'participant.sock';ledger=side/'events.ndjson';worker=compiled['executionRelease']['worker'];assert worker['executable'].startswith('/Users/lherron/praesidium/var/aspd/releases/')
   broker=subprocess.Popen([worker['executable'],*worker['argvPrefix'],'--socket',str(endpoint),'--event-ledger',str(ledger),'--join','participant-served'],env=base,cwd=project,stdout=brokerlog,stderr=brokerlog)
   for _ in range(300):
