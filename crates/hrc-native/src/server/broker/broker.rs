@@ -209,11 +209,12 @@ async fn prepare_dispatch(server: &Shared, birth: &Birth<'_>) -> Result<(Value, 
     if run.is_some() {
         intent["initialPrompt"] = prompt.into();
     }
+    let unpinned_directives = intent.get("summonDirectives").cloned();
     if let Some(pin) = &pin {
         // The directives reach the compile only: a stored intent never replays them.
         compile::direct_pin(&mut intent, pin);
     }
-    let request = compile::request(
+    let mut request = compile::request(
         &intent,
         scope,
         &identity,
@@ -221,8 +222,27 @@ async fn prepare_dispatch(server: &Shared, birth: &Birth<'_>) -> Result<(Value, 
         continuation,
         response_format,
     );
-    let prepared =
-        compile::Compiled::prepare(request, intent["presentation"]["operator"].as_str()).await?;
+    let operator = intent["presentation"]["operator"].as_str();
+    let prepared = match compile::Compiled::prepare(request.clone(), operator).await {
+        Err(error) if pin.is_some() && compile::unusable_pin(&error) => {
+            controller::log(
+                "warn",
+                "conversation_pin.dropped",
+                json!({"hostSessionId":host,"scopeRef":scope,"harness":pin.as_ref().unwrap()["harness"]}),
+            );
+            // Restore the caller's directives, removing every selection key
+            // injected by the pin. Identity, continuation and prompt stay put.
+            request.as_object_mut().unwrap().remove("selectionContext");
+            if let Some(directives) = unpinned_directives {
+                request["selectionContext"] = json!({"summonDirectives":directives});
+            }
+            // Exactly one second compile; its refusal propagates unchanged.
+            let prepared = compile::Compiled::prepare(request, operator).await?;
+            compile::record_selection(&mut stored, &prepared.response["plan"]["selection"]);
+            prepared
+        }
+        result => result?,
+    };
     // ASP's process spec is the final launch cwd. Refuse before even committing
     // the preparation: launch, leases, start graph and watch all follow it.
     let process = &prepared.response["plan"]["execution"]["dispatchRequest"]["startRequest"]["spec"]

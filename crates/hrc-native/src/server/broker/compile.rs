@@ -98,6 +98,44 @@ pub fn direct_pin(intent: &mut Value, pin: &Value) {
     intent["summonDirectives"] = Value::Object(directives);
 }
 
+/// Only ASP's typed rejection of the stored harness literal permits dropping
+/// a conversation pin. Other parameter errors and transport failures propagate.
+pub fn unusable_pin(error: &ApiError) -> bool {
+    let Some(detail) = &error.detail else {
+        return false;
+    };
+    let data = &detail["aspdError"]["data"];
+    error.code == "aspd_refused"
+        && data["reason"] == "invalid_params"
+        && data["issues"].as_array().is_some_and(|issues| {
+            issues.iter().any(|issue| {
+                issue["path"] == "params.compileRequest.selectionContext.summonDirectives.harness"
+                    && issue["code"] == "invalid_literal"
+            })
+        })
+}
+
+/// Replace the unusable stored selection with the selection that actually ran.
+pub fn record_selection(intent: &mut Value, selection: &Value) {
+    if let Some(provision) = intent["provision"].as_object_mut() {
+        for key in PINNED {
+            provision.remove(key);
+        }
+    }
+    let mut pin = json!({});
+    for (key, selected) in [
+        ("harness", "harness"),
+        ("model_provider", "modelProvider"),
+        ("model", "model"),
+        ("reasoning_effort", "reasoningEffort"),
+    ] {
+        if let Some(value) = selection.get(selected) {
+            pin[key] = value.clone();
+        }
+    }
+    record_pin(intent, &pin);
+}
+
 /// T-12419: a continuation key belongs to the harness family that produced it.
 /// ASP stamps the carried key with the LAUNCHING harness's provider, so a codex
 /// thread reached claude-code as `--resume <codex key>`, never produced a first
