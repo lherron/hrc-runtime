@@ -152,6 +152,40 @@ debounce. Format-2 invocations are refused (none exist in production).
 
 ## Turn doors (N2)
 
+This section is the canonical description of how a turn reaches a seat. Other
+documents point here.
+
+Two doors start a turn from a prompt, and they are not equivalent.
+
+- `POST /v1/submissions/invoke` is the door for "deliver this message to this
+  seat, starting the seat if it is cold". With `runtimeIntent` and `coldBirth`
+  it births a seat that has a session but no runtime and delivers the prompt
+  as that seat's first turn, in one call and one turn. It forwards the
+  caller's `turnPolicy` (`open` or `guarded`) and adds none when the field is
+  omitted, so the turn accepts steers unless the caller asks otherwise. It is
+  keyed by `idempotencyKey` per host session. It requires an existing session
+  row: for a seat that has never existed, call `POST /v1/targets/ensure`
+  first. A birth on an existing session continues that session's kept
+  conversation; `freshContext: true` forces a new one. `coldBirth.promptMode`
+  is validated, but only the presence of `coldBirth` has an effect: the
+  request answers 202 at launch and the prompt is always appended to priming.
+  Mail delivery uses this door (ensure, then invoke).
+- `POST /v1/turns` is the door for a caller that owns the turn's outcome. It
+  alone carries `fences`, `attachments`, `repair`, `firstTurnTimeoutMs`, the
+  `turn_started` wait and exact host-session pinning. It forces
+  `turnPolicy: guarded` (`server/turns/turns/mod.rs`), so a steer into its turn
+  is refused until the turn ends. `hrc start -p`, `hrc resume --no-attach -p`
+  and the kernel's `seat.summon` with a message use it.
+
+Neither door requires a seat to be started first and messaged second. The
+keyed claim-and-start API (`POST /v1/runtimes/start` with a session ref) is
+the one place with a two-step contract: it binds `initialPrompt` into the
+claim but never delivers it, and its caller follows with `/v1/turns`. A start
+with no message that should continue a stopped seat's conversation is
+`POST /v1/sessions/resume-continuation` followed by a start of the returned
+host session (`hrc resume`, hrc-domain `seat.summon` with
+`continuation: "resume"`).
+
 `POST /v1/turns` and `POST /v1/submissions/invoke` run Bun's nine-step
 admission (`server/turns/admission.rs`) and record its trace as
 `submission.admission`. A live broker seat takes the turn through

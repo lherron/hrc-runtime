@@ -378,7 +378,7 @@ export type DispatchTurnRequest = ExecutionFormatSelector & {
 export type DispatchTurnTerminalOutcome = 'completed' | 'failed' | 'cancelled' | 'zombie'
 
 export type DispatchTurnResponse = {
-  /** Present for broker-backed dispatches; /v1/turns is the invoke-door alias. */
+  /** Present for broker-backed dispatches; /v1/turns admits as intent invoke but is a separate door: it forces turnPolicy guarded and pins hostSessionId. */
   submissionId?: string | undefined
   /** HRC's durable admission identity. Format-2 accepted responses require it. */
   inputId?: string | undefined

@@ -94,7 +94,7 @@ hv run <task> -- ~/.bun/bin/hrc monitor session-report --runtime $R --json
   `render_frame` NDJSON instead (`{"type":"render_frame","phase":"queued"|"final","blocks":[{"t":"markdown",
   "md":"OK"}]}`, two lines) and no `.terminal`, so `jq .terminal.finalMessage` reads `null` for a turn that
   completed (2026-11-02, T-12291 `10-hv-redrive/cold-turn.json`; product task T-12306 item 5). On a cold scope
-  read the last frame with `phase == "final"`, or birth with `~/.bun/bin/hrc start` first and grade from the transcript.
+  read the last frame with `phase == "final"` (`hrc turn` births a cold scope on its message; no separate start is needed).
 - **`--until turn-finished` armed after the turn has finished waits for the next one.** On 2026-11-02 it armed
   4 s after the seat went idle, sat out 120 s and ended `result: timeout`, `outcome: not_matched`, `exitCode: 20`
   (`T-12291/02-runtime-lifecycle/drive.txt`; same on 2026-10-05, T-10297; on 2026-10-19 a late arm matched the

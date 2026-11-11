@@ -120,7 +120,7 @@ hrc attach cody@agent-spaces
 hrc attach rt-1c9cb9ec-9538-411a-b3d3-5feb7628bc54
 ```
 
-Shared notable flags (`run`/`start`): `--force-restart` (replace the runtime with a fresh PTY while preserving the conversation), `--new-session` (rotate to a fresh host session and conversation), `--dry-run` (daemon plan preview — no side effects; `run --dry-run` is exempt from the TTY gate), `--debug`, `--project-id <id>`, `--project-root <path>`, `--json` (on error, emit structured JSON incl. broker admission-rejection detail), `--no-register`, `-p <text>`, `--prompt-file <path>`. `run` adds `--attach-only`; `start` adds `--cwd <path>`, `--idempotency-key <key>` and `--wait [started|completed]`. `run` is interactive-only; use `hrc start <scope> [-p <prompt>]` for non-interactive provisioning. `attach` takes `--dry-run` and `--json`.
+Shared notable flags (`run`/`start`): `--force-restart` (replace the runtime with a fresh PTY while preserving the conversation), `--new-session` (rotate to a fresh host session and conversation), `--dry-run` (daemon plan preview — no side effects; `run --dry-run` is exempt from the TTY gate), `--debug`, `--project-id <id>`, `--project-root <path>`, `--json` (on error, emit structured JSON incl. broker admission-rejection detail), `--no-register`, `-p <text>`, `--prompt-file <path>`. `run` adds `--attach-only`; `start` adds `--cwd <path>`, `--idempotency-key <key>` and `--wait [started|completed]`. `run` is interactive-only; use `hrc start <scope> [-p <prompt>]` for non-interactive provisioning; its `-p` turn goes through `POST /v1/turns`, which is guarded (a steer into it is refused until it ends). `attach` takes `--dry-run` and `--json`.
 
 2026-11-02 amendment (T-12316, Daedalus EN-42466): the native exact/suffix
 claim-and-start API retains `runtimeIntent.initialPrompt` in its canonical
@@ -130,6 +130,13 @@ same action key. Every explicit repeat must call claim-and-start first:
 changing the message under that key refuses before delivery. The host-session
 ensure API still refuses `initialPrompt`. Claim and turn admission are separate
 operations; claim success alone proves no message delivery.
+
+That two-step shape is the claim-and-start contract only. It is not how a cold
+seat must be started on a message. To start a cold seat on a message in one
+turn that accepts steers, call `POST /v1/targets/ensure` (only when the seat
+has no session yet) and then `POST /v1/submissions/invoke` with `runtimeIntent`
+and `coldBirth`. The canonical description of the doors is
+`crates/hrc-native/README.md`, section "Turn doors".
 
 `run` (and `resume`, the same attached door) always asks ASP for presentation: the server sets `selection.presentation: true` in the compile request, which overrides summon directives, the project target, the agent profile and the catalog default. A scope whose live runtime was born without presentation (for example a headless seat woken by mail) is refused `stale_context` (`field: presentation`, `replacementRequired: true`) with the runtime untouched; terminate it first to run fresh.
 

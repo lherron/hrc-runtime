@@ -176,10 +176,11 @@ fn has_prompt(intent: &Value) -> bool {
 }
 
 /// admitRuntimeStartPrompt is not ported: no live caller sends a START with a
-/// non-empty initialPrompt (hrc start -p goes through /v1/turns).
+/// non-empty initialPrompt. The refusal names the door that starts a cold seat
+/// on a message in one turn (README "Turn doors").
 fn prompt_unported() -> ApiError {
     unavailable(
-        "runtime start with intent.initialPrompt is not served natively; dispatch the prompt through /v1/turns",
+        "runtime start with intent.initialPrompt is not served natively; to start a seat on a message use POST /v1/submissions/invoke with runtimeIntent and coldBirth (after POST /v1/targets/ensure if the seat has no session), or POST /v1/turns, whose turn is guarded and refuses steers",
         json!({"route":"runtime-start","reason":"start-prompt-not-ported","retryable":false}),
     )
 }
@@ -506,8 +507,11 @@ impl Claim {
         };
         let host = session["hostSessionId"].as_str().unwrap_or("").to_owned();
         let mut intent = localize(&self.intent, &session);
-        // T-12316: initialPrompt binds the canonical claim request/hash, but
-        // delivery belongs to the caller's subsequent pinned /v1/turns call.
+        // T-12316: on this claim-and-start door initialPrompt binds the claim
+        // request/hash only; the door never delivers it. Its caller follows
+        // with a pinned /v1/turns call. That two-step shape is this door's
+        // contract, not how a cold seat must be started on a message: see
+        // README "Turn doors" for submissions/invoke with coldBirth.
         // Keep self.intent intact so a changed-message retry still conflicts.
         intent.as_object_mut().unwrap().remove("initialPrompt");
         let started = attached::start(
