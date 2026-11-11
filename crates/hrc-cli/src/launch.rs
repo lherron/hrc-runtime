@@ -166,7 +166,13 @@ fn execute_start(
     if wait == "terminal" {
         request["turnPolicy"] = "guarded".into();
     }
-    let result = client.post("/v1/turns", request)?;
+    // A waited turn outlives the client's 30 s default; an unwaited one
+    // answers at admission.
+    let result = if wait == "accepted" {
+        client.post("/v1/turns", request)?
+    } else {
+        client.post_bounded("/v1/turns", request, Duration::from_secs(6 * 60 * 60))?
+    };
     if result["execution"]["state"] == "failed" {
         return Err(Error::failure(
             result["execution"]["errorMessage"]
