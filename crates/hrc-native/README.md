@@ -172,10 +172,18 @@ Two doors start a turn from a prompt, and they are not equivalent.
   Mail delivery uses this door (ensure, then invoke).
 - `POST /v1/turns` is the door for a caller that owns the turn's outcome. It
   alone carries `fences`, `attachments`, `repair`, `firstTurnTimeoutMs`, the
-  `turn_started` wait and exact host-session pinning. It forces
-  `turnPolicy: guarded` (`server/turns/turns/mod.rs`), so a steer into its turn
-  is refused until the turn ends. `hrc start -p`, `hrc resume --no-attach -p`
-  and the kernel's `seat.summon` with a message use it.
+  `turn_started` wait and exact host-session pinning. It takes the same
+  optional `turnPolicy` as invoke, and its turn is open unless the caller asks
+  for `guarded`. The callers that parse the turn's answer ask for it: ACP's
+  launcher, agent-loop, and `hrc start -p --wait completed`. `hrc start -p`,
+  `hrc resume --no-attach -p` and the kernel's `seat.summon` with a message
+  use the door without it.
+
+On both doors `turnPolicy: guarded` binds only when the seat is already
+running, because HRC sends the policy to the broker on a submission. A turn
+that cold-starts its seat carries its prompt in the launch and accepts steers
+whatever the policy. That gap is known and unsupported; a caller that must
+never see a steer in its answer should not rely on the guard for a cold start.
 
 Neither door requires a seat to be started first and messaged second. The
 keyed claim-and-start API (`POST /v1/runtimes/start` with a session ref) is

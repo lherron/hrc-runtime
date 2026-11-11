@@ -180,7 +180,7 @@ fn has_prompt(intent: &Value) -> bool {
 /// on a message in one turn (README "Turn doors").
 fn prompt_unported() -> ApiError {
     unavailable(
-        "runtime start with intent.initialPrompt is not served natively; to start a seat on a message use POST /v1/submissions/invoke with runtimeIntent and coldBirth (after POST /v1/targets/ensure if the seat has no session), or POST /v1/turns, whose turn is guarded and refuses steers",
+        "runtime start with intent.initialPrompt is not served natively; to start a seat on a message use POST /v1/submissions/invoke with runtimeIntent and coldBirth (after POST /v1/targets/ensure if the seat has no session), or POST /v1/turns when the caller needs fences, attachments or a waited answer",
         json!({"route":"runtime-start","reason":"start-prompt-not-ported","retryable":false}),
     )
 }

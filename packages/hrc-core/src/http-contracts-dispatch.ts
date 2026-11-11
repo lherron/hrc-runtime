@@ -315,7 +315,11 @@ export type OpenBrokerSessionResponse = {
 
 export type DispatchTurnRequest = ExecutionFormatSelector & {
   hostSessionId: string
-  /** Whether the turn refuses steers ('guarded') or accepts them ('open'). */
+  /**
+   * Whether the turn refuses steers ('guarded') or accepts them ('open', the
+   * default). Binds only when the seat is already running: a turn that
+   * cold-starts its seat accepts steers whatever the policy.
+   */
   turnPolicy?: 'open' | 'guarded' | undefined
   /**
    * Caller-stable identity for retrying a dispatch after an ambiguous/lost
@@ -380,7 +384,7 @@ export type DispatchTurnRequest = ExecutionFormatSelector & {
 export type DispatchTurnTerminalOutcome = 'completed' | 'failed' | 'cancelled' | 'zombie'
 
 export type DispatchTurnResponse = {
-  /** Present for broker-backed dispatches; /v1/turns admits as intent invoke but is a separate door: it forces turnPolicy guarded and pins hostSessionId. */
+  /** Present for broker-backed dispatches; /v1/turns admits as intent invoke but is a separate door: it pins hostSessionId and alone carries fences, attachments and repair. */
   submissionId?: string | undefined
   /** HRC's durable admission identity. Format-2 accepted responses require it. */
   inputId?: string | undefined

@@ -161,7 +161,12 @@ fn execute_start(
         Some("completed" | "true") => "terminal",
         _ => "accepted",
     };
-    let result = client.post("/v1/turns",json!({"hostSessionId":host,"idempotencyKey":args.value("idempotency-key").map(str::to_owned).unwrap_or_else(||format!("hrc-start-{}",uuid::Uuid::new_v4())),"prompt":prompt,"runtimeIntent":intent,"origin":local_origin(),"waitFor":wait,"waitForCompletion":wait=="terminal"}))?;
+    let mut request = json!({"hostSessionId":host,"idempotencyKey":args.value("idempotency-key").map(str::to_owned).unwrap_or_else(||format!("hrc-start-{}",uuid::Uuid::new_v4())),"prompt":prompt,"runtimeIntent":intent,"origin":local_origin(),"waitFor":wait,"waitForCompletion":wait=="terminal"});
+    // A caller that waits for the answer reads it, so no steer may join the turn.
+    if wait == "terminal" {
+        request["turnPolicy"] = "guarded".into();
+    }
+    let result = client.post("/v1/turns", request)?;
     if result["execution"]["state"] == "failed" {
         return Err(Error::failure(
             result["execution"]["errorMessage"]
