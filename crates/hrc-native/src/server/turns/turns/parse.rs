@@ -270,6 +270,7 @@ pub struct Dispatch {
     pub repair: Option<Value>,
     pub first_turn_timeout_ms: Option<i64>,
     pub origin: Option<Value>,
+    pub turn_policy: Option<String>,
 }
 pub fn dispatch(v: &Value) -> Result<Dispatch, ApiError> {
     if !record(v) {
@@ -293,8 +294,15 @@ pub fn dispatch(v: &Value) -> Result<Dispatch, ApiError> {
             "firstTurnTimeoutMs",
             "origin",
             "executionFormat",
+            "turnPolicy",
         ],
         None,
+    )?;
+    let turn_policy = one_of(
+        v.get("turnPolicy"),
+        &["open", "guarded"],
+        "turnPolicy must be \"open\" or \"guarded\"",
+        "turnPolicy",
     )?;
     let host = required(v, "hostSessionId")?;
     let prompt = required(v, "prompt")?;
@@ -363,6 +371,7 @@ pub fn dispatch(v: &Value) -> Result<Dispatch, ApiError> {
         repair,
         first_turn_timeout_ms,
         origin,
+        turn_policy,
     })
 }
 /// Format 2 has no production invocation; rusthrc refuses it explicitly.

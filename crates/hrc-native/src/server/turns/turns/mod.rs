@@ -599,7 +599,8 @@ pub async fn dispatch_turn(server: &Shared, body: Value) -> Result<Response, Api
         response_format: req.response_format.as_ref(),
         fresh_context: None,
         ttl_ms: None,
-        turn_policy: Some("guarded"),
+        // The caller's policy; guarded when it names none (T-13393 step 1).
+        turn_policy: Some(req.turn_policy.as_deref().unwrap_or("guarded")),
         idempotency_key: req.idempotency_key.as_deref(),
         repair: req.repair.as_ref(),
         first_turn_timeout_ms: req.first_turn_timeout_ms,

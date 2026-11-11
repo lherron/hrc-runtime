@@ -315,6 +315,8 @@ export type OpenBrokerSessionResponse = {
 
 export type DispatchTurnRequest = ExecutionFormatSelector & {
   hostSessionId: string
+  /** Whether the turn refuses steers ('guarded') or accepts them ('open'). */
+  turnPolicy?: 'open' | 'guarded' | undefined
   /**
    * Caller-stable identity for retrying a dispatch after an ambiguous/lost
    * response. The key itself is the replay identity.
