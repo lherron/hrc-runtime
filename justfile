@@ -1370,16 +1370,11 @@ _node-readback ssh-target expected-node target-sha aspd-sha aspd-release injecto
     if [[ -n "$injector_version" ]]; then
       just install-mail-injector-launchd "$injector_version"
     fi
-    # Classifier follows HRC on every node, beside the mail injector. A satellite
-    # pins max3's supervised version; max3 resolves its newly published tuple.
-    attention_version=latest
-    if [[ "$expected_node" != max3 ]]; then
-      # -n: this script is bash -s stdin; a plain ssh would swallow the rest of it.
-      attention_version="$(ssh -n -o BatchMode=yes max3 'plutil -extract ProgramArguments json -o - "$HOME/Library/LaunchAgents/com.praesidium.hrc-turn-attention.plist"' |
-        jq -er '.[] | select(startswith("hrc-turn-attention@")) | sub("^hrc-turn-attention@"; "")')"
-    fi
-    # zsh reads the node's .zshenv, which exports TYPESAFE_API_KEY. Never echo it.
-    zsh -c 'just install-turn-attention-launchd "$1"' -- "$attention_version"
+    # The turn-attention classifier is not installed here. It moves to a module
+    # under the praesidium kernel node by node (praesidium-kernel T-13374), and a
+    # deploy that reinstalled the launchd job would run it beside the module. A
+    # node still on the daemon keeps its loaded job; `just
+    # install-turn-attention-launchd <version>` remains for a rollback by hand.
 
 
     printf 'deployed %s: %s hrc %s (%s), aspd %s (%s), injector %s\n' \

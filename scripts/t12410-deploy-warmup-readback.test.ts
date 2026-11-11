@@ -76,7 +76,6 @@ function replay(current: string, archived?: string) {
       'ssh',
       `#!/bin/bash
 set -eu
-if [[ "$1" == -n ]]; then echo '["hrc-turn-attention@test"]'; exit; fi
 while [[ "$1" == -o ]]; do shift 2; done
 shift
 exec "$@"
@@ -98,7 +97,6 @@ esac
     executable('ps', '#!/bin/bash\necho "rusthrc HRC_TEST=yes"\n')
     executable('codesign', '#!/bin/bash\nexit 0\n')
     executable('sleep', '#!/bin/bash\necho sleep >> "$HOME/sleeps"\n')
-    executable('zsh', '#!/bin/bash\necho attention >> "$HOME/actions"\n')
     const r = Bun.spawnSync(
       [
         realJust,
