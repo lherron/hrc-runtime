@@ -13,8 +13,17 @@ predicate: >
   must still be the latest category-turn event of its hostSessionId and
   generation. This freshness check and the insert share one store transaction;
   otherwise stale_turn is returned without an append.
-  The hrc-turn-attention package runs outside the daemon on each HRC node,
-  follows that node's events, and classifies only scopes whose task segment
+  The classifier runs outside the HRC daemon on each HRC node and follows
+  that node's events. Before the T-13374 cutover it is the launchd-hosted
+  hrc-turn-attention package; after per-node cutover it is the Python
+  turn-attention module hosted by that node's Praesidium kernel, with source
+  in praesidium-kernel/modules/turn-attention/. The module calls the local
+  kernel's node.event.page and turn.attention.create pass-through operations;
+  it holds no direct HRC owner client. HRC's append admission, validation,
+  completion-derived identity, transaction, freshness and idempotency are
+  unchanged. The module's forwarded write has its module identity and no
+  lifecycle headers; this existing local route requires no lifecycle
+  credential. It classifies only scopes whose task segment
   does not match T- followed by digits. It reads the last assistant message_end
   from turn.message, not the transcript index. Lance authorizes hosted jev
   egress of the verbatim last 2500 characters of final text, last 400 characters
@@ -68,7 +77,20 @@ authority: >
   on the EN-39516 review thread, 2026-10-31.
   Additive text field (whole final message, 16 KB cap) by Lance's
   direction under T-12644, 2026-11-05.
+  Daedalus APPROVE of turn-attention-module r2 and kernel-modules r3 at
+  praesidium-kernel f91fd24, submitted in EN-51640 on the T-13344 thread,
+  2026-11-11, for implementation task T-13374. Lance directed the attention
+  module and owner-admitted HRC module writes; the HRC owner's port and
+  cutover read is EN-51638. This changes classifier hosting, transport and
+  cutover ownership, not HRC append or presentation semantics.
 source:
+  - wrkq:T-13374
+  - wrkc:EN-51636
+  - wrkc:EN-51638
+  - wrkc:EN-51640
+  - ../praesidium-kernel/docs/proposals/turn-attention-module.md
+  - ../praesidium-kernel/architecture/contracts/turn-attention-module.yaml
+  - ../praesidium-kernel/architecture/contracts/module-host.yaml
   - wrkq:T-12015
   - wrkq:T-12644
   - architecture/contracts/hrc-rust-migration.yaml
@@ -82,6 +104,16 @@ validation_scope: >
   installed Loggia row, hover and seatHeaders evidence. The revision names
   a route unit test for stale_turn and deliberately excludes a live gate
   forcing a next-turn start during classification. This review adds no gate.
+  For T-13374, turn-attention-module r2 section 7 supplies port acceptance,
+  including rerunning G1 through the Python classifier against the same
+  412 gold rows and pass rule. The old TypeScript G1 result does not attest
+  the Python port. Hrc-runtime owns removing and deploying the automatic
+  daemon-install block before any cutover, consulting Foundry on external
+  consumers, and per-node daemon bootout, plist removal and confirmed
+  process exit before the saved cursor is handed to the module. Rollback
+  uses the recorded daemon version's installer after module exit. The
+  daemon's package, installer, plist template and gate entries are removed
+  a day after the third node's cutover. Installed cutover remains unverified.
 last_verified: >
   2026-10-28 revised design read against single-event keyed reads, latest-turn
   recovery, empty bootstrap, presentation-runtime filtering, event categories,
@@ -93,6 +125,15 @@ design_review: >
   2026-10-31 T-12183 r1.1 shared-reader amendment reviewed against the
   projector's display selection and runtime-presence guard. No implementation
   or acceptance gate was run; prior last_verified evidence is unchanged.
+  2026-11-11 T-13374 port: Read the submitted r2 at f91fd24 and HRC
+  c8a1f968 subscriber, classifier, G1, local event-page and append routes,
+  store idempotency/freshness transaction, deploy lane and launchd installer.
+  Verified that paging is unfiltered, classifier-input events are not tool
+  spills, and the kernel seat projector carries each newest hrcSeq. The
+  module preserves the three-second timeout and classification semantics;
+  one-second wake coalescing and the 30-second idle backstop replace the
+  live stream. No build, test, install, restart or live mutation was run;
+  prior last_verified evidence is unchanged.
 reopen_when: >
   Append authority, completion identity, idempotency, transaction or freshness
   fence, egress authorization, classifier isolation or failure handling,
