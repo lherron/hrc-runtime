@@ -330,6 +330,13 @@ def main():
         r.check('3.summon', summoned.get('ok') and summoned['result']['session_ref'] == ref, reply=summoned)
         assert summoned['ok'], summoned
         host, runtime = summoned['result']['host_session_id'], summoned['result']['runtime_id']
+        # A resume never starts fresh: a scope with no recorded conversation is
+        # refused with HRC's own code, which the caller branches on.
+        cold = f'agent:{AGENT}:project:{PROJECT}:task:pty-{uuid.uuid4().hex[:8]}/lane:main'
+        resumed = wire(kernel, 'seat.summon', dict(session_ref=cold, continuation='resume', request_id='kf-resume'))
+        r.check('3.resume-refused-without-continuation', resumed.get('ok') is False
+                and resumed['error']['code'] == 'no_resumable_continuation'
+                and resumed['error']['details'].get('hrc_code') == 'no_resumable_continuation', reply=resumed)
         key = dict(session_ref=ref, subject='seat', ns='e2e', kind='ops', id='one')
         put = wire(kernel, 'seat.annotation.put', dict(**key, body={'v': 1}, expect={'updatedAt': None}))
         r.check('3.annotation-put', put.get('ok') and put['result']['created'] is True, reply=put)

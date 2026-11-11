@@ -12,8 +12,8 @@ const UNQUALIFIED: &str = "session_ref must name a task-qualified main-lane seat
 
 pub fn declaration() -> Value {
     json!({"name":OPERATION,"fences":"none","effect":"write",
-        "description":"Summon a seat through HRC's declaration and claim-and-start routes. HRC owns replay; reuse request_id on retry.",
-        "input":{"kind":"object","fields":{"session_ref":{"kind":"string"},"fresh":{"kind":"boolean"},"request_id":{"kind":"string"}},"required":["session_ref","request_id"]},
+        "description":"Summon a seat through HRC's declaration and claim-and-start routes. HRC owns replay; reuse request_id on retry. continuation \"resume\" instead continues the seat's latest recorded conversation in a successor session; HRC refuses it with no_resumable_continuation or resume_runtime_live, never starts fresh, and does not replay it.",
+        "input":{"kind":"object","fields":{"session_ref":{"kind":"string"},"fresh":{"kind":"boolean"},"continuation":{"kind":"string"},"request_id":{"kind":"string"}},"required":["session_ref","request_id"]},
         "output":{"kind":"object","fields":{"session_ref":{"kind":"string"},"host_session_id":{"kind":"string"},"runtime_id":{"kind":"string"},"status":{"kind":"string"},"replayed":{"kind":"boolean"}},"required":["session_ref","host_session_id","runtime_id","status","replayed"]}})
 }
 
@@ -23,7 +23,15 @@ pub struct Summon {
     session_ref: String,
     #[serde(default)]
     fresh: bool,
+    #[serde(default)]
+    continuation: Option<Continuation>,
     request_id: String,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "snake_case")]
+enum Continuation {
+    Resume,
 }
 
 pub fn invalid(message: &str) -> DispatchFailure {
@@ -50,6 +58,9 @@ impl Summon {
         }
         if args.request_id.trim().is_empty() {
             return Err(invalid("request_id must not be empty"));
+        }
+        if args.fresh && args.continuation.is_some() {
+            return Err(invalid("fresh and continuation are mutually exclusive"));
         }
         Ok(args)
     }
@@ -92,6 +103,31 @@ impl Summon {
             .as_object_mut()
             .ok_or_else(invalid)?
             .insert("sessionRef".into(), json!(self.session_ref));
+        let string = |v: &Value| {
+            v.as_str()
+                .filter(|s| !s.is_empty())
+                .map(str::to_owned)
+                .ok_or_else(invalid)
+        };
+        if self.continuation.is_some() {
+            // As `hrc resume --no-attach`: the resume route only mints the
+            // successor that inherits the conversation; the start runs it.
+            let resumed = owner::post(
+                owner,
+                "/v1/sessions/resume-continuation",
+                &json!({"sessionRef":self.session_ref,"intent":intent}),
+            )?;
+            let host = string(&resumed["hostSessionId"])?;
+            let started = owner::post(
+                owner,
+                "/v1/runtimes/start",
+                &json!({"hostSessionId":host,"intent":intent,"restartStyle":"reuse_pty","allowStaleGeneration":true}),
+            )?;
+            return Ok(
+                json!({"session_ref":self.session_ref,"host_session_id":host,
+                "runtime_id":string(&started["runtimeId"])?,"status":string(&started["status"])?,"replayed":false}),
+            );
+        }
         // Historical idempotency prefix is retained across the fold.
         let mut request = json!({"runtimeIntent":intent,"conflictPolicy":if self.fresh {"suffix"} else {"reject"},
             "summonIntent":"implicit","idempotencyKey":format!("hrc-kernel-summon-{}",self.request_id),"restartStyle":"reuse_pty"});
@@ -101,12 +137,6 @@ impl Summon {
             "sessionRef"
         }] = json!(self.session_ref);
         let response = owner::post(owner, "/v1/runtimes/start", &request)?;
-        let string = |v: &Value| {
-            v.as_str()
-                .filter(|s| !s.is_empty())
-                .map(str::to_owned)
-                .ok_or_else(invalid)
-        };
         Ok(
             json!({"session_ref":string(&response["claim"]["sessionRef"])?,
             "host_session_id":string(&response["hostSessionId"])?,"runtime_id":string(&response["runtimeId"])?,
