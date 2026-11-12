@@ -83,6 +83,17 @@ os.execvp('bun',['bun',BROKER,'run',module,'--transport','unix','--socket',a['--
                        '--event-ledger',str(root/'events.ndjson'),'--join','participant-served'])
 '''
 
+def session_invariants(r):
+    """One snapshot: every live HRC participant has exactly its current session."""
+    rows=r.rows("""SELECT p.scope_ref,p.lane_ref,p.host_session_id,c.active_host_session_id,
+        (SELECT COUNT(*) FROM sessions s WHERE s.scope_ref=p.scope_ref AND s.lane_ref=p.lane_ref AND s.status='active') AS active_count,
+        (SELECT status FROM sessions s WHERE s.host_session_id=p.host_session_id) AS session_status
+        FROM participant_registrations p LEFT JOIN continuities c ON c.scope_ref=p.scope_ref AND c.lane_ref=p.lane_ref
+        WHERE p.lifecycle_owner='hrc-launched' AND EXISTS(SELECT 1 FROM runtimes r WHERE r.host_session_id=p.host_session_id AND r.status IN ('ready','busy'))""")
+    for row in rows:
+        assert row['active_count']==1 and row['session_status']=='active' and row['host_session_id']==row['active_host_session_id'],row
+    return rows
+
 def claim_body(r, scope, key, policy='reject'):
     """Source-derived prae seat summon: praesidium-kernel hrc_writes.rs:324-415.
 
@@ -354,7 +365,10 @@ def main():
                          HRC_PEER_CONFIG_FILE=str(root/'federation.json'),HRC_ASPD_SOCKET=str(root/'aspd.sock'),
                          ASP_PROJECT_ROOT_OVERRIDE=str(root/'t12049'),HRC_PROJECT_SEARCH_ROOTS=str(root/'t12049'),HRC_WRKQ_DB=str(root/'wrkq.db'),WRKQ_DB=str(root/'wrkq.db'),HRC_ACP_WEBHOOK_URL=''))
     report={}; brokers=[]
-    def call(path,body): return r.http('POST',path,body,timeout=700)
+    def call(path,body):
+        result=r.http('POST',path,body,timeout=700)
+        report.setdefault('sessionInvariants',[]).append({'door':path,'rows':session_invariants(r)})
+        return result
     def scope(agent): return 'agent:'+agent+':project:t12049:task:launch'
     def target(agent):
         result=call('/v1/targets/ensure',{'sessionRef':scope(agent)+'/lane:main','runtimeIntent':{}})

@@ -367,6 +367,27 @@ pub async fn handle(server: &Shared, body: Value) -> Result<Response, ApiError> 
         }
     };
     let intent = body.get("intent").filter(|v| !v.is_null()).cloned();
+    let (target_scope, target_lane) = runtime_views::parse_target_ref(&raw)?;
+    let launch_command = super::federation::policy::launch_command(server, target_scope).await?;
+    if launch_command.is_some()
+        && let Some(host) = &pinned
+    {
+        let current = server
+            .store
+            .lock()
+            .unwrap()
+            .continuity_session(target_scope, target_lane)?;
+        if current.as_ref().and_then(|s| s["hostSessionId"].as_str()) != Some(host.as_str()) {
+            return Err(ApiError::domain(
+                StatusCode::CONFLICT,
+                "self_brokered_resume_current_only",
+                "resume on a self-brokered seat always continues the scope's current conversation; historical host sessions are unsupported",
+                Some(
+                    json!({"sessionRef":raw,"requestedHostSessionId":host,"currentHostSessionId":current.map(|s|s["hostSessionId"].clone()),"retryable":false}),
+                ),
+            ));
+        }
+    }
     let sessions = target_sessions(server, &raw)?;
     let selected = match &pinned {
         // A pinned prior outside the normalized target is not resumable here.
@@ -400,6 +421,9 @@ pub async fn handle(server: &Shared, body: Value) -> Result<Response, ApiError> 
     let scope = prior["scopeRef"].as_str().unwrap_or("").to_owned();
     let lane = hrc_store::storage_lane(prior["laneRef"].as_str().unwrap_or("main")).to_owned();
     assert_reserved_address_allows_birth(server, &scope, &lane, "resume").await?;
+    if let Some(command) = launch_command {
+        return resume_self_brokered(server, &raw, &prior, command).await;
+    }
     let project = server
         .store
         .lock()
@@ -484,4 +508,63 @@ pub async fn handle(server: &Shared, body: Value) -> Result<Response, ApiError> 
         successor["identity"] = identity;
     }
     Ok(Json(json!({"hostSessionId":successor["hostSessionId"],"status":successor["status"],"generation":successor["generation"],"priorHostSessionId":successor["priorHostSessionId"],"continuation":successor["continuation"],"scopeRef":successor["scopeRef"],"laneRef":successor["laneRef"],"session":successor})).into_response())
+}
+
+/// A self-brokered resume has exactly one session-changing owner: registration.
+async fn resume_self_brokered(
+    server: &Shared,
+    raw: &str,
+    prior: &Value,
+    command: Vec<String>,
+) -> Result<Response, ApiError> {
+    let scope = prior["scopeRef"].as_str().unwrap_or("").to_owned();
+    let lane = hrc_store::storage_lane(prior["laneRef"].as_str().unwrap_or("main")).to_owned();
+    let prior_host = prior["hostSessionId"].as_str().unwrap_or("").to_owned();
+    // A participant's registration owns succession. Minting an ordinary
+    // resume session first would leave it orphaned when launch succeeds
+    // that registration into a different session at the same generation.
+    let _gate = super::broker::seat_gate(server, &scope, &lane).await;
+    let current = server
+        .store
+        .lock()
+        .unwrap()
+        .continuity_session(&scope, &lane)?;
+    let Some(current) = current else {
+        return Err(ApiError::missing_host(&prior_host));
+    };
+    let current_host = current["hostSessionId"].as_str().unwrap_or("");
+    if let Some(runtime) = live_runtime(&server.store.lock().unwrap().sqlite, current_host)? {
+        return Err(live_conflict(
+            format!(
+                "cannot resume \"{raw}\": its runtime is still live; use `hrc attach`, or terminate/kill it before resume."
+            ),
+            json!({"sessionRef":raw,"hostSessionId":current_host}),
+            runtime,
+        ));
+    }
+    if current_host != prior_host {
+        return Err(ApiError::domain(
+            StatusCode::CONFLICT,
+            "self_brokered_resume_current_only",
+            "resume on a self-brokered seat always continues the scope's current conversation; historical host sessions are unsupported",
+            Some(
+                json!({"sessionRef":raw,"requestedHostSessionId":prior_host,"currentHostSessionId":current_host,"retryable":false}),
+            ),
+        ));
+    }
+    let started = super::participants::launch::launch(server, &current, command, None).await?;
+    let host = started["hostSessionId"].as_str().unwrap_or("");
+    let db = server.store.lock().unwrap();
+    let mut successor = db
+        .session(host)?
+        .ok_or_else(|| ApiError::missing_host(host))?;
+    if let Some(identity) = db.optional_identity(&scope, &lane)? {
+        successor["identity"] = identity;
+    }
+    // The caller's following start reuses this runtime. Preserve the
+    // resume response shape while naming its actual successor session.
+    Ok(Json(json!({"hostSessionId":successor["hostSessionId"],"status":successor["status"],
+        "generation":successor["generation"],"priorHostSessionId":successor["priorHostSessionId"],
+        "continuation":successor["continuation"],"scopeRef":successor["scopeRef"],"laneRef":successor["laneRef"],
+        "session":successor})).into_response())
 }

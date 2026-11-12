@@ -14,10 +14,11 @@ from pathlib import Path
 import shutil
 import signal
 import sqlite3
+import subprocess
 import sys
 import time
 
-from self_brokered import Aspd, LAUNCHER, HERE, Run, LEAK, daemon_env, claim_body
+from self_brokered import Aspd, LAUNCHER, HERE, Run, LEAK, daemon_env, claim_body, session_invariants
 from hrcpty_substrate import FakeAspd, alive, ops, descendants_of, canonical, start_hash
 from n4_federation import local_tailnet_address, free_port
 
@@ -44,6 +45,7 @@ def main():
     p.add_argument('--archive-only', action='store_true', help='run repeated terminate and continuation gates only')
     p.add_argument('--baseline', action='store_true', help='reproduce termination graph leak only')
     p.add_argument('--reproduce-claims', action='store_true', help='record T-13451 defects without requiring fixes')
+    p.add_argument('--doors-only', action='store_true', help='request-shape sweep only')
     p.add_argument('--claims-only', action='store_true', help='summon and first-allocation gates only')
     a = p.parse_args()
     root = a.scratch_root.absolute()
@@ -82,7 +84,7 @@ await runBrokerCli({additionalDrivers:[() => {
         "j=json.loads(Path(a['--registration']).read_text())")
     launcher.write_text('E2E='+repr(str(HERE))+'\nBROKER='+repr(str(broker))+'\n'+source)
     commands = {agent:[sys.executable, str(launcher), 'ok', str(a.broker_module)]
-                for agent in ('subject','control','interrupted','foundry','archive','summoned')}
+                for agent in ('subject','control','interrupted','foundry','archive','summoned','doors')}
     for agent in [*commands,'ordinary']:
         directory=root/'agents'/agent
         directory.mkdir(parents=True)
@@ -121,7 +123,11 @@ await runBrokerCli({additionalDrivers:[() => {
         ASP_PROJECT_ROOT_OVERRIDE=str(project),HRC_PROJECT_SEARCH_ROOTS=str(project),
         HRC_WRKQ_DB=str(root/'wrkq.db'),WRKQ_DB=str(root/'wrkq.db'),HRC_ACP_WEBHOOK_URL=''))
     report={'binary':str(r.binary),'binarySha256':hashlib.sha256(r.binary.read_bytes()).hexdigest()}
-    def call(path,body): return r.http('POST',path,body,timeout=100)
+    def call(path,body):
+        result=r.http('POST',path,body,timeout=100)
+        if not a.reproduce_claims:
+            report.setdefault('sessionInvariants',[]).append({'door':path,'rows':session_invariants(r)})
+        return result
     def scope(agent): return 'agent:'+agent+':project:t12049:task:'+('primary' if agent=='foundry' else 'lifecycle')
     def birth(agent):
         target=call('/v1/targets/ensure',{'sessionRef':scope(agent)+'/lane:main','runtimeIntent':{}})
@@ -248,6 +254,104 @@ await runBrokerCli({additionalDrivers:[() => {
         report['ordinaryClaimControl']={'virginSessions':rows,'live':live,'fresh':fresh,'compileRequest':req}
         call('/v1/terminate',{'runtimeId':new['runtime_id']})
         print('PASS summon retired/live/replay/suffix and virgin session ownership; ordinary controls',flush=True)
+    def door_gates():
+        sc=scope('doors'); ref=sc+'/lane:main'; checks=report.setdefault('doors',{})
+        def stop(rid):
+            row=r.runtime(rid); directory=Path(row['state']['broker']['substrate']['socketPath']).parent
+            child=int((directory/'child.pid').read_text()); supervisor=int((directory/'hrcpty.pid').read_text())
+            assert call('/v1/terminate',{'runtimeId':rid})[0]==200
+            r.wait(lambda:not alive(child) and not alive(supervisor),20)
+        # Exact claim with no session at all (the normal new-scope summon).
+        request=claim_body(r,sc,'T13451-virgin-exact')
+        answer=call('/v1/runtimes/start',request); checks['virginExact']={'request':request,'response':answer}
+        assert answer[0]==200 and answer[1]['generation']==1,answer
+        host=answer[1]['hostSessionId']; rid=answer[1]['runtimeId']
+        turn({'host':host},'CONT door sweep')
+        stop(rid)
+        # targets/ensure with a complete runtime intent still only ensures a
+        # session; it must not start a child on a retired scope.
+        intent=request['runtimeIntent']
+        before=r.rows('SELECT attempt_id FROM participant_registration_attempts')
+        ensured=call('/v1/targets/ensure',{'sessionRef':ref,'runtimeIntent':intent})
+        assert ensured[0]==200 and r.rows('SELECT attempt_id FROM participant_registration_attempts')==before,ensured
+        checks['ensureWithIntent']=ensured
+        # The no-input resume chain used by prae summon --continuation resume.
+        resumed=call('/v1/sessions/resume-continuation',{'sessionRef':ref,'intent':intent})
+        assert resumed[0]==200,resumed
+        answer=call('/v1/runtimes/start',{'hostSessionId':resumed[1]['hostSessionId'],'intent':intent,
+            'restartStyle':'reuse_pty','allowStaleGeneration':True})
+        assert answer[0]==200,answer
+        assert r.runtime(answer[1]['runtimeId'])['generation']==2,answer
+        rid=answer[1]['runtimeId']
+        reg=json.loads((Path(r.runtime(rid)['state']['broker']['substrate']['socketPath']).parent/'registration.json').read_text())
+        assert reg['continuation']['carried'],reg
+        checks['resume']={'resumed':resumed,'started':answer,'registration':reg,
+            'activeSessions':r.rows("SELECT host_session_id,generation FROM sessions WHERE scope_ref=? AND status='active'",(sc,))}
+        assert len(checks['resume']['activeSessions'])==1,checks['resume']
+        assert resumed[1]['hostSessionId']==answer[1]['hostSessionId'],checks['resume']
+        before=r.rows('SELECT host_session_id FROM sessions WHERE scope_ref=?',(sc,))
+        live=call('/v1/sessions/resume-continuation',{'sessionRef':ref,'intent':intent})
+        assert live[0]==409 and live[1]['error']['code']=='resume_runtime_live',live
+        stop(rid)
+        historical=call('/v1/sessions/resume-continuation',{'sessionRef':ref,'intent':intent,'priorHostSessionId':host})
+        assert historical[0]==409 and historical[1]['error']['code']=='self_brokered_resume_current_only',historical
+        assert r.rows('SELECT host_session_id FROM sessions WHERE scope_ref=?',(sc,))==before
+        checks['resume'].update(live=live,historical=historical)
+        # Both reusable-runtime submission doors can cause a cold birth.
+        for door in ('steer','invoke'):
+            body={'target':ref,'body':'CONT '+door,'origin':{'principalRef':'agent:clod'},'runtimeIntent':intent,'wait':True}
+            if door=='steer': body.pop('runtimeIntent')
+            if door=='invoke': body['coldBirth']={'promptMode':'replace-priming'}
+            answer=call('/v1/submissions/'+door,body)
+            assert answer[0]==200,answer
+            checks[door]=answer
+            if answer[1].get('runId'):
+                run=answer[1]['runId']
+                r.wait(lambda:r.rows("SELECT 1 FROM hrc_events WHERE run_id=? AND event_kind='turn.completed'",(run,)),30)
+                rid=answer[1]['runtimeId']
+            else:
+                # The fixture has queue/exclusive but no steer implementation.
+                # Its refusal is after the cold birth, whose invariant is still
+                # exercised here; this case makes no turn-completion claim.
+                assert door=='steer' and answer[1]['reason']=='unsupported:steer',answer
+                rid=r.rows('SELECT a.runtime_id FROM participant_registration_attempts a JOIN participant_registrations p USING(registration_id) WHERE p.scope_ref=? ORDER BY attach_epoch DESC LIMIT 1',(sc,))[0]['runtime_id']
+                assert r.runtime(rid)['status']=='ready'
+            checks[door]=answer; stop(rid)
+        # hrc run's prepare/resume chain, without a priming input.
+        host=r.rows('SELECT active_host_session_id FROM continuities WHERE scope_ref=?',(sc,))[0]['active_host_session_id']
+        answer=call('/v1/runs/prepare-attached',{'hostSessionId':host,'intent':intent,'restartStyle':'reuse_pty'})
+        assert answer[0]==200 and answer[1]['status']=='prepared',answer
+        unpark=call('/v1/runs/resume-attached',{'pendingStartId':answer[1]['pendingStartId']})
+        assert unpark[0] in (200,503),unpark
+        if unpark[0]==503: assert unpark[1]['error']['detail']['code']=='broker_attached_start_not_pending',unpark
+        checks['attached']={'prepared':answer,'resumed':unpark}; stop(answer[1]['runtimeId'])
+        # A second product caller for the exact claim shape.
+        argv=[str(r.binary),'start',sc,'--on-conflict','reject','--no-viewer','--json']
+        result=subprocess.run(argv,env=r.env,cwd=project,text=True,capture_output=True,timeout=90)
+        checks['hrcStart']={'argv':argv,'code':result.returncode,'stdout':result.stdout,'stderr':result.stderr}
+        assert result.returncode==0,checks['hrcStart']
+        started=json.loads(result.stdout)['runtime']; stop(started['runtimeId'])
+        # Explicit and implicit suffix claims refuse without creating a slot.
+        for implicit in (False,True):
+            request=claim_body(r,sc,'T13451-suffix-'+str(implicit),'suffix')
+            if implicit: request['summonIntent']='implicit'
+            answer=call('/v1/runtimes/start',request)
+            assert answer[0]==409 and answer[1]['error']['code']=='self_brokered_roster_unsupported',answer
+            checks['suffix-'+str(implicit)]=answer
+        ordinary_before=ordinary(); turn(ordinary_before,'CONT ordinary resume')
+        assert call('/v1/terminate',{'runtimeId':ordinary_before['id']})[0]==200
+        r.wait(lambda:not alive(ordinary_before['child']),20)
+        count=len(r.rows('SELECT * FROM runtimes'))
+        req=claim_body(r,scope('ordinary'),'ordinary-resume')
+        resumed=call('/v1/sessions/resume-continuation',{'sessionRef':scope('ordinary')+'/lane:main','intent':req['runtimeIntent']})
+        assert resumed[0]==200 and len(r.rows('SELECT * FROM runtimes'))==count,resumed
+        started=call('/v1/runtimes/start',{'hostSessionId':resumed[1]['hostSessionId'],'intent':req['runtimeIntent']})
+        assert started[0]==200 and started[1]['hostSessionId']==resumed[1]['hostSessionId'],started
+        live=call('/v1/sessions/resume-continuation',{'sessionRef':scope('ordinary')+'/lane:main','intent':req['runtimeIntent']})
+        assert live[0]==409 and live[1]['error']['code']=='resume_runtime_live',live
+        checks['ordinaryResume']={'resumed':resumed,'started':started,'live':live,'runtimeCountBeforeStart':count}
+        call('/v1/terminate',{'runtimeId':started[1]['runtimeId']})
+        print('PASS request-shape sweep: virgin exact, ensure, resume, steer, invoke, attached, hrc start, suffix',flush=True)
     def archive_gates():
         results={}
         def session(s):
@@ -314,10 +418,13 @@ await runBrokerCli({additionalDrivers:[() => {
         print('PASS repeated terminate keep/drop, fresh/continued birth, input and interrupt refusals (ordinary + self-brokered)',flush=True)
     try:
         owner=r.up('1')
+        if a.doors_only:
+            door_gates(); report['pass']=True; return
         if not a.baseline:
             claim_gates()
             if a.reproduce_claims: return
             if a.claims_only: report['pass']=True; return
+            door_gates()
             archive_gates()
             if a.archive_only:
                 report['pass']=True
