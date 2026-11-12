@@ -637,6 +637,11 @@
       "route": "/v1/federation/history/checkpoint"
     },
     {
+      "listener": "peer",
+      "method": "GET",
+      "route": "/v1/federation/stream"
+    },
+    {
       "listener": "registry",
       "method": "GET",
       "route": "/v1/federation/registry/designation"

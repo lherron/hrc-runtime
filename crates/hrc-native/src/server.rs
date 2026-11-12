@@ -85,6 +85,8 @@ mod messages;
 mod projection;
 #[path = "server/projection/runs.rs"]
 mod runs;
+#[path = "server/projection/seat_stream_carry.rs"]
+mod seat_stream_carry;
 #[path = "server/projection/seat_streams.rs"]
 mod seat_streams;
 #[path = "server/projection/seat_work.rs"]

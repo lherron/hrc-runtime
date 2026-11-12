@@ -35,6 +35,7 @@ availability is discovered from health capabilities and route presence.
 | `POST` | `/v1/federation/history/query` | Query collective history. |
 | `POST` | `/v1/federation/history/checkpoint` | Record a history checkpoint. |
 | `POST` | `/v1/federation/server-lifecycle` | Attested remote HRC restart (T-09861); advertised by the `serverLifecycle` health capability. |
+| `GET` | `/v1/federation/stream` | Carried seat stream (T-13420 spec 3.4, `hrc-runtime.seat-streams`): the `GET /v1/streams/open` query and `hrc-stream/1` upgrade, answered from the home's own seats without consulting placement, so a carry is one hop. Advertised by `capabilities.streams` (the kinds served, `["pty"]`). |
 
 The four T-10418 session-read routes are dispatched `localOnly` on the home, so a
 forwarded read never takes a second hop, and the three event/run routes refuse

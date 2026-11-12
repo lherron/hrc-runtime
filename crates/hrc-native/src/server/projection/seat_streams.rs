@@ -15,10 +15,19 @@ use tokio::{
     net::UnixStream,
 };
 
-const IO_TIMEOUT: Duration = Duration::from_secs(5);
+pub(super) const IO_TIMEOUT: Duration = Duration::from_secs(5);
 
 fn refusal(code: &'static str, message: &str) -> ApiError {
     ApiError::domain(StatusCode::CONFLICT, code, message, None)
+}
+/// Transient: a client retries a 5xx (spec 3.1, rev 1d).
+pub(super) fn stopping() -> ApiError {
+    ApiError::domain(
+        StatusCode::SERVICE_UNAVAILABLE,
+        "daemon_stopping",
+        "daemon is stopping",
+        None,
+    )
 }
 
 struct Seat {
@@ -93,10 +102,30 @@ fn size(query: &HashMap<String, String>) -> Result<Value, ApiError> {
     Ok(size)
 }
 
+/// `GET /v1/streams/open` on the daemon socket: local seats here, a seat
+/// homed on a peer is carried there (spec 3.4).
 pub async fn open(
+    server: &Shared,
+    request: Request,
+    query: &HashMap<String, String>,
+) -> Result<Response, ApiError> {
+    open_as(server, request, query, false).await
+}
+/// `GET /v1/federation/stream` on the peer listener: the home answers from
+/// its own seats and never consults placement, so a carry takes one hop.
+pub async fn open_for_peer(
+    server: &Shared,
+    request: Request,
+    query: &HashMap<String, String>,
+) -> Result<Response, ApiError> {
+    open_as(server, request, query, true).await
+}
+
+async fn open_as(
     server: &Shared,
     mut request: Request,
     query: &HashMap<String, String>,
+    from_peer: bool,
 ) -> Result<Response, ApiError> {
     let scope = query
         .get("scopeRef")
@@ -123,12 +152,14 @@ pub async fn open(
     }
     let read_only = mode == "read-only";
     let mut params = size(query)?;
-    let home = federation::session_home::home(server, &scope).await;
-    if home["state"] == "foreign" {
-        return Err(refusal(
-            "peer_stream_unsupported",
-            "peer streams are not yet supported",
-        ));
+    if !from_peer {
+        let home = federation::session_home::home(server, &scope).await;
+        if home["state"] == "foreign"
+            && let Some(node) = home["nodeId"].as_str()
+        {
+            let raw = request.uri().query().unwrap_or("").to_owned();
+            return super::seat_stream_carry::open(server, request, node, &raw, "pty").await;
+        }
     }
     let rt = current(server, &scope, &lane)?
         .runtime
@@ -143,6 +174,52 @@ pub async fn open(
     {
         return Err(refusal("not_attachable", "seat has no hrcpty presentation"));
     }
+    upgrade_requested(&request)?;
+    if server.controller.shutting_down.load(Ordering::SeqCst) {
+        return Err(stopping());
+    }
+    // Complete the existing attach handshake before committing to HTTP 101.
+    params["readOnly"] = json!(read_only);
+    params["remote"] = json!(true);
+    let (ops, data) = attach(&socket, params)
+        .await
+        .map_err(|_| refusal("no_runtime", "seat supervisor is unavailable"))?;
+    match close_code(server, &scope, &lane, &rt) {
+        Some("daemon_stopping") => return Err(stopping()),
+        Some(code) => return Err(refusal("no_runtime", code)),
+        None => {}
+    }
+    let opened = json!({"op":"opened","node":server.federation.node_id(),"runtimeId":rt.runtime_id,"generation":rt.generation,"kind":"pty","mode":mode});
+    admit(
+        server,
+        &mut request,
+        move |server, mut consumer| async move {
+            if let Err(error) = relay(
+                &server,
+                &scope,
+                &lane,
+                &rt,
+                ops,
+                data,
+                &mut consumer,
+                opened,
+                read_only,
+            )
+            .await
+            {
+                super::stderr_json(
+                    "warn",
+                    "seat-stream",
+                    "seat_stream.closed",
+                    json!({"runtimeId":rt.runtime_id,"error":error.to_string()}),
+                );
+            }
+        },
+    )
+}
+
+/// Checked after the seat's own refusals, as built in T-13421.
+pub(super) fn upgrade_requested(request: &Request) -> Result<(), ApiError> {
     let headers = request.headers();
     let upgrade = headers.get("upgrade").and_then(|h| h.to_str().ok());
     let connection = headers
@@ -156,54 +233,34 @@ pub async fn open(
     {
         return Err(ApiError::bad("hrc-stream/1 upgrade is required", None));
     }
-    if server.controller.shutting_down.load(Ordering::SeqCst) {
-        return Err(refusal("no_runtime", "daemon is stopping"));
-    }
-    // Complete the existing attach handshake before committing to HTTP 101.
-    params["readOnly"] = json!(read_only);
-    params["remote"] = json!(true);
-    let (ops, data) = attach(&socket, params)
-        .await
-        .map_err(|_| refusal("no_runtime", "seat supervisor is unavailable"))?;
-    if let Some(code) = close_code(server, &scope, &lane, &rt) {
-        return Err(refusal("no_runtime", code));
-    }
-    let upgrade = hyper::upgrade::on(&mut request);
-    let server = server.clone();
-    let opened = json!({"op":"opened","node":server.federation.node_id(),"runtimeId":rt.runtime_id,"generation":rt.generation,"kind":"pty","mode":mode});
+    Ok(())
+}
+
+pub(super) type Consumer = hyper_util::rt::TokioIo<hyper::upgrade::Upgraded>;
+/// Commit to HTTP 101 and run `stream` on the upgraded consumer as a task the
+/// stop drain waits for. Admission is serialized with drain: no upgraded task
+/// can register after stop.
+pub(super) fn admit<F, Fut>(
+    server: &Shared,
+    request: &mut Request,
+    stream: F,
+) -> Result<Response, ApiError>
+where
+    F: FnOnce(Shared, Consumer) -> Fut + Send + 'static,
+    Fut: Future<Output = ()> + Send + 'static,
+{
+    let upgrade = hyper::upgrade::on(request);
     let mut tasks = server.seat_streams.lock().unwrap();
-    // Serialize admission with drain: no upgraded task can register after stop.
     if server.controller.shutting_down.load(Ordering::SeqCst) {
-        return Err(refusal("no_runtime", "daemon is stopping"));
+        return Err(stopping());
     }
     while tasks.try_join_next().is_some() {}
     let owned = server.clone();
     tasks.spawn(async move {
-        let server = owned;
         let Ok(upgraded) = upgrade.await else {
             return;
         };
-        let mut consumer = hyper_util::rt::TokioIo::new(upgraded);
-        if let Err(error) = relay(
-            &server,
-            &scope,
-            &lane,
-            &rt,
-            ops,
-            data,
-            &mut consumer,
-            opened,
-            read_only,
-        )
-        .await
-        {
-            super::stderr_json(
-                "warn",
-                "seat-stream",
-                "seat_stream.closed",
-                json!({"runtimeId":rt.runtime_id,"error":error.to_string()}),
-            );
-        }
+        stream(owned, hyper_util::rt::TokioIo::new(upgraded)).await;
     });
     Ok((
         StatusCode::SWITCHING_PROTOCOLS,
@@ -223,7 +280,7 @@ async fn attach(socket: &Path, params: Value) -> Result<(hrcpty::Ops, UnixStream
         .await?;
     Ok((ops, data))
 }
-async fn read_frame(reader: &mut (impl AsyncRead + Unpin)) -> Result<Option<Frame>> {
+pub(super) async fn read_frame(reader: &mut (impl AsyncRead + Unpin)) -> Result<Option<Frame>> {
     let mut header = [0; codec::HEADER_LEN];
     if reader.read(&mut header[..1]).await? == 0 {
         return Ok(None);
@@ -234,7 +291,11 @@ async fn read_frame(reader: &mut (impl AsyncRead + Unpin)) -> Result<Option<Fram
     reader.read_exact(&mut bytes).await?;
     Ok(Some(Frame::new(kind, bytes)?))
 }
-async fn send(writer: &mut (impl AsyncWrite + Unpin), kind: Kind, bytes: Vec<u8>) -> Result<()> {
+pub(super) async fn send(
+    writer: &mut (impl AsyncWrite + Unpin),
+    kind: Kind,
+    bytes: Vec<u8>,
+) -> Result<()> {
     let frame = Frame::new(kind, bytes)?;
     tokio::time::timeout(IO_TIMEOUT, writer.write_all(&frame.encode())).await??;
     Ok(())
@@ -301,13 +362,20 @@ async fn relay(
     // Pin the entire input loop: a select wake never cancels a partial frame.
     let input = input(&mut read, &mut to_pty, &ops, read_only);
     tokio::pin!(input);
+    // The stop flag is an atomic and is checked every tick; the store is read
+    // once a second (T-13423 review note).
     let mut tick = tokio::time::interval(Duration::from_millis(200));
+    let mut checked = tokio::time::Instant::now();
     let mut bytes = vec![0; 64 * 1024];
     let code = loop {
         tokio::select! {
             biased;
             _ = tick.tick() => {
-                if let Some(code) = close_code(server, scope, lane, rt) { break code; }
+                if server.controller.shutting_down.load(Ordering::SeqCst) { break "daemon_stopping"; }
+                if checked.elapsed() >= Duration::from_secs(1) {
+                    checked = tokio::time::Instant::now();
+                    if let Some(code) = close_code(server, scope, lane, rt) { break code; }
+                }
             }
             _ = &mut input => break "consumer_closed",
             got = output.read(&mut bytes) => match got {

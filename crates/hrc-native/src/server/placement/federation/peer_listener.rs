@@ -16,7 +16,7 @@ use axum::{
 use hrc_store::timestamp;
 use serde_json::{Map, Value, json};
 
-pub const ROUTE_KEYS: [&str; 26] = [
+pub const ROUTE_KEYS: [&str; 27] = [
     "GET /v1/federation/health",
     "GET /v1/sessions/work",
     "PUT /v1/sessions/work",
@@ -43,6 +43,7 @@ pub const ROUTE_KEYS: [&str; 26] = [
     "POST /v1/federation/history/replicate",
     "POST /v1/federation/history/query",
     "POST /v1/federation/history/checkpoint",
+    "GET /v1/federation/stream",
 ];
 
 struct Invalid;
@@ -183,6 +184,20 @@ fn local_nodes(uri: &Uri) -> Uri {
 async fn route_request(server: &Shared, peer: &str, request: Request) -> Result<Response, Invalid> {
     let method = request.method().clone();
     let uri = request.uri().clone();
+    // A carried seat stream keeps the request itself: its upgrade lives there.
+    if method == Method::GET && uri.path() == crate::server::seat_stream_carry::PEER_ROUTE {
+        let mut query = std::collections::HashMap::new();
+        for (key, value) in form_urlencoded::parse(uri.query().unwrap_or("").as_bytes()) {
+            query
+                .entry(key.into_owned())
+                .or_insert_with(|| value.into_owned());
+        }
+        return Ok(
+            crate::server::seat_streams::open_for_peer(server, request, &query)
+                .await
+                .unwrap_or_else(IntoResponse::into_response),
+        );
+    }
     let headers = request.headers().clone();
     let path = uri.path().to_owned();
     let body = to_bytes(request.into_body(), usize::MAX)
@@ -232,7 +247,7 @@ async fn route_request(server: &Shared, peer: &str, request: Request) -> Result<
                 "startedAt": server.started_at,
                 "observedAt": timestamp(),
                 // Only what this daemon serves; the rest is absent, not false.
-                "capabilities": {"locate":true,"health":true,"runtimeProjection":true,"federatedSessionRead":true},
+                "capabilities": {"locate":true,"health":true,"runtimeProjection":true,"federatedSessionRead":true,"streams":["pty"]},
             });
             let caps = health["capabilities"].as_object_mut().unwrap();
             // Bun's capability order: runtimeProjection, collectiveHistory, ...,
@@ -561,7 +576,7 @@ mod tests {
 
     #[test]
     fn allowlist_names_the_session_writes_once() {
-        assert_eq!(ROUTE_KEYS.len(), 26);
+        assert_eq!(ROUTE_KEYS.len(), 27);
         assert_eq!(
             ROUTE_KEYS.iter().collect::<HashSet<_>>().len(),
             ROUTE_KEYS.len()
