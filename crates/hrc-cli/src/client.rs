@@ -258,24 +258,8 @@ pub(crate) fn decode_json(status: u16, text: &str) -> Result<Value> {
     }
     Ok(value)
 }
-fn env(key: &str) -> Option<String> {
-    std::env::var(key)
-        .ok()
-        .filter(|v| !v.trim().is_empty())
-        .map(|v| v.trim().to_owned())
-}
 pub(crate) fn runtime_root() -> PathBuf {
-    if let Some(root) = env("HRC_RUNTIME_DIR") {
-        return root.into();
-    }
-    if let Some(home) = env("HOME") {
-        return PathBuf::from(home).join("praesidium/var/run/hrc");
-    }
-    if let Some(root) = env("XDG_RUNTIME_DIR") {
-        return PathBuf::from(root).join("hrc");
-    }
-    PathBuf::from(env("TMPDIR").unwrap_or_else(|| "/tmp".into()))
-        .join(format!("hrc-{}", unsafe { libc::getuid() }))
+    hrc_common::runtime_root()
 }
 
 /// JavaScript encodeURIComponent semantics for IDs embedded in route paths.

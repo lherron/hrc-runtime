@@ -36,7 +36,7 @@ pub(crate) fn run(args: AttachArgs) -> i32 {
     }
 }
 
-fn winsize() -> libc::winsize {
+pub(crate) fn winsize() -> libc::winsize {
     // SAFETY: TIOCGWINSZ fills a winsize on stdout's tty; zeroes if not a tty.
     unsafe {
         let mut ws: libc::winsize = std::mem::zeroed();
@@ -53,12 +53,12 @@ fn size_params(ws: &libc::winsize) -> Value {
     json!({"cols": ws.ws_col, "rows": ws.ws_row, "xpixel": ws.ws_xpixel, "ypixel": ws.ws_ypixel})
 }
 
-extern "C" fn noop_handler(_: libc::c_int) {}
+pub(crate) extern "C" fn noop_handler(_: libc::c_int) {}
 
-struct RawMode(Option<libc::termios>);
+pub(crate) struct RawMode(Option<libc::termios>);
 
 impl RawMode {
-    fn enter() -> Self {
+    pub(crate) fn enter() -> Self {
         // SAFETY: tcgetattr/tcsetattr on stdin with locals.
         unsafe {
             let mut original: libc::termios = std::mem::zeroed();
@@ -72,7 +72,7 @@ impl RawMode {
         }
     }
 
-    fn restore(&self) {
+    pub(crate) fn restore(&self) {
         if let Some(original) = &self.0 {
             // SAFETY: restores the attributes read in `enter`.
             unsafe { libc::tcsetattr(0, libc::TCSANOW, original) };

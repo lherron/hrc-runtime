@@ -79,3 +79,100 @@ impl Frame {
         Ok(Some(Self { kind, payload }))
     }
 }
+
+/// The outcome of one `GET /v1/streams/open` on a unix socket.
+pub enum Open {
+    /// HTTP 101 and the home's `opened` control frame. Read further frames
+    /// from `reader` (it may hold buffered frame bytes); write on `stream`.
+    Upgraded {
+        reader: io::BufReader<std::os::unix::net::UnixStream>,
+        stream: std::os::unix::net::UnixStream,
+        opened: serde_json::Value,
+    },
+    /// Any other HTTP answer; `code` is the JSON error code when there is one.
+    Refused {
+        status: u16,
+        code: Option<String>,
+        message: String,
+    },
+}
+
+/// Open a stream by hand (sync clients have no HTTP library): one request,
+/// then the `opened` frame. `timeout` bounds the handshake only.
+pub fn open(
+    socket: &std::path::Path,
+    query: &[(&str, &str)],
+    caller: &str,
+    timeout: std::time::Duration,
+) -> io::Result<Open> {
+    use io::BufRead;
+    let stream = std::os::unix::net::UnixStream::connect(socket)?;
+    stream.set_read_timeout(Some(timeout))?;
+    stream.set_write_timeout(Some(timeout))?;
+    let query = url::form_urlencoded::Serializer::new(String::new())
+        .extend_pairs(query)
+        .finish();
+    let caller: String = caller.chars().filter(|c| c.is_ascii_graphic()).collect();
+    write!(
+        &stream,
+        "GET /v1/streams/open?{query} HTTP/1.1\r\nHost: localhost\r\nConnection: Upgrade\r\nUpgrade: {PROTOCOL}\r\nx-praesidium-caller: {caller}\r\n\r\n"
+    )?;
+    let mut reader = io::BufReader::new(stream.try_clone()?);
+    let mut line = String::new();
+    reader.read_line(&mut line)?;
+    let status: u16 = line
+        .split_whitespace()
+        .nth(1)
+        .and_then(|s| s.parse().ok())
+        .ok_or_else(|| invalid("malformed HTTP status line"))?;
+    let mut length = None;
+    loop {
+        line.clear();
+        if reader.read_line(&mut line)? == 0 {
+            return Err(invalid("truncated HTTP response head"));
+        }
+        let header = line.trim_end();
+        if header.is_empty() {
+            break;
+        }
+        if let Some((name, value)) = header.split_once(':')
+            && name.eq_ignore_ascii_case("content-length")
+        {
+            length = value.trim().parse::<usize>().ok();
+        }
+    }
+    if status != 101 {
+        let mut body = Vec::new();
+        match length {
+            Some(n) => {
+                body.resize(n.min(MAX_PAYLOAD), 0);
+                reader.read_exact(&mut body)?;
+            }
+            None => {
+                reader.take(MAX_PAYLOAD as u64).read_to_end(&mut body)?;
+            }
+        }
+        let value: serde_json::Value = serde_json::from_slice(&body).unwrap_or_default();
+        let error = &value["error"];
+        return Ok(Open::Refused {
+            status,
+            code: error["code"].as_str().map(str::to_owned),
+            message: error["message"]
+                .as_str()
+                .map(str::to_owned)
+                .unwrap_or_else(|| String::from_utf8_lossy(&body).into_owned()),
+        });
+    }
+    let frame = Frame::read(&mut reader)?.ok_or_else(|| invalid("stream closed before opened"))?;
+    let opened: serde_json::Value = serde_json::from_slice(frame.payload())
+        .ok()
+        .filter(|v: &serde_json::Value| frame.kind == Kind::Control && v["op"] == "opened")
+        .ok_or_else(|| invalid("first frame is not opened"))?;
+    stream.set_read_timeout(None)?;
+    stream.set_write_timeout(None)?;
+    Ok(Open::Upgraded {
+        reader,
+        stream,
+        opened,
+    })
+}

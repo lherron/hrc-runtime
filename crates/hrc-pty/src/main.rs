@@ -1,5 +1,6 @@
 //! hrc-pty: per-seat pty supervisor and attach client (T-12046 spec §4).
 mod attach;
+mod attach_seat;
 mod responder;
 mod rpc;
 mod serve;
@@ -12,6 +13,7 @@ const USAGE: &str = "usage:
                 [--broker-stderr PATH] [--token-file PATH] [--answers PATH] [--log PATH]
                 [--foreground] [--broker-argv ARG...]   (--broker-argv takes the rest)
   hrc-pty attach --socket PATH [--token-file PATH] [--read-only] [--byte-log PATH]
+  hrc-pty attach --seat SCOPEREF [--lane LANE] [--read-only] [--status-fd N] [--byte-log PATH]
   hrc-pty vt-capture --cols N --rows N [--scrollback N] FILE   (feed a byte log through libghostty-vt)
   hrc-pty version";
 
@@ -82,17 +84,36 @@ fn main() {
                 read_only: false,
                 byte_log: None,
             };
+            let (mut seat, mut lane, mut status_fd) = (None, None, None);
             while let Some(flag) = args.next() {
                 match flag.as_str() {
                     "--socket" => attach.socket = value(&mut args, flag).into(),
                     "--token-file" => attach.token_file = Some(value(&mut args, flag).into()),
                     "--read-only" => attach.read_only = true,
                     "--byte-log" => attach.byte_log = Some(value(&mut args, flag).into()),
+                    "--seat" => seat = Some(value(&mut args, flag)),
+                    "--lane" => lane = Some(value(&mut args, flag)),
+                    "--status-fd" => status_fd = Some(number(&mut args, flag)),
                     other => fail(&format!("unknown attach flag {other}")),
                 }
             }
+            if let Some(scope_ref) = seat {
+                if !attach.socket.as_os_str().is_empty() || attach.token_file.is_some() {
+                    fail("attach takes --seat or --socket, not both");
+                }
+                std::process::exit(attach_seat::run(attach_seat::SeatArgs {
+                    scope_ref,
+                    lane,
+                    read_only: attach.read_only,
+                    status_fd,
+                    byte_log: attach.byte_log,
+                }));
+            }
+            if lane.is_some() || status_fd.is_some() {
+                fail("--lane and --status-fd need --seat");
+            }
             if attach.socket.as_os_str().is_empty() {
-                fail("attach needs --socket");
+                fail("attach needs --socket or --seat");
             }
             std::process::exit(attach::run(attach));
         }
