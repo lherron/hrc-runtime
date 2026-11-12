@@ -397,7 +397,6 @@ pub struct Submission {
     pub runtime_intent: Option<Value>,
     pub established: Option<String>,
     pub ttl_ms: Option<i64>,
-    pub cold_birth: Option<String>,
 }
 pub fn submission(v: &Value, door: &str) -> Result<Submission, ApiError> {
     if !record(v) {
@@ -457,8 +456,8 @@ pub fn submission(v: &Value, door: &str) -> Result<Submission, ApiError> {
         origin["envelopeId"] = e.into();
     }
     let idempotency_key = optional_nonempty(v, "idempotencyKey")?;
-    let (mut turn_policy, mut runtime_intent, mut established, mut ttl_ms, mut cold_birth) =
-        (None, None, None, None, None);
+    let (mut turn_policy, mut runtime_intent, mut established, mut ttl_ms) =
+        (None, None, None, None);
     if door != "steer" {
         turn_policy = one_of(
             v.get("turnPolicy"),
@@ -486,15 +485,15 @@ pub fn submission(v: &Value, door: &str) -> Result<Submission, ApiError> {
                 return Err(bad("coldBirth must be an object", "coldBirth"));
             }
             reject_unknown(c, &["promptMode"], Some("coldBirth"))?;
-            cold_birth = Some(
-                one_of(
-                    c.get("promptMode"),
-                    &["replace-priming", "append-to-priming"],
-                    "coldBirth.promptMode must be \"replace-priming\" or \"append-to-priming\"",
-                    "coldBirth.promptMode",
-                )?
-                .ok_or_else(|| bad("coldBirth.promptMode is required", "coldBirth.promptMode"))?,
-            );
+            // Validated for the wire contract; nothing reads it. A cold birth
+            // always appends the prompt to priming.
+            one_of(
+                c.get("promptMode"),
+                &["replace-priming", "append-to-priming"],
+                "coldBirth.promptMode must be \"replace-priming\" or \"append-to-priming\"",
+                "coldBirth.promptMode",
+            )?
+            .ok_or_else(|| bad("coldBirth.promptMode is required", "coldBirth.promptMode"))?;
         }
     }
     if format.as_deref() == Some("format2") {
@@ -512,6 +511,5 @@ pub fn submission(v: &Value, door: &str) -> Result<Submission, ApiError> {
         runtime_intent,
         established,
         ttl_ms,
-        cold_birth,
     })
 }

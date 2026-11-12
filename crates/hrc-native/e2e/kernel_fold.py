@@ -369,6 +369,21 @@ def main():
         records = r.rows("SELECT event_kind,payload_json FROM hrc_events WHERE scope_ref=? AND event_kind LIKE 'session.annotation.%'",
                          (ref.split('/lane:')[0],))
         r.check('3.annotation-ledger', len(records) == 3 and all(json.loads(e['payload_json'])['updatedBy'] == 'system:hrc-kernel' for e in records if e['event_kind'] == 'session.annotation.changed'), records=records)
+        # A submission that does not ask to wait answers at admission, while
+        # its run is still active (the stub turn sits on a question).
+        held_ref = f'agent:{AGENT}:project:{PROJECT}:task:pty-{uuid.uuid4().hex[:8]}/lane:main'
+        held = wire(kernel, 'seat.summon', dict(session_ref=held_ref, request_id='kf-' + uuid.uuid4().hex[:6]))
+        assert held['ok'], held
+        try:
+            code, queued = r.http('POST', '/v1/submissions/enqueue', {
+                'target': held_ref, 'body': 'answer at admission', 'wait': False,
+                'origin': {'principalRef': 'agent:e2e'}}, timeout=20)
+        except Exception as error:  # a held answer outlives the client timeout
+            code, queued = None, {'error': repr(error)}
+        active = r.rows("SELECT status FROM runs WHERE run_id=?", ((queued or {}).get('runId', ''),))
+        r.check('3.enqueue-answers-at-admission', code == 202 and queued.get('stage') == 'accepted'
+                and bool(active) and active[0]['status'] in ('accepted', 'started', 'running'),
+                code=code, reply=queued, run=[dict(a) for a in active])
         (args.artifacts / 'ops.json').write_text(json.dumps(dict(summon=summoned, put=put, act=act, delete=deleted, send=sent, restart=restarted), indent=2) + '\n')
 
         # == 9. clear-context owner lifecycle (T-12360 F3) ==================

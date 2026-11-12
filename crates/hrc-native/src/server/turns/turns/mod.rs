@@ -666,11 +666,11 @@ pub async fn submission(server: &Shared, door: &str, body: Value) -> Result<Resp
         "system"
     };
     let run_origin = json!({"actor":principal,"kind":kind});
-    let launch_receipt = door == "invoke" && !req.wait && req.cold_birth.is_some();
     let options = route::Options {
         run_id: &run_id,
         prompt: &req.body,
-        wait_for_completion: !launch_receipt,
+        // The caller's flag: without it every door answers at admission.
+        wait_for_completion: req.wait,
         origin: Some(&run_origin),
         submission_origin: Some(&req.origin),
         response_format: req.response_format.as_ref(),

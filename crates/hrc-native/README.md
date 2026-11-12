@@ -166,9 +166,8 @@ Two doors start a turn from a prompt, and they are not equivalent.
   keyed by `idempotencyKey` per host session. It requires an existing session
   row: for a seat that has never existed, call `POST /v1/targets/ensure`
   first. A birth on an existing session continues that session's kept
-  conversation; `freshContext: true` forces a new one. `coldBirth.promptMode`
-  is validated, but only the presence of `coldBirth` has an effect: the
-  request answers 202 at launch and the prompt is always appended to priming.
+  conversation; `freshContext: true` forces a new one. `coldBirth` is
+  validated and has no effect: the prompt is always appended to priming.
   Mail delivery uses this door (ensure, then invoke).
 - `POST /v1/turns` is the door for a caller that owns the turn's outcome. It
   alone carries `fences`, `attachments`, `repair`, `firstTurnTimeoutMs`, the
@@ -184,6 +183,11 @@ running, because HRC sends the policy to the broker on a submission. A turn
 that cold-starts its seat carries its prompt in the launch and accepts steers
 whatever the policy. That gap is known and unsupported; a caller that must
 never see a steer in its answer should not rely on the guard for a cold start.
+
+Every door answers at admission (202, `stage: "accepted"`) unless the caller
+asks to wait: `wait: true` on the submission doors (enqueue, invoke, preempt,
+steer), `waitFor` on `/v1/turns`. A caller that does not wait learns the
+turn's outcome from the event stream.
 
 Neither door requires a seat to be started first and messaged second. The
 keyed claim-and-start API (`POST /v1/runtimes/start` with a session ref) is
