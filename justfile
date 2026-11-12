@@ -904,9 +904,8 @@ _deploy-node ssh-target expected-node target-ref="origin/main" aspd-ref="origin/
     expected_node="$1"
     target_ref="$2"
     aspd_ref="$3"
-    injector_version="$4"
-    restart_mode="$5"
-    publication="$6"
+    restart_mode="$4"
+    publication="$5"
     repo="$HOME/praesidium/hrc-runtime"
     asp_repo="$HOME/praesidium/agent-spaces"
     aspd_ns="$HOME/praesidium/var/aspd"
@@ -1113,7 +1112,7 @@ _deploy-node ssh-target expected-node target-ref="origin/main" aspd-ref="origin/
     echo "DEPLOY_ASPD_RELEASE=${aspd_release}"
     REMOTE
     } | ssh -o BatchMode=yes -o ConnectTimeout=10 "{{ ssh-target }}" \
-      bash -s -- "{{ expected-node }}" "$target_ref" "$aspd_ref" "$injector" "{{ restart }}" "{{ publication }}" | tee "$phase1_log"
+      bash -s -- "{{ expected-node }}" "$target_ref" "$aspd_ref" "{{ restart }}" "{{ publication }}" | tee "$phase1_log"
 
     # ---- restart, from the invoking seat (T-09861) ---------------------------
     # Install and restart stay ONE recipe invocation. The restart runs in THIS
