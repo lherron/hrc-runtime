@@ -19,6 +19,7 @@ import time
 
 from self_brokered import Aspd, LAUNCHER, HERE, Run, LEAK, daemon_env
 from hrcpty_substrate import FakeAspd, alive, ops, descendants_of
+from n4_federation import local_tailnet_address, free_port
 
 
 class LifecycleAspd(Aspd):
@@ -76,6 +77,7 @@ await runBrokerCli({additionalDrivers:[() => {
         directory.mkdir(parents=True)
         (directory/'agent-profile.toml').write_text('# fake aspd declaration\n')
     fake=LifecycleAspd(root, commands, a.artifacts/'aspd.jsonl')
+    fake.node_id='sb42'
     release_root=root/'release'
     (release_root/'bin').mkdir(parents=True)
     stub=release_root/'bin/stub-broker'
@@ -86,7 +88,10 @@ await runBrokerCli({additionalDrivers:[() => {
         'argvPrefix':[],'hostedDrivers':['claude-code-hrcpty']}}
     (release_root/'release.json').write_text(json.dumps({**fake.release,'protocol':'harness-broker/0.2',
         'hostedDrivers':['claude-code-hrcpty']}))
-    (root/'federation.json').write_text(json.dumps({'nodeId':'sb42','peers':{}}))
+    host=local_tailnet_address()
+    (root/'federation.json').write_text(json.dumps({'nodeId':'sb42','peers':{},
+        'registry':{'bind':f'http://{host}:{free_port(host)}'},
+        'gate':{'mode':'enforce','registryHost':'sb42'}}))
     r=Run(root,a.artifacts,a.binary.resolve())
     r.env=daemon_env(dict({k:v for k,v in os.environ.items() if not k.startswith(LEAK)},
         HRC_RUNTIME_DIR=str(root/'run'),HRC_STATE_DIR=str(root/'state'),

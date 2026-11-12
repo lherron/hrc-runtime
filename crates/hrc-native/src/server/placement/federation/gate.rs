@@ -844,6 +844,13 @@ async fn observe_capability(
             None,
         ));
     }
+    // Self-brokered launch owns its harness and credentials and has no aspd
+    // preparation. Checkout and agent-home presence above still apply.
+    if let super::policy::Policy::Resolved { policy, .. } = policy_for(server, scope).await
+        && policy["placement"]["launch"] == "self-brokered"
+    {
+        return None;
+    }
     let harness = adapter_id(hint, effective.as_deref());
     let Some(harness) = harness else {
         if hint.is_some_and(|h| h["placement"].is_object() && h["harness"]["id"].is_null()) {

@@ -22,6 +22,7 @@ from urllib.parse import urlencode
 from hrcpty_substrate import Run, FakeAspd, LEAK
 from foundation import daemon_env
 import participant_descriptor
+from n4_federation import local_tailnet_address, free_port
 
 HERE = Path(__file__).resolve().parent
 
@@ -37,7 +38,7 @@ class Aspd(FakeAspd):
             return hello
         if method == 'aspc.resolveRuntimeDeclaration':
             c = params['context']; agent = c['agentId']
-            placement = {'pins': {}, 'homes': {}}
+            placement = {'pins': {}, 'homes': {c['taskId']: getattr(self, 'node_id', 'selftest')}}
             if agent in self.commands:
                 placement.update(launch='self-brokered', launchCommand=self.commands[agent])
             elif agent == 'held': placement['launch'] = 'participant-only'
@@ -46,7 +47,7 @@ class Aspd(FakeAspd):
                     'placement':{'agentRoot':str(self.root/'agents'/agent),'projectRoot':str(self.root/'t12049'),
                                  'cwd':str(self.root/'t12049'),'runMode':c['runMode']},
                     'policy':{'claimsTask':False,'placement':placement},
-                    'identity':{'operator':False},'agentSources':{},'provisioning':{'scalars':{}},'diagnostics':[]}
+                    'identity':{'operator':False},'agentSources':{},'provisioning':{'scalars':{},'effectiveHarness':'agent-harness'},'diagnostics':[]}
         raise AssertionError('Self-brokered birth must never compile: '+method)
 
 LAUNCHER = r'''
@@ -326,7 +327,10 @@ def main():
         profile=root/'agents'/agent;profile.mkdir(parents=True)
         (profile/'agent-profile.toml').write_text('# Watched declaration fixture; values served by fake aspd.\n')
     fake=Aspd(root,commands,a.artifacts/'aspd.jsonl')
-    (root/'federation.json').write_text(json.dumps({'nodeId':'selftest','peers':{}}))
+    host=local_tailnet_address()
+    (root/'federation.json').write_text(json.dumps({'nodeId':'selftest','peers':{},
+        'registry':{'bind':f'http://{host}:{free_port(host)}'},
+        'gate':{'mode':'enforce','registryHost':'selftest'}}))
     r=Run(root,a.artifacts,a.binary.resolve())
     r.env=daemon_env(dict({k:v for k,v in os.environ.items() if not k.startswith(LEAK)},HRC_RUNTIME_DIR=str(root/'run'),HRC_STATE_DIR=str(root/'state'),
                          HRC_PEER_CONFIG_FILE=str(root/'federation.json'),HRC_ASPD_SOCKET=str(root/'aspd.sock'),
@@ -363,6 +367,13 @@ def main():
         before=json.loads(a.baseline_summary.read_text())['external']
         assert report['external']==before,(report['external'],before)
         report['S5']={'pass':True,'before':before,'after':report['external']}
+        # Same unsupported label on an ordinary profile must still refuse verbatim.
+        ordinary=call('/v1/targets/ensure',{'sessionRef':scope('ordinary')+'/lane:main','runtimeIntent':{}})
+        expected=f'harness unavailable for {scope("ordinary")}: observed harness "agent-harness" names no supported driver — configure and install a supported harness on this node'
+        assert ordinary[0]==409 and ordinary[1]['error']['detail']['reason']=='capability-harness-missing',ordinary
+        assert ordinary[1]['error']['message']==expected,ordinary
+        report['ordinaryHarnessRefusal']={'pass':True,'reply':ordinary}
+
         held=call('/v1/participants/register',{'registrationMode':'direct','requestedSessionRef':scope('held'),
             'hostIncarnationId':'absent-external','workspaceCwd':str(root/'t12049'),'socketPath':str(root/'absent.sock')})
         assert held[0]==200,held
