@@ -28,21 +28,19 @@ the deploy lane only sequences it.
 
 **A deploy neither needs nor installs the mail injector** (since 2026-11-12).
 Mail is delivered by the mail-delivery module under the praesidium kernel; the
-TypeScript `hrc-mail-injector` is being retired by ACP, and a deploy that
+TypeScript `hrc-mail-injector` was retired by ACP on 2026-11-12, and a deploy that
 reinstalled it would deliver every message twice. The deploy recipes no longer
 take an injector argument: usage is `<ref> <aspd> <restart>`, and a call that
 still passes one is refused before anything runs. No recipe installs the
 injector: `install-mail-injector-launchd` is deleted and `launchd-install`
-takes no version and skips the injector's plist.
+takes no version.
 
 **Unsupervised is the failure mode to watch.** On 2026-09-22 svc's aspd had died
 days earlier as a detached `aspd-start` process: a stale socket and pid file
 remained, HRC reported `aspd_unavailable`, the node could not birth, and the old
 `fleet-status` still read healthy. `fleet-status` now prints `ASPD` from HRC's
-live probe (`DOWN` when unreachable) and `INJECTOR` as `absent` (no launchd job,
-no plist and no process: the expected state once ACP retires it), the running
-pinned version, `UNSUPERVISED` (a process serves this node's socket but not
-under its label), or `down` (a job or plist exists but nothing runs).
+live probe (`DOWN` when unreachable). The `INJECTOR` column is gone: ACP stopped
+the mail injector on every node on 2026-11-12 and read `absent` on each.
 
 **Targets are parameters, and `@max3` is the interesting default.**
 `deploy-svc` / `deploy-hrcdev` default every target to `@max3`: what max3 is

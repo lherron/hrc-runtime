@@ -406,40 +406,23 @@ refresh-owner-exe node mode="render" restart="wait":
       hrc server stop --node "$node" "${flags[@]}" --reason "refresh ${node} owner exe to the fixed signed copy (T-12224)"
       on_node bootstrap
     fi
-    just _node-readback "$ssh_target" "$node" "$sha" "$aspd_sha" "$aspd_release" "" no-publish
+    just _node-readback "$ssh_target" "$node" "$sha" "$aspd_sha" "$aspd_release" no-publish
 
 # Run this before and after a deploy; an unreachable node prints as unreachable
 # instead of aborting the table.
 
-# Read-only hrc/aspd/injector/kernel parity table plus bun/codex/claude tool versions across max3, svc, and hrcdev
+# Read-only hrc/aspd/kernel parity table plus bun/codex/claude tool versions across max3, svc, and hrcdev
 fleet-status:
     #!/usr/bin/env bash
     set -uo pipefail
 
     # One login-free probe per node: HRC status (which carries HRC's own live
-    # aspd probe) plus the injector job as launchd sees it. An injector that is
-    # running but not owned by its launchd job is exactly the state that dies
-    # silently on the next reboot, so it prints as UNSUPERVISED, not as a version.
+    # aspd probe), the CLI kind and the praesidium kernel's own status.
     node_probe="$(cat '{{ justfile_directory() }}/scripts/hrc-cli-path.sh')"$'\n''export PATH="$HOME/.bun/bin:/opt/homebrew/bin:/usr/local/bin:$PATH"
       status="$(hrc server status --json 2>/dev/null | jq -c .)"
       [[ -n "$status" ]] || status="{}"
       printf "%s\n" "$status"
       hrc_cli_kind
-      socket="$(jq -r ".socketPath // empty" <<<"$status" 2>/dev/null)"
-      job="$(launchctl print "gui/$(id -u)/com.praesidium.hrc-mail-injector" 2>/dev/null)"
-      pid="$(awk '\''$1 == "pid" && $2 == "=" { print $3; exit }'\'' <<<"$job")"
-      if [[ -n "$pid" ]]; then
-        ps -o command= -p "$pid" | grep -oE "hrc-mail-injector@[^ /]+" | head -1 | sed "s/^hrc-mail-injector@//"
-      else
-        loose=""
-        for p in $(pgrep -u "$(id -u)" -f hrc-mail-injector); do
-          ps eww -p "$p" -o command= | tr " " "\n" | grep -qx "HRC_SOCKET_PATH=$socket" && loose=1
-        done
-        if [[ -n "$loose" ]]; then echo UNSUPERVISED
-        elif [[ -z "$job" && ! -e "$HOME/Library/LaunchAgents/com.praesidium.hrc-mail-injector.plist" ]]; then echo absent
-        else echo down
-        fi
-      fi
       kernel_bin="$HOME/.local/bin/praesidium-kernel"
       if [[ ! -x "$kernel_bin" ]]; then
         echo absent
@@ -481,7 +464,7 @@ fleet-status:
     }
 
     probe() {
-      local label="$1" target="$2" out status health hrc aspd owner cli injector kernel coherent actual_node
+      local label="$1" target="$2" out status health hrc aspd owner cli kernel coherent actual_node
       out="$(run_on_node "$label" "$target" "$node_probe" 2>/dev/null)"
       status="$(sed -n '1p' <<<"$out")"
       if [[ -z "$status" || "$status" == '{}' ]]; then
@@ -494,21 +477,19 @@ fleet-status:
         return
       fi
       cli="$(sed -n '2p' <<<"$out")"
-      injector="$(sed -n '3p' <<<"$out")"
-      kernel="$(sed -n '4p' <<<"$out")"
+      kernel="$(sed -n '3p' <<<"$out")"
       health="$(jq -r '.status // "down"' <<<"$status")"
       hrc="$(jq -r '.release.hrcBuild.sourceCommit // "unknown"' <<<"$status")"
       aspd="$(jq -r 'if .api.aspd.reachable == true then (.api.aspd.release.sourceCommit // "unidentified")[0:8] else "DOWN" end' <<<"$status")"
       # The running binary names the owner: Bun's hrc CLI or the native rusthrc (T-11893).
       owner="$(jq -r '.binaryPath // "" | if endswith("/rusthrc") then "rusthrc" elif . == "" then "unknown" else "bun" end' <<<"$status")"
       coherent="$(jq -r '.release.runningEqualsInstalled // false' <<<"$status")"
-      printf '%-8s %-12s %-10s %-10s %-8s %-8s %-26s %-28s %s\n' \
-        "$label" "$health" "${hrc:0:8}" "$aspd" "$owner" "${cli:-unknown}" "${injector:-unknown}" \
-        "${kernel:-unknown}" \
+      printf '%-8s %-12s %-10s %-10s %-8s %-8s %-28s %s\n' \
+        "$label" "$health" "${hrc:0:8}" "$aspd" "$owner" "${cli:-unknown}" "${kernel:-unknown}" \
         "$([[ "$coherent" == true ]] && echo 'running==installed' || echo 'STALE PROCESS')"
     }
 
-    printf '%-8s %-12s %-10s %-10s %-8s %-8s %-26s %-28s %s\n' NODE STATUS HRC ASPD OWNER CLI INJECTOR KERNEL COHERENCE
+    printf '%-8s %-12s %-10s %-10s %-8s %-8s %-28s %s\n' NODE STATUS HRC ASPD OWNER CLI KERNEL COHERENCE
     probe max3 'max3'
     probe svc 'mini'
     probe hrcdev 'hrcdev'
@@ -620,27 +601,6 @@ _max3-aspd-commit:
     jq -er '.api.aspd.release.sourceCommit' <<<"$status" ||
       fail 'max3 aspd did not report a release sourceCommit'
 
-# Print the hrc-mail-injector version max3's supervised injector is running. The
-# running argv is the authority, not the plist: a plist rewritten without a
-# reload names a version nobody runs.
-[private]
-_max3-injector-version:
-    #!/usr/bin/env bash
-    set -euo pipefail
-    fail() { printf '@max3 injector: %s\n' "$*" >&2; exit 1; }
-
-    source '{{ justfile_directory() }}/scripts/hrc-cli-path.sh'
-    status="$(hrc_healthy_status)" || fail 'local HRC daemon is not reachable or healthy'
-    [[ "$(jq -r '.node.nodeId // ""' <<<"$status")" == max3 ]] ||
-      fail 'the @max3 injector target must be resolved on max3'
-    job="$(launchctl print "gui/$(id -u)/com.praesidium.hrc-mail-injector" 2>/dev/null)" ||
-      fail 'launchd job com.praesidium.hrc-mail-injector is not loaded on max3'
-    pid="$(awk '$1 == "pid" && $2 == "=" { print $3; exit }' <<<"$job")"
-    [[ -n "$pid" ]] || fail 'max3 injector job is loaded but not running'
-    version="$(ps -o command= -p "$pid" | grep -oE 'hrc-mail-injector@[^ /]+' | head -1 | sed 's/^hrc-mail-injector@//')"
-    [[ -n "$version" ]] || fail "could not read a pinned version from injector pid ${pid}"
-    printf '%s\n' "$version"
-
 # A loaded HRC server keeps running until the authorized atomic-release restart.
 
 # Install shipped auxiliary LaunchAgents. The retired mail injector has no plist here and no installer.
@@ -725,8 +685,6 @@ _deploy-node ssh-target expected-node target-ref="origin/main" aspd-ref="origin/
     if [[ "$aspd_ref" == '@max3' ]]; then
       aspd_ref="$(just _max3-aspd-commit)"
     fi
-    # Never installed by a deploy; the empty value makes the readback skip it.
-    injector=''
 
     phase1_log="$(mktemp "${TMPDIR:-/tmp}/deploy-{{ expected-node }}.XXXXXX")"
     trap 'rm -f "$phase1_log"' EXIT
@@ -997,7 +955,7 @@ _deploy-node ssh-target expected-node target-ref="origin/main" aspd-ref="origin/
       on_node boot-check "$log_mark"
     fi
 
-    just _node-readback "{{ ssh-target }}" "{{ expected-node }}" "$target_sha" "$aspd_sha" "$aspd_release" "$injector" "{{ publication }}"
+    just _node-readback "{{ ssh-target }}" "{{ expected-node }}" "$target_sha" "$aspd_sha" "$aspd_release" "{{ publication }}"
 
     # C1b: retirement is a deploy mutation, after the full running-revision proof.
     # Standalone readback remains read-only.
@@ -1010,26 +968,23 @@ _deploy-node ssh-target expected-node target-ref="origin/main" aspd-ref="origin/
 # Read a node back after a deploy: healthy with a live pid,
 # the expected node, release identity (sourceCommit, running == installed) for
 # its owner kind, aspd, launchd ownership with the plist environment, and
-# brokers reattached; then optional publication and the injector (an empty
-# injector skips it).
+# brokers reattached; then optional publication.
 [private]
-_node-readback ssh-target expected-node target-sha aspd-sha aspd-release injector="" publication="no-publish":
+_node-readback ssh-target expected-node target-sha aspd-sha aspd-release publication="no-publish":
     #!/usr/bin/env bash
     set -euo pipefail
     # ssh joins its argv into one remote command line, so an empty argument would
     # vanish and shift the rest; `-` stands for empty.
     aspd_release='{{ aspd-release }}'
-    injector='{{ injector }}'
     ssh -o BatchMode=yes -o ConnectTimeout=10 '{{ ssh-target }}' \
-      bash -s -- '{{ expected-node }}' '{{ target-sha }}' '{{ aspd-sha }}' "${aspd_release:--}" "${injector:--}" '{{ publication }}' <<'REMOTE'
+      bash -s -- '{{ expected-node }}' '{{ target-sha }}' '{{ aspd-sha }}' "${aspd_release:--}" '{{ publication }}' <<'REMOTE'
     set -euo pipefail
 
     expected_node="$1"
     target_sha="$2"
     aspd_sha="$3"
     aspd_release="${4#-}"
-    injector_version="${5#-}"
-    publication="$6"
+    publication="$5"
     repo="$HOME/praesidium/hrc-runtime"
     export PATH="$HOME/.bun/bin:/opt/homebrew/bin:/usr/local/bin:$PATH"
     fail() {
@@ -1214,8 +1169,8 @@ _node-readback ssh-target expected-node target-sha aspd-sha aspd-release injecto
     # install-turn-attention-launchd <version>` remains for a rollback by hand.
 
 
-    printf 'deployed %s: %s hrc %s (%s), aspd %s (%s), injector %s\n' \
-      "$expected_node" "$owner" "$target_sha" "$release_root" "$aspd_sha" "$aspd_release" "${injector_version:-unchanged}"
+    printf 'deployed %s: %s hrc %s (%s), aspd %s (%s)\n' \
+      "$expected_node" "$owner" "$target_sha" "$release_root" "$aspd_sha" "$aspd_release"
     REMOTE
 
 # Pull ASP and wrkq from Verdaccio into bun.lock and commit the lock

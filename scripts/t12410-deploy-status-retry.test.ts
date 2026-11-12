@@ -12,7 +12,6 @@ const roots: string[] = []
 const realJust = Bun.which('just')!
 const sha = 'a'.repeat(40)
 const aspSha = 'b'.repeat(40)
-const pin = '0.1.0-test'
 const healthy = {
   status: 'healthy',
   node: { nodeId: 'max3' },
@@ -70,7 +69,6 @@ sys.exit(f['exit'])
   )
   executable('sleep', '#!/bin/bash\nprintf "%s\\n" "$*" >> "$HOME/sleeps"\n')
   executable('launchctl', '#!/bin/bash\necho launchctl >> "$HOME/actions"\necho "pid = 123"\n')
-  executable('ps', `#!/bin/bash\necho 'bunx hrc-mail-injector@${pin}'\n`)
   executable(
     'ssh',
     '#!/bin/bash\nset -eu\nwhile [[ "$1" == -o ]]; do shift 2; done\nshift\nexec "$@"\n'
@@ -114,7 +112,6 @@ sys.exit(f['exit'])
 for (const [recipe, expected] of [
   ['_max3-source-commit', sha],
   ['_max3-aspd-commit', aspSha],
-  ['_max3-injector-version', pin],
 ]) {
   test(`${recipe} tolerates four degraded probes and returns only the fifth healthy value`, () => {
     const r = run([recipe!], [busy, busy, busy, busy, ok])
