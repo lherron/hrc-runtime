@@ -2679,6 +2679,14 @@
     },
     {
       "package": "hrc-core",
+      "symbol": "HrcSeatScreenSnapshot",
+      "kind": "type",
+      "file": "packages/hrc-core/src/contracts-records.ts",
+      "hash": "hrc-core|HrcSeatScreenSnapshot|type",
+      "count": 1
+    },
+    {
+      "package": "hrc-core",
       "symbol": "HrcSeatStreamAttach",
       "kind": "type",
       "file": "packages/hrc-core/src/contracts-records.ts",

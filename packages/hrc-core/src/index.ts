@@ -239,6 +239,7 @@ export type {
   HrcSummonHarnessDirectives,
   HrcRuntimeSnapshot,
   HrcSeatStreamAttach,
+  HrcSeatScreenSnapshot,
   HrcSessionRecord,
   HrcStatusActiveRuntimeView,
   HrcStatusResponse,

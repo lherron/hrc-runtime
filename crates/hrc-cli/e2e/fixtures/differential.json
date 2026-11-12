@@ -2847,7 +2847,7 @@
       "stderr": "hrc: unknown command: seat \u2014 did you mean 'send'?\n",
       "nativeContract": {
         "exit": 0,
-        "stdout": "Usage: hrc seat [options] [command]\n\nseat continuity\n\nOptions:\n  -h, --help  display help for command\n\nCommands:\n  work [options] [command]  read or set work\n  help [command]  display help for command\n",
+        "stdout": "Usage: hrc seat [options] [command]\n\nseat continuity\n\nOptions:\n  -h, --help  display help for command\n\nCommands:\n  screen [options] <scopeRef>  stream screen snapshots\n  work [options] [command]  read or set work\n  help [command]  display help for command\n",
         "stderr": ""
       },
       "contractSource": "surface.json and native grammar contract (T-13010/T-13058); not native output capture"
@@ -2864,7 +2864,7 @@
       "stderr": "hrc: unknown command: seat \u2014 did you mean 'send'?\n",
       "nativeContract": {
         "exit": 0,
-        "stdout": "Usage: hrc seat [options] [command]\n\nseat continuity\n\nOptions:\n  -h, --help  display help for command\n\nCommands:\n  work [options] [command]  read or set work\n  help [command]  display help for command\n",
+        "stdout": "Usage: hrc seat [options] [command]\n\nseat continuity\n\nOptions:\n  -h, --help  display help for command\n\nCommands:\n  screen [options] <scopeRef>  stream screen snapshots\n  work [options] [command]  read or set work\n  help [command]  display help for command\n",
         "stderr": ""
       },
       "contractSource": "surface.json and native grammar contract (T-13010/T-13058); not native output capture"
@@ -3014,6 +3014,58 @@
         "stderr": "hrc: error: required option '--if-match <n>' not specified\ncommand: hrc seat work set\nusage: [options] <scope>\n"
       },
       "contractSource": "surface.json and native grammar contract (T-13010/T-13058); not native output capture"
+    },
+    {
+      "case": "help:seat screen:agent",
+      "argv": [
+        "--agent",
+        "seat",
+        "screen",
+        "--help"
+      ],
+      "exit": 2,
+      "stdout": "",
+      "stderr": "hrc: unknown command: seat \u2014 did you mean 'send'?\n",
+      "nativeContract": {
+        "exit": 0,
+        "stdout": "Usage: hrc seat screen [options] <scopeRef>\n\nstream current screen as JSON lines; exits on close (no reconnect)\n\nOptions:\n  --lane <lane>  seat lane (default main)\n  --styled       include terminal styling\n  -h, --help     display help for command\n",
+        "stderr": ""
+      },
+      "contractSource": "T-13431 screen command contract and surface.json; not native output capture"
+    },
+    {
+      "case": "help:seat screen:human",
+      "argv": [
+        "--human",
+        "seat",
+        "screen",
+        "--help"
+      ],
+      "exit": 2,
+      "stdout": "",
+      "stderr": "hrc: unknown command: seat \u2014 did you mean 'send'?\n",
+      "nativeContract": {
+        "exit": 0,
+        "stdout": "Usage: hrc seat screen [options] <scopeRef>\n\nstream current screen as JSON lines; exits on close (no reconnect)\n\nOptions:\n  --lane <lane>  seat lane (default main)\n  --styled       include terminal styling\n  -h, --help     display help for command\n",
+        "stderr": ""
+      },
+      "contractSource": "T-13431 screen command contract and surface.json; not native output capture"
+    },
+    {
+      "case": "missing:seat screen",
+      "argv": [
+        "seat",
+        "screen"
+      ],
+      "exit": 2,
+      "stdout": "",
+      "stderr": "hrc: unknown command: seat \u2014 did you mean 'send'?\n",
+      "nativeContract": {
+        "exit": 2,
+        "stdout": "",
+        "stderr": "hrc: error: missing required argument 'scopeRef'\ncommand: hrc seat screen\nusage: [options] <scopeRef>\n"
+      },
+      "contractSource": "T-13431 screen command grammar; not native output capture"
     },
     {
       "case": "grammar:",

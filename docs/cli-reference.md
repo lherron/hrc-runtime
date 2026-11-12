@@ -534,3 +534,13 @@ six operator operations: `seat.summon`, `seat.restart`, `seat.send`,
 `seat.annotation.put`, `seat.annotation.act` and `seat.annotation.delete`.
 It exposes no document, observation types or attach capability; seat attachment
 belongs to the Praesidium kernel.
+
+### `seat screen <scopeRef> [--lane <lane>] [--styled]`
+
+Open a passive screen stream through the local daemon, including for a seat
+homed on a peer. Stdout is one compact JSON snapshot per line: `text`,
+`cursor: {x,y,visible}`, `cols`, `rows`, and `screen`. The current screen comes
+first, then only changed snapshots, at most two per second. `--styled` retains
+terminal escape sequences. The stream never attaches or resizes the seat.
+A stream close ends the command; it does not reconnect. Interrupt to stop.
+An initial refusal exits 2; a transport failure exits 1.

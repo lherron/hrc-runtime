@@ -247,7 +247,7 @@ async fn route_request(server: &Shared, peer: &str, request: Request) -> Result<
                 "startedAt": server.started_at,
                 "observedAt": timestamp(),
                 // Only what this daemon serves; the rest is absent, not false.
-                "capabilities": {"locate":true,"health":true,"runtimeProjection":true,"federatedSessionRead":true,"streams":["pty"]},
+                "capabilities": {"locate":true,"health":true,"runtimeProjection":true,"federatedSessionRead":true,"streams":["pty","screen"]},
             });
             let caps = health["capabilities"].as_object_mut().unwrap();
             // Bun's capability order: runtimeProjection, collectiveHistory, ...,

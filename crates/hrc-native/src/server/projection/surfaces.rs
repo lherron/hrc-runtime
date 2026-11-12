@@ -79,7 +79,7 @@ pub fn stream_attach(runtime: &Value, node: &str) -> Option<Value> {
     let hrcpty = runtime.get("hrcpty").is_some_and(Value::is_object)
         || runtime_views::hosting(runtime).is_some_and(|h| h["presentation"]["kind"] == "hrcpty");
     (live && hrcpty && runtime["transport"] != "sdk").then(||
-        json!({"transport":"hrcpty","node":node,"streams":["pty"],"modes":["read-only","take-control"]}))
+        json!({"transport":"hrcpty","node":node,"streams":["pty","screen"],"modes":["read-only","take-control"]}))
 }
 
 /// A seat selector resolves home before runtime. Local descriptors retain the

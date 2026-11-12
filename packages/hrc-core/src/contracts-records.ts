@@ -136,6 +136,15 @@ export type HrcRuntimePresentationRecord = {
   viewerWindow?: string | undefined
 }
 
+/** One data frame on an hrc-stream/1 screen stream (plain or styled text). */
+export type HrcSeatScreenSnapshot = {
+  text: string
+  cursor: { x: number; y: number; visible: boolean }
+  cols: number
+  rows: number
+  screen: 'primary' | 'alternate'
+}
+
 /** Path-free discovery of streams served for a live seat. */
 export type HrcSeatStreamAttach = {
   transport: 'hrcpty'

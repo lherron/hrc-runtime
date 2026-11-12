@@ -87,6 +87,8 @@ source:
   - architecture/contracts/praesidium-surface.yaml
   - crates/hrc-common/src/seat_stream.rs
   - crates/hrc-native/src/server/projection/seat_streams.rs
+  - crates/hrc-native/src/server/projection/seat_streams/screen.rs
+  - crates/hrc-cli/src/commands/seat_screen.rs
   - crates/hrc-native/src/server/projection/seat_stream_carry.rs
   - crates/hrc-pty/src/serve.rs
   - crates/hrc-pty/src/attach.rs
@@ -138,8 +140,13 @@ design_review: >
   TCP keepalive (10 s idle, 5 s interval, 3 probes) via existing reqwest;
   no protocol ping or dependency was added. t13424-swift-decode.py compiles
   the current hrc-ios Contracts sources and checks additive-member decoding.
-  Screen remains a later task; this partial
-  implementation makes no fleet or installed acceptance claim.
+  T-13431 adds the passive screen capture loop and hrc seat screen client,
+  plain or styled, plus screen capability and row discovery. The client ends
+  on close without reconnect. The t13431-acceptance.py isolated local and
+  federated drive checks initial and changed snapshots, idle suppression,
+  cadence, passive size/client counts and cessation through actual capture
+  call-site logs after local and carried disconnect. These isolated runs
+  make no fleet or installed acceptance claim.
 reopen_when: >
   Seat selector or runtime-binding semantics, frame or upgrade format, stream
   kind meaning, read-only authority, replay ordering, backpressure, supervisor

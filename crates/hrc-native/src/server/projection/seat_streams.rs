@@ -15,6 +15,9 @@ use tokio::{
     net::UnixStream,
 };
 
+#[path = "seat_streams/screen.rs"]
+mod screen;
+
 pub(super) const IO_TIMEOUT: Duration = Duration::from_secs(5);
 
 fn refusal(code: &'static str, message: &str) -> ApiError {
@@ -150,13 +153,31 @@ async fn open_as(
     let lane = hrc_common::scope::normalize_lane_ref(query.get("laneRef").map(String::as_str))
         .map_err(|e| ApiError::bad(e.to_string(), None))?;
     let lane = hrc_store::storage_lane(&lane).to_owned();
-    if query.get("kind").map(String::as_str) != Some("pty") {
+    let kind = query.get("kind").map(String::as_str).unwrap_or("");
+    if !matches!(kind, "pty" | "screen") {
         return Err(refusal(
             "stream_kind_unsupported",
-            "only pty streams are supported",
+            "only pty and screen streams are supported",
         ));
     }
-    let mode = query.get("mode").map(String::as_str).unwrap_or("");
+    if kind == "screen" {
+        for key in ["mode", "cols", "rows", "xpixel", "ypixel"] {
+            if query.contains_key(key) {
+                return Err(ApiError::bad(format!("screen takes no {key}"), None));
+            }
+        }
+        if query
+            .get("styled")
+            .is_some_and(|v| !matches!(v.as_str(), "true" | "false"))
+        {
+            return Err(ApiError::bad("styled must be true or false", None));
+        }
+    }
+    let mode = if kind == "screen" {
+        "read-only"
+    } else {
+        query.get("mode").map(String::as_str).unwrap_or("")
+    };
     if !matches!(mode, "read-only" | "take-control") {
         return Err(ApiError::bad(
             "mode must be read-only or take-control",
@@ -171,7 +192,7 @@ async fn open_as(
             && let Some(node) = home["nodeId"].as_str()
         {
             let raw = request.uri().query().unwrap_or("").to_owned();
-            return super::seat_stream_carry::open(server, request, node, &raw, "pty").await;
+            return super::seat_stream_carry::open(server, request, node, &raw, kind).await;
         }
     }
     let rt = current(server, &scope, &lane)?
@@ -190,6 +211,28 @@ async fn open_as(
     upgrade_requested(&request)?;
     if server.controller.shutting_down.load(Ordering::SeqCst) {
         return Err(stopping());
+    }
+    if kind == "screen" {
+        let ops = hrcpty::Ops::connect(&socket)
+            .await
+            .map_err(|_| refusal("no_runtime", "seat supervisor is unavailable"))?;
+        let styled = query.get("styled").is_some_and(|v| v == "true");
+        return admit(
+            server,
+            &mut request,
+            move |server, mut consumer| async move {
+                if let Err(error) =
+                    screen::relay(&server, &scope, &lane, &rt, ops, &mut consumer, styled).await
+                {
+                    super::stderr_json(
+                        "warn",
+                        "seat-stream",
+                        "seat_stream.closed",
+                        json!({"runtimeId":rt.runtime_id,"error":error.to_string()}),
+                    );
+                }
+            },
+        );
     }
     // Complete the existing attach handshake before committing to HTTP 101.
     params["readOnly"] = json!(read_only);

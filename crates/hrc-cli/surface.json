@@ -6801,8 +6801,8 @@
       "aliases": [],
       "usage": "[options] [command]",
       "allowExcessArguments": false,
-      "help": "Usage: hrc seat [options] [command]\n\nseat continuity\n\nOptions:\n  -h, --help  display help for command\n\nCommands:\n  work [options] [command]  read or set work\n  help [command]  display help for command\n",
-      "humanHelp": "Usage: hrc seat [options] [command]\n\nseat continuity\n\nOptions:\n  -h, --help  display help for command\n\nCommands:\n  work [options] [command]  read or set work\n  help [command]  display help for command\n",
+      "help": "Usage: hrc seat [options] [command]\n\nseat continuity\n\nOptions:\n  -h, --help  display help for command\n\nCommands:\n  screen [options] <scopeRef>  stream screen snapshots\n  work [options] [command]  read or set work\n  help [command]  display help for command\n",
+      "humanHelp": "Usage: hrc seat [options] [command]\n\nseat continuity\n\nOptions:\n  -h, --help  display help for command\n\nCommands:\n  screen [options] <scopeRef>  stream screen snapshots\n  work [options] [command]  read or set work\n  help [command]  display help for command\n",
       "arguments": [],
       "options": [
         {
@@ -7027,6 +7027,45 @@
               "nativeOnly": true
             }
           ],
+          "nativeOnly": true
+        },
+        {
+          "path": [
+            "seat",
+            "screen"
+          ],
+          "name": "screen",
+          "aliases": [],
+          "usage": "[options] <scopeRef>",
+          "allowExcessArguments": false,
+          "help": "Usage: hrc seat screen [options] <scopeRef>\n\nstream current screen as JSON lines; exits on close (no reconnect)\n\nOptions:\n  --lane <lane>  seat lane (default main)\n  --styled       include terminal styling\n  -h, --help     display help for command\n",
+          "humanHelp": "Usage: hrc seat screen [options] <scopeRef>\n\nstream current screen as JSON lines; exits on close (no reconnect)\n\nOptions:\n  --lane <lane>  seat lane (default main)\n  --styled       include terminal styling\n  -h, --help     display help for command\n",
+          "arguments": [
+            {
+              "name": "scopeRef",
+              "required": true,
+              "variadic": false
+            }
+          ],
+          "options": [
+            {
+              "flags": "--lane <lane>",
+              "long": "--lane",
+              "required": true,
+              "optional": false,
+              "mandatory": false,
+              "negate": false
+            },
+            {
+              "flags": "--styled",
+              "long": "--styled",
+              "required": false,
+              "optional": false,
+              "mandatory": false,
+              "negate": false
+            }
+          ],
+          "children": [],
           "nativeOnly": true
         }
       ],
