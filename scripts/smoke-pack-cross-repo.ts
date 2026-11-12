@@ -15,8 +15,7 @@ import { join, resolve } from 'node:path'
 const ROOT = resolve(import.meta.dir, '..')
 
 // Every published package that strips the `bun` condition at prepack (the
-// publisher's list in publish-local-verdaccio.ts; hrc-turn-attention has no
-// prepack and no `bun` condition).
+// publisher's list in publish-local-verdaccio.ts).
 const PACKAGES = [
   'packages/agent-action-render',
   'packages/hrc-core',

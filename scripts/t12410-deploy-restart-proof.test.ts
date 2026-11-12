@@ -74,7 +74,6 @@ print('restart proven after ${warmupMs}ms: healthy new process')
         'max3',
         sha,
         aspSha,
-        'pin',
         mode,
         'no-publish',
       ],

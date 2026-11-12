@@ -14,14 +14,7 @@ type Violation = {
   reason?: string
 }
 
-const hrcPackages = [
-  'agent-action-render',
-  'hrc-core',
-  'hrc-events',
-  'hrc-sdk',
-  'hrc-turn-attention',
-  'hrc-frame-render',
-]
+const hrcPackages = ['agent-action-render', 'hrc-core', 'hrc-events', 'hrc-sdk', 'hrc-frame-render']
 
 const layers: Layer[] = [
   {

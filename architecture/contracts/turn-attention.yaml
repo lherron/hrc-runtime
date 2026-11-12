@@ -14,9 +14,8 @@ predicate: >
   generation. This freshness check and the insert share one store transaction;
   otherwise stale_turn is returned without an append.
   The classifier runs outside the HRC daemon on each HRC node and follows
-  that node's events. Before the T-13374 cutover it is the launchd-hosted
-  hrc-turn-attention package; after per-node cutover it is the Python
-  turn-attention module hosted by that node's Praesidium kernel, with source
+  that node's events. It is the Python turn-attention module hosted by
+  that node's Praesidium kernel, with source
   in praesidium-kernel/modules/turn-attention/. The module calls the local
   kernel's node.event.page and turn.attention.create pass-through operations;
   it holds no direct HRC owner client. HRC's append admission, validation,
@@ -107,13 +106,10 @@ validation_scope: >
   For T-13374, turn-attention-module r2 section 7 supplies port acceptance,
   including rerunning G1 through the Python classifier against the same
   412 gold rows and pass rule. The old TypeScript G1 result does not attest
-  the Python port. Hrc-runtime owns removing and deploying the automatic
-  daemon-install block before any cutover, consulting Foundry on external
-  consumers, and per-node daemon bootout, plist removal and confirmed
-  process exit before the saved cursor is handed to the module. Rollback
-  uses the recorded daemon version's installer after module exit. The
-  daemon's package, installer, plist template and gate entries are removed
-  a day after the third node's cutover. Installed cutover remains unverified.
+  the Python port. The standalone classifier package, launchd installer,
+  plist template and rollback files are removed under T-13429 after all
+  three nodes' cutover. Module acceptance and activation belong to
+  praesidium-kernel; HRC retains the append and presentation contract.
 last_verified: >
   2026-10-28 revised design read against single-event keyed reads, latest-turn
   recovery, empty bootstrap, presentation-runtime filtering, event categories,

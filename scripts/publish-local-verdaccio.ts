@@ -24,8 +24,6 @@ const PACKAGES = [
   'packages/hrc-sdk',
   'packages/hrc-frame-render',
   'packages/hrc-events',
-  // Last: it consumes hrc-core and hrc-sdk.
-  'packages/hrc-turn-attention',
 ] as const
 
 type Manifest = {

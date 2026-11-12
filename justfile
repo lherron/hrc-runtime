@@ -100,7 +100,6 @@ check:
     bun scripts/check-suppressions.ts
     bun scripts/check-env-hygiene.ts
     bun scripts/check-test-hermetic.ts
-    bun scripts/check-daemon-subprocess.ts
     bun scripts/check-test-doubles.ts
 
 # Prune nested node_modules copies of a root-pinned dependency that shadow the
@@ -662,10 +661,6 @@ launchd-uninstall:
       rm -f "$HOME/Library/LaunchAgents/${label}.plist"
     done
 
-# Install/reload the node-local classifier; Mable activates, key comes from env.
-install-turn-attention-launchd version:
-    bun scripts/install-turn-attention-launchd.ts '{{ version }}'
-
 [private]
 _deploy-node ssh-target expected-node target-ref="origin/main" aspd-ref="origin/main" restart="wait" publication="no-publish":
     #!/usr/bin/env bash
@@ -1162,11 +1157,6 @@ _node-readback ssh-target expected-node target-sha aspd-sha aspd-release publica
     # The mail injector is not installed here or anywhere: the kernel's
     # mail-delivery module delivers mail, and a started injector would deliver
     # every message twice.
-    # The turn-attention classifier is not installed here. It moves to a module
-    # under the praesidium kernel node by node (praesidium-kernel T-13374), and a
-    # deploy that reinstalled the launchd job would run it beside the module. A
-    # node still on the daemon keeps its loaded job; `just
-    # install-turn-attention-launchd <version>` remains for a rollback by hand.
 
 
     printf 'deployed %s: %s hrc %s (%s), aspd %s (%s)\n' \

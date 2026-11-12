@@ -175,7 +175,7 @@ provision_build() {
   log "installing dependencies (bun install --frozen-lockfile)"
   (cd "${REPO_ROOT}" && bun install --frozen-lockfile)
   log "building TypeScript workspace for the Bun test corpus and sibling dist declarations"
-  # The retained SDK, renderers and turn-attention subscriber need dist output.
+  # The retained SDK and renderers need dist output.
   # While the historical TS suites remain, build:ordered also builds their
   # packages; none is used to launch or migrate this environment.
   (cd "${REPO_ROOT}" && bun run build)

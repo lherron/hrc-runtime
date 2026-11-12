@@ -46,7 +46,7 @@ describe('isInstallSourcePath', () => {
   })
 
   test('fails closed on anything it does not recognize', () => {
-    expect(isInstallSourcePath('launchd/com.praesidium.hrc-turn-attention.plist')).toBe(true)
+    expect(isInstallSourcePath('launchd/com.praesidium.hrc-server.plist')).toBe(true)
     expect(isInstallSourcePath('.github/workflows/example.yml')).toBe(true)
     expect(isInstallSourcePath('newly-invented-directory/thing.conf')).toBe(true)
     expect(isInstallSourcePath('.npmrc')).toBe(true)

@@ -6,6 +6,10 @@ Open the board live: `arris serve diagrams/seat-data.arris-board.json --gui`.
 
 ## seat-data board (2026-10-31, proposal, not approved)
 
+The frames preserve their 2026-10-31/11-01 topology, including the retired
+standalone classifier labels; current classifier hosting is the Praesidium
+kernel module (T-13374). They are historical design snapshots.
+
 Three frames on where seat session data lives and where it should live. Context: c2 cards sit in Loggia's `storage.json` on max3 (c2 `docs/card-contract.md` §3); Lance asked whether HRC has a proper home for seat data that fits the cardo model.
 
 | frame | claim |
@@ -32,7 +36,7 @@ Extensibility, checked per axis a new kind would stress:
 
 Facts the frames rest on (verified 2026-10-31 on max3):
 
-- `turn.attention` is an `hrc_events` row appended by `hrc-turn-attention` through the only accepting route (`crates/hrc-native/src/server/turns/attention.rs`); `seat.attention` is a pure projection of the selected display event (`crates/hrc-domain/src/projection.rs`), contract `architecture/contracts/turn-attention.yaml`.
+- `turn.attention` is an `hrc_events` row appended by the classifier (now the Praesidium kernel's `turn-attention` module) through the only accepting route (`crates/hrc-native/src/server/turns/attention.rs`); `seat.attention` is a pure projection of the selected display event (`crates/hrc-domain/src/projection.rs`), contract `architecture/contracts/turn-attention.yaml`.
 - `session_metadata` is continuity-scoped `(scope_ref, lane_ref, key, source)`, scalars or arrays of scalars, ≤ 4 KB, 64 keys (`crates`/`packages/hrc-core/src/session-metadata.ts`).
 - The kernel document is declared in `crates/hrc-domain/src/declarations.rs`: three flat root observation types, no hierarchies or reference fields.
 - Loggia plugin storage holding seat state: c2 `cards`, `actions`, `inflight`; session-switcher `attention.asks`.

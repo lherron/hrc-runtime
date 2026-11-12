@@ -91,7 +91,6 @@ mail-delivery module under the praesidium kernel (not in this repo).
 | `hrc-events` | Canonical HRC event payload types, Zod schemas, and the monitor event schema |
 | `hrc-sdk` | Typed client (`HrcClient`) for the HRC daemon over the unix socket |
 | `hrc-frame-render` | Projects HRC lifecycle/message events into RenderFrames/timeline |
-| `hrc-turn-attention` | Node-local turn attention classifier subscriber (`bunx hrc-turn-attention@<version>`, activated separately) |
 
 ## Transports
 

@@ -108,7 +108,6 @@ esac
         sha,
         aspSha,
         'asp-test',
-        '',
         'no-publish',
       ],
       {

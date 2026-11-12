@@ -13,7 +13,7 @@ The daemon and its health-check CLI run without Bun on PATH, with inherited harn
 owner endpoints and credentials scrubbed. Its ASPD socket is private and absent; a probe
 that births a runtime must supply its own isolated compiler fixture.
 The dependency/build phase still uses Bun to build the TypeScript workspace for the
-retained SDK, rendering, turn-attention and historical TypeScript test corpus. Native
+retained SDK, rendering and historical TypeScript test corpus. Native
 startup and migration read no TypeScript owner sources.
 
 For installed-release checks, use the verify skill's `hv scratch up --name <task>`.

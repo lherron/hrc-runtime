@@ -206,10 +206,9 @@ configured so that macOS TCC grants survive releases (T-12224;
   `current` for the running exe. A failed migration leaves the store at its
   previous set; recover by deploying the previous release. Nothing pending takes
   no backup. The keep-manual scratch e2e is `scripts/hrc-owner-schema-e2e.sh`.
-- **Turn attention.** The subscriber is `bunx hrc-turn-attention@<version>`, not
-  part of the owner release. Activate a change with `just publish` plus
-  `just install-turn-attention-launchd <version>`, or with `just deploy-max3`,
-  which re-points it to latest.
+- **Turn attention.** The classifier runs as the `turn-attention` module in
+  each node's Praesidium kernel. Its source and activation belong to
+  praesidium-kernel; HRC owner deployment does not install a classifier.
 - **Readback** (`_node-readback`) also requires
   this boot's `broker.warmup.complete` with `attached == total` in the log the
   plist names.

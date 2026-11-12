@@ -15,9 +15,8 @@
  * - a killed child's stderr describes what it printed before the kill, so a
  *   timeout is reported as its own type, never as the child's stderr.
  *
- * It lives in hrc-core so placement code there can use it; the retired TS daemon
- * re-exports it. `scripts/check-daemon-subprocess.ts` refuses raw spawns in
- * daemon code and names this module.
+ * Retained in hrc-core for SDK consumers; the native HRC daemon owns its
+ * subprocess execution separately.
  */
 
 import type { Subprocess } from 'bun'

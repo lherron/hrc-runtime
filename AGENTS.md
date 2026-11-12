@@ -35,7 +35,7 @@ the agent digest of the published references `/a/hrc-build-deploy-guide` and
   release. To activate a daemon change, push it and ask Mable for
   `just deploy-max3`. Read back `release.hrcBuild.sourceCommit` in
   `hrc server status --json` (T-12644 cost an extra restart cycle on this).
-  The turn-attention subscriber activates separately
+  The Praesidium kernel's turn-attention module activates separately
   ([docs/fleet-deployment.md](docs/fleet-deployment.md#hrc-owner-bun-or-rusthrc)).
 - An HRC install before `just pull-deps` ships the OLD agent-spaces tuple, and
   so does one after a `pull-deps` that did not move `bun.lock`, so read back
