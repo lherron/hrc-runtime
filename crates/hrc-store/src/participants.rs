@@ -615,7 +615,41 @@ fn register_direct(
         return Ok(refused);
     }
     let now = timestamp();
-    let host = uuid("hsid");
+    // targets/ensure can precede the first HRC launch (mail delivery does
+    // this). Adopt its provisional session in this registration transaction;
+    // there has been no process, so the first process remains generation 1.
+    // External registration keeps its existing allocation semantics.
+    let provisional = if owner == HRC_LAUNCHED {
+        tx.query_row(
+            "SELECT s.* FROM continuities c JOIN sessions s ON s.host_session_id=c.active_host_session_id WHERE c.scope_ref=? AND c.lane_ref=?",
+            params![scope, lane], raw_row,
+        ).optional()?
+    } else {
+        None
+    };
+    if let Some(session) = &provisional {
+        let used: bool = tx.query_row(
+            "SELECT EXISTS(SELECT 1 FROM runtimes WHERE host_session_id=?)",
+            [session["host_session_id"].as_str()],
+            |r| r.get(0),
+        )?;
+        if used {
+            return Ok(refusal(
+                "rejected",
+                "host_binding_conflict",
+                "an unregistered session with a runtime cannot be adopted as a first participant launch",
+            ));
+        }
+    }
+    let host = provisional
+        .as_ref()
+        .and_then(|s| s["host_session_id"].as_str())
+        .map(str::to_owned)
+        .unwrap_or_else(|| uuid("hsid"));
+    let generation = provisional
+        .as_ref()
+        .and_then(|s| s["generation"].as_i64())
+        .unwrap_or(1);
     let reg = uuid("participant-registration");
     let binding = uuid("participant-binding");
     let attempt = uuid("participant-attempt");
@@ -627,7 +661,13 @@ fn register_direct(
     if reservation.is_none() {
         tx.execute("INSERT INTO participant_address_reservations(reservation_id,class_id,scope_ref,lane_ref,home_node_id,state,created_at,updated_at) VALUES (?,?,?,?,?,'held',?,?)",params![reservation_id,opt("classId"),scope,lane,home,now,now])?;
     }
-    tx.execute("INSERT INTO sessions(host_session_id,scope_ref,lane_ref,generation,status,created_at,updated_at) VALUES (?,?,?,1,'active',?,?)",params![host,scope,lane,now,now])?;
+    if provisional.is_some() {
+        // No continuation belongs to this agent's process yet. In particular,
+        // never offer a stale key that happened to be on the provisional row.
+        tx.execute("UPDATE sessions SET status='active',continuation_json=NULL,continuation_reuse_disabled=0,updated_at=? WHERE host_session_id=?", params![now,host])?;
+    } else {
+        tx.execute("INSERT INTO sessions(host_session_id,scope_ref,lane_ref,generation,status,created_at,updated_at) VALUES (?,?,?,?,'active',?,?)",params![host,scope,lane,generation,now,now])?;
+    }
     let identity = derive_identity(scope);
     let new_continuity = !tx.query_row(
         "SELECT EXISTS(SELECT 1 FROM continuities WHERE scope_ref=? AND lane_ref=?)",
@@ -638,17 +678,19 @@ fn register_direct(
     if new_continuity {
         crate::seat_work::initialize_seat(tx, scope, lane)?;
     }
-    tx.execute("INSERT INTO participant_registrations(registration_id,class_id,join_direction,participant_key,scope_ref,lane_ref,host_session_id,generation,workspace_cwd,serving_socket_path,address_policy,continuity_policy,lifecycle_owner,replay_semantics,host_incarnation_id,created_at,updated_at) VALUES (?,?,'participant-served',?,?,?,?,1,?,?,'selected-scope','host-incarnation',?,'full-source-replay',?,?,?)",params![reg,opt("classId"),opt("participantKey"),scope,lane,host,opt("workspaceCwd"),opt("socketPath"),owner,incarnation,now,now])?;
-    tx.execute("INSERT INTO participant_host_bindings(binding_id,reservation_id,registration_id,host_incarnation_id,host_session_id,generation,runtime_id,state,admitted_at,updated_at) VALUES (?,?,?,?,?,1,?,'BINDING',?,?)",params![binding,reservation_id,reg,incarnation,host,runtime,now,now])?;
+    tx.execute("INSERT INTO participant_registrations(registration_id,class_id,join_direction,participant_key,scope_ref,lane_ref,host_session_id,generation,workspace_cwd,serving_socket_path,address_policy,continuity_policy,lifecycle_owner,replay_semantics,host_incarnation_id,created_at,updated_at) VALUES (?,?,'participant-served',?,?,?,?,?, ?,?,'selected-scope','host-incarnation',?,'full-source-replay',?,?,?)",params![reg,opt("classId"),opt("participantKey"),scope,lane,host,generation,opt("workspaceCwd"),opt("socketPath"),owner,incarnation,now,now])?;
+    tx.execute("INSERT INTO participant_host_bindings(binding_id,reservation_id,registration_id,host_incarnation_id,host_session_id,generation,runtime_id,state,admitted_at,updated_at) VALUES (?,?,?,?,?,?,?,'BINDING',?,?)",params![binding,reservation_id,reg,incarnation,host,generation,runtime,now,now])?;
     Store::set_participant_disposition(tx, &reservation_id, None, &now)?;
     tx.execute("INSERT INTO participant_registration_attempts(attempt_id,registration_id,attach_epoch,request_id,operation_id,invocation_id,runtime_id,host_binding_id,state,recovery_disposition,establishment_work_state,establishment_attempt_count,continuation_carried,continuation_reason,continuation_resume_state,created_at,updated_at) VALUES (?,?,1,?,?,?,?,?,'IDENTITY_MINTED','unresolved','pending',0,0,'no_continuation','not_requested',?,?)",params![attempt,reg,request,operation,invocation,runtime,binding,now,now])?;
-    crate::append_event_at(
-        tx,
-        &json!({"hostSessionId":host,"scopeRef":scope,"laneRef":lane,"generation":1}),
-        "session.created",
-        &json!({"created":true}),
-        &now,
-    )?;
+    if provisional.is_none() {
+        crate::append_event_at(
+            tx,
+            &json!({"hostSessionId":host,"scopeRef":scope,"laneRef":lane,"generation":generation}),
+            "session.created",
+            &json!({"created":true}),
+            &now,
+        )?;
+    }
     let reply = registered(
         &registration(tx, &reg)?.context("new registration")?,
         &latest(tx, &reg)?.context("new attempt")?,

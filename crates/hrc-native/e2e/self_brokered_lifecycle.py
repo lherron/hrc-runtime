@@ -44,6 +44,7 @@ def main():
     p.add_argument('--archive-only', action='store_true', help='run repeated terminate and continuation gates only')
     p.add_argument('--baseline', action='store_true', help='reproduce termination graph leak only')
     p.add_argument('--reproduce-claims', action='store_true', help='record T-13451 defects without requiring fixes')
+    p.add_argument('--claims-only', action='store_true', help='summon and first-allocation gates only')
     a = p.parse_args()
     root = a.scratch_root.absolute()
     assert not root.exists()
@@ -141,15 +142,16 @@ await runBrokerCli({additionalDrivers:[() => {
         row=r.rows('SELECT * FROM runs WHERE run_id=?',(run,))[0]
         assert row['status']=='completed',row
         return {'response':answer,'run':row,'completed':events}
-    def ordinary():
+    def ordinary(enqueue=False):
         intent={'placement':{'agentRoot':str(project),'projectRoot':str(project),'cwd':str(project),
             'runMode':'task','bundle':{'kind':'compose','compose':[]},'dryRun':False},
             'harness':{'provider':'anthropic','interactive':True}}
         target=call('/v1/targets/ensure',{'sessionRef':scope('ordinary')+'/lane:main',
             'runtimeIntent':intent})
         assert target[0]==200,target
-        answer=call('/v1/runtimes/start',{'hostSessionId':target[1]['activeHostSessionId'],
-            'intent':intent})
+        answer=(call('/v1/submissions/enqueue',{'target':scope('ordinary')+'/lane:main',
+            'body':'CONT ordinary virgin enqueue','origin':{'principalRef':'agent:clod'},'runtimeIntent':intent,'wait':True})
+            if enqueue else call('/v1/runtimes/start',{'hostSessionId':target[1]['activeHostSessionId'], 'intent':intent}))
         assert answer[0]==200,answer
         rid=answer[1]['runtimeId']
         row=r.runtime(rid)
@@ -210,19 +212,26 @@ await runBrokerCli({additionalDrivers:[() => {
         assert answer[1]['claim']['hostSessionId']==born['host_session_id'],answer
         replay=call('/v1/runtimes/start',request)
         assert replay[0]==200 and replay[1]['runtimeId']==born['runtime_id'] and replay[1]['claim']['replayed'],replay
+        attempt_count=len(r.rows('SELECT * FROM participant_registration_attempts'))
         live=call('/v1/runtimes/start',claim_body(r,sc,'T13451-live'))
         assert live[0]==409 and live[1]['error']['code']=='session_scope_occupied',live
         suffix=call('/v1/runtimes/start',claim_body(r,sc,'T13451-suffix','suffix'))
         assert suffix[0]==409,suffix
+        assert len(r.rows('SELECT * FROM participant_registration_attempts'))==attempt_count
         assert len(r.rows('SELECT * FROM participant_registration_attempts WHERE runtime_id=?',(born['runtime_id'],)))==1
         assert len(r.rows('SELECT * FROM sessions WHERE scope_ref LIKE ?',(sc+'-%',)))==0
         report['A'].update(pass_=True,registration=reg,replay=replay,live=live,suffix=suffix)
-        # B becomes an enforced gate in the orphan-session fix.
+        assert report['B']['pass'],report['B']
+        initial=json.loads((directory/'registration.json').read_text())
+        assert initial['hostSessionId']==ensured[1]['activeHostSessionId'] and initial['generation']==1,initial
+        assert not initial['continuation']['carried'],initial
+        report['B']['initialRegistration']=initial
+        assert born['generation']==2,born
         call('/v1/terminate',{'runtimeId':born['runtime_id']})
 
         # Ordinary Claude discriminator: one session on virgin ensure + turn;
         # retired exact claims rotate and discard its reusable conversation.
-        old=ordinary(); turn(old,'CONT ordinary discriminator')
+        old=ordinary(enqueue=True); turn(old,'CONT ordinary discriminator')
         rows=r.rows('SELECT * FROM sessions WHERE scope_ref=?',(scope('ordinary'),))
         assert len(rows)==1 and rows[0]['status']=='active',rows
         live=call('/v1/runtimes/start',claim_body(r,scope('ordinary'),'T13451-ordinary-live'))
@@ -308,6 +317,7 @@ await runBrokerCli({additionalDrivers:[() => {
         if not a.baseline:
             claim_gates()
             if a.reproduce_claims: return
+            if a.claims_only: report['pass']=True; return
             archive_gates()
             if a.archive_only:
                 report['pass']=True
