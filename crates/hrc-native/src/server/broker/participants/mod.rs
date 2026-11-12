@@ -2,6 +2,8 @@ pub mod delivery;
 mod descriptor;
 mod establishment;
 mod start_validation;
+#[cfg(test)]
+mod tests;
 use super::{ApiError, Server};
 use axum::{
     Json,
@@ -162,41 +164,237 @@ fn parse_registration(body: Value) -> Result<Value, ApiError> {
     }
     Ok(parsed)
 }
+/// What a participant door answers: a 200 body, or the `{status, reason,
+/// detail}` refusal the routes send, 409 when rejected and 200 when pending.
+/// The in-process doors return it as is; the routes turn it into a response.
+pub enum Answer {
+    Done(Value),
+    Refused(Value),
+}
+impl Answer {
+    fn refused(status: &str, reason: &str, detail: impl Into<String>) -> Self {
+        Self::Refused(json!({"status":status,"reason":reason,"detail":detail.into()}))
+    }
+    fn into_response(self) -> Response {
+        match self {
+            Self::Done(v) => Json(v).into_response(),
+            Self::Refused(v) => (
+                if v["status"] == "rejected" {
+                    StatusCode::CONFLICT
+                } else {
+                    StatusCode::OK
+                },
+                Json(v),
+            )
+                .into_response(),
+        }
+    }
+}
+
 pub async fn register(server: &super::Shared, body: Value) -> Result<Response, ApiError> {
+    Ok(register_core(server, body).await?.into_response())
+}
+async fn register_core(server: &super::Shared, body: Value) -> Result<Answer, ApiError> {
     let body = parse_registration(body)?;
-    let joined = join(server, &body).await?;
-    let mut db = server.store.lock().unwrap();
-    match joined {
-        hrc_store::ParticipantJoin::Succession { .. } => Ok(attachment_reply(
+    Ok(match join(server, &body).await? {
+        hrc_store::ParticipantJoin::Succession { .. } => Answer::refused(
             "pending",
             "participant_successor_gate_changed",
             "replacement requires another retirement observation",
-        )),
-        hrc_store::ParticipantJoin::Refused(v) => Ok((
-            if v["status"] == "rejected" {
-                StatusCode::CONFLICT
-            } else {
-                StatusCode::OK
-            },
-            Json(v),
-        )
-            .into_response()),
+        ),
+        hrc_store::ParticipantJoin::Refused(v) => Answer::Refused(v),
         hrc_store::ParticipantJoin::Registered(mut v) => {
             if let Some(metadata) = body.get("metadata") {
-                let written = db.write_metadata(hrc_store::MetadataWrite {
-                    scope: v["scopeRef"].as_str().unwrap_or(""),
-                    lane: v["identity"]["laneRef"].as_str().unwrap_or("main"),
-                    source: "launch",
-                    set: metadata,
-                    clear: &[],
-                    replace: true,
-                    updated_by: v["identity"]["registrationId"].as_str().unwrap_or(""),
-                })?;
+                let written =
+                    server
+                        .store
+                        .lock()
+                        .unwrap()
+                        .write_metadata(hrc_store::MetadataWrite {
+                            scope: v["scopeRef"].as_str().unwrap_or(""),
+                            lane: v["identity"]["laneRef"].as_str().unwrap_or("main"),
+                            source: "launch",
+                            set: metadata,
+                            clear: &[],
+                            replace: true,
+                            updated_by: v["identity"]["registrationId"].as_str().unwrap_or(""),
+                        })?;
                 v["rejectedMetadata"] = written["rejected"].clone();
             }
-            Ok(Json(v).into_response())
+            Answer::Done(v)
         }
+    })
+}
+
+/// HRC's statement that the processes it launched for a scope's previous
+/// incarnation are gone. The caller confirms it under its start gate; this
+/// module takes it as the predecessor's retirement evidence and probes nothing.
+#[cfg_attr(
+    not(test),
+    expect(
+        dead_code,
+        reason = "first caller is the self-brokered launch, T-13434 task 3"
+    )
+)]
+pub struct PredecessorGone {
+    pub detail: String,
+}
+/// The continuation an allocation offers its launcher (T-13434 section 6).
+#[cfg_attr(
+    not(test),
+    expect(
+        dead_code,
+        reason = "first caller is the self-brokered launch, T-13434 task 3"
+    )
+)]
+#[derive(Clone, Copy)]
+pub enum Continuation {
+    /// The session's continuation when it is reusable.
+    Continue,
+    /// None, after `prae runtime archive --continuation drop`.
+    Fresh,
+}
+
+/// HRC as the registrant of a self-brokered seat (T-13434 sections 5 and 6).
+/// Mints a host incarnation and records the registration: the first for the
+/// scope as `hrc-launched`, every later one as a host succession over the
+/// latest binding, generation + 1 with a new host session. Over an
+/// externally-owned predecessor (the cutover) it probes that endpoint first and
+/// refuses `host_binding_conflict` unless it is dead. The allocation is one
+/// store transaction; `Done` is the register route's created-registration body.
+#[cfg_attr(
+    not(test),
+    expect(
+        dead_code,
+        reason = "first caller is the self-brokered launch, T-13434 task 3"
+    )
+)]
+pub async fn allocate_hrc_launched(
+    server: &super::Shared,
+    scope: &str,
+    lane: &str,
+    workspace_cwd: &Path,
+    socket_path: &Path,
+    continuation: Continuation,
+    gone: &PredecessorGone,
+) -> Result<Answer, ApiError> {
+    let incarnation = format!("hrc-launch-{}", uuid::Uuid::new_v4());
+    let body = parse_registration(json!({
+        "registrationMode":"direct","requestedSessionRef":scope,"hostIncarnationId":incarnation,
+        "laneRef":lane,"workspaceCwd":workspace_cwd.to_string_lossy(),
+        "socketPath":socket_path.to_string_lossy(),
+        "continuation":match continuation {Continuation::Continue=>"continue",Continuation::Fresh=>"fresh"},
+    }))?;
+    local_scope(server, scope).await?;
+    let home = participant_home(server);
+    let external = {
+        let db = server.store.lock().unwrap();
+        match db.participant_registration_by_scope(scope)? {
+            Some(reg) if reg["lifecycle_owner"] == "externally-owned" => {
+                db.participant_latest_attempt(reg["registration_id"].as_str().unwrap_or(""))?
+            }
+            _ => None,
+        }
+    };
+    let probed = match external {
+        Some(attempt) => Some((
+            attempt["attempt_id"].as_str().unwrap_or("").to_owned(),
+            establishment::observe_transport_evidence(&attempt).await,
+        )),
+        None => None,
+    };
+    let evidence = match &probed {
+        Some((attempt_id, (outcome, detail))) => hrc_store::PredecessorEvidence::Probe {
+            attempt_id,
+            outcome,
+            detail,
+        },
+        None => hrc_store::PredecessorEvidence::Gone {
+            detail: &gone.detail,
+        },
+    };
+    let joined = server
+        .store
+        .lock()
+        .unwrap()
+        .allocate_hrc_launched_participant(&body, &home, evidence)?;
+    Ok(match joined {
+        hrc_store::ParticipantJoin::Registered(v) => {
+            server.ledger_committed();
+            Answer::Done(v)
+        }
+        hrc_store::ParticipantJoin::Refused(v) => Answer::Refused(v),
+        hrc_store::ParticipantJoin::Succession { .. } => Answer::refused(
+            "pending",
+            "participant_successor_gate_changed",
+            "replacement requires another retirement observation",
+        ),
+    })
+}
+
+/// The attach route's work for HRC's own launcher, which hands HRC the
+/// descriptor file it wrote. Validation is the route's, including the one
+/// `hrc-launched` relaxation `attach` applies (a descriptor without the
+/// offered continuation: the seat chose to start fresh).
+#[cfg_attr(
+    not(test),
+    expect(
+        dead_code,
+        reason = "first caller is the self-brokered launch, T-13434 task 3"
+    )
+)]
+pub async fn attach_hrc_launched(
+    server: &super::Shared,
+    registration_id: &str,
+    attempt_id: &str,
+    attach_epoch: u64,
+    descriptor: Value,
+) -> Result<Answer, ApiError> {
+    let answer = attach_core(
+        server,
+        json!({"registrationId":registration_id,"attemptId":attempt_id,"attachEpoch":attach_epoch,"descriptor":descriptor}),
+    )
+    .await?;
+    server.ledger_committed();
+    Ok(answer)
+}
+
+/// End an `hrc-launched` attempt that has not reached ACTIVE (a failed start,
+/// or `launch_interrupted`): abandon it and retire its binding.
+#[cfg_attr(
+    not(test),
+    expect(
+        dead_code,
+        reason = "first caller is the self-brokered launch, T-13434 task 3"
+    )
+)]
+pub fn abandon_hrc_launched(
+    server: &super::Shared,
+    attempt_id: &str,
+    reason: &str,
+) -> Result<Answer, ApiError> {
+    if reason.trim().is_empty() {
+        return Err(malformed(
+            "abandon reason must be non-empty",
+            Some("reason"),
+        ));
     }
+    let abandoned = server
+        .store
+        .lock()
+        .unwrap()
+        .abandon_hrc_launched_attempt(attempt_id, reason)?;
+    Ok(match abandoned {
+        hrc_store::ParticipantAbandon::Abandoned { changed } => {
+            if changed {
+                server.ledger_committed();
+            }
+            Answer::Done(
+                json!({"status":"abandoned","attemptId":attempt_id,"reason":reason,"changed":changed}),
+            )
+        }
+        hrc_store::ParticipantAbandon::Refused(v) => Answer::Refused(v),
+    })
 }
 
 /// T-13189: a host clears its parked disposition by address. Clear-only;
@@ -240,15 +438,8 @@ pub async fn unpark(server: &super::Shared, body: Value) -> Result<Response, Api
     Ok(Json(json!({"reservationId":id,"scopeRef":scope,"laneRef":lane,"disposition":null,"dispositionAt":null,"changed":changed})).into_response())
 }
 
-async fn join(
-    server: &super::Shared,
-    body: &Value,
-) -> Result<hrc_store::ParticipantJoin, ApiError> {
-    let authority = super::federation::session_home::home(
-        server,
-        body["requestedSessionRef"].as_str().unwrap(),
-    )
-    .await;
+async fn local_scope(server: &super::Shared, scope: &str) -> Result<(), ApiError> {
+    let authority = super::federation::session_home::home(server, scope).await;
     if authority["state"] == "foreign" {
         return Err(ApiError::domain(
             StatusCode::CONFLICT,
@@ -257,6 +448,13 @@ async fn join(
             Some(json!({"homeNodeId":authority["nodeId"]})),
         ));
     }
+    Ok(())
+}
+async fn join(
+    server: &super::Shared,
+    body: &Value,
+) -> Result<hrc_store::ParticipantJoin, ApiError> {
+    local_scope(server, body["requestedSessionRef"].as_str().unwrap()).await?;
     let home = participant_home(server);
     let joined = server
         .store
@@ -369,31 +567,57 @@ fn parse_attach(mut body: Value) -> Result<Value, ApiError> {
     }
     Ok(body)
 }
-fn attachment_reply(status: &str, reason: &str, detail: impl Into<String>) -> Response {
-    (
-        if status == "rejected" {
-            StatusCode::CONFLICT
-        } else {
-            StatusCode::OK
-        },
-        Json(json!({"status":status,"reason":reason,"detail":detail.into()})),
-    )
-        .into_response()
-}
 pub async fn attach(server: &super::Shared, body: Value) -> Result<Response, ApiError> {
+    Ok(attach_core(server, body).await?.into_response())
+}
+/// The descriptor's start request must express exactly the continuation HRC
+/// selected for the attempt. One relaxation: an hrc-launched seat may decline
+/// an offered continuation and start fresh (T-13434 section 4); the attempt
+/// attach freezes then records that it requested none.
+fn continuation_agreement(
+    reg: &Value,
+    mut attempt: Value,
+    supplied: Option<&Value>,
+) -> Result<Value, Answer> {
+    if reg["lifecycle_owner"] == hrc_store::HRC_LAUNCHED
+        && attempt["continuation_carried"] == 1
+        && supplied.is_none()
+    {
+        attempt["continuation_carried"] = 0.into();
+    }
+    if attempt["continuation_carried"] != 1 && supplied.is_some() {
+        return Err(Answer::refused(
+            "rejected",
+            "participant_continuation_mismatch",
+            "HRC selected no continuation for this attempt, so the descriptor start request must not carry one",
+        ));
+    }
+    if attempt["continuation_carried"] == 1
+        && attempt["continuation_selected_json"].as_str()
+            != supplied.map(Value::to_string).as_deref()
+    {
+        return Err(Answer::refused(
+            "rejected",
+            "participant_continuation_mismatch",
+            "the descriptor start request does not express exactly the continuation HRC selected for this attempt",
+        ));
+    }
+    Ok(attempt)
+}
+async fn attach_core(server: &super::Shared, body: Value) -> Result<Answer, ApiError> {
     let body = parse_attach(body)?;
     let reg_id = body["registrationId"].as_str().unwrap();
     let (reg, attempt) = {
         let db = server.store.lock().unwrap();
         let Some(reg) = db.participant_registration(reg_id)? else {
-            return Ok(attachment_reply(
+            return Ok(Answer::refused(
                 "rejected",
                 "participant_registration_unknown",
                 format!("no participant registration {reg_id}"),
             ));
         };
         let Some(attempt) = db.participant_latest_attempt(reg_id)? else {
-            return Ok(attachment_reply(
+            return Ok(Answer::refused(
                 "pending",
                 "participant_attempt_unavailable",
                 "the registration has no durable attempt to attach to",
@@ -404,7 +628,7 @@ pub async fn attach(server: &super::Shared, body: Value) -> Result<Response, Api
     if attempt["attempt_id"] != body["attemptId"]
         || attempt["attach_epoch"].as_f64() != body["attachEpoch"].as_f64()
     {
-        return Ok(attachment_reply(
+        return Ok(Answer::refused(
             "rejected",
             "participant_attach_epoch_stale",
             format!(
@@ -417,7 +641,7 @@ pub async fn attach(server: &super::Shared, body: Value) -> Result<Response, Api
         ));
     }
     if attempt["disposition_reason"] == "operator_evict" {
-        return Ok(attachment_reply(
+        return Ok(Answer::refused(
             "rejected",
             "participant_operator_evicted",
             "HRC evicted this attachment; its old credentials cannot re-establish the attempt",
@@ -429,7 +653,7 @@ pub async fn attach(server: &super::Shared, body: Value) -> Result<Response, Api
             .lock()
             .unwrap()
             .participant_resume_unsupported(&attempt, body["reason"].as_str().unwrap())?;
-        return Ok(attachment_reply(
+        return Ok(Answer::refused(
             "pending",
             "participant_resume_unsupported",
             format!(
@@ -440,36 +664,23 @@ pub async fn attach(server: &super::Shared, body: Value) -> Result<Response, Api
     }
     let d = &body["descriptor"];
     let supplied = d["harnessInvocation"]["startRequest"]["spec"].get("continuation");
-    if attempt["continuation_carried"] != 1 && supplied.is_some() {
-        return Ok(attachment_reply(
-            "rejected",
-            "participant_continuation_mismatch",
-            "HRC selected no continuation for this attempt, so the descriptor start request must not carry one",
-        ));
-    }
-    if attempt["continuation_carried"] == 1
-        && attempt["continuation_selected_json"].as_str()
-            != supplied.map(Value::to_string).as_deref()
-    {
-        return Ok(attachment_reply(
-            "rejected",
-            "participant_continuation_mismatch",
-            "the descriptor start request does not express exactly the continuation HRC selected for this attempt",
-        ));
-    }
+    let attempt = match continuation_agreement(&reg, attempt, supplied) {
+        Ok(attempt) => attempt,
+        Err(refused) => return Ok(refused),
+    };
     let mut issues = descriptor::validate_outer(d);
     if issues.is_empty() {
         issues = descriptor::agreement(d, &reg, &attempt);
     }
     if !issues.is_empty() {
-        return Ok(attachment_reply(
+        return Ok(Answer::refused(
             "rejected",
             "participant_descriptor_invalid",
             issues.join("; "),
         ));
     }
     if reg["serving_socket_path"].is_null() && body.get("socketPath").is_none() {
-        return Ok(attachment_reply(
+        return Ok(Answer::refused(
             "rejected",
             "participant_serving_endpoint_missing",
             "a participant-served registration needs its broker endpoint at registration or on this attachment",
@@ -502,7 +713,7 @@ pub async fn attach(server: &super::Shared, body: Value) -> Result<Response, Api
         .unwrap();
     if !prepared {
         if persisted["prepared_profile_json"].as_str() != Some(d.to_string().as_str()) {
-            return Ok(attachment_reply(
+            return Ok(Answer::refused(
                 "rejected",
                 "participant_attach_conflict",
                 "this attempt already froze a different descriptor; changing a bridge after activation is a replacement operation, not an attachment",
@@ -517,7 +728,7 @@ pub async fn attach(server: &super::Shared, body: Value) -> Result<Response, Api
         if persisted["broker_identity_json"].is_string() && !owns_live {
             let outcome = establishment::observe_transport(&persisted).await;
             return Ok(if outcome == "transport_dead" {
-                attachment_reply(
+                Answer::refused(
                     "rejected",
                     "participant_established_endpoint_dead",
                     format!(
@@ -527,7 +738,7 @@ pub async fn attach(server: &super::Shared, body: Value) -> Result<Response, Api
                     ),
                 )
             } else {
-                attachment_reply(
+                Answer::refused(
                     "pending",
                     "participant_established_endpoint_unconfirmed",
                     format!(
@@ -552,7 +763,7 @@ pub async fn attach(server: &super::Shared, body: Value) -> Result<Response, Api
                 "participant.hosting_intent.failed",
                 json!({"registrationId":reg_id,"error":format!("{error:#}")}),
             );
-            return Ok(attachment_reply(
+            return Ok(Answer::refused(
                 "pending",
                 "participant_hosting_intent_unavailable",
                 "the attached descriptor is durable but HRC could not persist its hosting intent; addressed work stays pending",
@@ -578,7 +789,9 @@ pub async fn attach(server: &super::Shared, body: Value) -> Result<Response, Api
     } else {
         json!([])
     };
-    Ok(Json(json!({"status":"attached","rejectedMetadata":rejected,"registrationId":reg_id,"attemptId":attempt["attempt_id"],"attachEpoch":attempt["attach_epoch"],"prepared":prepared,"observation":{"state":"attached","detail":if prepared{"the participant descriptor is durable and its establishment work is armed"}else{"an identical attachment was already durable for this attempt"}}})).into_response())
+    Ok(Answer::Done(
+        json!({"status":"attached","rejectedMetadata":rejected,"registrationId":reg_id,"attemptId":attempt["attempt_id"],"attachEpoch":attempt["attach_epoch"],"prepared":prepared,"observation":{"state":"attached","detail":if prepared{"the participant descriptor is durable and its establishment work is armed"}else{"an identical attachment was already durable for this attempt"}}}),
+    ))
 }
 
 pub use establishment::resume;

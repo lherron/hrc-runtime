@@ -62,3 +62,46 @@ pub fn m0133_participant_parked_disposition(conn: &Connection) -> anyhow::Result
     )?;
     Ok(())
 }
+
+/// T-13438: `hrc-launched` joins the lifecycle owners, for a participant HRC
+/// itself registers and starts (self-brokered launch, T-13434 section 6).
+/// SQLite cannot alter a CHECK, so the table is rebuilt: same columns in the
+/// same order, the baseline text with one more value, and its one index.
+/// `participant_registration_attempts` and `participant_host_bindings`
+/// reference it by name and resolve to the renamed table; no trigger or view
+/// names it.
+pub fn m0134_participant_hrc_launched_owner(conn: &Connection) -> anyhow::Result<()> {
+    conn.execute_batch(
+        "CREATE TABLE \"participant_registrations_0134\" (
+  registration_id TEXT PRIMARY KEY,
+  class_id TEXT,
+  join_direction TEXT NOT NULL CHECK (join_direction IN ('hrc-hosted', 'participant-served')),
+  participant_key TEXT,
+  scope_ref TEXT NOT NULL UNIQUE,
+  lane_ref TEXT NOT NULL,
+  host_session_id TEXT NOT NULL,
+  generation INTEGER NOT NULL CHECK (generation >= 1),
+  workspace_cwd TEXT,
+  serving_socket_path TEXT,
+  address_policy TEXT
+          CHECK (address_policy IS NULL OR address_policy IN ('permanent-keyed', 'selected-scope')),
+  continuity_policy TEXT
+          CHECK (continuity_policy IS NULL OR continuity_policy IN ('key-scoped', 'host-incarnation')),
+  lifecycle_owner TEXT
+          CHECK (lifecycle_owner IS NULL OR lifecycle_owner IN ('hrc-managed', 'externally-owned', 'hrc-launched')),
+  replay_semantics TEXT
+          CHECK (replay_semantics IS NULL OR replay_semantics IN ('none', 'full-source-replay')),
+  host_incarnation_id TEXT,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL,
+  CHECK (address_policy IS NOT NULL AND continuity_policy IS NOT NULL AND lifecycle_owner IS NOT NULL AND replay_semantics IS NOT NULL AND host_incarnation_id IS NOT NULL)
+);
+INSERT INTO participant_registrations_0134 SELECT registration_id,class_id,join_direction,participant_key,scope_ref,lane_ref,host_session_id,generation,workspace_cwd,serving_socket_path,address_policy,continuity_policy,lifecycle_owner,replay_semantics,host_incarnation_id,created_at,updated_at FROM participant_registrations;
+DROP TABLE participant_registrations;
+ALTER TABLE participant_registrations_0134 RENAME TO participant_registrations;
+CREATE INDEX idx_participant_registration_incarnation
+        ON participant_registrations(host_incarnation_id)
+        WHERE host_incarnation_id IS NOT NULL;",
+    )?;
+    Ok(())
+}

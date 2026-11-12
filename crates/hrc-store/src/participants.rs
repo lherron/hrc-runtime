@@ -6,6 +6,34 @@ use rusqlite::{Connection, OptionalExtension, params};
 use serde_json::{Value, json};
 use uuid::Uuid;
 
+/// The lifecycle owner of a participant HRC registers and starts itself
+/// (T-13434 section 6). Every other registration is externally owned.
+pub const HRC_LAUNCHED: &str = "hrc-launched";
+const EXTERNALLY_OWNED: &str = "externally-owned";
+
+/// Evidence that the predecessor of an hrc-launched allocation is gone.
+pub enum PredecessorEvidence<'a> {
+    /// HRC's own statement, made under its start gate, that the processes it
+    /// launched for the predecessor are gone. It admits a succession over an
+    /// hrc-launched registration only.
+    Gone { detail: &'a str },
+    /// A transport probe of an externally-owned predecessor's endpoint, made
+    /// outside the store lock. Only `transport_dead` for the attempt that is
+    /// still current admits the cutover.
+    Probe {
+        attempt_id: &'a str,
+        outcome: &'a str,
+        detail: &'a str,
+    },
+}
+pub enum ParticipantAbandon {
+    /// `changed` is false for a replay over an already abandoned attempt.
+    Abandoned {
+        changed: bool,
+    },
+    Refused(Value),
+}
+
 pub enum ParticipantJoin {
     Registered(Value),
     Refused(Value),
@@ -189,6 +217,28 @@ fn registered(reg: &Value, attempt: &Value, created: bool) -> Result<Value> {
         "continuation":{"carried":carried,"reason":attempt["continuation_reason"].as_str().unwrap_or("no_continuation"),"selected":selected,"resumeState":attempt["continuation_resume_state"].as_str().unwrap_or("indeterminate")}}),
     )
 }
+/// An externally-owned address whose bindings are all retired: HRC does not
+/// succeed an external host it did not launch.
+fn succession_unsupported(
+    db: &Connection,
+    scope: &str,
+    reservation_id: &str,
+) -> Result<Option<ParticipantJoin>> {
+    let retired: i64 = db.query_row(
+        "SELECT count(*) FROM participant_host_bindings WHERE reservation_id=?",
+        [reservation_id],
+        |r| r.get(0),
+    )?;
+    Ok((retired > 0).then(|| {
+        refusal(
+            "pending",
+            "participant_host_succession_unsupported",
+            format!(
+                "{scope} has {retired} retired host binding(s); succeeding a previous incarnation at a held address requires the explicit succession procedure, which this HRC release does not yet execute"
+            ),
+        )
+    }))
+}
 fn never_attached(db: &Connection, attempt: &Value) -> Result<bool> {
     let exists: bool = db.query_row(
         "SELECT EXISTS(SELECT 1 FROM runtimes WHERE runtime_id=?)",
@@ -265,217 +315,324 @@ impl Store {
         body: &Value,
         home: &str,
     ) -> Result<ParticipantJoin> {
-        let scope = body["requestedSessionRef"]
-            .as_str()
-            .context("validated scope")?;
-        let lane = body["laneRef"].as_str().unwrap_or("main");
-        let incarnation = body["hostIncarnationId"]
-            .as_str()
-            .context("validated incarnation")?;
         let tx = self
             .sqlite
             .transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)?;
-        let existing=tx.query_row("SELECT * FROM participant_registrations WHERE scope_ref=? AND host_incarnation_id=?",[scope,incarnation],raw_row).optional()?;
-        if let Some(reg) = existing {
-            let Some(attempt) = latest(&tx, reg["registration_id"].as_str().unwrap_or(""))? else {
-                return Ok(refusal(
-                    "pending",
-                    "participant_attempt_unavailable",
-                    "the registered participant has no durable attempt",
-                ));
-            };
-            if let Some(predecessor) = body.get("expectedPredecessor") {
-                if predecessor["hostIncarnationId"] == incarnation
-                    && predecessor["runtimeId"] == attempt["runtime_id"]
-                    && predecessor["generation"] == reg["generation"]
-                    && never_attached(&tx, &attempt)?
-                {
-                    let selected = attempt["continuation_selected_json"]
-                        .as_str()
-                        .map(serde_json::from_str::<Value>)
-                        .transpose()?
-                        .unwrap_or(Value::Null);
-                    if attempt["continuation_carried"] == 1
-                        && selected["provider"] == "arris"
-                        && selected["kind"] == "host-incarnation"
-                    {
-                        let result = succession::admit(&tx, &reg, &attempt, body)?;
-                        tx.commit()?;
-                        return Ok(result);
-                    }
-                    let contradicts = if body["continuation"] == "fresh" {
-                        attempt["continuation_carried"] == 1
-                    } else {
-                        attempt["continuation_reason"] == "participant_fresh"
-                    };
-                    if contradicts {
-                        return Ok(refusal(
-                            "rejected",
-                            "host_binding_precondition_failed",
-                            format!(
-                                "this allocation's continuation selection ({}) was made for a different continuation declaration; a selection is fixed once its attempt is allocated",
-                                attempt["continuation_reason"]
-                                    .as_str()
-                                    .unwrap_or("undefined")
-                            ),
-                        ));
-                    }
-                    return Ok(ParticipantJoin::Registered(registered(
-                        &reg, &attempt, false,
-                    )?));
-                }
-                let result = succession::admit(&tx, &reg, &attempt, body)?;
-                tx.commit()?;
-                return Ok(result);
-            }
-            return Ok(ParticipantJoin::Registered(registered(
-                &reg, &attempt, false,
-            )?));
+        let joined = register_direct(&tx, body, home, EXTERNALLY_OWNED)?;
+        if !matches!(joined, ParticipantJoin::Refused(_)) {
+            tx.commit()?;
         }
-        let held=tx.query_row("SELECT b.reservation_id,r.scope_ref FROM participant_host_bindings b LEFT JOIN participant_address_reservations r ON r.reservation_id=b.reservation_id WHERE b.host_incarnation_id=? AND b.state IN ('BINDING','BOUND')",[incarnation],|r|Ok((r.get::<_,String>(0)?,r.get::<_,Option<String>>(1)?))).optional()?;
-        if let Some((reservation, held_scope)) = held {
-            return Ok(refusal(
-                "rejected",
-                "participant_host_incarnation_bound_elsewhere",
-                format!(
-                    "host incarnation {incarnation} already holds {}; one incarnation holds at most one address",
-                    held_scope.unwrap_or(reservation)
-                ),
-            ));
-        }
-        let reservation = tx
+        Ok(joined)
+    }
+    /// HRC as the registrant (T-13434 section 6). The first allocation for a
+    /// scope registers it `hrc-launched`; every later one is a host succession
+    /// over the latest binding, with HRC supplying the expected predecessor and
+    /// `evidence` that it is gone. One transaction: a refusal writes nothing.
+    pub fn allocate_hrc_launched_participant(
+        &mut self,
+        body: &Value,
+        home: &str,
+        evidence: PredecessorEvidence<'_>,
+    ) -> Result<ParticipantJoin> {
+        let scope = body["requestedSessionRef"]
+            .as_str()
+            .context("validated scope")?;
+        let tx = self
+            .sqlite
+            .transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)?;
+        let reg = tx
             .query_row(
-                "SELECT * FROM participant_address_reservations WHERE scope_ref=? AND lane_ref=?",
-                [scope, lane],
+                "SELECT * FROM participant_registrations WHERE scope_ref=?",
+                [scope],
                 raw_row,
             )
             .optional()?;
-        let reservation_id = if let Some(ref reservation) = reservation {
-            let id = reservation["reservation_id"]
-                .as_str()
-                .context("reservation identity")?;
-            if reservation["state"] == "held" && reservation["home_node_id"] != home {
-                let remote = reservation["home_node_id"].as_str().unwrap_or("");
-                return Ok(ParticipantJoin::Refused(
-                    json!({"status":"rejected","reason":"participant_scope_bound_elsewhere","detail":format!("{scope} is reserved on {remote}; register the host there"),"observed":{"homeNodeId":remote}}),
-                ));
-            }
-            if reservation["state"] != "held" {
-                return Ok(refusal(
-                    "rejected",
-                    "participant_scope_occupied",
-                    format!(
-                        "{scope} carries a released reservation {id}; a released address is re-claimed under a new explicit operation"
-                    ),
-                ));
-            }
-            id.to_owned()
-        } else {
-            let occupied=tx.query_row("SELECT c.active_host_session_id FROM continuities c WHERE c.scope_ref=? AND c.lane_ref=? AND (EXISTS (SELECT 1 FROM participant_registrations p WHERE p.scope_ref=c.scope_ref) OR EXISTS (SELECT 1 FROM runtimes r WHERE r.host_session_id=c.active_host_session_id AND r.status NOT IN ('terminated','dead','stale','crashed','detached')))",[scope,lane],|r|r.get::<_,String>(0)).optional()?;
-            if let Some(host) = occupied {
-                return Ok(refusal(
-                    "rejected",
-                    "participant_scope_occupied",
-                    format!(
-                        "{scope} is occupied by a live runtime on session {host}; retire the occupant before a participant claims this address"
-                    ),
-                ));
-            }
-            uuid("participant-reservation")
+        let joined = match reg {
+            None => register_direct(&tx, body, home, HRC_LAUNCHED)?,
+            Some(reg) => succession::hrc_launched(&tx, &reg, body, evidence)?,
         };
-        let occupant:Option<String>=tx.query_row("SELECT registration_id FROM participant_host_bindings WHERE reservation_id=? AND state IN ('BINDING','BOUND','DETACHED','RETIRING')",[&reservation_id],|r|r.get(0)).optional()?;
-        if let Some(id) = occupant {
-            let (Some(registration), Some(predecessor)) =
-                (registration(&tx, &id)?, latest(&tx, &id)?)
-            else {
-                return Ok(refusal(
-                    "pending",
-                    "participant_attempt_unavailable",
-                    "the occupied participant address has no durable predecessor attempt",
-                ));
-            };
-            if body.get("expectedPredecessor").is_none() && !never_attached(&tx, &predecessor)? {
-                let occupant: String=tx.query_row("SELECT host_incarnation_id FROM participant_host_bindings WHERE registration_id=? AND state IN ('BINDING','BOUND','DETACHED','RETIRING')",[&id],|r|r.get(0))?;
-                let state = predecessor["state"].as_str().unwrap_or("");
-                let detail = if state == "DETACHED" {
-                    format!(
-                        "attempt DETACHED, reconnect {}; not evidence of host death or life",
-                        predecessor["establishment_work_state"]
-                            .as_str()
-                            .unwrap_or("undefined")
-                    )
-                } else {
-                    format!("attempt {state}")
-                };
-                return Ok(refusal(
-                    "rejected",
-                    "host_binding_conflict",
-                    format!(
-                        "{scope} is held by host incarnation {occupant} ({detail}); an explicit matching expectedPredecessor is required"
-                    ),
-                ));
+        Ok(match joined {
+            ParticipantJoin::Registered(reply) => {
+                tx.commit()?;
+                ParticipantJoin::Registered(reply)
             }
-            let result = succession::admit(&tx, &registration, &predecessor, body)?;
-            tx.commit()?;
-            return Ok(result);
+            // A freshly minted incarnation at an unregistered scope cannot
+            // name a predecessor; never commit a two-phase admission here.
+            ParticipantJoin::Succession { .. } => refusal(
+                "pending",
+                "participant_successor_gate_changed",
+                "the address gained a registration during allocation",
+            ),
+            refused => refused,
+        })
+    }
+    /// End an hrc-launched attempt that never reached ACTIVE (a failed or
+    /// interrupted launch): abandon it, complete its establishment work so no
+    /// recovery resumes it, and retire its binding. The reservation stays held.
+    pub fn abandon_hrc_launched_attempt(
+        &mut self,
+        attempt_id: &str,
+        reason: &str,
+    ) -> Result<ParticipantAbandon> {
+        anyhow::ensure!(!reason.trim().is_empty(), "abandon reason is required");
+        let tx = self
+            .sqlite
+            .transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)?;
+        let refused = |reason: &str, detail: String| {
+            Ok(ParticipantAbandon::Refused(
+                json!({"status":"rejected","reason":reason,"detail":detail}),
+            ))
+        };
+        let Some(a) = tx
+            .query_row(
+                "SELECT * FROM participant_registration_attempts WHERE attempt_id=?",
+                [attempt_id],
+                raw_row,
+            )
+            .optional()?
+        else {
+            return refused(
+                "participant_attempt_unknown",
+                format!("no participant attempt {attempt_id}"),
+            );
+        };
+        let reg = registration(&tx, a["registration_id"].as_str().unwrap_or(""))?
+            .context("attempt registration")?;
+        if reg["lifecycle_owner"] != HRC_LAUNCHED {
+            return refused(
+                "participant_not_hrc_launched",
+                format!(
+                    "registration {} is {}; HRC abandons only an attempt it launched",
+                    js(&reg["registration_id"]),
+                    js(&reg["lifecycle_owner"])
+                ),
+            );
         }
-        let retired: i64 = tx.query_row(
-            "SELECT count(*) FROM participant_host_bindings WHERE reservation_id=?",
-            [&reservation_id],
-            |r| r.get(0),
-        )?;
-        if retired > 0 {
+        let absorbing = ["ABANDONED", "TERMINAL", "SUPERSEDED"]
+            .iter()
+            .any(|s| a["state"] == *s);
+        if !absorbing && (a["state"] == "ACTIVE" || !a["initial_activation_confirmed_at"].is_null())
+        {
+            return refused(
+                "participant_attempt_active",
+                format!(
+                    "attempt {attempt_id} reached ACTIVE; ending it is a termination, not an abandoned start"
+                ),
+            );
+        }
+        let now = timestamp();
+        let mut changed = tx.execute("UPDATE participant_registration_attempts SET state='ABANDONED',disposition_reason=?,establishment_work_state='completed',establishment_next_attempt_at=NULL,establishment_last_error=?,updated_at=? WHERE attempt_id=? AND state NOT IN ('ABANDONED','TERMINAL','SUPERSEDED')",params![reason,reason,now,attempt_id])? == 1;
+        changed |= tx.execute("UPDATE participant_registration_attempts SET recovery_disposition='abandoned',recovery_reason=?,updated_at=? WHERE attempt_id=? AND recovery_disposition='unresolved'",params![reason,now,attempt_id])? == 1;
+        if let Some(binding) = a["host_binding_id"].as_str() {
+            changed |= tx.execute("UPDATE participant_host_bindings SET state='RETIRED',retired_at=?,disposition_reason=?,updated_at=? WHERE binding_id=? AND state!='RETIRED'",params![now,reason,now,binding])? == 1;
+        }
+        tx.commit()?;
+        Ok(ParticipantAbandon::Abandoned { changed })
+    }
+}
+
+/// Direct registration in the caller's transaction, which commits it.
+/// `owner` is the new registration's lifecycle owner.
+fn register_direct(
+    tx: &Connection,
+    body: &Value,
+    home: &str,
+    owner: &str,
+) -> Result<ParticipantJoin> {
+    let scope = body["requestedSessionRef"]
+        .as_str()
+        .context("validated scope")?;
+    let lane = body["laneRef"].as_str().unwrap_or("main");
+    let incarnation = body["hostIncarnationId"]
+        .as_str()
+        .context("validated incarnation")?;
+    let existing = tx
+        .query_row(
+            "SELECT * FROM participant_registrations WHERE scope_ref=? AND host_incarnation_id=?",
+            [scope, incarnation],
+            raw_row,
+        )
+        .optional()?;
+    if let Some(reg) = existing {
+        let Some(attempt) = latest(tx, reg["registration_id"].as_str().unwrap_or(""))? else {
             return Ok(refusal(
                 "pending",
-                "participant_host_succession_unsupported",
+                "participant_attempt_unavailable",
+                "the registered participant has no durable attempt",
+            ));
+        };
+        if let Some(predecessor) = body.get("expectedPredecessor") {
+            if predecessor["hostIncarnationId"] == incarnation
+                && predecessor["runtimeId"] == attempt["runtime_id"]
+                && predecessor["generation"] == reg["generation"]
+                && never_attached(tx, &attempt)?
+            {
+                let selected = attempt["continuation_selected_json"]
+                    .as_str()
+                    .map(serde_json::from_str::<Value>)
+                    .transpose()?
+                    .unwrap_or(Value::Null);
+                if attempt["continuation_carried"] == 1
+                    && selected["provider"] == "arris"
+                    && selected["kind"] == "host-incarnation"
+                {
+                    return succession::admit(tx, &reg, &attempt, body);
+                }
+                let contradicts = if body["continuation"] == "fresh" {
+                    attempt["continuation_carried"] == 1
+                } else {
+                    attempt["continuation_reason"] == "participant_fresh"
+                };
+                if contradicts {
+                    return Ok(refusal(
+                        "rejected",
+                        "host_binding_precondition_failed",
+                        format!(
+                            "this allocation's continuation selection ({}) was made for a different continuation declaration; a selection is fixed once its attempt is allocated",
+                            attempt["continuation_reason"]
+                                .as_str()
+                                .unwrap_or("undefined")
+                        ),
+                    ));
+                }
+                return Ok(ParticipantJoin::Registered(registered(
+                    &reg, &attempt, false,
+                )?));
+            }
+            return succession::admit(tx, &reg, &attempt, body);
+        }
+        return Ok(ParticipantJoin::Registered(registered(
+            &reg, &attempt, false,
+        )?));
+    }
+    let held=tx.query_row("SELECT b.reservation_id,r.scope_ref FROM participant_host_bindings b LEFT JOIN participant_address_reservations r ON r.reservation_id=b.reservation_id WHERE b.host_incarnation_id=? AND b.state IN ('BINDING','BOUND')",[incarnation],|r|Ok((r.get::<_,String>(0)?,r.get::<_,Option<String>>(1)?))).optional()?;
+    if let Some((reservation, held_scope)) = held {
+        return Ok(refusal(
+            "rejected",
+            "participant_host_incarnation_bound_elsewhere",
+            format!(
+                "host incarnation {incarnation} already holds {}; one incarnation holds at most one address",
+                held_scope.unwrap_or(reservation)
+            ),
+        ));
+    }
+    let reservation = tx
+        .query_row(
+            "SELECT * FROM participant_address_reservations WHERE scope_ref=? AND lane_ref=?",
+            [scope, lane],
+            raw_row,
+        )
+        .optional()?;
+    let reservation_id = if let Some(ref reservation) = reservation {
+        let id = reservation["reservation_id"]
+            .as_str()
+            .context("reservation identity")?;
+        if reservation["state"] == "held" && reservation["home_node_id"] != home {
+            let remote = reservation["home_node_id"].as_str().unwrap_or("");
+            return Ok(ParticipantJoin::Refused(
+                json!({"status":"rejected","reason":"participant_scope_bound_elsewhere","detail":format!("{scope} is reserved on {remote}; register the host there"),"observed":{"homeNodeId":remote}}),
+            ));
+        }
+        if reservation["state"] != "held" {
+            return Ok(refusal(
+                "rejected",
+                "participant_scope_occupied",
                 format!(
-                    "{scope} has {retired} retired host binding(s); succeeding a previous incarnation at a held address requires the explicit succession procedure, which this HRC release does not yet execute"
+                    "{scope} carries a released reservation {id}; a released address is re-claimed under a new explicit operation"
                 ),
             ));
         }
-        let now = timestamp();
-        let host = uuid("hsid");
-        let reg = uuid("participant-registration");
-        let binding = uuid("participant-binding");
-        let attempt = uuid("participant-attempt");
-        let runtime = uuid("rt");
-        let request = uuid("req");
-        let operation = uuid("op");
-        let invocation = uuid("inv");
-        let opt = |key: &str| body[key].as_str();
-        if reservation.is_none() {
-            tx.execute("INSERT INTO participant_address_reservations(reservation_id,class_id,scope_ref,lane_ref,home_node_id,state,created_at,updated_at) VALUES (?,?,?,?,?,'held',?,?)",params![reservation_id,opt("classId"),scope,lane,home,now,now])?;
+        id.to_owned()
+    } else {
+        let occupied=tx.query_row("SELECT c.active_host_session_id FROM continuities c WHERE c.scope_ref=? AND c.lane_ref=? AND (EXISTS (SELECT 1 FROM participant_registrations p WHERE p.scope_ref=c.scope_ref) OR EXISTS (SELECT 1 FROM runtimes r WHERE r.host_session_id=c.active_host_session_id AND r.status NOT IN ('terminated','dead','stale','crashed','detached')))",[scope,lane],|r|r.get::<_,String>(0)).optional()?;
+        if let Some(host) = occupied {
+            return Ok(refusal(
+                "rejected",
+                "participant_scope_occupied",
+                format!(
+                    "{scope} is occupied by a live runtime on session {host}; retire the occupant before a participant claims this address"
+                ),
+            ));
         }
-        tx.execute("INSERT INTO sessions(host_session_id,scope_ref,lane_ref,generation,status,created_at,updated_at) VALUES (?,?,?,1,'active',?,?)",params![host,scope,lane,now,now])?;
-        let identity = derive_identity(scope);
-        let new_continuity = !tx.query_row(
-            "SELECT EXISTS(SELECT 1 FROM continuities WHERE scope_ref=? AND lane_ref=?)",
-            params![scope, lane],
-            |r| r.get::<_, bool>(0),
-        )?;
-        tx.execute("INSERT INTO continuities(scope_ref,lane_ref,active_host_session_id,updated_at,scope_kind,agent_id,project_id,task_id,role_name) VALUES (?,?,?,?,?,?,?,?,?) ON CONFLICT(scope_ref,lane_ref) DO UPDATE SET active_host_session_id=excluded.active_host_session_id,updated_at=excluded.updated_at",params![scope,lane,host,now,identity["kind"].as_str(),identity["agentId"].as_str(),identity["projectId"].as_str(),identity["taskId"].as_str(),identity["roleName"].as_str()])?;
-        if new_continuity {
-            crate::seat_work::initialize_seat(&tx, scope, lane)?;
+        uuid("participant-reservation")
+    };
+    let occupant:Option<String>=tx.query_row("SELECT registration_id FROM participant_host_bindings WHERE reservation_id=? AND state IN ('BINDING','BOUND','DETACHED','RETIRING')",[&reservation_id],|r|r.get(0)).optional()?;
+    if let Some(id) = occupant {
+        let (Some(registration), Some(predecessor)) = (registration(tx, &id)?, latest(tx, &id)?)
+        else {
+            return Ok(refusal(
+                "pending",
+                "participant_attempt_unavailable",
+                "the occupied participant address has no durable predecessor attempt",
+            ));
+        };
+        if body.get("expectedPredecessor").is_none() && !never_attached(tx, &predecessor)? {
+            let occupant: String=tx.query_row("SELECT host_incarnation_id FROM participant_host_bindings WHERE registration_id=? AND state IN ('BINDING','BOUND','DETACHED','RETIRING')",[&id],|r|r.get(0))?;
+            let state = predecessor["state"].as_str().unwrap_or("");
+            let detail = if state == "DETACHED" {
+                format!(
+                    "attempt DETACHED, reconnect {}; not evidence of host death or life",
+                    predecessor["establishment_work_state"]
+                        .as_str()
+                        .unwrap_or("undefined")
+                )
+            } else {
+                format!("attempt {state}")
+            };
+            return Ok(refusal(
+                "rejected",
+                "host_binding_conflict",
+                format!(
+                    "{scope} is held by host incarnation {occupant} ({detail}); an explicit matching expectedPredecessor is required"
+                ),
+            ));
         }
-        tx.execute("INSERT INTO participant_registrations(registration_id,class_id,join_direction,participant_key,scope_ref,lane_ref,host_session_id,generation,workspace_cwd,serving_socket_path,address_policy,continuity_policy,lifecycle_owner,replay_semantics,host_incarnation_id,created_at,updated_at) VALUES (?,?,'participant-served',?,?,?,?,1,?,?,'selected-scope','host-incarnation','externally-owned','full-source-replay',?,?,?)",params![reg,opt("classId"),opt("participantKey"),scope,lane,host,opt("workspaceCwd"),opt("socketPath"),incarnation,now,now])?;
-        tx.execute("INSERT INTO participant_host_bindings(binding_id,reservation_id,registration_id,host_incarnation_id,host_session_id,generation,runtime_id,state,admitted_at,updated_at) VALUES (?,?,?,?,?,1,?,'BINDING',?,?)",params![binding,reservation_id,reg,incarnation,host,runtime,now,now])?;
-        Self::set_participant_disposition(&tx, &reservation_id, None, &now)?;
-        tx.execute("INSERT INTO participant_registration_attempts(attempt_id,registration_id,attach_epoch,request_id,operation_id,invocation_id,runtime_id,host_binding_id,state,recovery_disposition,establishment_work_state,establishment_attempt_count,continuation_carried,continuation_reason,continuation_resume_state,created_at,updated_at) VALUES (?,?,1,?,?,?,?,?,'IDENTITY_MINTED','unresolved','pending',0,0,'no_continuation','not_requested',?,?)",params![attempt,reg,request,operation,invocation,runtime,binding,now,now])?;
-        crate::append_event_at(
-            &tx,
-            &json!({"hostSessionId":host,"scopeRef":scope,"laneRef":lane,"generation":1}),
-            "session.created",
-            &json!({"created":true}),
-            &now,
-        )?;
-        let reply = registered(
-            &registration(&tx, &reg)?.context("new registration")?,
-            &latest(&tx, &reg)?.context("new attempt")?,
-            true,
-        )?;
-        tx.commit()?;
-        Ok(ParticipantJoin::Registered(reply))
+        return succession::admit(tx, &registration, &predecessor, body);
     }
+    if let Some(refused) = succession_unsupported(tx, scope, &reservation_id)? {
+        return Ok(refused);
+    }
+    let now = timestamp();
+    let host = uuid("hsid");
+    let reg = uuid("participant-registration");
+    let binding = uuid("participant-binding");
+    let attempt = uuid("participant-attempt");
+    let runtime = uuid("rt");
+    let request = uuid("req");
+    let operation = uuid("op");
+    let invocation = uuid("inv");
+    let opt = |key: &str| body[key].as_str();
+    if reservation.is_none() {
+        tx.execute("INSERT INTO participant_address_reservations(reservation_id,class_id,scope_ref,lane_ref,home_node_id,state,created_at,updated_at) VALUES (?,?,?,?,?,'held',?,?)",params![reservation_id,opt("classId"),scope,lane,home,now,now])?;
+    }
+    tx.execute("INSERT INTO sessions(host_session_id,scope_ref,lane_ref,generation,status,created_at,updated_at) VALUES (?,?,?,1,'active',?,?)",params![host,scope,lane,now,now])?;
+    let identity = derive_identity(scope);
+    let new_continuity = !tx.query_row(
+        "SELECT EXISTS(SELECT 1 FROM continuities WHERE scope_ref=? AND lane_ref=?)",
+        params![scope, lane],
+        |r| r.get::<_, bool>(0),
+    )?;
+    tx.execute("INSERT INTO continuities(scope_ref,lane_ref,active_host_session_id,updated_at,scope_kind,agent_id,project_id,task_id,role_name) VALUES (?,?,?,?,?,?,?,?,?) ON CONFLICT(scope_ref,lane_ref) DO UPDATE SET active_host_session_id=excluded.active_host_session_id,updated_at=excluded.updated_at",params![scope,lane,host,now,identity["kind"].as_str(),identity["agentId"].as_str(),identity["projectId"].as_str(),identity["taskId"].as_str(),identity["roleName"].as_str()])?;
+    if new_continuity {
+        crate::seat_work::initialize_seat(tx, scope, lane)?;
+    }
+    tx.execute("INSERT INTO participant_registrations(registration_id,class_id,join_direction,participant_key,scope_ref,lane_ref,host_session_id,generation,workspace_cwd,serving_socket_path,address_policy,continuity_policy,lifecycle_owner,replay_semantics,host_incarnation_id,created_at,updated_at) VALUES (?,?,'participant-served',?,?,?,?,1,?,?,'selected-scope','host-incarnation',?,'full-source-replay',?,?,?)",params![reg,opt("classId"),opt("participantKey"),scope,lane,host,opt("workspaceCwd"),opt("socketPath"),owner,incarnation,now,now])?;
+    tx.execute("INSERT INTO participant_host_bindings(binding_id,reservation_id,registration_id,host_incarnation_id,host_session_id,generation,runtime_id,state,admitted_at,updated_at) VALUES (?,?,?,?,?,1,?,'BINDING',?,?)",params![binding,reservation_id,reg,incarnation,host,runtime,now,now])?;
+    Store::set_participant_disposition(tx, &reservation_id, None, &now)?;
+    tx.execute("INSERT INTO participant_registration_attempts(attempt_id,registration_id,attach_epoch,request_id,operation_id,invocation_id,runtime_id,host_binding_id,state,recovery_disposition,establishment_work_state,establishment_attempt_count,continuation_carried,continuation_reason,continuation_resume_state,created_at,updated_at) VALUES (?,?,1,?,?,?,?,?,'IDENTITY_MINTED','unresolved','pending',0,0,'no_continuation','not_requested',?,?)",params![attempt,reg,request,operation,invocation,runtime,binding,now,now])?;
+    crate::append_event_at(
+        tx,
+        &json!({"hostSessionId":host,"scopeRef":scope,"laneRef":lane,"generation":1}),
+        "session.created",
+        &json!({"created":true}),
+        &now,
+    )?;
+    let reply = registered(
+        &registration(tx, &reg)?.context("new registration")?,
+        &latest(tx, &reg)?.context("new attempt")?,
+        true,
+    )?;
+    Ok(ParticipantJoin::Registered(reply))
 }
 
 impl Store {
@@ -658,6 +815,15 @@ impl Store {
             "participant broker hello did not report its negotiated protocol"
         );
         let state = json!({"schemaVersion":"runtime-state/v1","kind":"harness-broker","runtimeId":attempt["runtime_id"],"hostSessionId":reg["host_session_id"],"generation":reg["generation"],"status":"starting","lifecycleOwner":"external","participantRegistration":{"registrationId":reg["registration_id"],"attemptId":attempt["attempt_id"],"attachEpoch":attempt["attach_epoch"],"join":reg["join_direction"]},"broker":{"protocolVersion":hello["protocolVersion"],"endpoint":realized["endpoint"],"substrate":realized["substrate"],"presentation":realized["presentation"]},"invocation":{"invocationId":attempt["invocation_id"],"state":"ready","driver":descriptor["brokerDriver"]},"control":{"mode":"broker-ipc","brokerAttached":false}});
+        // A self-brokered seat is HRC's to start and stop, and its broker is
+        // still the participant's own (T-13434 §7). Externally-owned state is
+        // exactly what it was.
+        let launched = reg["lifecycle_owner"] == HRC_LAUNCHED;
+        let mut state = state;
+        if launched {
+            state["lifecycleOwner"] = "hrc".into();
+            state["participant"] = json!({"lifecycleOwner":HRC_LAUNCHED});
+        }
         let tx = self.sqlite.unchecked_transaction()?;
         let existing = tx
             .query_row(
@@ -673,14 +839,18 @@ impl Store {
                 .map(serde_json::from_str::<Value>)
                 .transpose()?
                 .unwrap_or_else(|| json!({}));
-            let owner_drift = runtime_state["lifecycleOwner"] != "external";
+            let owner_drift = runtime_state["lifecycleOwner"] != state["lifecycleOwner"]
+                || (launched && runtime_state["participant"]["lifecycleOwner"] != HRC_LAUNCHED);
             if advance {
                 runtime_state["status"] = "starting".into();
                 runtime_state["participantRegistration"] = state["participantRegistration"].clone();
                 runtime_state["invocation"] = state["invocation"].clone();
             }
             if owner_drift {
-                runtime_state["lifecycleOwner"] = "external".into();
+                runtime_state["lifecycleOwner"] = state["lifecycleOwner"].clone();
+                if launched {
+                    runtime_state["participant"]["lifecycleOwner"] = HRC_LAUNCHED.into();
+                }
             }
             if advance {
                 tx.execute("UPDATE runtimes SET active_operation_id=?,active_invocation_id=?,selected_profile_hash=?,status='starting',status_changed_at=?,runtime_state_json=?,updated_at=? WHERE runtime_id=?",params![attempt["operation_id"].as_str(),attempt["invocation_id"].as_str(),descriptor["descriptorHash"].as_str(),now,runtime_state.to_string(),now,attempt["runtime_id"].as_str()])?;

@@ -294,7 +294,7 @@ impl Store {
                 },
             ));
         }
-        let authorizing = &intent["retirementBasis"];
+        let authorizing = intent["retirementBasis"].clone();
         let dead = authorizing["liveness"]["state"] == "dead";
         let retirement = if pre_attach {
             "pre_attach_superseded"
@@ -303,7 +303,7 @@ impl Store {
         } else {
             "host_replaced"
         };
-        let disposition = disposition_reason(&a, &kind, pre_attach, authorizing);
+        let disposition = disposition_reason(&a, &kind, pre_attach, &authorizing);
         if !absorbing(&a) {
             tx.execute("UPDATE participant_registration_attempts SET state='ABANDONED',disposition_reason=?,updated_at=? WHERE attempt_id=?",params![disposition,now,a["attempt_id"].as_str()])?;
         }
@@ -356,67 +356,122 @@ impl Store {
                 "predecessor recovery is neither reconciled nor explicitly abandoned",
             ));
         }
-        let session = tx.query_row(
-            "SELECT * FROM sessions WHERE host_session_id=?",
-            [reg["host_session_id"].as_str()],
-            raw_row,
-        )?;
-        let (carried, selection_reason, selected) =
-            select(&tx, &session, &a, body, &kind, pre_attach)?;
-        let attempt = uuid("participant-attempt");
-        let request = uuid("req");
-        let operation = uuid("op");
-        let invocation = uuid("inv");
-        let mut current = reg.clone();
-        let (runtime, binding_id) = if kind == "host" {
-            if !["BINDING", "RETIRING"]
-                .iter()
-                .any(|v| binding["state"] == *v)
-            {
-                return Ok(gate_changed("successor allocation gate changed"));
-            }
-            let host = uuid("hsid");
-            let generation = reg["generation"].as_i64().unwrap_or(1) + 1;
-            let runtime = uuid("rt");
-            let next_binding = uuid("participant-binding");
-            tx.execute(
-                "UPDATE sessions SET status='archived',updated_at=? WHERE host_session_id=?",
-                params![now, reg["host_session_id"].as_str()],
-            )?;
-            tx.execute("INSERT INTO sessions(host_session_id,scope_ref,lane_ref,generation,status,prior_host_session_id,last_applied_intent_json,continuation_json,created_at,updated_at) VALUES (?,?,?,?,'active',?,?,?,?,?)",params![host,reg["scope_ref"].as_str(),reg["lane_ref"].as_str(),generation,reg["host_session_id"].as_str(),session["last_applied_intent_json"].as_str(),if carried{session["continuation_json"].as_str()}else{None},now,now])?;
-            tx.execute("UPDATE continuities SET active_host_session_id=?,updated_at=? WHERE scope_ref=? AND lane_ref=?",params![host,now,reg["scope_ref"].as_str(),reg["lane_ref"].as_str()])?;
-            tx.execute("UPDATE participant_host_bindings SET state='RETIRED',retired_at=?,disposition_reason=?,retirement_receipt_json=CASE WHEN state IN ('BOUND','DETACHED') THEN ? ELSE retirement_receipt_json END,updated_at=? WHERE binding_id=?",params![now,retirement,authorizing.to_string(),now,binding["binding_id"].as_str()])?;
-            tx.execute("UPDATE participant_registrations SET host_session_id=?,generation=?,host_incarnation_id=?,workspace_cwd=COALESCE(?,workspace_cwd),serving_socket_path=COALESCE(?,serving_socket_path),updated_at=? WHERE registration_id=?",params![host,generation,body["hostIncarnationId"].as_str(),body["workspaceCwd"].as_str(),body["socketPath"].as_str(),now,reg["registration_id"].as_str()])?;
-            tx.execute("INSERT INTO participant_host_bindings(binding_id,reservation_id,registration_id,host_incarnation_id,host_session_id,generation,runtime_id,state,predecessor_binding_id,admitted_at,updated_at) VALUES (?,?,?,?,?,?,?,'BINDING',?,?,?)",params![next_binding,binding["reservation_id"].as_str(),reg["registration_id"].as_str(),body["hostIncarnationId"].as_str(),host,generation,runtime,binding["binding_id"].as_str(),now,now])?;
-            tx.execute("UPDATE runs SET status='failed',completed_at=?,updated_at=?,error_code='runtime_unavailable',error_message='participant host was replaced: host_replaced' WHERE runtime_id=? AND completed_at IS NULL AND status IN ('queued','accepted','started','running') AND EXISTS(SELECT 1 FROM runtimes r WHERE r.runtime_id=runs.runtime_id AND r.status!='terminated')",params![now,now,binding["runtime_id"].as_str()])?;
-            tx.execute("UPDATE runtimes SET status='terminated',status_changed_at=?,lifecycle_terminal_reason='host_replaced',active_run_id=NULL,runtime_state_json=json_set(COALESCE(runtime_state_json,'{}'),'$.status','terminated','$.terminalReason','host_replaced'),updated_at=? WHERE runtime_id=? AND status!='terminated'",params![now,now,binding["runtime_id"].as_str()])?;
-            current["host_session_id"] = host.into();
-            current["generation"] = generation.into();
-            (runtime, next_binding)
-        } else {
-            tx.execute("UPDATE participant_registrations SET workspace_cwd=COALESCE(?,workspace_cwd),serving_socket_path=COALESCE(?,serving_socket_path),updated_at=? WHERE registration_id=?",params![body["workspaceCwd"].as_str(),body["socketPath"].as_str(),now,reg["registration_id"].as_str()])?;
-            (
-                binding["runtime_id"].as_str().unwrap_or("").to_owned(),
-                binding["binding_id"].as_str().unwrap_or("").to_owned(),
-            )
-        };
-        Self::set_participant_disposition(
+        let Some(result) = allocate(
             &tx,
-            binding["reservation_id"]
-                .as_str()
-                .context("reservation id")?,
-            None,
+            reg,
+            &a,
+            &binding,
+            body,
+            Successor {
+                kind: &kind,
+                pre_attach,
+                retirement,
+                authorizing: &authorizing,
+                retired_ok: false,
+            },
+            &mut intent,
             &now,
-        )?;
-        tx.execute("INSERT INTO participant_registration_attempts(attempt_id,registration_id,attach_epoch,request_id,operation_id,invocation_id,runtime_id,host_binding_id,state,recovery_disposition,establishment_work_state,establishment_attempt_count,continuation_carried,continuation_reason,continuation_selected_json,continuation_resume_state,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,'IDENTITY_MINTED','unresolved','pending',0,?,?,?,'not_requested',?,?)",params![attempt,reg["registration_id"].as_str(),a["attach_epoch"].as_i64().unwrap_or(1)+1,request,operation,invocation,runtime,binding_id,carried,selection_reason,selected,now,now])?;
-        intent["allocatedAttemptId"] = attempt.clone().into();
-        tx.execute("UPDATE participant_registration_attempts SET replacement_intent_json=?,establishment_work_state='completed',establishment_next_attempt_at=NULL,establishment_last_error=NULL,updated_at=? WHERE attempt_id=?",params![intent.to_string(),now,a["attempt_id"].as_str()])?;
-        let successor = latest(&tx, reg["registration_id"].as_str().unwrap_or(""))?
-            .context("successor attempt")?;
-        let result = registered(&current, &successor, true)?;
+        )?
+        else {
+            return Ok(gate_changed("successor allocation gate changed"));
+        };
         tx.commit()?;
         Ok(ParticipantJoin::Registered(result))
     }
+}
+
+struct Successor<'a> {
+    kind: &'a str,
+    pre_attach: bool,
+    /// The predecessor binding's retirement reason.
+    retirement: &'a str,
+    /// The evidence that authorizes the predecessor's retirement.
+    authorizing: &'a Value,
+    /// An already RETIRED predecessor binding is allocatable (hrc-launched).
+    retired_ok: bool,
+}
+
+/// Allocate the successor attempt over the absorbing predecessor `a`, in the
+/// caller's transaction, and, for a host replacement, its new host session,
+/// generation, runtime and binding. `None` is a predecessor binding no longer
+/// in an allocatable state.
+#[allow(clippy::too_many_arguments)]
+fn allocate(
+    tx: &Connection,
+    reg: &Value,
+    a: &Value,
+    binding: &Value,
+    body: &Value,
+    next: Successor<'_>,
+    intent: &mut Value,
+    now: &str,
+) -> Result<Option<Value>> {
+    let Successor {
+        kind,
+        pre_attach,
+        retirement,
+        authorizing,
+        retired_ok,
+    } = next;
+    let now = now.to_owned();
+    let session = tx.query_row(
+        "SELECT * FROM sessions WHERE host_session_id=?",
+        [reg["host_session_id"].as_str()],
+        raw_row,
+    )?;
+    let (carried, selection_reason, selected) = select(tx, &session, a, body, kind, pre_attach)?;
+    let attempt = uuid("participant-attempt");
+    let request = uuid("req");
+    let operation = uuid("op");
+    let invocation = uuid("inv");
+    let mut current = reg.clone();
+    let (runtime, binding_id) = if kind == "host" {
+        if !["BINDING", "RETIRING"]
+            .iter()
+            .any(|v| binding["state"] == *v)
+            && !(retired_ok && binding["state"] == "RETIRED")
+        {
+            return Ok(None);
+        }
+        let host = uuid("hsid");
+        let generation = reg["generation"].as_i64().unwrap_or(1) + 1;
+        let runtime = uuid("rt");
+        let next_binding = uuid("participant-binding");
+        tx.execute(
+            "UPDATE sessions SET status='archived',updated_at=? WHERE host_session_id=?",
+            params![now, reg["host_session_id"].as_str()],
+        )?;
+        tx.execute("INSERT INTO sessions(host_session_id,scope_ref,lane_ref,generation,status,prior_host_session_id,last_applied_intent_json,continuation_json,created_at,updated_at) VALUES (?,?,?,?,'active',?,?,?,?,?)",params![host,reg["scope_ref"].as_str(),reg["lane_ref"].as_str(),generation,reg["host_session_id"].as_str(),session["last_applied_intent_json"].as_str(),if carried{session["continuation_json"].as_str()}else{None},now,now])?;
+        tx.execute("UPDATE continuities SET active_host_session_id=?,updated_at=? WHERE scope_ref=? AND lane_ref=?",params![host,now,reg["scope_ref"].as_str(),reg["lane_ref"].as_str()])?;
+        tx.execute("UPDATE participant_host_bindings SET state='RETIRED',retired_at=?,disposition_reason=?,retirement_receipt_json=CASE WHEN state IN ('BOUND','DETACHED') THEN ? ELSE retirement_receipt_json END,updated_at=? WHERE binding_id=? AND state!='RETIRED'",params![now,retirement,authorizing.to_string(),now,binding["binding_id"].as_str()])?;
+        tx.execute("UPDATE participant_registrations SET host_session_id=?,generation=?,host_incarnation_id=?,workspace_cwd=COALESCE(?,workspace_cwd),serving_socket_path=COALESCE(?,serving_socket_path),updated_at=? WHERE registration_id=?",params![host,generation,body["hostIncarnationId"].as_str(),body["workspaceCwd"].as_str(),body["socketPath"].as_str(),now,reg["registration_id"].as_str()])?;
+        tx.execute("INSERT INTO participant_host_bindings(binding_id,reservation_id,registration_id,host_incarnation_id,host_session_id,generation,runtime_id,state,predecessor_binding_id,admitted_at,updated_at) VALUES (?,?,?,?,?,?,?,'BINDING',?,?,?)",params![next_binding,binding["reservation_id"].as_str(),reg["registration_id"].as_str(),body["hostIncarnationId"].as_str(),host,generation,runtime,binding["binding_id"].as_str(),now,now])?;
+        tx.execute("UPDATE runs SET status='failed',completed_at=?,updated_at=?,error_code='runtime_unavailable',error_message='participant host was replaced: host_replaced' WHERE runtime_id=? AND completed_at IS NULL AND status IN ('queued','accepted','started','running') AND EXISTS(SELECT 1 FROM runtimes r WHERE r.runtime_id=runs.runtime_id AND r.status!='terminated')",params![now,now,binding["runtime_id"].as_str()])?;
+        tx.execute("UPDATE runtimes SET status='terminated',status_changed_at=?,lifecycle_terminal_reason='host_replaced',active_run_id=NULL,runtime_state_json=json_set(COALESCE(runtime_state_json,'{}'),'$.status','terminated','$.terminalReason','host_replaced'),updated_at=? WHERE runtime_id=? AND status!='terminated'",params![now,now,binding["runtime_id"].as_str()])?;
+        current["host_session_id"] = host.into();
+        current["generation"] = generation.into();
+        (runtime, next_binding)
+    } else {
+        tx.execute("UPDATE participant_registrations SET workspace_cwd=COALESCE(?,workspace_cwd),serving_socket_path=COALESCE(?,serving_socket_path),updated_at=? WHERE registration_id=?",params![body["workspaceCwd"].as_str(),body["socketPath"].as_str(),now,reg["registration_id"].as_str()])?;
+        (
+            binding["runtime_id"].as_str().unwrap_or("").to_owned(),
+            binding["binding_id"].as_str().unwrap_or("").to_owned(),
+        )
+    };
+    Store::set_participant_disposition(
+        tx,
+        binding["reservation_id"]
+            .as_str()
+            .context("reservation id")?,
+        None,
+        &now,
+    )?;
+    tx.execute("INSERT INTO participant_registration_attempts(attempt_id,registration_id,attach_epoch,request_id,operation_id,invocation_id,runtime_id,host_binding_id,state,recovery_disposition,establishment_work_state,establishment_attempt_count,continuation_carried,continuation_reason,continuation_selected_json,continuation_resume_state,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,'IDENTITY_MINTED','unresolved','pending',0,?,?,?,'not_requested',?,?)",params![attempt,reg["registration_id"].as_str(),a["attach_epoch"].as_i64().unwrap_or(1)+1,request,operation,invocation,runtime,binding_id,carried,selection_reason,selected,now,now])?;
+    intent["allocatedAttemptId"] = attempt.clone().into();
+    tx.execute("UPDATE participant_registration_attempts SET replacement_intent_json=?,establishment_work_state='completed',establishment_next_attempt_at=NULL,establishment_last_error=NULL,updated_at=? WHERE attempt_id=?",params![intent.to_string(),now,a["attempt_id"].as_str()])?;
+    let successor =
+        latest(tx, reg["registration_id"].as_str().unwrap_or(""))?.context("successor attempt")?;
+    Ok(Some(registered(&current, &successor, true)?))
 }
 
 fn disposition_reason(a: &Value, kind: &str, pre_attach: bool, evidence: &Value) -> String {
@@ -491,4 +546,180 @@ fn select(
         return Ok((false, "reuse_disabled".into(), None));
     }
     Ok((true, "carried".into(), Some(value.into())))
+}
+
+/// HRC's own host succession (T-13434 section 6), in the caller's single
+/// transaction: the predecessor is the latest binding, and `evidence` is why it
+/// is gone. An `hrc-launched` registration takes HRC's statement, even over
+/// bindings that are all retired. An `externally-owned` one (the cutover) needs
+/// a dead transport probe of its current attempt and keeps today's refusal once
+/// all its bindings are retired. Every refusal returns before the first write.
+pub(super) fn hrc_launched(
+    db: &Connection,
+    reg: &Value,
+    body: &Value,
+    evidence: PredecessorEvidence<'_>,
+) -> Result<ParticipantJoin> {
+    let scope = reg["scope_ref"].as_str().unwrap_or("");
+    if reg["lane_ref"] != body["laneRef"] {
+        return Ok(refusal(
+            "rejected",
+            "host_binding_precondition_failed",
+            format!(
+                "{scope} is registered on lane {}; one registration holds one lane",
+                js(&reg["lane_ref"])
+            ),
+        ));
+    }
+    let Some(a) = latest(db, reg["registration_id"].as_str().unwrap_or(""))? else {
+        return Ok(refusal(
+            "pending",
+            "participant_attempt_unavailable",
+            "the registered participant has no durable attempt",
+        ));
+    };
+    let Some(binding) = db
+        .query_row(
+            "SELECT * FROM participant_host_bindings WHERE binding_id=?",
+            [a["host_binding_id"].as_str()],
+            raw_row,
+        )
+        .optional()?
+    else {
+        return Ok(refusal(
+            "rejected",
+            "host_binding_precondition_failed",
+            "replacement requires the exact durable predecessor binding identity",
+        ));
+    };
+    let incarnation = js(&binding["host_incarnation_id"]);
+    let (reason, detail) = match (reg["lifecycle_owner"].as_str(), evidence) {
+        (Some(HRC_LAUNCHED), PredecessorEvidence::Gone { detail }) => (
+            "hrc_launched_predecessor_gone",
+            json!({"basis":"hrc_launched","detail":detail}),
+        ),
+        (Some(HRC_LAUNCHED), PredecessorEvidence::Probe { .. }) => {
+            return Ok(gate_changed(
+                "the address is hrc-launched; a transport probe does not retire its host",
+            ));
+        }
+        (Some(EXTERNALLY_OWNED), evidence) => {
+            if !["BINDING", "BOUND", "DETACHED", "RETIRING"]
+                .iter()
+                .any(|s| binding["state"] == *s)
+            {
+                let reservation = binding["reservation_id"].as_str().unwrap_or("");
+                return Ok(succession_unsupported(db, scope, reservation)?
+                    .unwrap_or_else(|| gate_changed("predecessor binding changed")));
+            }
+            match evidence {
+                PredecessorEvidence::Probe {
+                    attempt_id,
+                    outcome,
+                    detail,
+                } if a["attempt_id"] == attempt_id => {
+                    if outcome != "transport_dead" {
+                        return Ok(refusal(
+                            "rejected",
+                            "host_binding_conflict",
+                            format!(
+                                "{scope} is held by externally-owned host incarnation {incarnation}; its endpoint probe found {outcome} ({detail}), and only a dead endpoint admits HRC's succession"
+                            ),
+                        ));
+                    }
+                    (
+                        "transport_dead",
+                        json!({"basis":"transport","probedEndpoint":a["attach_socket_path"],"detail":detail}),
+                    )
+                }
+                PredecessorEvidence::Probe { .. } => {
+                    return Ok(gate_changed(
+                        "the probed predecessor attempt is no longer current",
+                    ));
+                }
+                PredecessorEvidence::Gone { .. } => {
+                    return Ok(refusal(
+                        "rejected",
+                        "host_binding_conflict",
+                        format!(
+                            "{scope} is held by externally-owned host incarnation {incarnation}; HRC succeeds it only after a transport probe finds its endpoint dead"
+                        ),
+                    ));
+                }
+            }
+        }
+        (other, _) => anyhow::bail!(
+            "participant registration {} has unknown lifecycle owner {other:?}",
+            js(&reg["registration_id"])
+        ),
+    };
+    let now = timestamp();
+    let writer = json!({"subject":"host","classId":reg["class_id"].as_str().unwrap_or("hrc-direct-registration"),"participantKey":reg["participant_key"].as_str().or(reg["registration_id"].as_str()),"attemptId":a["attempt_id"],"invocationId":a["invocation_id"],"attachEpoch":a["attach_epoch"],"hostIncarnationId":binding["host_incarnation_id"]});
+    let receipt = json!({"schemaVersion":"writer-evidence/v1","writerRef":writer,"observedAt":now,"writePath":{"state":"unknown","reason":reason,"detail":detail},"liveness":{"state":"dead","reason":reason,"detail":detail},"priorRecovery":{"state":"unknown","reason":"HRC succeeds a host whose processes are gone","detail":detail}});
+    let mut candidate = json!({"hostIncarnationId":body["hostIncarnationId"]});
+    for key in ["workspaceCwd", "socketPath"] {
+        if let Some(v) = body.get(key) {
+            candidate[key] = v.clone();
+        }
+    }
+    if body["continuation"] == "fresh" {
+        candidate["continuation"] = "fresh".into();
+    }
+    let mut intent = json!({"schemaVersion":"participant-replacement-intent/v1","kind":"host","registrant":"hrc","operationId":uuid("participant-replacement"),"predecessor":{"bindingId":binding["binding_id"],"hostIncarnationId":binding["host_incarnation_id"],"hostSessionId":binding["host_session_id"],"generation":binding["generation"],"runtimeId":binding["runtime_id"],"attemptId":a["attempt_id"],"attachEpoch":a["attach_epoch"],"invocationId":a["invocation_id"]},"predecessorWork":{"state":a["establishment_work_state"],"attemptCount":a["establishment_attempt_count"]},"candidate":candidate,"receipt":receipt,"retirementBasis":receipt,"createdAt":now});
+    db.execute("UPDATE participant_registration_attempts SET writer_evidence_json=?,updated_at=? WHERE attempt_id=?",params![receipt.to_string(),now,a["attempt_id"].as_str()])?;
+    if !absorbing(&a) {
+        let disposition = if reason == "transport_dead" {
+            disposition_reason(&a, "host", false, &receipt)
+        } else {
+            format!("{reason}:{now}")
+        };
+        db.execute("UPDATE participant_registration_attempts SET state='ABANDONED',disposition_reason=?,updated_at=? WHERE attempt_id=?",params![disposition,now,a["attempt_id"].as_str()])?;
+    }
+    db.execute("UPDATE participant_registration_attempts SET recovery_disposition='abandoned',recovery_reason=?,updated_at=? WHERE attempt_id=? AND recovery_disposition='unresolved'",params![reason,now,a["attempt_id"].as_str()])?;
+    if ["BOUND", "DETACHED"]
+        .iter()
+        .any(|state| binding["state"] == *state)
+    {
+        db.execute("UPDATE participant_host_bindings SET state='RETIRING',retirement_receipt_json=?,updated_at=? WHERE binding_id=?",params![receipt.to_string(),now,binding["binding_id"].as_str()])?;
+    }
+    db.execute(
+        "UPDATE participant_registrations SET lifecycle_owner=?,updated_at=? WHERE registration_id=?",
+        params![HRC_LAUNCHED, now, reg["registration_id"].as_str()],
+    )?;
+    let a = db.query_row(
+        "SELECT * FROM participant_registration_attempts WHERE attempt_id=?",
+        [a["attempt_id"].as_str()],
+        raw_row,
+    )?;
+    let binding = db.query_row(
+        "SELECT * FROM participant_host_bindings WHERE binding_id=?",
+        [binding["binding_id"].as_str()],
+        raw_row,
+    )?;
+    let retirement = if reason == "transport_dead" {
+        "transport_dead"
+    } else {
+        "predecessor_gone"
+    };
+    Ok(
+        match allocate(
+            db,
+            reg,
+            &a,
+            &binding,
+            body,
+            Successor {
+                kind: "host",
+                pre_attach: false,
+                retirement,
+                authorizing: &receipt,
+                retired_ok: true,
+            },
+            &mut intent,
+            &now,
+        )? {
+            Some(reply) => ParticipantJoin::Registered(reply),
+            None => gate_changed("successor allocation gate changed"),
+        },
+    )
 }

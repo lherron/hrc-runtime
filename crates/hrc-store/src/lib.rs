@@ -48,7 +48,10 @@ pub use turn_attention::TurnAttention;
 pub mod transcript_index;
 pub use metadata::{MetadataWrite, validate_metadata};
 pub use monitor_read::{MonitorFilters, escape_like, event_row, parse_task_id};
-pub use participants::{ParticipantBookkeepingConflict, ParticipantJoin};
+pub use participants::{
+    HRC_LAUNCHED, ParticipantAbandon, ParticipantBookkeepingConflict, ParticipantJoin,
+    PredecessorEvidence,
+};
 
 pub fn canonical_lane(lane: &str) -> String {
     if lane == "main" || lane == "lane:main" {

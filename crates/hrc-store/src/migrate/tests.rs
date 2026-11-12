@@ -402,3 +402,67 @@ fn lock_is_released_with_its_owner() {
     drop(owner);
     StoreOwner::acquire(&dir.db()).expect("free once the owner is gone");
 }
+
+/// T-13438 failure mode 2: 0134 widens the `lifecycle_owner` CHECK by
+/// rebuilding `participant_registrations`. Rows, the incarnation index and
+/// the children's keys survive; a migrated store's schema text equals a fresh
+/// one's; the new value is admitted and an unknown one still refused.
+#[test]
+fn m0134_admits_hrc_launched_and_keeps_registrations() {
+    let at = |id: &str| FORWARD.iter().position(|m| m.id == id).unwrap();
+    let head = at("0134_participant_hrc_launched_owner");
+    let old = Dir::new();
+    migrate(&old.db(), &FORWARD[..head], &actor()).unwrap();
+    let c = conn(&old.db());
+    let insert = |c: &Connection, owner: &str, id: &str| {
+        c.execute("INSERT INTO participant_registrations(registration_id,join_direction,scope_ref,lane_ref,host_session_id,generation,address_policy,continuity_policy,lifecycle_owner,replay_semantics,host_incarnation_id,created_at,updated_at) VALUES (?,'participant-served',?,'main','hs',1,'selected-scope','host-incarnation',?,'full-source-replay','inc','t','t')", params![id, format!("agent:{id}"), owner])
+    };
+    insert(&c, "externally-owned", "reg-ext").unwrap();
+    assert!(
+        insert(&c, "hrc-launched", "reg-early").is_err(),
+        "0133 refuses the new owner"
+    );
+    c.execute("INSERT INTO participant_registration_attempts(attempt_id,registration_id,attach_epoch,request_id,operation_id,invocation_id,runtime_id,state,created_at,updated_at) VALUES ('att','reg-ext',1,'req','op','inv','rt','IDENTITY_MINTED','t','t')", []).unwrap();
+    drop(c);
+    assert_eq!(
+        migrate(&old.db(), FORWARD, &actor()).unwrap(),
+        Outcome::Upgraded {
+            applied: FORWARD[head..].iter().map(|m| m.id.to_owned()).collect()
+        }
+    );
+    let c = conn(&old.db());
+    let owner: String = c
+        .query_row(
+            "SELECT lifecycle_owner FROM participant_registrations WHERE registration_id='reg-ext'",
+            [],
+            |r| r.get(0),
+        )
+        .unwrap();
+    assert_eq!(owner, "externally-owned");
+    let violations: i64 = c
+        .query_row("SELECT count(*) FROM pragma_foreign_key_check", [], |r| {
+            r.get(0)
+        })
+        .unwrap();
+    assert_eq!(violations, 0);
+    insert(&c, "hrc-launched", "reg-launched").unwrap();
+    assert!(insert(&c, "bogus", "reg-bogus").is_err());
+    let schema = |db: &Path| -> Vec<(String, Option<String>)> {
+        conn(db)
+            .prepare("SELECT name,sql FROM sqlite_master WHERE tbl_name='participant_registrations' ORDER BY name")
+            .unwrap()
+            .query_map([], |r| Ok((r.get(0)?, r.get(1)?)))
+            .unwrap()
+            .collect::<rusqlite::Result<_>>()
+            .unwrap()
+    };
+    let fresh = Dir::new();
+    migrate(&fresh.db(), FORWARD, &actor()).unwrap();
+    let migrated = schema(&old.db());
+    assert_eq!(migrated, schema(&fresh.db()));
+    assert!(
+        migrated
+            .iter()
+            .any(|(name, _)| name == "idx_participant_registration_incarnation")
+    );
+}

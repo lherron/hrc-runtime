@@ -42,6 +42,11 @@ pub const FORWARD: &[Forward] = &[
         rebuild: false,
         apply: forward::m0133_participant_parked_disposition,
     },
+    Forward {
+        id: "0134_participant_hrc_launched_owner",
+        rebuild: true,
+        apply: forward::m0134_participant_hrc_launched_owner,
+    },
 ];
 
 /// Who moved the store, recorded in the `store.migrated` row of an upgrade.
