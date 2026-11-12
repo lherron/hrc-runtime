@@ -1,11 +1,13 @@
-//! Task-seat retirement (T-12236). A live `task:T-…` seat is retired when its
-//! wrkq task is `completed`, or once it has been idle for
-//! HRC_TASK_SEAT_IDLE_HOURS (default 4). Retirement is the terminate
-//! `hrc runtime terminate --no-drop-continuation` performs: the session row
-//! and its continuation stay, so the next message resumes the conversation.
-//! Busy seats, seats with a run or protected input in flight, seats a person
-//! is attached to read-write, primaries, standing seats and app scopes are
-//! never touched.
+//! Seat retirement (T-12236, T-13432). A live `task:T-…` seat is retired when
+//! its wrkq task is `completed`, or once it has been idle for
+//! HRC_TASK_SEAT_IDLE_HOURS (default 4). A standing seat named in
+//! [`IDLE_STANDING_SEATS`] is retired once it has been idle for that rule's
+//! window; no wrkq task stands behind it, so idle is its only trigger.
+//! Retirement is the terminate `hrc runtime terminate --no-drop-continuation`
+//! performs: the session row and its continuation stay, so the next message
+//! resumes the conversation. Busy seats, seats with a run or protected input
+//! in flight, seats a person is attached to read-write, every other standing
+//! seat (other agents' primaries among them) and app scopes are never touched.
 use super::{Shared, control, hrcpty, lease, projection::db};
 use rusqlite::params;
 use serde_json::{Map, Value, json};
@@ -16,6 +18,11 @@ const INTERVAL: Duration = Duration::from_secs(300);
 const DEFAULT_IDLE_HOURS: f64 = 4.0;
 const SOURCE: &str = "hrc-seat-retirement";
 
+/// Standing seats that retire on idle: (agent, task, idle window). Lance
+/// ruling 2026-11-12 (T-13430): an idle Foundry project primary after 60 min.
+const IDLE_STANDING_SEATS: &[(&str, &str, Duration)] =
+    &[("foundry", "primary", Duration::from_secs(60 * 60))];
+
 /// HRC_TASK_SEAT_IDLE_HOURS: a positive number of hours, default 4.
 fn idle_hours() -> f64 {
     std::env::var("HRC_TASK_SEAT_IDLE_HOURS")
@@ -25,28 +32,46 @@ fn idle_hours() -> f64 {
         .unwrap_or(DEFAULT_IDLE_HOURS)
 }
 
-/// Why the seat must be left alone, before any trigger is considered.
-async fn guard(server: &Shared, rt: &db::Rt) -> anyhow::Result<Option<String>> {
+/// What a seat that may be retired is judged on.
+enum Due {
+    /// A task seat: its wrkq task's state, then the task idle window.
+    Task(String),
+    /// A standing seat from [`IDLE_STANDING_SEATS`]: its task id and window.
+    Idle(String, Duration),
+}
+
+/// The seat's [`Due`], or why it must be left alone before any trigger is
+/// considered.
+async fn judge(server: &Shared, rt: &db::Rt) -> anyhow::Result<Result<Due, String>> {
     if rt.scope_ref.starts_with("app:") {
-        return Ok(Some("app_scope".into()));
+        return Ok(Err("app_scope".into()));
     }
-    if server
-        .store
-        .lock()
-        .unwrap()
-        .seat_state(&rt.scope_ref, &rt.lane_ref)?["kind"]
-        != "task"
+    let (identity, kind) = {
+        let db = server.store.lock().unwrap();
+        (
+            db.identity(&rt.scope_ref, &rt.lane_ref)?,
+            db.seat_state(&rt.scope_ref, &rt.lane_ref)?["kind"].clone(),
+        )
+    };
+    let task = identity["taskId"].as_str().unwrap_or_default().to_owned();
+    let due = if let Some(&(_, _, window)) = IDLE_STANDING_SEATS
+        .iter()
+        .find(|(agent, t, _)| identity["agentId"] == *agent && task == *t)
     {
-        return Ok(Some("standing_seat".into()));
-    }
+        Due::Idle(task, window)
+    } else if kind == "task" {
+        Due::Task(task)
+    } else {
+        return Ok(Err("standing_seat".into()));
+    };
     if super::controller::is_external_lifecycle_owner(rt) {
-        return Ok(Some("external_lifecycle_owner".into()));
+        return Ok(Err("external_lifecycle_owner".into()));
     }
     if rt.status != "ready" {
-        return Ok(Some(rt.status.clone()));
+        return Ok(Err(rt.status.clone()));
     }
     if rt.active_run_id.is_some() {
-        return Ok(Some("active_run".into()));
+        return Ok(Err("active_run".into()));
     }
     let (nonterminal, protected) = {
         let db = server.store.lock().unwrap();
@@ -57,10 +82,10 @@ async fn guard(server: &Shared, rt: &db::Rt) -> anyhow::Result<Option<String>> {
         )?
     };
     if nonterminal {
-        return Ok(Some("nonterminal_run".into()));
+        return Ok(Err("nonterminal_run".into()));
     }
     if protected {
-        return Ok(Some("protected_input".into()));
+        return Ok(Err("protected_input".into()));
     }
     // A person typing into the seat is using it, whatever the task says.
     if let Some((socket, pid)) = hrcpty::substrate(rt)
@@ -69,9 +94,9 @@ async fn guard(server: &Shared, rt: &db::Rt) -> anyhow::Result<Option<String>> {
             .as_u64()
             .is_some_and(|n| n > 0)
     {
-        return Ok(Some("attached_client".into()));
+        return Ok(Err("attached_client".into()));
     }
-    Ok(None)
+    Ok(Ok(due))
 }
 
 /// Close a still-idle seat to admission before the terminate awaits, as the
@@ -101,8 +126,8 @@ fn close(server: &Shared, rt: &db::Rt) -> anyhow::Result<bool> {
     Ok(true)
 }
 
-/// One pass: judge every live runtime, retire the task seats that are due.
-pub async fn retire_task_seats(server: &Shared) -> anyhow::Result<Value> {
+/// One pass: judge every live runtime, retire the seats that are due.
+pub async fn retire_seats(server: &Shared) -> anyhow::Result<Value> {
     let _pass = super::maintenance::SEAT_PASSES.lock().await;
     let hours = idle_hours();
     let ttl_ms = (hours * 3_600_000.0) as i64;
@@ -123,54 +148,62 @@ pub async fn retire_task_seats(server: &Shared) -> anyhow::Result<Value> {
         {
             break;
         }
-        if let Some(reason) = guard(server, rt).await? {
-            *skipped.entry(reason).or_default() += 1;
-            continue;
-        }
-        let task = server
-            .store
-            .lock()
-            .unwrap()
-            .identity(&rt.scope_ref, &rt.lane_ref)?["taskId"]
-            .as_str()
-            .unwrap_or_default()
-            .to_owned();
-        if !tasks.contains_key(&task) {
-            let state = server
-                .wrkq
-                .request("wrkq.task.show", json!({"task":task}))
-                .await
-                .map_err(|e| format!("{e:#}"))
-                .and_then(|v| {
-                    v["state"]
-                        .as_str()
-                        .map(str::to_owned)
-                        .ok_or_else(|| "wrkq.task.show answered no state".to_owned())
-                });
-            tasks.insert(task.clone(), state);
-        }
-        let state = &tasks[&task];
+        let due = match judge(server, rt).await? {
+            Ok(due) => due,
+            Err(reason) => {
+                *skipped.entry(reason).or_default() += 1;
+                continue;
+            }
+        };
         let idle_ms = rt
             .last_activity_at
             .as_deref()
             .and_then(db::parse_ms)
             .map(|at| now_ms - at);
-        let trigger = if state.as_deref() == Ok("completed") {
-            "task_completed"
-        } else if idle_ms.is_some_and(|ms| ms >= ttl_ms) {
-            "idle_ttl"
-        } else {
-            *skipped
-                .entry(
-                    if state.is_err() {
-                        "task_state_unavailable"
-                    } else {
-                        "not_due"
-                    }
-                    .into(),
-                )
-                .or_default() += 1;
-            continue;
+        let idle_for = |ms: i64| idle_ms.is_some_and(|idle| idle >= ms);
+        let (task, state, trigger) = match due {
+            Due::Idle(task, window) => {
+                if !idle_for(window.as_millis() as i64) {
+                    *skipped.entry("not_due".into()).or_default() += 1;
+                    continue;
+                }
+                (task, None, "idle_ttl")
+            }
+            Due::Task(task) => {
+                if !tasks.contains_key(&task) {
+                    let state = server
+                        .wrkq
+                        .request("wrkq.task.show", json!({"task":task}))
+                        .await
+                        .map_err(|e| format!("{e:#}"))
+                        .and_then(|v| {
+                            v["state"]
+                                .as_str()
+                                .map(str::to_owned)
+                                .ok_or_else(|| "wrkq.task.show answered no state".to_owned())
+                        });
+                    tasks.insert(task.clone(), state);
+                }
+                let state = tasks[&task].clone();
+                let trigger = if state.as_deref() == Ok("completed") {
+                    "task_completed"
+                } else if idle_for(ttl_ms) {
+                    "idle_ttl"
+                } else {
+                    *skipped
+                        .entry(
+                            if state.is_err() {
+                                "task_state_unavailable"
+                            } else {
+                                "not_due"
+                            }
+                            .into(),
+                        )
+                        .or_default() += 1;
+                    continue;
+                };
+                (task, state.ok(), trigger)
+            }
         };
         let Some(_write) = server.owner_writes.enter() else {
             break;
@@ -184,13 +217,7 @@ pub async fn retire_task_seats(server: &Shared) -> anyhow::Result<Value> {
         line.insert("scopeRef".into(), rt.scope_ref.as_str().into());
         line.insert("taskId".into(), task.as_str().into());
         line.insert("trigger".into(), trigger.into());
-        line.insert(
-            "taskState".into(),
-            match state {
-                Ok(s) => s.as_str().into(),
-                Err(_) => Value::Null,
-            },
-        );
+        line.insert("taskState".into(), state.into());
         line.insert("idleMs".into(), idle_ms.into());
         match control::retire(server, rt, trigger, SOURCE).await {
             Ok(dropped) => {
@@ -248,7 +275,7 @@ pub fn start(server: &Shared) {
             {
                 return;
             }
-            match retire_task_seats(&server).await {
+            match retire_seats(&server).await {
                 Ok(summary) => {
                     super::stderr_json("info", "sweep", "runtime.seat_retirement_complete", summary)
                 }
