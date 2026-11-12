@@ -318,44 +318,47 @@ install *options:
 #                 worktree at the target -> immutable release under
 #                 ~/praesidium/var/aspd, launchd com.praesidium.aspd)
 #   rusthrc       this repo (atomic release, launchd com.praesidium.hrc-server)
-#   mail injector hrc-mail-injector, bunx-pinned from Verdaccio (launchd
-#                 com.praesidium.hrc-mail-injector)
 # Each takes its own target. `@max3` means what max3 is RUNNING right now;
-# `origin/main` / `latest` mean the newest pushed or published build.
+# `origin/main` means the newest pushed build.
+#
+# A deploy neither needs nor installs the hrc-mail-injector: mail is delivered
+# by the mail-delivery module under the praesidium kernel, and a reinstalled
+# injector would deliver every message twice. The recipes took an injector
+# argument before `restart` until 2026-11-12; an old four-argument call is
+# refused before anything runs, because its third argument is no restart mode.
 
-# Deploy to the max3 logical node (defaults to the latest pushed main and latest injector)
-deploy-max3 ref="origin/main" aspd="origin/main" injector="latest" restart="wait":
-    @just _deploy-node "max3" "max3" "{{ ref }}" "{{ aspd }}" "{{ injector }}" "{{ restart }}" "publish"
+# Deploy to the max3 logical node (defaults to the latest pushed main)
+deploy-max3 ref="origin/main" aspd="origin/main" restart="wait":
+    @just _deploy-node "max3" "max3" "{{ ref }}" "{{ aspd }}" "{{ restart }}" "publish"
 
 # Deploy to the svc logical node (user lherron on mini)
-deploy-svc ref="@max3" aspd="@max3" injector="@max3" restart="wait":
-    @just _deploy-node "mini" "svc" "{{ ref }}" "{{ aspd }}" "{{ injector }}" "{{ restart }}" "no-publish"
+deploy-svc ref="@max3" aspd="@max3" restart="wait":
+    @just _deploy-node "mini" "svc" "{{ ref }}" "{{ aspd }}" "{{ restart }}" "no-publish"
 
 # `hrcdev` here is the Tart macOS guest VM hosted on max3 (`ssh hrcdev`), not the
 # retired ~/praesidium/var/install/hrc-dev lane. See docs/fleet-deployment.md.
 
 # Deploy to the hrcdev logical node (the Tart guest VM on max3)
-deploy-hrcdev ref="@max3" aspd="@max3" injector="@max3" restart="wait":
-    @just _deploy-node "hrcdev" "hrcdev" "{{ ref }}" "{{ aspd }}" "{{ injector }}" "{{ restart }}" "no-publish"
+deploy-hrcdev ref="@max3" aspd="@max3" restart="wait":
+    @just _deploy-node "hrcdev" "hrcdev" "{{ ref }}" "{{ aspd }}" "{{ restart }}" "no-publish"
 
 # The targets are resolved ONCE and passed to every node as literals. Letting
 # each node resolve `@max3` for itself would race a concurrent max3 install and
 # could leave nodes on different builds while reporting success.
 
-# Bring svc and hrcdev to the hrc, aspd and mail-injector builds max3 is running
+# Bring svc and hrcdev to the hrc and aspd builds max3 is running
 deploy-fleet restart="wait":
     #!/usr/bin/env bash
     set -euo pipefail
     hrc_sha="$(just _max3-source-commit)"
     aspd_sha="$(just _max3-aspd-commit)"
-    injector="$(just _max3-injector-version)"
-    echo "[fleet] targets from max3: hrc ${hrc_sha} aspd ${aspd_sha} injector ${injector}"
+    echo "[fleet] targets from max3: hrc ${hrc_sha} aspd ${aspd_sha}"
     # This deliberately goes through the max3 fast path. It proves the exact
     # running target has been selected, restarted/read back, and published
     # before either consumer node begins deployment.
-    just _deploy-node "max3" "max3" "$hrc_sha" "$aspd_sha" "$injector" "{{ restart }}" "publish"
-    just _deploy-node "mini" "svc" "$hrc_sha" "$aspd_sha" "$injector" "{{ restart }}" "no-publish"
-    just _deploy-node "hrcdev" "hrcdev" "$hrc_sha" "$aspd_sha" "$injector" "{{ restart }}" "no-publish"
+    just _deploy-node "max3" "max3" "$hrc_sha" "$aspd_sha" "{{ restart }}" "publish"
+    just _deploy-node "mini" "svc" "$hrc_sha" "$aspd_sha" "{{ restart }}" "no-publish"
+    just _deploy-node "hrcdev" "hrcdev" "$hrc_sha" "$aspd_sha" "{{ restart }}" "no-publish"
     just fleet-status
 
 # T-12224: a rusthrc owner plist that still execs the release link
@@ -432,7 +435,10 @@ fleet-status:
         for p in $(pgrep -u "$(id -u)" -f hrc-mail-injector); do
           ps eww -p "$p" -o command= | tr " " "\n" | grep -qx "HRC_SOCKET_PATH=$socket" && loose=1
         done
-        [[ -n "$loose" ]] && echo UNSUPERVISED || echo down
+        if [[ -n "$loose" ]]; then echo UNSUPERVISED
+        elif [[ -z "$job" && ! -e "$HOME/Library/LaunchAgents/com.praesidium.hrc-mail-injector.plist" ]]; then echo absent
+        else echo down
+        fi
       fi
       kernel_bin="$HOME/.local/bin/praesidium-kernel"
       if [[ ! -x "$kernel_bin" ]]; then
@@ -866,10 +872,16 @@ install-mail-injector-launchd version:
     echo "[injector] ${service_target} pid ${pid} running hrc-mail-injector@${version} for node ${node_id}"
 
 [private]
-_deploy-node ssh-target expected-node target-ref="origin/main" aspd-ref="origin/main" injector="latest" restart="wait" publication="no-publish":
+_deploy-node ssh-target expected-node target-ref="origin/main" aspd-ref="origin/main" restart="wait" publication="no-publish":
     #!/usr/bin/env bash
     set -euo pipefail
 
+    # Refuse a bad restart mode before anything is built or installed. This is
+    # also what stops a call written for the retired injector argument.
+    case '{{ restart }}' in
+      wait|force) ;;
+      *) echo "deploy-{{ expected-node }}: restart mode must be wait or force, got '{{ restart }}' (the injector argument was removed; usage: <ref> <aspd> <restart>)" >&2; exit 2 ;;
+    esac
     target_ref='{{ target-ref }}'
     if [[ "$target_ref" == '@max3' ]]; then
       target_ref="$(just _max3-source-commit)"
@@ -878,12 +890,8 @@ _deploy-node ssh-target expected-node target-ref="origin/main" aspd-ref="origin/
     if [[ "$aspd_ref" == '@max3' ]]; then
       aspd_ref="$(just _max3-aspd-commit)"
     fi
-    injector='{{ injector }}'
-    if [[ "$injector" == '@max3' ]]; then
-      injector="$(just _max3-injector-version)"
-    elif [[ "$injector" == latest ]]; then
-      injector="$(npm view hrc-mail-injector@latest version)"
-    fi
+    # Never installed by a deploy; the empty value makes the readback skip it.
+    injector=''
 
     phase1_log="$(mktemp "${TMPDIR:-/tmp}/deploy-{{ expected-node }}.XXXXXX")"
     trap 'rm -f "$phase1_log"' EXIT
@@ -975,7 +983,7 @@ _deploy-node ssh-target expected-node target-ref="origin/main" aspd-ref="origin/
     }
     target_sha="$(resolve_target "$repo" "$target_ref" hrc)"
     aspd_sha="$(resolve_target "$asp_repo" "$aspd_ref" agent-spaces)"
-    echo "[deploy-${expected_node}] targets: hrc ${target_sha} aspd ${aspd_sha} injector ${injector_version}"
+    echo "[deploy-${expected_node}] targets: hrc ${target_sha} aspd ${aspd_sha}"
 
     running_sha="$(jq -r '.release.hrcBuild.sourceCommit // ""' <<<"$status_before")"
     running_installed="$(jq -r '.release.runningEqualsInstalled // false' <<<"$status_before")"

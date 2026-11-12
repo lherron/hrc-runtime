@@ -13,43 +13,43 @@ target.) One recipe per node — `just deploy-svc`, `deploy-max3`, `deploy-hrcde
 — plus `just fleet-status` for a read-only parity table and `just deploy-fleet`
 to bring svc and hrcdev to the builds max3 is running, in a single pass.
 
-**A node is three processes, deployed in dependency order**, each under its own
+**A node is two processes that a deploy installs, in dependency order**, each under its own
 gui LaunchAgent and each with its own target:
 
 | order | process | source | launchd label | proven by |
 |---|---|---|---|---|
 | 1 | aspd | throwaway detached worktree of `~/praesidium/agent-spaces` at the target → immutable release in `~/praesidium/var/aspd/releases` | `com.praesidium.aspd` | HRC's live probe `.api.aspd.release.sourceCommit` + a launchd-owned pid |
 | 2 | rusthrc (`crates/hrc-native`) | this repo → atomic release | `com.praesidium.hrc-server` | `.release.hrcBuild.sourceCommit`, `runningEqualsInstalled`, launchd owns the pid with the plist env |
-| 3 | hrc-mail-injector | `bunx hrc-mail-injector@<pinned>` from Verdaccio | `com.praesidium.hrc-mail-injector` | job pid argv names the pinned version, logged `"status":"running"`, same pid 10s later |
 
-aspd goes first because HRC refuses every birth without a reachable aspd. The
-injector goes last because it subscribes to the restarted daemon. aspd's
+aspd goes first because HRC refuses every birth without a reachable aspd. aspd's
 lifecycle is agent-spaces' own (`scripts/aspd-service.ts`: `supervise`,
 `activate`; `just build-asp-release`, `install-asp-release`, `aspd-activate`);
-the deploy lane only sequences it. The injector plist is rendered from
-`launchd/com.praesidium.hrc-mail-injector.plist` by `just
-install-mail-injector-launchd <version>`, which takes node ID and socket from HRC
-status and the wrkq endpoint from the node's `com.praesidium.hrc-server` plist, and retires any
-earlier injector on this node's socket (ad-hoc `launchctl submit` jobs and loose
-processes alike — two injectors are two mail writers). It needs the injector
-state store to already carry its one-time kicker-store import marker.
+the deploy lane only sequences it.
+
+**A deploy neither needs nor installs the mail injector** (since 2026-11-12).
+Mail is delivered by the mail-delivery module under the praesidium kernel; the
+TypeScript `hrc-mail-injector` is being retired by ACP, and a deploy that
+reinstalled it would deliver every message twice. The deploy recipes no longer
+take an injector argument: usage is `<ref> <aspd> <restart>`, and a call that
+still passes one is refused before anything runs. `just
+install-mail-injector-launchd <version>` remains only until ACP deletes the
+packages; do not run it on a node whose mail the kernel module delivers.
 
 **Unsupervised is the failure mode to watch.** On 2026-09-22 svc's aspd had died
 days earlier as a detached `aspd-start` process: a stale socket and pid file
 remained, HRC reported `aspd_unavailable`, the node could not birth, and the old
 `fleet-status` still read healthy. `fleet-status` now prints `ASPD` from HRC's
-live probe (`DOWN` when unreachable) and `INJECTOR` as the running pinned version,
-`UNSUPERVISED` (a process serves this node's socket but not under its label), or
-`down`.
+live probe (`DOWN` when unreachable) and `INJECTOR` as `absent` (no launchd job,
+no plist and no process: the expected state once ACP retires it), the running
+pinned version, `UNSUPERVISED` (a process serves this node's socket but not
+under its label), or `down` (a job or plist exists but nothing runs).
 
 **Targets are parameters, and `@max3` is the interesting default.**
 `deploy-svc` / `deploy-hrcdev` default every target to `@max3`: what max3 is
 *running right now* — hrc `.release.hrcBuild.sourceCommit`, aspd
-`.api.aspd.release.sourceCommit`, and the injector version in its launchd job's
-argv — read on the driver and handed to the node as literals. `deploy-max3`
-defaults to `origin/main` (both repos) and `latest` (injector, resolved to a
-version and pinned). Any ref works: `just deploy-svc origin/main origin/main
-0.1.0-dev.…`. `deploy-fleet` resolves `@max3` **once** and passes the literals to every
+`.api.aspd.release.sourceCommit` — read on the driver and handed to the node as
+literals. `deploy-max3` defaults to `origin/main` (both repos). Any ref works:
+`just deploy-svc origin/main origin/main`. `deploy-fleet` resolves `@max3` **once** and passes the literals to every
 node. Letting each node resolve it would race a concurrent max3 install. It
 runs max3 first, which re-proves max3's running target and publishes it, and
 then svc and hrcdev. To move the fleet forward, bring max3 to latest first

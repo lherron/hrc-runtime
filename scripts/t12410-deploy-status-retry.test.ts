@@ -152,7 +152,7 @@ test('healthy status still refuses wrong node and incoherent release', () => {
   }
 }, 20000)
 
-const deploy = ['_deploy-node', 'mini', 'max3', sha, aspSha, pin, 'force', 'no-publish']
+const deploy = ['_deploy-node', 'mini', 'max3', sha, aspSha, 'force', 'no-publish']
 test('remote preflight retries degraded status without requiring a new script in the old checkout', () => {
   const r = run(deploy, [busy, ok])
   expect(r.exit).toBe(0)
