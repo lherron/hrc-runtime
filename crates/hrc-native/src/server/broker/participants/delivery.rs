@@ -22,6 +22,9 @@ pub enum Delivery {
         attempt_id: String,
         runtime: db::Rt,
     },
+    /// A self-brokered scope with no serving or establishing attempt: HRC
+    /// births it. Classification only; admission's rotation stage allocates.
+    Launch { command: Vec<String> },
     /// `pending` keeps the mail eligible; `unavailable` is untrusted linkage.
     /// Neither ever falls through to a generic birth.
     Refused {
@@ -35,9 +38,64 @@ impl Delivery {
     pub fn runtime(&self) -> Option<&db::Rt> {
         match self {
             Self::Attached(rt) | Self::Reconnect { runtime: rt, .. } => Some(rt),
-            Self::Refused { .. } => None,
+            Self::Refused { .. } | Self::Launch { .. } => None,
         }
     }
+}
+
+/// Participant resolution for admission. A scope whose declaration says
+/// self-brokered is `Launch` when it has no registration, its latest attempt is
+/// absorbing, or that attempt is an `hrc-launched` allocation whose launch is
+/// not in flight in this process; a launch in flight is `attachment_pending`.
+/// Everything else, and every other scope, is `resolve`. Writes nothing.
+///
+/// The declaration is an aspd call, so it is read only where the answer could
+/// be `Launch`: never for a serving or establishing attempt, and for an
+/// unregistered scope only when no live broker runtime serves its session (the
+/// route would birth, which reads the declaration anyway).
+pub async fn classify(server: &Shared, session: &Value) -> Result<Option<Delivery>, ApiError> {
+    let scope = session["scopeRef"].as_str().unwrap_or("");
+    let candidate = {
+        let store = server.store.lock().unwrap();
+        match store.participant_registration_by_scope(scope)? {
+            None => crate::server::turns::admission::active_broker_runtime(
+                &store.sqlite,
+                session["hostSessionId"].as_str().unwrap_or(""),
+            )?
+            .is_none(),
+            Some(reg) => {
+                let attempt = store
+                    .participant_latest_attempt(reg["registration_id"].as_str().unwrap_or(""))?;
+                match attempt {
+                    None => true,
+                    Some(attempt) => {
+                        let id = attempt["attempt_id"].as_str().unwrap_or("");
+                        if super::launch::in_flight(id) {
+                            return Ok(Some(Delivery::Refused {
+                                kind: "pending",
+                                reason: "participant_attachment_pending",
+                                detail: format!(
+                                    "self-brokered attempt {id} is launching; addressed work stays pending until it is established"
+                                ),
+                            }));
+                        }
+                        matches!(
+                            attempt["state"].as_str(),
+                            Some("SUPERSEDED" | "ABANDONED" | "TERMINAL")
+                        ) || (reg["lifecycle_owner"] == hrc_store::HRC_LAUNCHED
+                            && attempt["state"] == "IDENTITY_MINTED")
+                    }
+                }
+            }
+        }
+    };
+    if candidate
+        && let Some(command) =
+            crate::server::federation::policy::launch_command(server, scope).await?
+    {
+        return Ok(Some(Delivery::Launch { command }));
+    }
+    resolve(server, session)
 }
 
 /// participantNeedsReconnect: an activated attempt whose controller client is
@@ -268,6 +326,8 @@ pub async fn target(server: &Shared, session: &Value) -> Option<Result<db::Rt, A
             detail,
         } => Err(refusal(session, kind, reason, &detail)),
         Delivery::Reconnect { .. } => Err(reconnecting(session)),
+        // resolve never classifies a launch; only admission does.
+        Delivery::Launch { .. } => Err(reconnecting(session)),
     })
 }
 

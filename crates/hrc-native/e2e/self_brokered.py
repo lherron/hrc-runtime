@@ -58,6 +58,8 @@ mode, module, *flags = sys.argv[1:]
 a = dict(zip(flags[::2],flags[1::2])); root=Path(a['--registration']).parent
 (root/'argv.json').write_text(json.dumps(sys.argv[1:]))
 (root/'child.pid').write_text(str(os.getpid()))
+if globals().get('SPAWNS'):
+    with open(SPAWNS,'a') as f: f.write(json.dumps({'pid':os.getpid(),'registration':a['--registration'],'at':time.time()})+'\n')
 print('SELF-BROKERED-TERMINAL',flush=True)
 if mode == 'exit': sys.exit(23)
 if mode == 'stall':
@@ -66,6 +68,11 @@ j=json.loads(Path(a['--registration']).read_text())
 v=d.scratch(j, a['--project-root']); s=v['harnessInvocation']['startRequest']['spec']
 s['driver']['kind']=s['harness']['driver']=v['brokerDriver']='noop-driver'
 if mode == 'establish': s['driver']['kind']=s['harness']['driver']=v['brokerDriver']='unsupported-launch-driver'
+if mode == 'turn':
+    # T-13441: a seat that completes turns; it continues what HRC offered.
+    s['driver']['kind']=s['harness']['driver']=v['brokerDriver']='turn-stub-driver'
+    if (j.get('continuation') or {}).get('carried'): s['continuation']=j['continuation']['selected']
+    BROKER=TURN_BROKER
 v=d.seal(v)
 if mode == 'bad': v['descriptorHash']='invalid'
 dest=Path(a['--descriptor-out']); tmp=dest.with_suffix('.tmp')
@@ -75,19 +82,245 @@ os.execvp('bun',['bun',BROKER,'run',module,'--transport','unix','--socket',a['--
                        '--event-ledger',str(root/'events.ndjson'),'--join','participant-served'])
 '''
 
+def gates(r, root, report, call, scope, target, a_log):
+    """T-13441: births caused by an input (contract 5.1): G1, G8, G2, G3, mail, lazy.
+
+    Every turn's completion is read from its run row, never the HTTP reply.
+    """
+    import concurrent.futures
+    def enqueue(agent, word, **extra):
+        body = {'target': scope(agent)+'/lane:main', 'body': 'Reply '+word,
+                'origin': {'principalRef': 'agent:clod'}, 'wait': True}
+        body.update(extra)
+        return call('/v1/submissions/enqueue', body)
+    def attempts(agent):
+        return r.rows('SELECT a.* FROM participant_registration_attempts a JOIN participant_registrations p USING(registration_id) WHERE p.scope_ref=? ORDER BY a.attach_epoch', (scope(agent),))
+    def counts(agent):
+        sc = scope(agent)
+        return {'registrations': len(r.rows('SELECT 1 FROM participant_registrations WHERE scope_ref=?', (sc,))),
+                'attempts': len(attempts(agent)),
+                'bindings': len(r.rows('SELECT 1 FROM participant_host_bindings b JOIN participant_registrations p USING(registration_id) WHERE p.scope_ref=?', (sc,))),
+                'sessions': len(r.rows('SELECT 1 FROM sessions WHERE scope_ref=?', (sc,))),
+                'activeHost': r.rows('SELECT active_host_session_id FROM continuities WHERE scope_ref=?', (sc,))[0]['active_host_session_id'],
+                'generation': r.rows('SELECT generation FROM participant_registrations WHERE scope_ref=?', (sc,))[0]['generation']}
+    def regfile(runtime_id):
+        f = next(f for f in (root/'run/bipc').glob('*/registration.json') if json.loads(f.read_text())['identity']['runtimeId'] == runtime_id)
+        return f.parent, json.loads(f.read_text())
+    def spawns(agent):
+        p = root/'spawns.jsonl'
+        lines = [json.loads(l) for l in p.read_text().splitlines()] if p.exists() else []
+        return [x for x in lines if json.loads(Path(x['registration']).read_text())['scopeRef'] == scope(agent)]
+    def completed(reply):
+        assert reply[0] == 200 and reply[1].get('runId'), reply
+        run_id = reply[1]['runId']
+        r.wait(lambda: r.rows("SELECT 1 FROM runs WHERE run_id=? AND status='completed'", (run_id,)), 60)
+        run = r.rows('SELECT * FROM runs WHERE run_id=?', (run_id,))[0]
+        turn = r.rows("SELECT 1 FROM hrc_events WHERE event_kind='turn.completed' AND run_id=?", (run_id,))
+        assert turn, ('no turn.completed for', run_id)
+        return run
+    def alive(pid):
+        try: os.kill(pid, 0); return True
+        except ProcessLookupError: return False
+    def seat_pids(directory):
+        return {name: int((directory/name).read_text()) for name in ('hrcpty.pid', 'child.pid') if (directory/name).exists()}
+    def end_seat(rt, drop=False):
+        """End a live self-brokered seat with what exists before T-13442's terminate."""
+        directory, _ = regfile(rt)
+        pids = seat_pids(directory)
+        body = {'runtimeId': rt}
+        if drop: body['dropContinuation'] = True
+        reply = call('/v1/terminate', body)
+        record = {'terminate': reply, 'pids': pids}
+        deadline = time.time()+30
+        while time.time() < deadline and any(alive(p) for p in pids.values()): time.sleep(.2)
+        record['aliveAfterTerminate'] = {k: alive(p) for k, p in pids.items()}
+        a = r.rows('SELECT state FROM participant_registration_attempts WHERE runtime_id=?', (rt,))[0]['state']
+        record['attemptAfterTerminate'] = a
+        record['runtimeAfterTerminate'] = r.runtime(rt)['status']
+        # G-one: the predecessor's supervisor and child are gone before any later spawn.
+        assert not any(record['aliveAfterTerminate'].values()), record
+        assert a == 'TERMINAL' and record['runtimeAfterTerminate'] == 'terminated', record
+        record['endedAt'] = time.time()
+        return record
+    def declarations(agent):
+        lines = [json.loads(l) for l in (a_log).read_text().splitlines()]
+        return [l for l in lines if (l.get('request') or {}).get('method') == 'aspc.resolveRuntimeDeclaration'
+                and l['request']['params']['context']['agentId'] == agent]
+    def knocks():
+        return r.rows("SELECT payload_json FROM hrc_events WHERE event_kind='participant.host_requested'")
+
+    g = report.setdefault('gates', {})
+    # Participant-only control in the same daemon (S1 seeds it on a full run).
+    if not r.rows('SELECT 1 FROM participant_registrations WHERE scope_ref=?', (scope('held'),)):
+        held = call('/v1/participants/register', {'registrationMode': 'direct', 'requestedSessionRef': scope('held'),
+            'hostIncarnationId': 'absent-external', 'workspaceCwd': str(root/'t12049'), 'socketPath': str(root/'absent.sock')})
+        assert held[0] == 200, held
+        with sqlite3.connect(r.db_path) as db:
+            db.execute("UPDATE participant_registration_attempts SET state='ABANDONED',establishment_work_state='completed' WHERE attempt_id=?", (held[1]['identity']['attemptId'],))
+            db.execute("UPDATE participant_host_bindings SET state='RETIRED',disposition_reason='scratch_absent_host',retired_at='2026-11-12T00:00:00Z' WHERE runtime_id=?", (held[1]['identity']['runtimeId'],))
+
+    # G1: an enqueue to a self-brokered scope with no runtime births it on hrcpty.
+    ensured = target('turn')
+    k0 = len(knocks())
+    control = enqueue('held', 'HELD')
+    assert control[0] == 503 and control[1]['error']['code'] == 'runtime_unavailable', control
+    # Never attached, so participant resolution answers pending (no knock); the
+    # ensure door, which reaches the absent host, knocks once.
+    assert control[1]['error']['detail']['reason'] == 'participant_attachment_pending', control
+    ensure_held = call('/v1/targets/ensure', {'sessionRef': scope('held')+'/lane:main', 'runtimeIntent': {}})
+    assert ensure_held[0] == 409 and ensure_held[1]['error']['detail']['reason'] == 'host_absent', ensure_held
+    assert len(knocks()) == k0+1, 'participant-only ensure must knock once'
+    assert not r.rows("SELECT 1 FROM runtimes WHERE scope_ref=?", (scope('held'),)), 'participant-only scope must never be born'
+    first = enqueue('turn', 'ONE')
+    run1 = completed(first)
+    rt1 = first[1]['runtimeId']
+    d1, reg1 = regfile(rt1)
+    row1 = r.runtime(rt1)
+    assert row1['transport'] == 'hrcpty' and row1['status'] in ('ready', 'busy'), row1
+    assert row1['state']['participant']['lifecycleOwner'] == 'hrc-launched', row1['state']
+    assert run1['host_session_id'] == reg1['hostSessionId'] and run1['generation'] == reg1['generation'], (run1, reg1)
+    assert run1['runtime_id'] == rt1
+    attach = r.http('GET', '/v1/attach?'+urlencode({'runtimeId': rt1}))
+    assert attach[0] == 200 and 'hrcpty' in json.dumps(attach), attach
+    trace = [json.loads(e['payload_json']) for e in r.rows("SELECT payload_json FROM hrc_events WHERE event_kind='submission.admission' AND run_id=?", (run1['run_id'],))]
+    steps = {t['step']: t['outcome'] for t in trace[0]['trace']}
+    assert steps['participant-resolution'] == 'passed' and steps['rotation'] == 'passed', trace
+    assert len(spawns('turn')) == 1
+    session1 = r.rows('SELECT * FROM sessions WHERE host_session_id=?', (reg1['hostSessionId'],))[0]
+    key1 = json.loads(session1['continuation_json'])['key']
+    g['G1'] = {'pass': True, 'reply': first, 'run': run1, 'registration': reg1, 'ensuredSession': ensured,
+               'admissionTrace': trace[0], 'attach': attach, 'control': {'enqueue': control, 'ensure': ensure_held}, 'knocksAdded': 1,
+               'sessionContinuation': session1['continuation_json']}
+
+    # A second input into the live seat is delivered there, and reads no declaration.
+    asked = len(declarations('turn'))
+    again = enqueue('turn', 'AGAIN')
+    run1b = completed(again)
+    assert again[1]['runtimeId'] == rt1 and run1b['generation'] == reg1['generation'] and len(spawns('turn')) == 1, again
+    assert len(declarations('turn')) == asked, 'a live self-brokered seat is resolved without an aspd declaration read'
+    g['G1']['liveSecondInput'] = {'reply': again, 'run': run1b, 'declarationReads': 0}
+
+    # End the first seat, continuation kept.
+    ended1 = end_seat(rt1)
+    g['end1'] = ended1
+
+    # G8: freshContext on the retired scope is refused after participant resolution and changes nothing.
+    before = counts('turn'); spawned = len(spawns('turn'))
+    refused = enqueue('turn', 'FRESH', freshContext=True)
+    after = counts('turn')
+    assert refused[0] == 503 and refused[1]['error']['detail']['reason'] == 'participant_rotation_unsupported', refused
+    assert before == after and len(spawns('turn')) == spawned, (before, after)
+    g['G8'] = {'pass': True, 'refused': refused, 'before': before, 'after': after}
+
+    # G2: the next plain enqueue births generation + 1 on a new host session, carrying the continuation.
+    second = enqueue('turn', 'TWO')
+    run2 = completed(second)
+    rt2 = second[1]['runtimeId']
+    d2, reg2 = regfile(rt2)
+    assert reg2['generation'] == reg1['generation']+1, (reg1['generation'], reg2['generation'])
+    assert run2['host_session_id'] == reg2['hostSessionId'] != reg1['hostSessionId'], (run2, reg2)
+    assert run2['generation'] == reg2['generation']
+    assert r.rows('SELECT status FROM sessions WHERE host_session_id=?', (reg1['hostSessionId'],))[0]['status'] == 'archived'
+    assert reg2['continuation']['carried'] and reg2['continuation']['selected']['key'] == key1, reg2['continuation']
+    session2 = r.rows('SELECT * FROM sessions WHERE host_session_id=?', (reg2['hostSessionId'],))[0]
+    assert json.loads(session2['continuation_json'])['key'] == key1, 'the successor continued the same conversation'
+    ended2 = end_seat(rt2, drop=True)
+    third = enqueue('turn', 'THREE')
+    run3 = completed(third)
+    d3, reg3 = regfile(third[1]['runtimeId'])
+    a3 = r.rows('SELECT continuation_carried,continuation_reason FROM participant_registration_attempts WHERE runtime_id=?', (third[1]['runtimeId'],))[0]
+    assert reg3['generation'] == reg2['generation']+1 and not reg3['continuation']['carried'], reg3
+    # The offer itself was fresh (store reason participant_fresh), not a refused continue.
+    assert a3['continuation_reason'] == 'participant_fresh', a3
+    for ended, spawn in [(ended1, spawns('turn')[1]), (ended2, spawns('turn')[2])]:
+        assert spawn['at'] > ended['endedAt'], (spawn, ended)
+    g['G2'] = {'pass': True, 'registrationFiles': {str(d1): reg1, str(d2): reg2, str(d3): reg3},
+               'generations': [reg1['generation'], reg2['generation'], reg3['generation']],
+               'runs': [run1, run2, run3], 'end2': ended2, 'thirdAttempt': a3}
+    end_seat(third[1]['runtimeId'])
+
+    # The turns door: a turn addressed to the retired seat's last host session births generation + 1.
+    turn = call('/v1/turns', {'hostSessionId': reg3['hostSessionId'], 'prompt': 'Reply FOUR', 'waitFor': 'terminal'})
+    run4 = completed(turn)
+    d4, reg4 = regfile(turn[1]['runtimeId'])
+    assert reg4['generation'] == reg3['generation']+1 and run4['host_session_id'] == reg4['hostSessionId'], (reg4, run4)
+    g['turnsDoor'] = {'pass': True, 'reply': turn, 'run': run4, 'registration': reg4}
+    end_seat(turn[1]['runtimeId'])
+
+    # G3: two enqueues together to a scope with no runtime: one spawn, one child.
+    target('race')
+    with concurrent.futures.ThreadPoolExecutor(2) as pool:
+        replies = list(pool.map(lambda w: enqueue('race', w), ['RACE-A', 'RACE-B']))
+    ok = [x for x in replies if x[0] == 200]
+    refusals = [x for x in replies if x[0] != 200]
+    assert ok, replies
+    for x in ok: completed(x)
+    for x in refusals:
+        assert x[0] == 503 and x[1]['error']['code'] == 'runtime_unavailable', x
+    race = spawns('race')
+    assert len(race) == 1, race
+    assert len(attempts('race')) == 1, attempts('race')
+    g['G3'] = {'pass': True, 'replies': replies, 'spawns': race,
+               'outcome': 'both delivered' if not refusals else 'one delivered, one retryable refusal'}
+    if refusals:
+        retry = enqueue('race', 'RACE-RETRY'); completed(retry)
+        assert len(spawns('race')) == 1, 'a retry after the birth is delivered, not born'
+        g['G3']['retry'] = retry
+
+    # An input whose launch fails is answered with the launch's retryable
+    # runtime_unavailable; the attempt is abandoned and nothing keeps running.
+    target('exit')
+    failed = enqueue('exit', 'EXIT')
+    assert failed[0] == 503 and failed[1]['error']['code'] == 'runtime_unavailable' and failed[1]['error']['detail']['retryable'], failed
+    assert 'leaseError' not in failed[1]['error']['detail'] and 'abandonError' not in failed[1]['error']['detail'], failed
+    fa = attempts('exit')[-1]
+    assert fa['state'] == 'ABANDONED' and fa['disposition_reason'].startswith('launch_failed'), fa
+    assert not r.rows("SELECT 1 FROM runtimes WHERE runtime_id=? AND status IN ('ready','busy')", (fa['runtime_id'],))
+    fd, _ = regfile(fa['runtime_id'])
+    assert not any(alive(p) for p in seat_pids(fd).values()) and not (fd/'hrcpty.sock').exists()
+    assert not r.rows("SELECT 1 FROM runs WHERE scope_ref=?", (scope('exit'),)), 'no run row for an undelivered input'
+    g['inputLaunchFailure'] = {'pass': True, 'reply': failed, 'attempt': fa}
+
+    # Mail path: the enqueue door carrying an envelope origin, as mail delivery does.
+    target('mail')
+    mail = enqueue('mail', 'MAIL', origin={'principalRef': 'agent:clod', 'envelopeId': 'EN-T13441-1'})
+    runm = completed(mail)
+    adm = r.rows("SELECT envelope_id FROM submission_admissions WHERE run_id=?", (runm['run_id'],))
+    assert adm and adm[0]['envelope_id'] == 'EN-T13441-1', adm
+    g['mail'] = {'pass': True, 'door': 'POST /v1/submissions/enqueue with origin.envelopeId', 'reply': mail, 'admission': adm}
+
+    # Lazy target: a handoff to a scope with no session; the first registration creates it.
+    assert not r.rows('SELECT 1 FROM sessions WHERE scope_ref=?', (scope('lazy'),))
+    lazy = call('/v1/messages/turn-handoff', {'from': {'kind': 'entity', 'entity': 'system'},
+        'to': {'kind': 'session', 'sessionRef': scope('lazy')+'/lane:main'}, 'body': 'Reply LAZY', 'createIfMissing': True,
+        'runtimeIntent': {'placement': {'agentRoot': str(root/'agents/lazy'), 'projectRoot': str(root/'t12049'),
+                                        'cwd': str(root/'t12049'), 'runMode': 'task'},
+                          'harness': {'id': 'claude-code', 'interactive': False}}})
+    g['lazy'] = {'reply': lazy}
+    assert lazy[0] == 200, lazy
+    sessions = r.rows('SELECT * FROM sessions WHERE scope_ref=?', (scope('lazy'),))
+    reg = r.rows('SELECT * FROM participant_registrations WHERE scope_ref=?', (scope('lazy'),))
+    assert len(sessions) == 1 and reg and sessions[0]['host_session_id'] == reg[0]['host_session_id'], (sessions, reg)
+    assert len(spawns('lazy')) == 1
+    runl = completed((200, lazy[1])) if lazy[1].get('runId') else None
+    if runl: assert runl['host_session_id'] == reg[0]['host_session_id'], runl
+    g['lazy'].update({'pass': True, 'sessions': sessions, 'run': runl})
+
 def main():
     p=argparse.ArgumentParser(description=__doc__)
     for name in ('binary','scratch-root','artifacts','broker-module'): p.add_argument('--'+name,type=Path,required=True)
     p.add_argument('--baseline',action='store_true')
     p.add_argument('--baseline-summary',type=Path)
+    p.add_argument('--gates-only',action='store_true',help='T-13441 gates without S1-S5 (development only)')
     a=p.parse_args(); root=a.scratch_root.absolute(); assert not root.exists(); root.mkdir(parents=True)
     a.artifacts.mkdir(parents=True,exist_ok=True)
     (root/'t12049').mkdir(); (root/'t12049/.praesidium').mkdir()
     (root/'t12049/.praesidium/project.json').write_text(json.dumps({'id':'t12049'}))
     launcher=root/'launcher.py'
-    launcher.write_text('E2E='+repr(str(HERE))+'\nBROKER='+repr(str(HERE/'participant_eviction_broker.mjs'))+'\n'+LAUNCHER)
+    launcher.write_text('E2E='+repr(str(HERE))+'\nBROKER='+repr(str(HERE/'participant_eviction_broker.mjs'))+'\nTURN_BROKER='+repr(str(HERE/'self_brokered_broker.mjs'))+'\nSPAWNS='+repr(str(root/'spawns.jsonl'))+'\n'+LAUNCHER)
     commands={agent:[sys.executable,str(launcher),mode,str(a.broker_module)] for agent,mode in
-              [('self','ok'),('exit','exit'),('stall','stall'),('bad','bad'),('establish','establish')]}
+              [('self','ok'),('exit','exit'),('stall','stall'),('bad','bad'),('establish','establish'),
+               ('turn','turn'),('race','turn'),('mail','turn'),('lazy','turn')]}
     commands['invalid']=[]
     for agent in [*commands,'external','held','ordinary']:
         profile=root/'agents'/agent;profile.mkdir(parents=True)
@@ -121,6 +354,8 @@ def main():
         return {'transport':row['transport'],'substrate':row['state']['broker']['substrate'],'lifecycleOwner':row['state']['lifecycleOwner']}
     try:
         r.up('self-brokered')
+        if a.gates_only:
+            gates(r,root,report,call,scope,target,a.artifacts/'aspd.jsonl'); report['pass']=True; return
         report['external']=external()
         if a.baseline:
             report['pass']=True; return
@@ -210,6 +445,7 @@ def main():
         report['S3']={'pass':True,'cases':failures}
         invalid=ensure(target('invalid')); assert invalid[0]>=400 and 'launchCommand' in json.dumps(invalid),invalid
         report['invalidCommand']=invalid
+        gates(r,root,report,call,scope,target,a.artifacts/'aspd.jsonl')
         report['pass']=True
     finally:
         report['checks']=r.checks

@@ -1,16 +1,50 @@
-//! No-input self-brokered birth. Caller holds broker::session_gate from its
-//! reuse check through allocation and establishment; there is no compiled plan.
+//! Self-brokered birth in its two steps (self-brokered-seat-launch.md section
+//! 5). `allocate` records the registration, which fixes the seat's host
+//! session, generation and runtime identity; `launch_attempt` starts the
+//! process and establishes it. The caller holds broker::session_gate around
+//! `allocate`. The no-input doors keep it through `launch_attempt` (`launch`);
+//! an input allocates in admission's rotation stage and launches in its route.
 use super::{Answer, Continuation, PredecessorGone};
 use crate::server::{ApiError, Shared, aspc, broker, hrcpty};
 use anyhow::{Context, Result, bail, ensure};
 use serde_json::{Value, json};
 use std::{
+    collections::HashSet,
     fs,
     io::Write,
     os::unix::fs::{OpenOptionsExt, PermissionsExt},
     path::Path,
+    sync::{LazyLock, Mutex},
     time::Duration,
 };
+
+/// Attempts this daemon process allocated whose launch has not settled. An
+/// allocated attempt outside it (its route never ran, or the daemon that
+/// allocated it is gone) is not establishing: it blocks nothing.
+static IN_FLIGHT: LazyLock<Mutex<HashSet<String>>> = LazyLock::new(Default::default);
+
+pub fn in_flight(attempt_id: &str) -> bool {
+    IN_FLIGHT.lock().unwrap().contains(attempt_id)
+}
+
+/// An allocated, unlaunched attempt. Dropping it without `launch_attempt`
+/// leaves the attempt identity-minted and no longer in flight.
+pub struct Allocation {
+    registration: Value,
+    attempt_id: String,
+    cwd: String,
+    command: Vec<String>,
+}
+impl Allocation {
+    pub fn host_session_id(&self) -> &str {
+        self.registration["hostSessionId"].as_str().unwrap_or("")
+    }
+}
+impl Drop for Allocation {
+    fn drop(&mut self) {
+        IN_FLIGHT.lock().unwrap().remove(&self.attempt_id);
+    }
+}
 
 fn done(answer: Answer) -> Result<Value> {
     match answer {
@@ -19,16 +53,38 @@ fn done(answer: Answer) -> Result<Value> {
     }
 }
 
-/// Allocates and launches under the caller's continuity gate. Kept separate
-/// from input admission so its later rotation stage can reuse the launch seam.
+fn busy(scope: &str, runtime: &str, reason: &str, message: &str) -> ApiError {
+    crate::server::turns::admission::unavailable(
+        message,
+        json!({"scopeRef":scope,"runtimeId":runtime,"reason":reason,"retryable":true}),
+    )
+}
+
+/// No-input doors (ensure, start, resume): allocation and launch back to back
+/// under the caller's continuity gate. There is no compiled plan.
 pub async fn launch(
     server: &Shared,
     session: &Value,
-    mut command: Vec<String>,
+    command: Vec<String>,
     attach: Option<broker::AttachGate>,
 ) -> Result<Value, ApiError> {
     let scope = session["scopeRef"].as_str().unwrap_or("");
     let lane = session["laneRef"].as_str().unwrap_or("main");
+    let allocation = allocate(server, scope, lane, Some(session), command).await?;
+    launch_attempt(server, allocation, attach).await
+}
+
+/// Confirm the predecessor is gone and record the registration: the first for
+/// the scope, or a host succession. `session` is the scope's current session
+/// (None for a lazy target), read for its continuation. Writes nothing on a
+/// refusal; the registration is one store transaction.
+pub async fn allocate(
+    server: &Shared,
+    scope: &str,
+    lane: &str,
+    session: Option<&Value>,
+    command: Vec<String>,
+) -> Result<Allocation, ApiError> {
     let previous = {
         let db = server.store.lock().unwrap();
         db.participant_registration_by_scope(scope)?
@@ -39,9 +95,19 @@ pub async fn launch(
     };
     if let Some(previous) = previous {
         let runtime = previous["runtime_id"].as_str().unwrap();
-        let terminal = ["ABANDONED", "TERMINAL", "SUPERSEDED"]
+        if in_flight(previous["attempt_id"].as_str().unwrap_or("")) {
+            return Err(busy(
+                scope,
+                runtime,
+                "participant_attachment_pending",
+                "a self-brokered launch for this scope is in flight; retry once it settles",
+            ));
+        }
+        // Absorbing, or allocated by a launch that is no longer running.
+        let ended = ["ABANDONED", "TERMINAL", "SUPERSEDED"]
             .iter()
-            .any(|s| previous["state"] == *s);
+            .any(|s| previous["state"] == *s)
+            || previous["state"] == "IDENTITY_MINTED";
         let socket = hrcpty::self_brokered_socket(&server.runtime, runtime);
         let pid = fs::read_to_string(socket.parent().unwrap().join("hrcpty.pid"))
             .ok()
@@ -56,14 +122,13 @@ pub async fn launch(
             .as_ref()
             .and_then(|r| r["runtimeStateJson"]["broker"]["brokerPid"].as_i64())
             .is_some_and(hrcpty::alive);
-        if !terminal
-            || !row_terminal
-            || child_alive
-            || hrcpty::identify(&socket, pid).await.is_some()
+        if !ended || !row_terminal || child_alive || hrcpty::identify(&socket, pid).await.is_some()
         {
-            return Err(crate::server::turns::admission::unavailable(
+            return Err(busy(
+                scope,
+                runtime,
+                "host_binding_conflict",
                 "self-brokered predecessor has not ended",
-                json!({"scopeRef":scope,"runtimeId":runtime,"reason":"host_binding_conflict","retryable":true}),
             ));
         }
     }
@@ -72,28 +137,46 @@ pub async fn launch(
     let cwd = placement["projectRoot"]
         .as_str()
         .or_else(|| placement["cwd"].as_str())
-        .context("self-brokered declaration has no project root")?;
-    super::super::compile::require_cwd(
-        cwd,
-        session["hostSessionId"].as_str().unwrap_or(""),
-        scope,
-    )?;
-    let continuation = if session["continuation"]["key"]
-        .as_str()
-        .is_some_and(|s| !s.is_empty())
-    {
+        .context("self-brokered declaration has no project root")?
+        .to_owned();
+    let host = session
+        .and_then(|s| s["hostSessionId"].as_str())
+        .unwrap_or("");
+    super::super::compile::require_cwd(&cwd, host, scope)?;
+    // Offer `continue` when the session's continuation is reusable: it holds a
+    // key and `prae runtime archive --continuation drop` has not disabled it.
+    // The store's selection still decides what the successor carries.
+    let reuse_disabled = !host.is_empty()
+        && server
+            .store
+            .lock()
+            .unwrap()
+            .sqlite
+            .query_row(
+                "SELECT continuation_reuse_disabled FROM sessions WHERE host_session_id=?",
+                [host],
+                |r| r.get::<_, i64>(0),
+            )
+            .map_err(anyhow::Error::from)?
+            != 0;
+    let continuation = if !reuse_disabled
+        && session.is_some_and(|s| {
+            s["continuation"]["key"]
+                .as_str()
+                .is_some_and(|k| !k.is_empty())
+        }) {
         Continuation::Continue
     } else {
         Continuation::Fresh
     };
-    // Allocation mints the runtime id. Replace this unpublished provisional
-    // endpoint immediately, before any file, supervisor or descriptor exists.
+    // Allocation mints the runtime id. launch_attempt replaces this
+    // unpublished provisional endpoint before any file or process exists.
     let registration = done(
         super::allocate_hrc_launched(
             server,
             scope,
             lane,
-            Path::new(cwd),
+            Path::new(&cwd),
             &server.runtime.join("pending-launch.sock"),
             continuation,
             &PredecessorGone {
@@ -110,13 +193,36 @@ pub async fn launch(
             json!({"scopeRef":scope,"reason":"host_binding_conflict","retryable":true}),
         )
     })?;
+    let attempt_id = registration["identity"]["attemptId"]
+        .as_str()
+        .context("allocated attempt id missing")?
+        .to_owned();
+    IN_FLIGHT.lock().unwrap().insert(attempt_id.clone());
+    Ok(Allocation {
+        registration,
+        attempt_id,
+        cwd,
+        command,
+    })
+}
+
+/// Files, supervisor, spawn, the 60-second wait, attach and establishment to
+/// ACTIVE for an allocated attempt. A failure ends the supervisor's lease,
+/// abandons the attempt and answers retryable `runtime_unavailable`.
+pub async fn launch_attempt(
+    server: &Shared,
+    allocation: Allocation,
+    attach: Option<broker::AttachGate>,
+) -> Result<Value, ApiError> {
+    let registration = &allocation.registration;
+    let cwd = allocation.cwd.as_str();
+    let mut command = allocation.command.clone();
     let id = &registration["identity"];
+    let scope = registration["scopeRef"].as_str().unwrap_or("");
     let runtime = id["runtimeId"]
         .as_str()
         .context("allocated runtime id missing")?;
-    let attempt = id["attemptId"]
-        .as_str()
-        .context("allocated attempt id missing")?;
+    let attempt = allocation.attempt_id.as_str();
     let socket = hrcpty::self_brokered_socket(&server.runtime, runtime);
     let directory = socket.parent().unwrap();
     let endpoint = directory.join("broker.sock");
@@ -127,7 +233,7 @@ pub async fn launch(
         fs::set_permissions(directory, fs::Permissions::from_mode(0o700))?;
         server.store.lock().unwrap().set_hrc_launch_endpoint(attempt, &endpoint)?;
         let mut file = fs::OpenOptions::new().write(true).create_new(true).mode(0o600).open(directory.join("registration.json"))?;
-        file.write_all(serde_json::to_string(&registration)?.as_bytes())?; file.sync_all()?;
+        file.write_all(serde_json::to_string(registration)?.as_bytes())?; file.sync_all()?;
         let mut token = fs::OpenOptions::new().write(true).create_new(true).mode(0o600).open(directory.join("attach.token"))?;
         token.write_all(uuid::Uuid::new_v4().to_string().as_bytes())?; token.sync_all()?;
         fs::File::open(directory)?.sync_all()?;
@@ -164,22 +270,39 @@ pub async fn launch(
         if let Some(gate) = attach { let _ = gate.ready.send(runtime.to_owned()); }
         Ok(json!({"runtimeId":runtime,"hostSessionId":registration["hostSessionId"],"generation":registration["generation"],"transport":"hrcpty","status":"ready"}))
     }.await;
-    match result {
-        Ok(value) => Ok(value),
-        Err(error) => {
-            // No preparation record exists: this is the launch's own refused-
-            // start settlement, never broker::settle_refused_start.
-            super::super::controller::delete_active(server, runtime);
-            hrcpty::end_lease(&socket, supervisor).await?;
-            done(super::abandon_hrc_launched(
-                server,
-                attempt,
-                &format!("launch_failed: {error:#}"),
-            )?)?;
-            Err(crate::server::turns::admission::unavailable(
-                format!("self-brokered launch failed: {error:#}"),
-                json!({"scopeRef":scope,"runtimeId":runtime,"attemptId":attempt,"reason":error.to_string(),"retryable":true}),
-            ))
+    let error = match result {
+        Ok(value) => return Ok(value),
+        Err(error) => error,
+    };
+    // No preparation record exists: this is the launch's own refused-start
+    // settlement, never broker::settle_refused_start. The attempt is abandoned
+    // whether or not ending the lease succeeded, so it never stays establishing.
+    super::super::controller::delete_active(server, runtime);
+    let lease = hrcpty::end_lease(&socket, supervisor).await.err();
+    let abandoned =
+        super::abandon_hrc_launched(server, attempt, &format!("launch_failed: {error:#}"))
+            .map_err(|e| anyhow::anyhow!("{}: {}", e.code, e.message))
+            .and_then(done)
+            .err();
+    for (what, failure) in [("lease_end_failed", &lease), ("abandon_failed", &abandoned)] {
+        if let Some(failure) = failure {
+            crate::server::stderr_json(
+                "warn",
+                "participants",
+                &format!("self_brokered.launch.{what}"),
+                json!({"runtimeId":runtime,"attemptId":attempt,"error":format!("{failure:#}")}),
+            );
         }
     }
+    let mut detail = json!({"scopeRef":scope,"runtimeId":runtime,"attemptId":attempt,"reason":error.to_string(),"retryable":true});
+    if let Some(e) = lease {
+        detail["leaseError"] = format!("{e:#}").into();
+    }
+    if let Some(e) = abandoned {
+        detail["abandonError"] = format!("{e:#}").into();
+    }
+    Err(crate::server::turns::admission::unavailable(
+        format!("self-brokered launch failed: {error:#}"),
+        detail,
+    ))
 }

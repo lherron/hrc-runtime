@@ -599,6 +599,19 @@ async fn live_unbound(server: &Shared, host: &str) -> Result<Option<db::Rt>, Api
 /// executeAdmittedTurn (format1): the live seat, else a birth. Returns the
 /// enriched route receipt.
 pub async fn execute(server: &Shared, plan: &Plan, o: &Options<'_>) -> Result<Value, ApiError> {
+    // A self-brokered birth admission allocated: launch it to ACTIVE, then
+    // deliver through ordinary participant delivery, which now resolves the
+    // successor the plan already names. A failed launch answers the input
+    // with its retryable runtime_unavailable.
+    let allocation = plan.launch.lock().unwrap().take();
+    if let Some(allocation) = allocation {
+        crate::server::participants::launch::launch_attempt(
+            server,
+            allocation,
+            o.attach.and_then(|g| g.lock().unwrap().take()),
+        )
+        .await?;
+    }
     // R7.6: a participant resolves BEFORE reuse or birth, at the route every
     // door shares, so no door births a substitute at a participant address.
     if let Some(target) = crate::server::participants::delivery::target(server, &plan.session).await

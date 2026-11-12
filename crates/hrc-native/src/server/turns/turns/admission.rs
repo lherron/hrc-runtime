@@ -77,6 +77,9 @@ pub struct Plan {
     pub run_id: Option<String>,
     pub intent: Value,
     pub observation: Observation,
+    /// A self-brokered birth the rotation stage allocated; the route launches
+    /// it before delivering. Dropped unlaunched, the attempt blocks nothing.
+    pub launch: std::sync::Mutex<Option<crate::server::participants::launch::Allocation>>,
 }
 pub enum Admitted {
     Replayed(Value),
@@ -396,32 +399,7 @@ async fn steps(
     }
     let lazy = matches!(&req.target, Target::Lazy { .. });
     // participant-resolution
-    let participant = if lazy {
-        // No session yet: a participant address is never substituted by a birth.
-        let registered = {
-            let db = server.store.lock().unwrap();
-            db.participant_registration_by_scope(session["scopeRef"].as_str().unwrap_or(""))?
-                .is_some()
-        };
-        if registered {
-            trace.push("refused");
-            let detail = crate::server::participants::host_refusal_detail(
-                server,
-                session["scopeRef"].as_str().unwrap_or(""),
-                session["laneRef"].as_str().unwrap_or("main"),
-                "turn-lazy",
-                "participant addresses cannot be substituted by a birth",
-                true,
-            );
-            return Err(unavailable(
-                &detail,
-                json!({"reason":"participant_substitution"}),
-            ));
-        }
-        None
-    } else {
-        delivery::resolve(server, &session).inspect_err(|_| trace.push("refused"))?
-    };
+    let participant = participant_resolution(server, &session, lazy, trace).await?;
     match &participant {
         None => trace.push("skipped:not-applicable"),
         Some(_) if req.fresh_context == Some(true) => {
@@ -512,15 +490,29 @@ async fn steps(
     };
     trace.push("passed");
     // rotation
-    if let Target::Lazy { materialize, .. } = &req.target {
-        session = materialize().await.inspect_err(|_| trace.push("refused"))?;
-    }
-    if participant.is_some() {
+    let mut launch = None;
+    match participant {
+        Some(Delivery::Launch { command }) => {
+            let allocation = allocate_launch(server, &session, lazy, command)
+                .await
+                .inspect_err(|_| trace.push("refused"))?;
+            session = crate::server::context::session(
+                server,
+                &json!({"hostSessionId":allocation.host_session_id()}),
+            )
+            .inspect_err(|_| trace.push("refused"))?;
+            launch = Some(allocation);
+            trace.push("passed");
+        }
         // An externally owned address is never rotated by HRC.
-        trace.push("skipped:not-applicable");
-    } else {
-        session = rotation(server, req, session, trace).await?;
-        trace.push("passed");
+        Some(_) => trace.push("skipped:not-applicable"),
+        None => {
+            if let Target::Lazy { materialize, .. } = &req.target {
+                session = materialize().await.inspect_err(|_| trace.push("refused"))?;
+            }
+            session = rotation(server, req, session, trace).await?;
+            trace.push("passed");
+        }
     }
     trace.session = session.clone();
     // launch-carry-observation
@@ -560,7 +552,78 @@ async fn steps(
         run_id: req.run_id.clone(),
         intent,
         observation,
+        launch: std::sync::Mutex::new(launch),
     })))
+}
+
+/// Participant resolution classifies and writes nothing. A lazy target is a
+/// participant address only when its declaration is self-brokered.
+async fn participant_resolution(
+    server: &Shared,
+    session: &Value,
+    lazy: bool,
+    trace: &mut Trace,
+) -> Result<Option<Delivery>, ApiError> {
+    let self_brokered = lazy
+        && crate::server::federation::policy::launch_command(
+            server,
+            session["scopeRef"].as_str().unwrap_or(""),
+        )
+        .await
+        .inspect_err(|_| trace.push("refused"))?
+        .is_some();
+    Ok(if lazy && !self_brokered {
+        // No session yet: a participant address is never substituted by a birth.
+        let registered = {
+            let db = server.store.lock().unwrap();
+            db.participant_registration_by_scope(session["scopeRef"].as_str().unwrap_or(""))?
+                .is_some()
+        };
+        if registered {
+            trace.push("refused");
+            let detail = crate::server::participants::host_refusal_detail(
+                server,
+                session["scopeRef"].as_str().unwrap_or(""),
+                session["laneRef"].as_str().unwrap_or("main"),
+                "turn-lazy",
+                "participant addresses cannot be substituted by a birth",
+                true,
+            );
+            return Err(unavailable(
+                &detail,
+                json!({"reason":"participant_substitution"}),
+            ));
+        }
+        None
+    } else {
+        // Classification only: a self-brokered birth allocates at rotation.
+        delivery::classify(server, session)
+            .await
+            .inspect_err(|_| trace.push("refused"))?
+    })
+}
+
+/// The rotation stage's effect for a self-brokered scope: under the
+/// continuity start gate, confirm the predecessor is gone and record the
+/// registration, whose session replaces the plan's. A lazy target has none;
+/// the first registration creates it.
+async fn allocate_launch(
+    server: &Shared,
+    session: &Value,
+    lazy: bool,
+    command: Vec<String>,
+) -> Result<crate::server::participants::launch::Allocation, ApiError> {
+    let scope = session["scopeRef"].as_str().unwrap_or("");
+    let lane = session["laneRef"].as_str().unwrap_or("main");
+    let _gate = crate::server::broker::session_gate(server, session).await;
+    crate::server::participants::launch::allocate(
+        server,
+        scope,
+        lane,
+        (!lazy).then_some(session),
+        command,
+    )
+    .await
 }
 
 /// The rotation step for an HRC-owned session: auto-rotate a stale generation,

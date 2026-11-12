@@ -921,6 +921,7 @@ pub async fn continue_cold(
             lifecycle_from_seq,
             broker_after: Default::default(),
         },
+        launch: Default::default(),
     };
     let prompt = cold["prompt"].as_str().unwrap_or("");
     let options = route::Options {

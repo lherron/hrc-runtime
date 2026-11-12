@@ -1,7 +1,7 @@
 pub mod delivery;
 mod descriptor;
 mod establishment;
-mod launch;
+pub mod launch;
 pub use launch::launch;
 mod start_validation;
 #[cfg(test)]
