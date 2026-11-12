@@ -162,66 +162,30 @@ pub async fn handle(
     };
 
     // Validate at the authority boundary, after resolving the credential's seat.
-    // HRC IDs cannot collide with wrkq's H-number IDs. Legacy rows are read only
-    // when there is no pending HRC obligation for this seat.
-    let (stored, pending) = {
-        let db = server.store.lock().unwrap();
-        (
-            db.seat_handoff(&handoff_id)?,
-            db.pending_seat_handoff(
-                string(&session["scopeRef"]).as_str(),
-                string(&session["laneRef"]).as_str(),
-            )?,
-        )
+    // Only an HRC seat handoff arms a restart; wrkq's own handoff rows are not read.
+    let stored = server.store.lock().unwrap().seat_handoff(&handoff_id)?;
+    let Some(value) = stored else {
+        return Err(refused(
+            "handoff_not_found",
+            format!(
+                "no HRC seat handoff {handoff_id}; create one with `prae seat handoff create` or `hrc handoff create`"
+            ),
+        ));
     };
-    if let Some(value) = stored {
-        if value["scopeRef"] != session["scopeRef"]
-            || hrc_store::storage_lane(string(&value["laneRef"]).as_str())
-                != hrc_store::storage_lane(string(&session["laneRef"]).as_str())
-        {
-            return Err(refused(
-                "handoff_scope_mismatch",
-                "handoff belongs to a different seat".into(),
-            ));
-        }
-        if value["state"] != "pending" {
-            return Err(refused(
-                "handoff_not_pending",
-                "handoff is not pending".into(),
-            ));
-        }
-    } else {
-        if pending.is_some() {
-            return Err(refused(
-                "handoff_scope_mismatch",
-                "use the pending HRC seat handoff".into(),
-            ));
-        }
-        let legacy = server
-            .wrkq
-            .request("wrkq.handoff.get", json!({"handoff":handoff_id}))
-            .await
-            .map_err(|e| {
-                refused(
-                    "handoff_not_found",
-                    format!("could not read handoff {handoff_id}: {e}"),
-                )
-            })?;
-        let identity = hrc_store::derive_identity(string(&session["scopeRef"]).as_str());
-        if legacy["agent_id"] != identity["agentId"]
-            || legacy["project_id"] != identity["projectId"]
-        {
-            return Err(refused(
-                "handoff_scope_mismatch",
-                "legacy handoff belongs to a different agent/project".into(),
-            ));
-        }
-        if legacy["status"] != "pending" {
-            return Err(refused(
-                "handoff_not_pending",
-                "legacy handoff is not pending".into(),
-            ));
-        }
+    if value["scopeRef"] != session["scopeRef"]
+        || hrc_store::storage_lane(string(&value["laneRef"]).as_str())
+            != hrc_store::storage_lane(string(&session["laneRef"]).as_str())
+    {
+        return Err(refused(
+            "handoff_scope_mismatch",
+            "handoff belongs to a different seat".into(),
+        ));
+    }
+    if value["state"] != "pending" {
+        return Err(refused(
+            "handoff_not_pending",
+            "handoff is not pending".into(),
+        ));
     }
 
     // Same refusal as fresh-context against a participant: rotation would move
@@ -391,8 +355,8 @@ async fn execute(server: &Shared, intent: Intent, terminal_seq: i64) -> Result<(
         seat_handoff_prompt(&value, prior_generation, next_generation)
     } else {
         format!(
-            "Fresh context after self-restart (generation {prior_generation} → {next_generation}). Run `wrkq handoff get {} --json`, absorb it, acknowledge it with `wrkq handoff acknowledge`, then continue the work it describes.",
-            intent.handoff_id
+            "Fresh context after self-restart (generation {prior_generation} → {next_generation}). Seat handoff {} was armed for this restart and is no longer pending. Read it with `prae seat handoff get {} --json`, then continue the work it describes.",
+            intent.handoff_id, intent.handoff_id
         )
     };
     let session_ref = format!(

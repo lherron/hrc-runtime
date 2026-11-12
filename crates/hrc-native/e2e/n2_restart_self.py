@@ -53,8 +53,8 @@ def main():
 
         seat, gate = held_turn('cancel')
         s.env.update(HRC_SESSION_REF=scope + '/lane:main', HRC_RUNTIME_ID=seat['runtimeId'])
-        handoff = s.command('handoff-create', [str(Path.home() / ".local/bin/wrkq"), 'handoff', 'create', '--scope',
-                            'tabularasa@' + s.project_id, '-t', 'Restart self probe', '--body-file', '-', '--json'],
+        handoff = s.command('handoff-create', ['hrc', 'handoff', 'create', '--scope', scope + '/lane:main',
+                            '-t', 'Restart self probe', '--body-file', '-'],
                             stdin='After reading and acknowledging this handoff, reply with exactly SUCCESSOR_OK. Do not restart yourself.\n')
         handoff = handoff.get('handoff', handoff)
         hid = handoff['id']
@@ -66,11 +66,11 @@ def main():
             return {'exit': step['exit'], 'matched': expected}
 
         checks['handoffRequired'] = cli('missing-handoff', [], 'handoff_required', 1)
-        consumed = s.command('consumed-handoff-create', [str(Path.home() / ".local/bin/wrkq"), 'handoff', 'create', '--scope',
-                             'tabularasa@' + s.project_id, '-t', 'Consumed probe', '--body-file', '-', '--json'], stdin='Already consumed.\n')
+        consumed = s.command('consumed-handoff-create', ['hrc', 'handoff', 'create', '--scope', scope + '/lane:main',
+                             '-t', 'Consumed probe', '--body-file', '-'], stdin='Already consumed.\n')
         consumed = consumed.get('handoff', consumed)
-        s.command('consume-handoff', [str(Path.home() / ".local/bin/wrkq"), 'handoff', 'acknowledge', consumed['id'], '--if-match',
-                                    str(consumed['etag']), '--note', 'E2E refusal probe', '--json'])
+        s.command('consume-handoff', ['hrc', 'handoff', 'acknowledge', consumed['id'], '--if-match',
+                                    str(consumed['etag']), '--note', 'E2E refusal probe'])
         checks['handoffNotPending'] = cli('consumed-handoff', ['--handoff', consumed['id']], 'handoff_not_pending', 1)
         checks['armCancel'] = cli('arm-cancel', ['--handoff', hid], 'restart armed')
         assert not s.rows("SELECT 1 FROM hrc_events WHERE event_kind='session.restart_executed'")

@@ -15,8 +15,8 @@ predicate: >
   history remain owner reads. These operation namespaces introduce no
   separate seat.asks, seat.work or seat.handoff document node types.
   The whole-seat pane presents these together with their related
-  subjects. Legacy handoff import, manual assignment and shim retirement
-  remain held under T-12380; the existing HRC legacy fallback remains.
+  subjects. HRC reads no legacy wrkq handoff: the fallback was removed on
+  2026-11-12 by Lance's direction, with no import of legacy rows.
   A projected relationship has one canonical join field whose value
   equals its target natural key. Agent references use agentRef with
   agent:<id>; projectRef uses the wrkq root slug matching project.projectId,

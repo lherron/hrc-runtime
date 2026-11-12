@@ -373,15 +373,16 @@ hrc restartme --cancel            # disarm
   credential (`<runtimeRoot>/lifecycle/<runtimeId>.credential`, located by
   `HRC_RUNTIME_ID`, attributed by `HRC_SESSION_REF`). Restarting another seat
   is `hrc restart <scope>` (or `hrc turn --fresh-context <target>`).
-- The CLI refuses unless `wrkq handoff get <id>` shows a **pending** handoff
-  whose agent and project are the caller's. Without `--handoff` it refuses
+- The daemon refuses unless `<id>` is a **pending** HRC seat handoff
+  (`hrc handoff create`, `prae seat handoff create`) for the caller's seat and
+  lane; an id it does not hold is `handoff_not_found`. Without `--handoff` it refuses
   `[handoff_required]` (exit 1) with the recipe on stderr.
 - Arming binds to the broker turn active right now (`no_active_turn` otherwise).
   Only that turn's terminal fires it; an older turn's late terminal does not.
 - On that terminal HRC rotates the session (generation+1, continuation
   dropped; `context.cleared` with `reason: self-restart`) and delivers the
-  successor's first prompt: run `wrkq handoff get <id> --json`, absorb it,
-  acknowledge it, continue.
+  successor's first prompt: read the pending seat handoff with
+  `prae seat handoff get <id> --json`, absorb it, acknowledge it, continue.
 - Ledger: `session.restart_armed` → `turn.completed` → `context.cleared` →
   `session.restart_executed`; `session.restart_cancelled` on `--cancel`.
 - Refused for external-lifecycle participants (`participant_rotation_unsupported`).

@@ -40,7 +40,7 @@ def main(f, a):
              (['--handoff', pending['id']], own, 'no_active_turn'),
              (['--handoff', acknowledged['id']], own, 'handoff_not_pending'),
              (['--handoff', mismatch['id']], own, 'handoff_scope_mismatch'),
-             (['--handoff', 'H-99999'], own, 'handoff_scope_mismatch'),
+             (['--handoff', 'H-99999'], own, 'handoff_not_found'),
              (['--cancel'], own, 'no restart was armed'),
              (['--cancel'], scope, 'credential'), (['--cancel'], invalid, 'credential')]
     cases += [(argv + ['--output', 'json'], context, "--output json is not supported by 'restartme'") for argv, context, _ in cases[:9]]

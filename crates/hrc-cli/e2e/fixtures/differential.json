@@ -1936,7 +1936,13 @@
       ],
       "exit": 0,
       "stdout": "Usage: hrc restartme [options]\n\nrestart this agent into a fresh context when the current turn ends (needs a\npending handoff)\n\nOptions:\n  --handoff <id>  the pending HRC or legacy wrkq handoff the successor will\n                  consume\n  --cancel        disarm a restart armed earlier\n  -h, --help      display help for command\n",
-      "stderr": ""
+      "stderr": "",
+      "nativeContract": {
+        "exit": 0,
+        "stdout": "Usage: hrc restartme [options]\n\nrestart this agent into a fresh context when the current turn ends (needs a\npending handoff)\n\nOptions:\n  --handoff <id>  the pending HRC seat handoff the successor will consume\n  --cancel        disarm a restart armed earlier\n  -h, --help      display help for command\n",
+        "stderr": ""
+      },
+      "contractSource": "surface.json: restartme takes only an HRC seat handoff; the legacy wrkq handoff read is removed"
     },
     {
       "case": "help:restartme:human",
@@ -1947,7 +1953,13 @@
       ],
       "exit": 0,
       "stdout": "Usage: hrc restartme [options]\n\nrestart this agent into a fresh context when the current turn ends (needs a\npending handoff)\n\nOptions:\n  --handoff <id>  the pending HRC or legacy wrkq handoff the successor will\n                  consume\n  --cancel        disarm a restart armed earlier\n  -h, --help      display help for command\n",
-      "stderr": ""
+      "stderr": "",
+      "nativeContract": {
+        "exit": 0,
+        "stdout": "Usage: hrc restartme [options]\n\nrestart this agent into a fresh context when the current turn ends (needs a\npending handoff)\n\nOptions:\n  --handoff <id>  the pending HRC seat handoff the successor will consume\n  --cancel        disarm a restart armed earlier\n  -h, --help      display help for command\n",
+        "stderr": ""
+      },
+      "contractSource": "surface.json: restartme takes only an HRC seat handoff; the legacy wrkq handoff read is removed"
     },
     {
       "case": "help:send:agent",

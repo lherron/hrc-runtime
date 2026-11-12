@@ -15,9 +15,9 @@ predicate: >
   continuation dropped, then delivers the pending HRC seat handoff body inline
   as the successor's first turn through the semantic turn-handoff delivery path.
   HRC validates the pending obligation against the credential-bound full seat
-  scope and lane. When no HRC handoff is pending, the daemon validates the legacy
-  wrkq handoff by agent and project and retains the wrkq resume wording. The CLI
-  never shells out to wrkq for this check. HRC rows survive rotation and retain
+  scope and lane. Only an HRC seat handoff arms a restart: an id with no HRC row
+  is refused handoff_not_found, and neither the daemon nor the CLI reads wrkq's
+  handoff store. HRC rows survive rotation and retain
   acknowledged history with an etag fence. The document projects only id/state
   while pending and for 24 hours after acknowledgement. External-lifecycle
   participants cannot use this rotation. Queued
