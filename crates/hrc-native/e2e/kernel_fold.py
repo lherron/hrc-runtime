@@ -401,10 +401,12 @@ def main():
         stored = r.rows('SELECT status FROM runtimes WHERE runtime_id=?', (clear_runtime,))
         r.check('9.old-runtime-ended', stored == [{'status': 'terminated'}], rows=stored)
         code, terminated = r.http('POST', '/v1/terminate', {'runtimeId': clear_runtime})
-        r.check('9.owner-confirms-terminated', code == 503
-                and terminated.get('error', {}).get('code') == 'runtime_unavailable'
-                and terminated['error'].get('detail', {}).get('status') == 'terminated',
-                status=code, body=terminated)
+        r.check('9.terminate-idempotent', code == 200 and terminated == {
+                    'ok': True, 'hostSessionId': clear_host, 'runtimeId': clear_runtime,
+                    'droppedContinuation': False}
+                and r.rows('SELECT status FROM runtimes WHERE runtime_id=?', (clear_runtime,)) == stored
+                and r.rows("SELECT COUNT(*) AS n FROM hrc_events WHERE hrc_seq>? AND runtime_id=? AND event_kind='runtime.terminated'",
+                           (head, clear_runtime)) == [{'n': 1}], status=code, body=terminated)
 
         # == 5. shutdown order =================================================
         rc = r.down(daemon)

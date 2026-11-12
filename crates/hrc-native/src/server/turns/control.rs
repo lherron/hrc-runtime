@@ -448,11 +448,7 @@ pub async fn terminate(server: &Shared, body: Value) -> Result<Response, ApiErro
             "disposition",
         ));
     }
-    let rt = if !external && known.status == "terminated" {
-        available(known)?
-    } else {
-        known
-    };
+    let rt = known;
     if let Some(owner) = action.owner_run_id.as_deref().filter(|_| !external) {
         let protected = {
             let db = server.store.lock().unwrap();
@@ -467,6 +463,11 @@ pub async fn terminate(server: &Shared, body: Value) -> Result<Response, ApiErro
             )
             .into();
             return Ok(Json(out).into_response());
+        }
+        // A repeated terminate still checks protected owners, but never reopens
+        // the terminal runtime while applying its continuation disposition.
+        if rt.status == "terminated" {
+            return terminate_runtime(server, &rt, options).await;
         }
         // Close the runtime to later admission before disposal awaits.
         let now = hrc_store::timestamp();
@@ -581,8 +582,9 @@ async fn terminate_runtime(
             Ok(())
         })?;
     }
-    // A repeated tmux terminate re-runs no teardown and appends no second audit.
-    if tmux && rt.status == "terminated" {
+    // Repeated terminate applies the continuation disposition above without
+    // re-running teardown or appending a second termination audit.
+    if rt.status == "terminated" {
         return Ok(Json(response).into_response());
     }
     let _terminating = controller::begin_terminating(server, &rt.runtime_id);

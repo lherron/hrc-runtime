@@ -18,14 +18,22 @@ import sys
 import time
 
 from self_brokered import Aspd, LAUNCHER, HERE, Run, LEAK, daemon_env
-from hrcpty_substrate import FakeAspd, alive, ops, descendants_of
+from hrcpty_substrate import FakeAspd, alive, ops, descendants_of, canonical, start_hash
 from n4_federation import local_tailnet_address, free_port
 
 
 class LifecycleAspd(Aspd):
     def handle(self, method, params):
         if method == 'aspc.compileHarnessInvocation':
-            return FakeAspd.handle(self, method, params)
+            assert params['compileRequest']['agent']['id']=='ordinary', 'self-brokered birth must not compile'
+            result=FakeAspd.handle(self, method, params)
+            request=params['compileRequest']
+            start=result['plan']['execution']['dispatchRequest']['startRequest']
+            if request.get('continuation'):
+                start['spec']['continuation']=request['continuation']['broker']
+                result['plan']['execution']['profile']['startRequestHash']=start_hash(start)
+                result['plan']['planHash']=hashlib.sha256(canonical(result['plan']).encode()).hexdigest()
+            return result
         return super().handle(method, params)
 
 
@@ -33,6 +41,7 @@ def main():
     p = argparse.ArgumentParser(description=__doc__)
     for name in ('binary', 'scratch-root', 'artifacts', 'broker-module'):
         p.add_argument('--'+name, type=Path, required=True)
+    p.add_argument('--archive-only', action='store_true', help='run repeated terminate and continuation gates only')
     p.add_argument('--baseline', action='store_true', help='reproduce termination graph leak only')
     a = p.parse_args()
     root = a.scratch_root.absolute()
@@ -71,7 +80,7 @@ await runBrokerCli({additionalDrivers:[() => {
         "j=json.loads(Path(a['--registration']).read_text())")
     launcher.write_text('E2E='+repr(str(HERE))+'\nBROKER='+repr(str(broker))+'\n'+source)
     commands = {agent:[sys.executable, str(launcher), 'ok', str(a.broker_module)]
-                for agent in ('subject','control','interrupted','foundry')}
+                for agent in ('subject','control','interrupted','foundry','archive')}
     for agent in [*commands,'ordinary']:
         directory=root/'agents'/agent
         directory.mkdir(parents=True)
@@ -82,6 +91,17 @@ await runBrokerCli({additionalDrivers:[() => {
     (release_root/'bin').mkdir(parents=True)
     stub=release_root/'bin/stub-broker'
     shutil.copy(HERE/'hrcpty_stub_broker.py',stub)
+    # The ordinary Claude control emits a real continuation event and completes
+    # CONT turns without the substrate fixture's question/answer interaction.
+    stub.write_text(stub.read_text()
+        .replace("if state['driver'] == 'codex-app-server' and 'CONT' in prompt:",
+                 "if state['driver'] in ('codex-app-server','claude-code-hrcpty') and 'CONT' in prompt:")
+        .replace("{'provider': 'openai', 'kind': 'thread',",
+                 "{'provider': 'anthropic' if state['driver'] == 'claude-code-hrcpty' else 'openai', 'kind': 'thread',")
+        .replace("(state['driver'] == 'codex-app-server' or ARGS.get('ops-only') == '1'):",
+                 "(state['driver'] in ('codex-app-server','claude-code-hrcpty') or ARGS.get('ops-only') == '1'):")
+        .replace("or state['driver'] == 'codex-app-server':",
+                 "or state['driver'] in ('codex-app-server','claude-code-hrcpty'):"))
     stub.chmod(0o755)
     fake.release={'releaseId':'sb42-claude-control','sourceCommit':'1'*40,'builtAt':'2026-11-12T00:00:00Z',
         'releaseRoot':str(release_root),'worker':{'protocol':'harness-broker/0.2','executable':str(stub),
@@ -111,8 +131,8 @@ await runBrokerCli({additionalDrivers:[() => {
         directory=Path(row['state']['broker']['substrate']['socketPath']).parent
         return {'id':row['runtime_id'],'host':row['host_session_id'],'generation':row['generation'],
                 'child':int((directory/'child.pid').read_text()),'supervisor':int((directory/'hrcpty.pid').read_text()),'directory':directory}
-    def turn(s):
-        answer=call('/v1/turns',{'hostSessionId':s['host'],'prompt':'complete lifecycle turn',
+    def turn(s,prompt='complete lifecycle turn'):
+        answer=call('/v1/turns',{'hostSessionId':s['host'],'prompt':prompt,
             'runtimeIntent':{'harness':{'id':'claude-code','interactive':False}}})
         assert answer[0] in (200,202),answer
         run=answer[1]['runId']
@@ -135,7 +155,7 @@ await runBrokerCli({additionalDrivers:[() => {
         socket=Path(row['state']['broker']['substrate']['socketPath'])
         status=ops(socket,socket.parent/'attach.token','status')['status']
         assert status['child']['state']=='running' and status['broker']['state']=='running',status
-        return {'id':rid,'child':status['child']['pid'],'socket':socket}
+        return {'id':rid,'host':row['host_session_id'],'child':status['child']['pid'],'socket':socket}
     def graph(s):
         return {'attempt':r.rows('SELECT state,disposition_reason,establishment_work_state FROM participant_registration_attempts WHERE runtime_id=?',(s['id'],)),
                 'binding':r.rows('SELECT state FROM participant_host_bindings WHERE runtime_id=?',(s['id'],)),
@@ -152,8 +172,77 @@ await runBrokerCli({additionalDrivers:[() => {
         answer=call('/v1/terminate',body)
         assert answer[0]==200,answer
         return ended(s)
+    def archive_gates():
+        results={}
+        def session(s):
+            return r.rows('SELECT continuation_json,continuation_reuse_disabled FROM sessions WHERE host_session_id=?',(s['host'],))[0]
+        def stop(s):
+            answer=call('/v1/terminate',{'runtimeId':s['id'],'dropContinuation':False})
+            assert answer[0]==200,answer
+            r.wait(lambda:not alive(s['child']) and r.runtime(s['id'])['status']=='terminated',20,'archive predecessor ended')
+        def repeat(s,drop,owner=False):
+            body={'runtimeId':s['id']}
+            if owner: body['ownerRunId']='archive-gate-owner'
+            if drop is not None: body['dropContinuation']=drop
+            answer=call('/v1/terminate',body)
+            assert answer[0]==200 and answer[1]['droppedContinuation']==(drop is True),answer
+            assert r.runtime(s['id'])['status']=='terminated',r.runtime(s['id'])
+            return answer
+        def offer(s,kind,carried):
+            if kind=='self-brokered':
+                answer=json.loads((s['directory']/'registration.json').read_text())['continuation']
+                assert answer['carried'] is carried,answer
+            else:
+                frames=[json.loads(line) for line in (a.artifacts/'aspd.jsonl').read_text().splitlines()]
+                requests=[v['request']['params']['compileRequest'] for v in frames
+                    if v.get('request',{}).get('method')=='aspc.compileHarnessInvocation']
+                request=next(q for q in requests if q['identity']['runtimeId']==s['id'])
+                answer=request.get('continuation')
+                assert bool(answer) is carried,request
+            return answer
+        for kind,spawn in [('ordinary',ordinary),('self-brokered',lambda:birth('archive'))]:
+            first=spawn(); first_turn=turn(first,'CONT archive conversation')
+            kept=session(first)
+            assert kept['continuation_json'] and not kept['continuation_reuse_disabled'],kept
+            stop(first)
+            # A terminal row can still have protected work during reconciliation.
+            # The owner check must win before an archive can disable reuse.
+            run_id=first_turn['run']['run_id']
+            with sqlite3.connect(r.db_path) as db: db.execute("UPDATE runs SET status='running' WHERE run_id=?",(run_id,))
+            protected=call('/v1/terminate',{'runtimeId':first['id'],'ownerRunId':'other-owner','dropContinuation':True})
+            assert protected[0]==200 and not protected[1]['droppedContinuation'] and 'protected work' in protected[1]['warning'],protected
+            assert session(first)==kept and r.runtime(first['id'])['status']=='terminated',protected
+            with sqlite3.connect(r.db_path) as db: db.execute("UPDATE runs SET status='completed' WHERE run_id=?",(run_id,))
+            keep=repeat(first,False); omitted=repeat(first,None,owner=True)
+            assert session(first)==kept,(session(first),kept)
+            continued=spawn(); offered_keep=offer(continued,kind,True)
+            turn(continued,'CONT continued conversation')
+            stop(continued)
+            audit_before=r.rows("SELECT COUNT(*) AS count FROM hrc_events WHERE runtime_id=? AND event_kind='runtime.terminated'",(continued['id'],))
+            assert audit_before[0]['count']>=1,audit_before
+            drop=repeat(continued,True); second_drop=repeat(continued,True,owner=True); after_omit=repeat(continued,None)
+            assert session(continued)['continuation_reuse_disabled']==1,session(continued)
+            audit_after=r.rows("SELECT COUNT(*) AS count FROM hrc_events WHERE runtime_id=? AND event_kind='runtime.terminated'",(continued['id'],))
+            assert audit_before==audit_after,(audit_before,audit_after)
+            literal=call('/v1/literal-input/by-selector',{'selector':{'sessionRef':r.runtime(continued['id'])['scope_ref']+'/lane:main'},'text':'must refuse'})
+            assert literal[0]==503 and literal[1]['error']['code']=='runtime_unavailable',literal
+            interrupt=call('/v1/interrupt',{'runtimeId':continued['id']})
+            assert interrupt[0]==503 and interrupt[1]['error']['message']==f'runtime "{continued["id"]}" is terminated',interrupt
+            fresh=spawn(); offered_drop=offer(fresh,kind,False)
+            results[kind]={'protectedOwner':protected,'keep':keep,'omitted':omitted,'offeredKeep':offered_keep,
+                'drop':drop,'secondDrop':second_drop,'omittedAfterDrop':after_omit,
+                'offeredDrop':offered_drop,'inputRefusal':literal,'interruptRefusal':interrupt,
+                'auditBefore':audit_before,'auditAfter':audit_after}
+            stop(fresh)
+        report['archiveTerminated']={'pass':True,'cases':results}
+        print('PASS repeated terminate keep/drop, fresh/continued birth, input and interrupt refusals (ordinary + self-brokered)',flush=True)
     try:
         owner=r.up('1')
+        if not a.baseline:
+            archive_gates()
+            if a.archive_only:
+                report['pass']=True
+                return
         subject=birth('subject')
         if not a.baseline: report['firstTurn']=turn(subject)
         report['terminate']=terminate(subject)
