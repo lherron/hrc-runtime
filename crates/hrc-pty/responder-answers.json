@@ -110,6 +110,447 @@
    "reply": "\u001b[?1016;2$y",
    "replyHex": "1b5b3f313031363b322479",
    "firstByteMs": 0.27
+  },
+  {
+   "name": "program_status_query_st",
+   "query": "\u001b]7501;?\u001b\\",
+   "reply": "",
+   "replyHex": "",
+   "firstByteMs": null
+  },
+  {
+   "name": "foreground_color",
+   "query": "\u001b]10;?\u0007",
+   "reply": "\u001b]10;rgb:d9d9/e6e6/f2f2\u0007",
+   "replyHex": "1b5d31303b7267623a643964392f653665362f6632663207",
+   "firstByteMs": 0.58
+  },
+  {
+   "name": "background_color",
+   "query": "\u001b]11;?\u0007",
+   "reply": "\u001b]11;rgb:0d0d/1919/2626\u0007",
+   "replyHex": "1b5d31313b7267623a306430642f313931392f3236323607",
+   "firstByteMs": 0.23
+  },
+  {
+   "name": "palette_color_0",
+   "query": "\u001b]4;0;?\u0007",
+   "reply": "\u001b]4;0;rgb:0000/0000/0000\u0007",
+   "replyHex": "1b5d343b303b7267623a303030302f303030302f3030303007",
+   "firstByteMs": 0.58
+  },
+  {
+   "name": "palette_color_1",
+   "query": "\u001b]4;1;?\u0007",
+   "reply": "\u001b]4;1;rgb:b8b8/7a7a/7a7a\u0007",
+   "replyHex": "1b5d343b313b7267623a623862382f376137612f3761376107",
+   "firstByteMs": 0.25
+  },
+  {
+   "name": "palette_color_2",
+   "query": "\u001b]4;2;?\u0007",
+   "reply": "\u001b]4;2;rgb:7a7a/b8b8/7a7a\u0007",
+   "replyHex": "1b5d343b323b7267623a376137612f623862382f3761376107",
+   "firstByteMs": 0.35
+  },
+  {
+   "name": "palette_color_3",
+   "query": "\u001b]4;3;?\u0007",
+   "reply": "\u001b]4;3;rgb:b8b8/b8b8/7a7a\u0007",
+   "replyHex": "1b5d343b333b7267623a623862382f623862382f3761376107",
+   "firstByteMs": 0.3
+  },
+  {
+   "name": "palette_color_4",
+   "query": "\u001b]4;4;?\u0007",
+   "reply": "\u001b]4;4;rgb:7a7a/7a7a/b8b8\u0007",
+   "replyHex": "1b5d343b343b7267623a376137612f376137612f6238623807",
+   "firstByteMs": 0.32
+  },
+  {
+   "name": "palette_color_5",
+   "query": "\u001b]4;5;?\u0007",
+   "reply": "\u001b]4;5;rgb:b8b8/7a7a/b8b8\u0007",
+   "replyHex": "1b5d343b353b7267623a623862382f376137612f6238623807",
+   "firstByteMs": 0.54
+  },
+  {
+   "name": "palette_color_6",
+   "query": "\u001b]4;6;?\u0007",
+   "reply": "\u001b]4;6;rgb:7a7a/b8b8/b8b8\u0007",
+   "replyHex": "1b5d343b363b7267623a376137612f623862382f6238623807",
+   "firstByteMs": 0.32
+  },
+  {
+   "name": "palette_color_7",
+   "query": "\u001b]4;7;?\u0007",
+   "reply": "\u001b]4;7;rgb:d9d9/d9d9/d9d9\u0007",
+   "replyHex": "1b5d343b373b7267623a643964392f643964392f6439643907",
+   "firstByteMs": 0.25
+  },
+  {
+   "name": "palette_color_8",
+   "query": "\u001b]4;8;?\u0007",
+   "reply": "\u001b]4;8;rgb:4c4c/4c4c/4c4c\u0007",
+   "replyHex": "1b5d343b383b7267623a346334632f346334632f3463346307",
+   "firstByteMs": 0.72
+  },
+  {
+   "name": "palette_color_9",
+   "query": "\u001b]4;9;?\u0007",
+   "reply": "\u001b]4;9;rgb:dbdb/bdbd/bdbd\u0007",
+   "replyHex": "1b5d343b393b7267623a646264622f626462642f6264626407",
+   "firstByteMs": 0.33
+  },
+  {
+   "name": "palette_color_10",
+   "query": "\u001b]4;10;?\u0007",
+   "reply": "\u001b]4;10;rgb:bdbd/dbdb/bdbd\u0007",
+   "replyHex": "1b5d343b31303b7267623a626462642f646264622f6264626407",
+   "firstByteMs": 0.3
+  },
+  {
+   "name": "palette_color_11",
+   "query": "\u001b]4;11;?\u0007",
+   "reply": "\u001b]4;11;rgb:dbdb/dbdb/bdbd\u0007",
+   "replyHex": "1b5d343b31313b7267623a646264622f646264622f6264626407",
+   "firstByteMs": 0.28
+  },
+  {
+   "name": "palette_color_12",
+   "query": "\u001b]4;12;?\u0007",
+   "reply": "\u001b]4;12;rgb:bdbd/bdbd/dbdb\u0007",
+   "replyHex": "1b5d343b31323b7267623a626462642f626462642f6462646207",
+   "firstByteMs": 0.26
+  },
+  {
+   "name": "palette_color_13",
+   "query": "\u001b]4;13;?\u0007",
+   "reply": "\u001b]4;13;rgb:dbdb/bdbd/dbdb\u0007",
+   "replyHex": "1b5d343b31333b7267623a646264622f626462642f6462646207",
+   "firstByteMs": 0.46
+  },
+  {
+   "name": "palette_color_14",
+   "query": "\u001b]4;14;?\u0007",
+   "reply": "\u001b]4;14;rgb:bdbd/dbdb/dbdb\u0007",
+   "replyHex": "1b5d343b31343b7267623a626462642f646264622f6462646207",
+   "firstByteMs": 0.29
+  },
+  {
+   "name": "palette_color_15",
+   "query": "\u001b]4;15;?\u0007",
+   "reply": "\u001b]4;15;rgb:ffff/ffff/ffff\u0007",
+   "replyHex": "1b5d343b31353b7267623a666666662f666666662f6666666607",
+   "firstByteMs": 0.26
+  }
+ ],
+ "harnesses": {
+  "claude": {
+   "version": "Claude Code 2.1.312",
+   "preamble": "\u001b[<u\u001b[>5u",
+   "queries": [
+    {
+     "name": "xtversion",
+     "query": "\u001b[>0q"
+    },
+    {
+     "name": "kitty_keyboard_query",
+     "query": "\u001b[?u",
+     "template": "kitty_flags"
+    },
+    {
+     "name": "program_status_query",
+     "query": "\u001b]7501;?\u0007"
+    },
+    {
+     "name": "da1",
+     "query": "\u001b[c"
+    },
+    {
+     "name": "decrqm_2026",
+     "query": "\u001b[?2026$p"
+    },
+    {
+     "name": "kitty_graphics_query",
+     "query": "\u001b_Gi=31,s=1,v=1,a=q,t=d,f=24;AAAA\u001b\\"
+    },
+    {
+     "name": "cell_size",
+     "query": "\u001b[16t",
+     "template": "cell_size"
+    },
+    {
+     "name": "decrqm_1016",
+     "query": "\u001b[?1016$p"
+    }
+   ],
+   "batches": [
+    {
+     "name": "batch1",
+     "query": "\u001b[>0q\u001b[?u\u001b]7501;?\u0007\u001b[c"
+    },
+    {
+     "name": "batch2",
+     "query": "\u001b[?2026$p\u001b_Gi=31,s=1,v=1,a=q,t=d,f=24;AAAA\u001b\\\u001b[16t\u001b[?1016$p\u001b[c"
+    }
+   ]
+  },
+  "pi": {
+   "version": "@earendil-works/pi-tui 1.3.0 (installed Foundry prefix ~/.local)",
+   "preamble": "\u001b[>7u",
+   "queries": [
+    {
+     "name": "kitty_keyboard_query",
+     "query": "\u001b[?u",
+     "template": "kitty_flags"
+    },
+    {
+     "name": "program_status_query_st",
+     "query": "\u001b]7501;?\u001b\\"
+    },
+    {
+     "name": "da1",
+     "query": "\u001b[c"
+    },
+    {
+     "name": "cell_size",
+     "query": "\u001b[16t",
+     "template": "cell_size"
+    },
+    {
+     "name": "foreground_color",
+     "query": "\u001b]10;?\u0007"
+    },
+    {
+     "name": "background_color",
+     "query": "\u001b]11;?\u0007"
+    },
+    {
+     "name": "palette_color_0",
+     "query": "\u001b]4;0;?\u0007"
+    },
+    {
+     "name": "palette_color_1",
+     "query": "\u001b]4;1;?\u0007"
+    },
+    {
+     "name": "palette_color_2",
+     "query": "\u001b]4;2;?\u0007"
+    },
+    {
+     "name": "palette_color_3",
+     "query": "\u001b]4;3;?\u0007"
+    },
+    {
+     "name": "palette_color_4",
+     "query": "\u001b]4;4;?\u0007"
+    },
+    {
+     "name": "palette_color_5",
+     "query": "\u001b]4;5;?\u0007"
+    },
+    {
+     "name": "palette_color_6",
+     "query": "\u001b]4;6;?\u0007"
+    },
+    {
+     "name": "palette_color_7",
+     "query": "\u001b]4;7;?\u0007"
+    },
+    {
+     "name": "palette_color_8",
+     "query": "\u001b]4;8;?\u0007"
+    },
+    {
+     "name": "palette_color_9",
+     "query": "\u001b]4;9;?\u0007"
+    },
+    {
+     "name": "palette_color_10",
+     "query": "\u001b]4;10;?\u0007"
+    },
+    {
+     "name": "palette_color_11",
+     "query": "\u001b]4;11;?\u0007"
+    },
+    {
+     "name": "palette_color_12",
+     "query": "\u001b]4;12;?\u0007"
+    },
+    {
+     "name": "palette_color_13",
+     "query": "\u001b]4;13;?\u0007"
+    },
+    {
+     "name": "palette_color_14",
+     "query": "\u001b]4;14;?\u0007"
+    },
+    {
+     "name": "palette_color_15",
+     "query": "\u001b]4;15;?\u0007"
+    },
+    {
+     "name": "da1",
+     "query": "\u001b[c"
+    }
+   ],
+   "batches": [
+    {
+     "name": "startup",
+     "query": "\u001b[>7u\u001b[?u\u001b]7501;?\u001b\\\u001b[c\u001b[16t\u001b]10;?\u0007\u001b]11;?\u0007\u001b]4;0;?\u0007\u001b]4;1;?\u0007\u001b]4;2;?\u0007\u001b]4;3;?\u0007\u001b]4;4;?\u0007\u001b]4;5;?\u0007\u001b]4;6;?\u0007\u001b]4;7;?\u0007\u001b]4;8;?\u0007\u001b]4;9;?\u0007\u001b]4;10;?\u0007\u001b]4;11;?\u0007\u001b]4;12;?\u0007\u001b]4;13;?\u0007\u001b]4;14;?\u0007\u001b]4;15;?\u0007\u001b[c"
+    }
+   ]
+  }
+ },
+ "recordings": [
+  {
+   "recordedAt": "2026-11-12T11:07:18-0600",
+   "terminal": "Ghostty 1.4.1-dev+scriptable.0.2.0 (/Users/lherron/Applications/ScriptableGhostty.app/Contents/MacOS/scriptable-ghostty)",
+   "harness": "pi",
+   "version": "@earendil-works/pi-tui 1.3.0 (installed Foundry prefix ~/.local)",
+   "method": "Exact data-defined queries written by a pty child of hrc-pty serve; hrc-pty attach in a real Ghostty tab relays replies. Each reply contains all bytes received within 600 ms. Existing entries are retained unchanged; an empty reply means no answer.",
+   "childStatus": {
+    "pid": 61096,
+    "state": "exited",
+    "code": 0,
+    "signal": null
+   },
+   "additions": [
+    {
+     "name": "program_status_query_st",
+     "query": "\u001b]7501;?\u001b\\",
+     "reply": "",
+     "replyHex": "",
+     "firstByteMs": null
+    },
+    {
+     "name": "foreground_color",
+     "query": "\u001b]10;?\u0007",
+     "reply": "\u001b]10;rgb:d9d9/e6e6/f2f2\u0007",
+     "replyHex": "1b5d31303b7267623a643964392f653665362f6632663207",
+     "firstByteMs": 0.58
+    },
+    {
+     "name": "background_color",
+     "query": "\u001b]11;?\u0007",
+     "reply": "\u001b]11;rgb:0d0d/1919/2626\u0007",
+     "replyHex": "1b5d31313b7267623a306430642f313931392f3236323607",
+     "firstByteMs": 0.23
+    },
+    {
+     "name": "palette_color_0",
+     "query": "\u001b]4;0;?\u0007",
+     "reply": "\u001b]4;0;rgb:0000/0000/0000\u0007",
+     "replyHex": "1b5d343b303b7267623a303030302f303030302f3030303007",
+     "firstByteMs": 0.58
+    },
+    {
+     "name": "palette_color_1",
+     "query": "\u001b]4;1;?\u0007",
+     "reply": "\u001b]4;1;rgb:b8b8/7a7a/7a7a\u0007",
+     "replyHex": "1b5d343b313b7267623a623862382f376137612f3761376107",
+     "firstByteMs": 0.25
+    },
+    {
+     "name": "palette_color_2",
+     "query": "\u001b]4;2;?\u0007",
+     "reply": "\u001b]4;2;rgb:7a7a/b8b8/7a7a\u0007",
+     "replyHex": "1b5d343b323b7267623a376137612f623862382f3761376107",
+     "firstByteMs": 0.35
+    },
+    {
+     "name": "palette_color_3",
+     "query": "\u001b]4;3;?\u0007",
+     "reply": "\u001b]4;3;rgb:b8b8/b8b8/7a7a\u0007",
+     "replyHex": "1b5d343b333b7267623a623862382f623862382f3761376107",
+     "firstByteMs": 0.3
+    },
+    {
+     "name": "palette_color_4",
+     "query": "\u001b]4;4;?\u0007",
+     "reply": "\u001b]4;4;rgb:7a7a/7a7a/b8b8\u0007",
+     "replyHex": "1b5d343b343b7267623a376137612f376137612f6238623807",
+     "firstByteMs": 0.32
+    },
+    {
+     "name": "palette_color_5",
+     "query": "\u001b]4;5;?\u0007",
+     "reply": "\u001b]4;5;rgb:b8b8/7a7a/b8b8\u0007",
+     "replyHex": "1b5d343b353b7267623a623862382f376137612f6238623807",
+     "firstByteMs": 0.54
+    },
+    {
+     "name": "palette_color_6",
+     "query": "\u001b]4;6;?\u0007",
+     "reply": "\u001b]4;6;rgb:7a7a/b8b8/b8b8\u0007",
+     "replyHex": "1b5d343b363b7267623a376137612f623862382f6238623807",
+     "firstByteMs": 0.32
+    },
+    {
+     "name": "palette_color_7",
+     "query": "\u001b]4;7;?\u0007",
+     "reply": "\u001b]4;7;rgb:d9d9/d9d9/d9d9\u0007",
+     "replyHex": "1b5d343b373b7267623a643964392f643964392f6439643907",
+     "firstByteMs": 0.25
+    },
+    {
+     "name": "palette_color_8",
+     "query": "\u001b]4;8;?\u0007",
+     "reply": "\u001b]4;8;rgb:4c4c/4c4c/4c4c\u0007",
+     "replyHex": "1b5d343b383b7267623a346334632f346334632f3463346307",
+     "firstByteMs": 0.72
+    },
+    {
+     "name": "palette_color_9",
+     "query": "\u001b]4;9;?\u0007",
+     "reply": "\u001b]4;9;rgb:dbdb/bdbd/bdbd\u0007",
+     "replyHex": "1b5d343b393b7267623a646264622f626462642f6264626407",
+     "firstByteMs": 0.33
+    },
+    {
+     "name": "palette_color_10",
+     "query": "\u001b]4;10;?\u0007",
+     "reply": "\u001b]4;10;rgb:bdbd/dbdb/bdbd\u0007",
+     "replyHex": "1b5d343b31303b7267623a626462642f646264622f6264626407",
+     "firstByteMs": 0.3
+    },
+    {
+     "name": "palette_color_11",
+     "query": "\u001b]4;11;?\u0007",
+     "reply": "\u001b]4;11;rgb:dbdb/dbdb/bdbd\u0007",
+     "replyHex": "1b5d343b31313b7267623a646264622f646264622f6264626407",
+     "firstByteMs": 0.28
+    },
+    {
+     "name": "palette_color_12",
+     "query": "\u001b]4;12;?\u0007",
+     "reply": "\u001b]4;12;rgb:bdbd/bdbd/dbdb\u0007",
+     "replyHex": "1b5d343b31323b7267623a626462642f626462642f6462646207",
+     "firstByteMs": 0.26
+    },
+    {
+     "name": "palette_color_13",
+     "query": "\u001b]4;13;?\u0007",
+     "reply": "\u001b]4;13;rgb:dbdb/bdbd/dbdb\u0007",
+     "replyHex": "1b5d343b31333b7267623a646264622f626462642f6462646207",
+     "firstByteMs": 0.46
+    },
+    {
+     "name": "palette_color_14",
+     "query": "\u001b]4;14;?\u0007",
+     "reply": "\u001b]4;14;rgb:bdbd/dbdb/dbdb\u0007",
+     "replyHex": "1b5d343b31343b7267623a626462642f646264622f6462646207",
+     "firstByteMs": 0.29
+    },
+    {
+     "name": "palette_color_15",
+     "query": "\u001b]4;15;?\u0007",
+     "reply": "\u001b]4;15;rgb:ffff/ffff/ffff\u0007",
+     "replyHex": "1b5d343b31353b7267623a666666662f666666662f6666666607",
+     "firstByteMs": 0.26
+    }
+   ]
   }
  ]
 }

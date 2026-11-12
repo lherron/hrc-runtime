@@ -249,10 +249,10 @@ e2e-hrc-pty:
     {{rbuild}} --mac --pull {{mac_debug}}/hrc-pty cargo build --manifest-path crates/Cargo.toml --locked -p hrc-pty
     python3 crates/hrc-pty/e2e/hrc_pty_e2e.py --binary {{mac_debug}}/hrc-pty --scratch "$scratch" --artifacts "${HRC_PTY_E2E_ARTIFACTS:-/tmp/hrc-pty-e2e-$(date +%s)-$$}"
 
-# Re-record Ghostty's answers to Claude's startup queries into responder-answers.json
-hrc-pty-record-answers:
+# Record Ghostty replies for a data-defined harness; retain the existing answer union
+hrc-pty-record-answers harness="claude":
     {{rbuild}} --mac --pull {{mac_debug}}/hrc-pty cargo build --manifest-path crates/Cargo.toml --locked -p hrc-pty
-    python3 crates/hrc-pty/e2e/record_answers.py --binary {{mac_debug}}/hrc-pty --out "${HRC_PTY_RECORD_ARTIFACTS:-/tmp/hrc-pty-record-$(date +%s)-$$}"
+    python3 crates/hrc-pty/e2e/record_answers.py --binary {{mac_debug}}/hrc-pty --harness {{harness}} --out "${HRC_PTY_RECORD_ARTIFACTS:-/tmp/hrc-pty-record-$(date +%s)-$$}"
 
 # Rebuild hrc-pty's vendored libghostty-vt from scriptable-ghostty (zig 0.17; after moving GHOSTTY_COMMIT)
 hrc-pty-vendor-lib:
