@@ -24,6 +24,7 @@ pub(super) fn mark_terminal(
         return Ok(());
     }
     let now = hrc_store::timestamp();
+    super::super::lease::retire_hrc_launched(&tx, &rt, &now, "participant_exit")?;
     let occurred = envelope["time"].as_str().unwrap_or(&now);
     let message = format!(
         "external_participant_exit: invocation {invocation} exited cleanly; HRC no longer observes this turn, its native outcome is unknown"

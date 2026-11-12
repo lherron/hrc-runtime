@@ -219,6 +219,11 @@ fn held(r: &Value, facts: &Value) -> bool {
         return false;
     }
     let state = &r["runtimeStateJson"];
+    // A participant serves its own evidence; it has no frozen aspd worker.
+    // Ordinary status/liveness guards and terminal IPC TTL still apply.
+    if hrc_store::participant_served(state) {
+        return false;
+    }
     let release = &state["executionRelease"];
     let worker = &release["worker"];
     if release["source"] != "aspd"

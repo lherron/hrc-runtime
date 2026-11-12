@@ -205,6 +205,7 @@ pub fn mark_crash_terminal(
         return Ok(());
     }
     let now = hrc_store::timestamp();
+    super::super::lease::retire_hrc_launched(&tx, &rt, &now, code)?;
     let inv = match &rt.active_invocation_id {
         Some(id) => db::invocation(&tx, id)?,
         None => db::invocations_for_runtime(&tx, runtime_id)?.pop(),
@@ -309,7 +310,7 @@ pub(super) async fn broker_pane_alive(server: &Server, runtime_id: &str) -> bool
     };
     let Some(rt) = state else { return false };
     if let Some((socket, pid)) = crate::server::hrcpty::substrate(&rt) {
-        return super::super::lease::hrcpty_broker_alive(&socket, pid).await;
+        return super::super::lease::hrcpty_broker_alive(&rt, &socket, pid).await;
     }
     let state = rt.state_object();
     let window = &state["broker"]["brokerWindow"];

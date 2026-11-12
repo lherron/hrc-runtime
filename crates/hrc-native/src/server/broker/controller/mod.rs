@@ -709,6 +709,18 @@ pub async fn after_mapped(server: &Shared, runtime: &str, envelope: &Value, outc
                 json!({"runtimeId":runtime,"invocationId":invocation,"error":error.to_string()}),
             );
         }
+        let owned = {
+            let db = server.store.lock().unwrap();
+            db::runtime(&db.sqlite, runtime)
+                .ok()
+                .flatten()
+                .is_some_and(|rt| {
+                    rt.state_object()["participant"]["lifecycleOwner"] == hrc_store::HRC_LAUNCHED
+                })
+        };
+        if owned && !is_terminating(server, runtime) {
+            super::lease::reap(server, runtime, "participant_exit").await;
+        }
     } else if !participant && terminal {
         flush_gap(server, &invocation).await;
         // Local writes and a tmux reap only: no broker RPC under the guard.
@@ -847,6 +859,28 @@ pub fn consume(
                 return;
             };
             super::lease::reap(&server, &runtime_id, "broker_close").await;
+            return;
+        }
+        let self_brokered = {
+            let db = server.store.lock().unwrap();
+            db::runtime(&db.sqlite, &runtime_id)
+                .ok()
+                .flatten()
+                .is_some_and(|rt| {
+                    rt.state_object()["participant"]["lifecycleOwner"] == hrc_store::HRC_LAUNCHED
+                })
+        };
+        if self_brokered {
+            // A closed participant connection need not mean process death.
+            // Let the child/supervisor verdict own the terminal reason.
+            if let Err(error) = super::lease::reconcile_liveness(&server, &runtime_id).await {
+                log(
+                    "warn",
+                    "self-brokered liveness failed",
+                    json!({"runtimeId":runtime_id,"error":error.to_string()}),
+                );
+            }
+            delete_active(&server, &runtime_id);
             return;
         }
         if broker_pane_alive(&server, &runtime_id).await {

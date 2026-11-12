@@ -413,6 +413,8 @@ async fn refusal(server: &Shared, row: &Row, invocation: &str) -> Option<(&'stat
     if !row.broker() {
         return Some(("offline_read_not_harness_broker", "controller".into()));
     }
+    // Includes hrc-launched participants: no aspd preparation/release exists
+    // with which HRC could run an offline reader. Keep the participant refusal.
     if row.participant_served() {
         return Some(("offline_read_external_lifecycle", "external".into()));
     }

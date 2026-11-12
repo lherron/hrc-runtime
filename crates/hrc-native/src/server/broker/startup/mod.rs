@@ -22,6 +22,7 @@ use std::{
 use tokio::process::Command;
 
 mod probe;
+mod self_brokered;
 mod sweeps;
 pub use probe::broker_health;
 use probe::*;
@@ -711,6 +712,7 @@ fn terminal_active_runs(server: &Server) -> Result<()> {
 /// terminal rows, classify every broker row without attaching, sweep orphans
 /// and legacy rows, then attach the durable survivors. Never fails the boot.
 pub async fn reconcile(server: &Shared) -> Result<()> {
+    self_brokered::reconcile(server).await?;
     if let Err(e) = hrcpty_log_sweep(server) {
         startup_issue("hrcpty log sweep failed", json!({}), &e);
     }
@@ -721,6 +723,17 @@ pub async fn reconcile(server: &Shared) -> Result<()> {
         let Some(rt) = row(server, &id)? else {
             continue;
         };
+        if rt.state_object()["participant"]["lifecycleOwner"] == hrc_store::HRC_LAUNCHED {
+            // Participant establishment is armed by participants::resume after
+            // this pass; never issue release-bound broker::hello for this row.
+            if !lease::unavailable(&rt.status)
+                && let Some((socket, pid)) = hrcpty::substrate(&rt)
+                && !lease::hrcpty_liveness(server, &rt, &socket, pid).await?
+            {
+                hrcpty::watch(server, &id, &socket);
+            }
+            continue;
+        }
         if skipped(&rt) {
             continue;
         }

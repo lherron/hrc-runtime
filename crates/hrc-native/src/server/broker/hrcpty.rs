@@ -430,7 +430,10 @@ async fn follow(server: &Shared, runtime_id: &str, socket: &Path) -> Result<()> 
         record(server, runtime_id, key, &frame["params"])?;
         let active = {
             let db = server.store.lock().unwrap();
-            db::runtime(&db.sqlite, runtime_id)?.is_some_and(|rt| rt.active_run_id.is_some())
+            db::runtime(&db.sqlite, runtime_id)?.is_some_and(|rt| {
+                rt.active_run_id.is_some()
+                    || rt.state_object()["participant"]["lifecycleOwner"] == hrc_store::HRC_LAUNCHED
+            })
         };
         // An HRC terminate (including context invalidation) owns settlement
         // and its terminal event. The child exit it causes is not death.

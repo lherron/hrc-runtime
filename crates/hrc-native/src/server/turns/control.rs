@@ -562,12 +562,14 @@ async fn terminate_runtime(
         session_event(&db.sqlite, rt, &now)?;
     }
     let pane = if tmux { Some(tmux_pane(rt)?) } else { None };
-    let dropped = if tmux {
-        o.drop_continuation == Some(true)
-    } else {
-        o.drop_continuation
-            .unwrap_or_else(|| rt.active_run_id.is_some() && launched(server, rt))
-    };
+    // Self-brokered hosts keep their continuation unless explicitly dropped.
+    let dropped =
+        if tmux || rt.state_object()["participant"]["lifecycleOwner"] == hrc_store::HRC_LAUNCHED {
+            o.drop_continuation == Some(true)
+        } else {
+            o.drop_continuation
+                .unwrap_or_else(|| rt.active_run_id.is_some() && launched(server, rt))
+        };
     let mut response = action_response(rt);
     response["droppedContinuation"] = dropped.into();
     if dropped {
@@ -760,6 +762,7 @@ fn launched(server: &Shared, rt: &db::Rt) -> bool {
 
 /// finalizeRuntimeTermination
 pub(super) fn finalize(db: &Connection, rt: &db::Rt, now: &str) -> anyhow::Result<()> {
+    lease::retire_hrc_launched(db, rt, now, "runtime_terminated")?;
     if let Some(run) = &rt.active_run_id {
         db.execute(
             "UPDATE runtimes SET active_run_id=NULL, updated_at=? WHERE runtime_id=?",

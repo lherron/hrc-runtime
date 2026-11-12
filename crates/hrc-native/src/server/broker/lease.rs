@@ -202,6 +202,18 @@ fn ev(db: &Connection, rt: &db::Rt, now: &str) -> events::Ev {
         ..Default::default()
     }
 }
+/// Settle the process-owned participant graph in the caller's transaction.
+/// This never releases its address or changes the session continuation. It also
+/// retires an already-TERMINAL attempt's binding (producer exit may race us).
+pub fn retire_hrc_launched(db: &Connection, rt: &db::Rt, now: &str, reason: &str) -> Result<()> {
+    if rt.state_object()["participant"]["lifecycleOwner"] != hrc_store::HRC_LAUNCHED {
+        return Ok(());
+    }
+    db.execute("UPDATE participant_registration_attempts SET state='TERMINAL',disposition_reason=?,establishment_work_state='completed',establishment_next_attempt_at=NULL,updated_at=? WHERE runtime_id=? AND state NOT IN ('ABANDONED','TERMINAL','SUPERSEDED')", params![reason,now,rt.runtime_id])?;
+    db.execute("UPDATE participant_host_bindings SET state='RETIRED',retired_at=?,disposition_reason=?,updated_at=? WHERE runtime_id=? AND state!='RETIRED'", params![now,reason,now,rt.runtime_id])?;
+    Ok(())
+}
+
 /// markRuntimeStale
 pub fn mark_stale(db: &Connection, rt: &db::Rt, payload: &Value) -> Result<()> {
     let now = hrc_store::timestamp();
@@ -233,6 +245,12 @@ pub fn mark_stale(db: &Connection, rt: &db::Rt, payload: &Value) -> Result<()> {
             ("updated_at", db::text(now.as_str())),
             ("runtime_state_json", db::text(state.to_string())),
         ],
+    )?;
+    retire_hrc_launched(
+        db,
+        rt,
+        &now,
+        payload["reason"].as_str().unwrap_or("reconcile_not_live"),
     )?;
     events::append(db, "runtime.stale", &ev(db, rt, &now), payload)?;
     Ok(())
@@ -271,6 +289,7 @@ pub fn mark_terminated_after_user_exit(
             ("runtime_state_json", db::text(state.to_string())),
         ],
     )?;
+    retire_hrc_launched(db, rt, &now, "user_initiated_session_end")?;
     let mut out = payload.clone();
     out["reason"] = "user_initiated_session_end".into();
     events::append(db, "runtime.terminated", &ev(db, rt, &now), &out)?;
@@ -386,12 +405,17 @@ pub async fn reconcile_liveness(server: &Server, runtime_id: &str) -> Result<()>
     Ok(())
 }
 
-/// The existing supervisor identity + running broker signal, shared by
-/// lease reconciliation and the broker-close condemnation guard.
-pub(crate) async fn hrcpty_broker_alive(socket: &std::path::Path, pid: Option<i64>) -> bool {
-    hrcpty_status(socket, pid)
-        .await
-        .is_some_and(|s| s["broker"]["state"] == "running")
+/// The same seat-specific verdict for the broker-close condemnation guard.
+pub(crate) async fn hrcpty_broker_alive(
+    rt: &db::Rt,
+    socket: &std::path::Path,
+    pid: Option<i64>,
+) -> bool {
+    let status = hrcpty_status(socket, pid).await;
+    if rt.state_object()["participant"]["lifecycleOwner"] == hrc_store::HRC_LAUNCHED {
+        return status.is_some() && hrcpty_dead_reason(rt, status.as_ref()).is_none();
+    }
+    status.is_some_and(|s| s["broker"]["state"] == "running")
 }
 
 /// Why a supervisor `status` (None: no supervisor answers as the recorded
@@ -402,8 +426,8 @@ pub(crate) fn hrcpty_dead_reason(rt: &db::Rt, status: Option<&Value>) -> Option<
     let Some(status) = status else {
         return Some("broker_hrcpty_supervisor_missing");
     };
-    // T-13434 task 4 owns full self-brokered liveness. This narrow branch
-    // unblocks no-input reuse: this supervisor intentionally has no broker.
+    // The participant is the terminal child; broker.state=none is intentional.
+    // No aspd selection or execution release exists for this launch.
     if rt.state_object()["participant"]["lifecycleOwner"] == hrc_store::HRC_LAUNCHED {
         return (status["child"]["state"] != "running").then_some("broker_hrcpty_child_exited");
     }
