@@ -47,6 +47,16 @@ pub fn token_path(socket: &Path) -> PathBuf {
         .unwrap_or_default()
 }
 
+/// Recover a self-brokered launch's supervisor from an attempt runtime id,
+/// including before a runtime row exists. The pid file is hrcpty.pid beside it.
+pub fn self_brokered_socket(runtime_root: &Path, runtime_id: &str) -> PathBuf {
+    let digest = super::compile::digest(format!("self-brokered:{runtime_id}").as_bytes());
+    runtime_root
+        .join("bipc")
+        .join(&digest[..12])
+        .join("hrcpty.sock")
+}
+
 /// The lease the broker receives at dispatch start (§5 step 3).
 pub fn lease(socket: &Path, resize: bool) -> Value {
     json!({"kind":"hrcpty","socketPath":socket,"ownership":"hrc","allowedOps":{"inspect":true,"sendInput":true,"sendInterrupt":true,"capture":true,"resize":resize,"spawn":true}})
@@ -133,7 +143,8 @@ pub async fn serve(
     let log_path = log_dir.join(format!("{runtime_id}.log"));
     let bin = binary();
     let (cols, rows) = INITIAL_SIZE;
-    let out = Command::new(&bin)
+    let mut command = Command::new(&bin);
+    command
         .arg("serve")
         .arg("--socket")
         .arg(socket)
@@ -141,9 +152,11 @@ pub async fn serve(
         .arg(&log_path)
         .args(["--broker-stderr", broker_stderr])
         .args(["--cols", &cols.to_string(), "--rows", &rows.to_string()])
-        .args(["--runtime-id", runtime_id])
-        .arg("--broker-argv")
-        .args(broker_argv)
+        .args(["--runtime-id", runtime_id]);
+    if !broker_argv.is_empty() {
+        command.arg("--broker-argv").args(broker_argv);
+    }
+    let out = command
         .stdin(std::process::Stdio::null())
         .env("PRAESIDIUM_CALLER", "rusthrc")
         .output()

@@ -322,7 +322,7 @@ pub async fn assert_scope_not_retired(
 }
 
 /// A reserved participant address births only through its participant.
-pub fn assert_reserved_address_allows_birth(
+pub async fn assert_reserved_address_allows_birth(
     server: &Server,
     scope: &str,
     lane: &str,
@@ -333,6 +333,13 @@ pub fn assert_reserved_address_allows_birth(
         .lock()
         .unwrap()
         .target_birth_refusal(scope, lane)?;
+    if refusal.is_some()
+        && super::policy::launch_command(server, scope)
+            .await?
+            .is_some()
+    {
+        return Ok(());
+    }
     match refusal {
         None => Ok(()),
         Some(message) => Err(ApiError::domain(

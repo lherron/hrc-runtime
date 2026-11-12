@@ -282,6 +282,17 @@ pub async fn birth(server: &Shared, birth: Birth<'_>) -> Result<Value, ApiError>
     // into its own runtime before any birth; this backstop is for any caller
     // that reaches a birth with one anyway.
     let scope = birth.session["scopeRef"].as_str().unwrap_or("");
+    if let Some(command) = super::federation::policy::launch_command(server, scope).await? {
+        // Input allocation belongs to the admission rotation stage (next task).
+        // Never allocate here for a plan already bound to an input's session.
+        if !birth.prompt.is_empty() {
+            return Err(crate::server::turns::admission::unavailable(
+                "self-brokered input birth is not available through this door yet",
+                json!({"scopeRef":scope,"reason":"self_brokered_input_birth_pending"}),
+            ));
+        }
+        return super::participants::launch(server, &birth.session, command, birth.attach).await;
+    }
     let registration = server
         .store
         .lock()

@@ -402,6 +402,11 @@ pub(crate) fn hrcpty_dead_reason(rt: &db::Rt, status: Option<&Value>) -> Option<
     let Some(status) = status else {
         return Some("broker_hrcpty_supervisor_missing");
     };
+    // T-13434 task 4 owns full self-brokered liveness. This narrow branch
+    // unblocks no-input reuse: this supervisor intentionally has no broker.
+    if rt.state_object()["participant"]["lifecycleOwner"] == hrc_store::HRC_LAUNCHED {
+        return (status["child"]["state"] != "running").then_some("broker_hrcpty_child_exited");
+    }
     if status["broker"]["state"] != "running" {
         return Some("broker_hrcpty_broker_exited");
     }

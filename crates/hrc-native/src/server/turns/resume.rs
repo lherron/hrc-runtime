@@ -399,7 +399,7 @@ pub async fn handle(server: &Shared, body: Value) -> Result<Response, ApiError> 
     }
     let scope = prior["scopeRef"].as_str().unwrap_or("").to_owned();
     let lane = hrc_store::storage_lane(prior["laneRef"].as_str().unwrap_or("main")).to_owned();
-    assert_reserved_address_allows_birth(server, &scope, &lane, "resume")?;
+    assert_reserved_address_allows_birth(server, &scope, &lane, "resume").await?;
     let project = server
         .store
         .lock()
@@ -439,7 +439,7 @@ pub async fn handle(server: &Shared, body: Value) -> Result<Response, ApiError> 
         if historical {
             // An explicit historical resume branches from a newer key: the
             // historical-resume door checks the reservation again.
-            assert_reserved_address_allows_birth(server, &scope, &lane, "resume")?;
+            assert_reserved_address_allows_birth(server, &scope, &lane, "resume").await?;
         }
         let db = server.store.lock().unwrap();
         match raced {

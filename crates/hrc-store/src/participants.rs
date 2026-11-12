@@ -411,7 +411,13 @@ impl Store {
         let absorbing = ["ABANDONED", "TERMINAL", "SUPERSEDED"]
             .iter()
             .any(|s| a["state"] == *s);
-        if !absorbing && (a["state"] == "ACTIVE" || !a["initial_activation_confirmed_at"].is_null())
+        // Activation precedes replay. If replay exhausts during initial launch,
+        // the launch still failed and owns cleanup; a completed ACTIVE seat is
+        // never an abandoned start (its caller must terminate it instead).
+        let failed_establishment = a["establishment_work_state"] == "exhausted";
+        if !absorbing
+            && !failed_establishment
+            && (a["state"] == "ACTIVE" || !a["initial_activation_confirmed_at"].is_null())
         {
             return refused(
                 "participant_attempt_active",
@@ -426,6 +432,9 @@ impl Store {
         if let Some(binding) = a["host_binding_id"].as_str() {
             changed |= tx.execute("UPDATE participant_host_bindings SET state='RETIRED',retired_at=?,disposition_reason=?,updated_at=? WHERE binding_id=? AND state!='RETIRED'",params![now,reason,now,binding])? == 1;
         }
+        tx.execute("UPDATE runtimes SET status='failed',status_changed_at=?,lifecycle_terminal_reason=?,updated_at=? WHERE runtime_id=? AND (status='starting' OR ?)", params![now,reason,now,a["runtime_id"].as_str(),failed_establishment])?;
+        tx.execute("UPDATE runtime_operations SET status='failed',completed_at=?,updated_at=? WHERE operation_id=? AND (status='starting' OR ?)", params![now,now,a["operation_id"].as_str(),failed_establishment])?;
+        tx.execute("UPDATE broker_invocations SET invocation_state='failed',updated_at=? WHERE invocation_id=? AND invocation_state IN ('starting','ready')", params![now,a["invocation_id"].as_str()])?;
         tx.commit()?;
         Ok(ParticipantAbandon::Abandoned { changed })
     }
@@ -636,6 +645,16 @@ fn register_direct(
 }
 
 impl Store {
+    /// The runtime id is minted by allocation. Bind its deterministic IPC path
+    /// before launching, while the attempt is still identity-minted.
+    pub fn set_hrc_launch_endpoint(&self, attempt: &str, socket: &std::path::Path) -> Result<()> {
+        let changed = self.sqlite.execute("UPDATE participant_registrations SET serving_socket_path=? WHERE lifecycle_owner='hrc-launched' AND registration_id=(SELECT registration_id FROM participant_registration_attempts WHERE attempt_id=? AND state='IDENTITY_MINTED')", params![socket.to_string_lossy(),attempt])?;
+        anyhow::ensure!(
+            changed == 1,
+            "self-brokered launch endpoint allocation fence changed"
+        );
+        Ok(())
+    }
     /// Canonical participant rows used to fence attachment against the latest epoch.
     pub fn participant_registration(&self, id: &str) -> Result<Option<Value>> {
         registration(&self.sqlite, id)
@@ -792,6 +811,8 @@ impl Store {
         let now = timestamp();
         let transport = if realized["presentation"]["kind"] == "tmux-tui" {
             "tmux"
+        } else if realized["presentation"]["kind"] == "hrcpty" {
+            "hrcpty"
         } else {
             "headless"
         };
@@ -823,6 +844,7 @@ impl Store {
         if launched {
             state["lifecycleOwner"] = "hrc".into();
             state["participant"] = json!({"lifecycleOwner":HRC_LAUNCHED});
+            state["broker"]["brokerPid"] = realized["brokerPid"].clone();
         }
         let tx = self.sqlite.unchecked_transaction()?;
         let existing = tx
@@ -866,6 +888,15 @@ impl Store {
             }
         } else {
             tx.execute("INSERT INTO runtimes(runtime_id,host_session_id,scope_ref,lane_ref,generation,transport,harness,provider,status,status_changed_at,supports_inflight_input,controller_kind,active_operation_id,active_invocation_id,selected_profile_hash,runtime_state_json,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,'starting',?,1,'harness-broker',?,?,?,?,?,?)",params![attempt["runtime_id"].as_str(),reg["host_session_id"].as_str(),reg["scope_ref"].as_str(),reg["lane_ref"].as_str(),reg["generation"].as_i64(),transport,harness,provider,now,attempt["operation_id"].as_str(),attempt["invocation_id"].as_str(),descriptor["descriptorHash"].as_str(),state.to_string(),now,now])?;
+        }
+        if launched {
+            tx.execute(
+                "UPDATE runtimes SET presentation_json=? WHERE runtime_id=?",
+                params![
+                    json!({"operatorAttachable":true,"viewerRequested":false}).to_string(),
+                    attempt["runtime_id"].as_str()
+                ],
+            )?;
         }
         tx.execute("INSERT INTO runtime_operations(operation_id,runtime_id,host_session_id,generation,operation_kind,controller,selected_profile_id,selected_profile_hash,startup_method,turn_delivery,status,route_decision_json,capability_resolution_json,created_at,started_at,updated_at) SELECT ?,?,?,?,'broker_invocation','harness-broker',?,?,'broker.ensureInvocation','invocation.input','starting',?,?,?,?,? WHERE NOT EXISTS (SELECT 1 FROM runtime_operations WHERE operation_id=?)",params![attempt["operation_id"].as_str(),attempt["runtime_id"].as_str(),reg["host_session_id"].as_str(),reg["generation"].as_i64(),descriptor["descriptorId"].as_str(),descriptor["descriptorHash"].as_str(),json!({"origin":"participant-registration","join":reg["join_direction"]}).to_string(),json!({"brokerHello":hello.get("capabilities").unwrap_or(&json!({}))}).to_string(),now,now,now,attempt["operation_id"].as_str()])?;
         let existing=tx.query_row("SELECT operation_id,runtime_id,start_request_hash,selected_profile_hash FROM broker_invocations WHERE invocation_id=?",[attempt["invocation_id"].as_str()],raw_row).optional()?;
@@ -918,6 +949,8 @@ impl Store {
             )?;
             let transport = if state["broker"]["presentation"]["kind"] == "tmux-tui" {
                 "tmux"
+            } else if state["broker"]["presentation"]["kind"] == "hrcpty" {
+                "hrcpty"
             } else {
                 "headless"
             };

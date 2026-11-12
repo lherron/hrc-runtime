@@ -638,9 +638,8 @@ impl Claim {
                         .unwrap()
                         .participant_host_not_serving(&scope, lane)?;
                     if host_not_serving {
-                        summon::assert_reserved_address_allows_birth(
-                            server, &scope, lane, "start",
-                        )?;
+                        summon::assert_reserved_address_allows_birth(server, &scope, lane, "start")
+                            .await?;
                     }
                     return Err(ApiError::domain(
                         StatusCode::CONFLICT,

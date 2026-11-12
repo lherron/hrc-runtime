@@ -7,7 +7,7 @@ pub(super) mod gate;
 pub mod history;
 mod locate;
 pub mod peer_listener;
-mod policy;
+pub(crate) mod policy;
 pub use policy::start_refresh as start_seat_kind_refresh;
 mod projection;
 mod rebuild;

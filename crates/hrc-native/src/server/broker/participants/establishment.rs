@@ -48,7 +48,14 @@ pub fn hosting(server: &Shared, reg: &Value, attempt: &Value) -> Result<()> {
     let d = parsed(attempt, "prepared_profile_json")?;
     let runtime = string(attempt, "runtime_id")?;
     let leaf = compile::digest(format!("{}:{runtime}", string(&d, "brokerDriver")?).as_bytes());
-    let directory = server.runtime.join("bipc").join(&leaf[..12]);
+    let directory = if reg["lifecycle_owner"] == hrc_store::HRC_LAUNCHED {
+        super::super::hrcpty::self_brokered_socket(&server.runtime, runtime)
+            .parent()
+            .unwrap()
+            .to_owned()
+    } else {
+        server.runtime.join("bipc").join(&leaf[..12])
+    };
     fs::create_dir_all(&directory)?;
     fs::set_permissions(&directory, fs::Permissions::from_mode(0o700))?;
     let token_path = directory.join("attach.token");
@@ -74,7 +81,9 @@ pub fn hosting(server: &Shared, reg: &Value, attempt: &Value) -> Result<()> {
         Err(e) => return Err(e.into()),
     }
     fs::File::open(&directory)?.sync_all()?;
-    let presentation = if let Some(terminal) = d.get("brokerTerminal") {
+    let presentation = if reg["lifecycle_owner"] == hrc_store::HRC_LAUNCHED {
+        "hrcpty"
+    } else if let Some(terminal) = d.get("brokerTerminal") {
         ensure!(
             terminal["host"] == "tmux",
             "participant descriptor requests an unsupported HRC presentation resource"
@@ -133,6 +142,15 @@ fn presentation_socket(server: &Shared, d: &Value, attempt: &Value) -> Result<Pa
         clean(string(attempt, "runtime_id")?, 32)
     )))
 }
+fn reg_generation(server: &Shared, attempt: &Value) -> Result<Value> {
+    Ok(server
+        .store
+        .lock()
+        .unwrap()
+        .participant_registration(string(attempt, "registration_id")?)?
+        .context("launch registration missing")?["generation"]
+        .clone())
+}
 async fn realize(server: &Shared, attempt: &Value) -> Result<Value> {
     let id = string(attempt, "attempt_id")?;
     let mut a = current(server, id)?;
@@ -147,6 +165,21 @@ async fn realize(server: &Shared, attempt: &Value) -> Result<Value> {
             a["state"]
         );
         let mut value = json!({"schemaVersion":"participant-realized-hosting/v1","endpoint":intent["endpoint"],"substrate":{"kind":"external"},"presentation":{"kind":"none"}});
+        if intent["presentation"]["kind"] == "hrcpty" {
+            let socket = super::super::hrcpty::self_brokered_socket(
+                &server.runtime,
+                string(&a, "runtime_id")?,
+            );
+            let ops = super::super::hrcpty::Ops::connect(&socket).await?;
+            let status = ops.call("status", json!({})).await?;
+            ensure!(
+                status["child"]["state"] == "running",
+                "self-brokered launcher child is not running"
+            );
+            value["substrate"] = json!({"kind":"leased-hrcpty","socketPath":socket,"pid":ops.hello["pid"],"generation":reg_generation(server, &a)?});
+            value["presentation"] = json!({"kind":"hrcpty","socketPath":socket,"operatorAttachTarget":true,"attachCommand":super::super::hrcpty::attach_command(&socket.to_string_lossy())});
+            value["brokerPid"] = status["child"]["pid"].clone();
+        }
         if intent["presentation"]["kind"] == "tmux-tui" {
             let socket = presentation_socket(server, &d, &a)?;
             fs::create_dir_all(socket.parent().unwrap())?;
@@ -238,11 +271,6 @@ async fn realize(server: &Shared, attempt: &Value) -> Result<Value> {
             surface["kind"] = "tmux-pane".into();
             surface["ownership"] = "hrc".into();
             surface["allowedOps"] = json!({"inspect":true,"sendInput":true,"sendInterrupt":true,"capture":true,"resize":false});
-            dispatch["runtime"] = json!({"terminalSurface":surface,"terminalSurfaceRequired":true});
-        } else if realized["presentation"]["kind"] == "hrcpty"
-            && let Some(socket) = realized["presentation"]["socketPath"].as_str()
-        {
-            let surface = super::super::hrcpty::lease(Path::new(socket), false);
             dispatch["runtime"] = json!({"terminalSurface":surface,"terminalSurfaceRequired":true});
         }
         dispatch["lifecyclePolicy"] = intent["lifecyclePolicy"].clone();

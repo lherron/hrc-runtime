@@ -1,6 +1,8 @@
 pub mod delivery;
 mod descriptor;
 mod establishment;
+mod launch;
+pub use launch::launch;
 mod start_validation;
 #[cfg(test)]
 mod tests;
@@ -229,24 +231,10 @@ async fn register_core(server: &super::Shared, body: Value) -> Result<Answer, Ap
 /// HRC's statement that the processes it launched for a scope's previous
 /// incarnation are gone. The caller confirms it under its start gate; this
 /// module takes it as the predecessor's retirement evidence and probes nothing.
-#[cfg_attr(
-    not(test),
-    expect(
-        dead_code,
-        reason = "first caller is the self-brokered launch, T-13434 task 3"
-    )
-)]
 pub struct PredecessorGone {
     pub detail: String,
 }
 /// The continuation an allocation offers its launcher (T-13434 section 6).
-#[cfg_attr(
-    not(test),
-    expect(
-        dead_code,
-        reason = "first caller is the self-brokered launch, T-13434 task 3"
-    )
-)]
 #[derive(Clone, Copy)]
 pub enum Continuation {
     /// The session's continuation when it is reusable.
@@ -262,13 +250,6 @@ pub enum Continuation {
 /// externally-owned predecessor (the cutover) it probes that endpoint first and
 /// refuses `host_binding_conflict` unless it is dead. The allocation is one
 /// store transaction; `Done` is the register route's created-registration body.
-#[cfg_attr(
-    not(test),
-    expect(
-        dead_code,
-        reason = "first caller is the self-brokered launch, T-13434 task 3"
-    )
-)]
 pub async fn allocate_hrc_launched(
     server: &super::Shared,
     scope: &str,
@@ -336,13 +317,6 @@ pub async fn allocate_hrc_launched(
 /// descriptor file it wrote. Validation is the route's, including the one
 /// `hrc-launched` relaxation `attach` applies (a descriptor without the
 /// offered continuation: the seat chose to start fresh).
-#[cfg_attr(
-    not(test),
-    expect(
-        dead_code,
-        reason = "first caller is the self-brokered launch, T-13434 task 3"
-    )
-)]
 pub async fn attach_hrc_launched(
     server: &super::Shared,
     registration_id: &str,
@@ -359,15 +333,10 @@ pub async fn attach_hrc_launched(
     Ok(answer)
 }
 
-/// End an `hrc-launched` attempt that has not reached ACTIVE (a failed start,
-/// or `launch_interrupted`): abandon it and retire its binding.
-#[cfg_attr(
-    not(test),
-    expect(
-        dead_code,
-        reason = "first caller is the self-brokered launch, T-13434 task 3"
-    )
-)]
+/// End an `hrc-launched` attempt whose establishment did not complete (a
+/// failed start or `launch_interrupted`): abandon it and retire its binding.
+/// An exhausted initial replay may have activated; a completed ACTIVE seat
+/// always requires termination instead.
 pub fn abandon_hrc_launched(
     server: &super::Shared,
     attempt_id: &str,

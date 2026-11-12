@@ -759,6 +759,9 @@ fn assemble_placement(
     if let Some(v) = policy["placement"].get("launch").filter(|v| !v.is_null()) {
         placement_policy.insert("launch".into(), v.clone());
     }
+    if let Some(v) = policy["placement"].get("launchCommand") {
+        placement_policy.insert("launchCommand".into(), v.clone());
+    }
     placement_policy.insert("pins".into(), policy["placement"]["pins"].clone());
     placement_policy.insert("homes".into(), policy["placement"]["homes"].clone());
     shaped["placement"] = placement_policy.into();

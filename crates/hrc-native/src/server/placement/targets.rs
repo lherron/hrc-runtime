@@ -70,7 +70,8 @@ pub async fn ensure_target_session(
     birth_cause: Option<&str>,
 ) -> Result<Option<Value>, ApiError> {
     let (scope, lane) = runtime_views::parse_target_ref(raw)?;
-    super::federation::summon::assert_reserved_address_allows_birth(server, scope, lane, "ensure")?;
+    super::federation::summon::assert_reserved_address_allows_birth(server, scope, lane, "ensure")
+        .await?;
     let existing = runtime_views::find_target_session(server, raw)?;
     let session = if let Some(mut session) = existing {
         if session["status"] == "archived"

@@ -37,6 +37,43 @@ pub async fn policy_for(server: &Server, scope: &str) -> Policy {
     resolve_policy(server, scope, &mut None).await
 }
 
+/// The profile's verbatim launcher argv, shared by the reserved-address gate
+/// and no-input birth. Unresolved ordinary profiles retain their compile path.
+pub async fn launch_command(
+    server: &Server,
+    scope: &str,
+) -> Result<Option<Vec<String>>, crate::server::ApiError> {
+    let Policy::Resolved { policy, profile } = policy_for(server, scope).await else {
+        return Ok(None);
+    };
+    if policy["placement"]["launch"] != "self-brokered" {
+        return Ok(None);
+    }
+    let command = policy["placement"]["launchCommand"]
+        .as_array()
+        .filter(|v| !v.is_empty())
+        .filter(|v| {
+            v.iter().all(|a| {
+                a.as_str()
+                    .is_some_and(|s| !s.is_empty() && !s.contains('\0'))
+            })
+        });
+    let Some(command) = command else {
+        return Err(crate::server::ApiError::domain(
+            axum::http::StatusCode::UNPROCESSABLE_ENTITY,
+            "declaration_invalid",
+            format!("{profile}: self-brokered requires a non-empty string array launchCommand"),
+            Some(json!({"profile":profile,"scopeRef":scope})),
+        ));
+    };
+    Ok(Some(
+        command
+            .iter()
+            .map(|a| a.as_str().unwrap().to_owned())
+            .collect(),
+    ))
+}
+
 async fn resolve_policy(server: &Server, scope: &str, source: &mut Option<String>) -> Policy {
     if hrc_common::scope::validate_scope(scope).is_err() {
         return Policy::NotAnAgentScope(format!(
