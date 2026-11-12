@@ -1,0 +1,109 @@
+id: hrc-runtime.seat-streams
+kind: contract
+status: active
+owner_project: hrc-runtime
+scope: seat-named PTY and screen streams, authenticated one-hop carry and attach discovery
+predicate: >
+  T-13420 specification rev 1a defines a seat-stream primitive on the local
+  HRC daemon socket, independent of federation configuration. A caller names
+  scopeRef and laneRef; the daemon resolves the seat's current runtime at each
+  open. GET /v1/streams/open selects kind pty or screen, with mode read-only
+  or take-control for pty, optional terminal size for pty and styled for
+  screen. Screen is always read-only and takes no size. Successful opens
+  upgrade with HTTP 101 and Upgrade hrc-stream/1. Refusals precede the upgrade
+  as ordinary JSON errors with stable codes unknown_seat, no_runtime,
+  not_attachable, stream_kind_unsupported, peer_unreachable or
+  peer_stream_unsupported.
+  One connection carries one stream, without multiplexing or byte-offset
+  resume. Each frame is a type byte, a four-byte big-endian payload length
+  and a payload of at most 1 MiB. Types are 0x01 data, 0x02 JSON control with
+  op, and 0x03 JSON close with code and reason followed by connection close.
+  The home's first frame is an opened control carrying node, runtimeId,
+  generation, kind and mode. Close codes are consumer_closed, runtime_ended,
+  runtime_replaced, daemon_stopping and peer_lost.
+  PTY data is raw terminal bytes, beginning with the supervisor's replay
+  prefix before live output. Consumer resize controls carry cols, rows,
+  xpixel and ypixel. The home attaches using the existing supervisor hello,
+  attach and data-connection protocol with remote true and the caller's
+  readOnly; it discards consumer data in read-only mode. Attachment and
+  detach retain the ownership, replay and responder boundaries of
+  hrc-runtime.hrcpty-seat-supervision. The supervisor protocol is unchanged,
+  including for supervisors predating the daemon deployment. Socket and TCP
+  backpressure reach the supervisor's existing bounded client queue, which
+  drops a stalled PTY consumer.
+  Screen streams call existing capture every 200 ms without attaching. Each
+  data frame is one JSON snapshot with text, cursor x/y/visible, cols, rows
+  and screen. The first snapshot is current; subsequent snapshots are sent
+  only on change, at most five per second. Screen consumers send only close;
+  screen observation changes neither terminal size nor attached-client count.
+  HRC owns home discovery and peer credentials. A foreign open uses existing
+  locate and GET /v1/federation/stream on the home's peer listener with the
+  same query and upgrade. The home authenticates the peer bearer token and
+  answers locally without a second hop. The origin relays frames in both
+  directions without interpreting them. Peer health capabilities.streams
+  lists supported kinds; the origin refuses peer_stream_unsupported when
+  the home does not advertise the requested kind. Take-control is authorized
+  by Lance's remote-attach ruling, not by federatedSessionRead observation.
+  hrc-pty attach --seat with optional --lane and --read-only opens through
+  the local daemon, relays the raw terminal and translates SIGWINCH to resize.
+  A dropped stream retries with backoff from 250 ms doubling to 5 s and
+  reconnects by seat identity; no_runtime and unknown_seat refusals end it.
+  Optional --status-fd writes a JSON line per state change separately from
+  terminal bytes: connected with node and runtimeId, reconnecting with reason
+  (close code or transport), and ended with reason. hrc seat screen with
+  optional --lane and --styled prints one JSON snapshot per stdout line.
+  Seat presentation and peer health runtime rows expose a path-free attach
+  member for an hrcpty seat with a live runtime, absent otherwise. It carries
+  transport hrcpty, node, streams pty/screen and modes read-only/take-control.
+  Existing local-only hrcpty and tmux descriptors remain unchanged.
+  GET /v1/attach accepts a seat selector; a foreign seat returns transport
+  hrc-stream, node and a local hrc-pty attach --seat/--lane argv, appending
+  --read-only for read-only mode. Local descriptors retain existing behavior.
+  Kernel resource.attach may return this foreign descriptor through the local
+  HRC door; this is the narrow exception to the earlier foreign_seat attach
+  refusal in hrc-runtime.praesidium-surface. It adds no kernel peer control
+  connection. Loggia local terminals retain direct supervisor attachment.
+  Streams to tmux-backed, headless and sdk seats refuse not_attachable.
+  Encryption, per-user authentication beyond existing peer bearer authority,
+  PTY flow-control credits and rate limits, screen deltas, scrollback, images,
+  additional stream kinds and multiple hops are outside this contract.
+authority: >
+  Daedalus APPROVE of T-13420 seat-streams rev 1a in reply to EN-52376,
+  2026-11-12, incorporating EN-52380. Lance's carry, remote-control,
+  direct-local-terminal and hover-preview rulings are recorded in the spec.
+  The submitted workflow retains Lance's review before implementation.
+source:
+  - wrkq:T-13420
+  - wrkc:EN-52376
+  - wrkc:EN-52380
+  - architecture/records/invariants/hrc-runtime.hrcpty-seat-supervision.yaml
+  - architecture/records/invariants/hrc-runtime.federated-session-read.yaml
+  - architecture/contracts/praesidium-surface.yaml
+  - crates/hrc-pty/src/serve.rs
+  - crates/hrc-pty/src/attach.rs
+  - crates/hrc-native/src/server/broker/hrcpty.rs
+  - crates/hrc-native/src/server/projection/surfaces.rs
+  - crates/hrc-native/src/server/placement/federation/peer_listener.rs
+  - crates/hrc-native/src/server/placement/federation/projection.rs
+  - crates/hrc-native/src/server/placement/federation/locate.rs
+  - crates/hrc-native/src/server/placement/federation/routing.rs
+validation_scope: >
+  Submitted G1 through G5 remain requester-owned live acceptance: remote
+  typing and resize, read-only input refusal, local streams without federation,
+  recovery across home-daemon restart without disturbing the seat, and passive
+  screen observation preserving terminal size and client count. Each ends in
+  a rerunnable script and result in the task artifact directory. This ruling
+  adds no gate and establishes no implementation, install or live acceptance.
+last_verified: >
+  2026-11-12 design-only source reading of rev 1a, supervisor read-only input
+  filtering, attach/replay ordering, bounded-client eviction, capture, daemon
+  supervisor authentication, attach descriptors, home authority and peer
+  authentication, capability parsing and bounded-stream relay; also kernel
+  adapter foreign-seat refusal and descriptor issuance. No build, test,
+  install, restart or live mutation was run for this review.
+reopen_when: >
+  Seat selector or runtime-binding semantics, frame or upgrade format, stream
+  kind meaning, read-only authority, replay ordering, backpressure, supervisor
+  compatibility, home resolution, peer authorization or hop count, capability
+  admission, row or attach-descriptor contract, reconnect/status semantics,
+  direct local-terminal boundary or supported consumer model changes.

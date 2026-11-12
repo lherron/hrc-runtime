@@ -99,7 +99,10 @@ predicate: >
   credential-free branch; peer lifecycle retains local authorization and the
   peer-validated lifecycle grant. Cross-node summon and interrupt and room
   membership operations are no longer in this campaign. Existing foreign_seat
-  restrictions remain unchanged. This extension gives the kernel no new peer
+  restrictions remain unchanged by this extension. The separate T-13420
+  seat-streams contract permits foreign resource.attach through the local
+  HRC stream door; other foreign-seat restrictions remain unchanged.
+  This extension gives the kernel no new peer
   control connection and adds no federated owner route. Ordinary
   operator acknowledgement, wrkf, daemon callers, interactive TTY entry points
   and server serve remain excluded. Deliberately headerless calls and a
@@ -130,6 +133,8 @@ authority: >
   T-12771 specification r2, etag 5, submitted in EN-48405 and approved by
   Daedalus on 2026-11-09, adds session home classification and binding-local
   retirement of foreign projections without changing seat identity.
+  T-13420 specification rev 1a, approved in reply to EN-52376 on 2026-11-12,
+  adds only the foreign resource.attach exception governed by seat-streams.
 source:
   - wrkq:T-12771
   - wrkc:EN-48405
@@ -148,6 +153,7 @@ source:
   - docs/proposals/praesidium-kernel.md
   - docs/proposals/praesidium-document.md
   - architecture/contracts/seat-asks.yaml
+  - architecture/contracts/seat-streams.yaml
   - architecture/contracts/seat-annotations.yaml
   - architecture/records/invariants/hrc-runtime.self-restart-turn-boundary.yaml
   - architecture/records/invariants/hrc-runtime.operator-owner-authority.yaml
@@ -183,6 +189,12 @@ reopen_when: >
   authority precedence, cache invalidation, foreign projection retirement,
   scope-only seat identity or explicit support boundary changes.
 design_review: >
+  2026-11-12 T-13420 rev 1a APPROVE in reply to EN-52376 introduces the
+  separate seat-streams producer contract and its narrow foreign attach
+  exception. HRC retains stream routing and peer credentials; the kernel
+  receives a descriptor through its local HRC door. Other foreign-seat
+  restrictions and the operator extension's scope remain unchanged.
+  Design-only source review; no implementation or live acceptance is claimed.
   2026-11-09 T-12771 r2, etag 5, APPROVE in reply to EN-48405. Read the
   revised spec, HRC locate authority and participant join, session and
   presentation routes, kernel local and peer walk/event read paths, retained
