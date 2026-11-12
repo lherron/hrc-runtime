@@ -110,7 +110,6 @@ Deleted entries stay listed to explain their removal; their source remains in gi
 | `n3_edges.py` | Subscriber name identity across routes, UTF-16 name cap, and combined-error parse order on /v1/events. | keep-manual |
 | `n3_events.py` | Event history reads over rows seeded with the native append: filters, inclusive/exclusive cursors, tail/page limits, head vs allocated head, incarnation fences, refusals. | keep-manual |
 | `n3_handoff.py` | Semantic handoff refusal order before any durable write; `--turns` adds warm, restart-held and cold real turns with one durable response each. | keep-manual |
-| `n3_injector.py` | Production `bunx hrc-mail-injector` + wrkc reply with the native owner replaced mid-delivery. Still starts the Bun injector (T-13068 List). | keep-manual |
 | `n3_kernel_volume.py` | Historical independent-kernel survival workflow; superseded by embedded kernel checks (T-12141). | delete |
 | `n3_mail.py` | Stop gate on real private wrkc obligations: unseen clear, presented block, refusal cap and reset, reply clears; malformed bodies 400, unknown runtime fails open. | keep-manual |
 | `n3_messages.py` | Message filters and row shape over native-seeded rows (messages.rs insert), each filter judged against its own model. | keep-manual |
@@ -123,7 +122,6 @@ Deleted entries stay listed to explain their removal; their source remains in gi
 | `n4_gate.py` | N4 summon gate on a native owner over native-seeded ledger/registry rows, each case a literal. (requires explicit scratch/capture inputs; retained qualification) | keep-manual |
 | `n4_history.py` | N4 collective history, origin n4a and authority svc both native, over ~100 messages from the native insert: restart keeps delivered rows, re-enqueues a tampered fingerprint, backfills and tails; reads judged as literals (T-13125). | keep-manual |
 | `n4_listener_stop.py` | Native federation listeners drain on owner shutdown (N5's stop seam). (requires explicit scratch/capture inputs; retained qualification) | keep-manual |
-| `n4_mail.py` | N4 gate 1: mail and a reply in both directions between two native scratch nodes (the injector is the production `bunx hrc-mail-injector`). (protected by T-11899) | keep-manual |
 | `n4_ops.py` | N4 operations reads on one frozen store, each case a literal. (requires explicit scratch/capture inputs; retained qualification) | keep-manual |
 | `n4_placement.py` | N4 project-root placement on a native owner; hrcpty births land in the resolved root. (requires explicit scratch/capture inputs; retained qualification) | keep-manual |
 | `n4_svc_authority.py` | svc as registry host and collective-history authority on a generated svc-sized seed (2k designations by registry statements, 12k records replicated through the peer route): literals per case, nothing unaddressed moves, peer stop ends the owner (T-13125). | keep-manual |

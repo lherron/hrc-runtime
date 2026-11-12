@@ -18,8 +18,8 @@ Since 2026-10-26 the installed CLI and the live daemon are native (`rusthrc`); `
 native daemon from a release copy, and every file grades that. "Bun only" marks behavior of the Bun daemon
 and CLI deleted in T-13157: history, not drivable.
 
-Not mapped here: the viewer (it ships from ACP now) and the mail injector (agent-control-plane's
-`hrc-mail-injector`). `~/.bun/bin/hrc federation retire`, `~/.bun/bin/hrc server restart|stop` and `just install|publish|deploy-*`
+Not mapped here: the viewer (it ships from ACP now) and mail delivery (the praesidium kernel's
+mail-delivery module). `~/.bun/bin/hrc federation retire`, `~/.bun/bin/hrc server restart|stop` and `just install|publish|deploy-*`
 are named in their features but are operator steps, never driven by this skill.
 Also not mapped, from the live surface on 2026-10-05 (T-10350), rechecked 2026-10-26 (T-11864), 2026-11-02
 (T-12291, native CLI) and 2026-11-09 (T-12756; `index/help-*.txt` in that task's artifacts):

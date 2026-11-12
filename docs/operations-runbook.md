@@ -106,7 +106,7 @@ For fleet changes follow [fleet-deployment.md](https://github.com/lherron/hrc-ru
 `just deploy-max3` advances and publishes max3 first; `just deploy-svc` and
 `just deploy-hrcdev` consume `@max3` without publication. `just deploy-fleet`
 resolves targets from what max3 is running. Use `just fleet-status` for the
-HRC, aspd, and injector readbacks. Parity means matching source commits, not
+HRC, aspd, and kernel readbacks. Parity means matching source commits, not
 per-node set versions.
 
 **Restart authority.** Only `mable@<project>:primary` may restart shared
@@ -230,7 +230,7 @@ deleting `prune-mark.json` beside it in the same step.
 Never take a torn filesystem copy of a live WAL database. Full VACUUM remains
 an offline coordinated operation.
 
-## Viewer and mail injector ownership
+## Viewer and mail delivery ownership
 
 `hrc-viewer` ships and is supervised from **agent-control-plane**, not HRC.
 Its source is `agent-control-plane/packages/hrc-viewer`, its plist is
@@ -250,13 +250,12 @@ The completed extraction's approved rev 3 design is preserved on T-07595
 plans and historical TS call sites are not current operating instructions.
 Retrieve it with `wrkq attach get ATT-00414 -o <path>`.
 
-The mail injector also belongs to ACP (`packages/hrc-mail-injector`,
-`com.praesidium.hrc-mail-injector`). Its log is
-`var/logs/hrc-runtime/hrc-mail-injector.log` and private state is
-`var/state/acp/hrc-mail-injector.sqlite` (`HRC_MAIL_INJECTOR_STATE_PATH`).
-Old `hrcmail_*` tables in HRC's state DB are pre-split leftovers, not current
-mail state. For deployment and supervision use
-[fleet-deployment.md](https://github.com/lherron/hrc-runtime/blob/main/docs/fleet-deployment.md).
+Mail is delivered by the mail-delivery module under the praesidium kernel,
+which belongs to the praesidium-kernel project. ACP's TypeScript
+`hrc-mail-injector` was retired on 2026-11-12: its service is stopped on every
+node and its packages are deleted, and HRC has no recipe that starts it. Old
+`hrcmail_*` tables in HRC's state DB are pre-split leftovers, not current mail
+state.
 
 ## ASP preparation and runtime events
 

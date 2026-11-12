@@ -128,9 +128,9 @@ requiring the dotfiles to agree.
 `~/.bun/bin/{bun,bunx}` (bunx a symlink to bun), with no Homebrew or npm-global
 copy anywhere on PATH. A block at the end of each node's `~/.zprofile` moves
 `~/.bun/bin` to the front of the login PATH (`/etc/zprofile`'s path_helper
-reorders what `.zshenv` set), because `zsh -lc` seats resolve bun that way. The
-injector plist pins `~/.bun/bin/bunx` by absolute path, and so does any praesidium
-LaunchAgent that execs bun directly. On 2026-09-23 max3's plist pinned an
+reorders what `.zshenv` set), because `zsh -lc` seats resolve bun that way. Any
+praesidium LaunchAgent that execs bun directly pins `~/.bun/bin/bunx` by
+absolute path. On 2026-09-23 max3's plist pinned an
 npm-global bunx that was later uninstalled, and it would have died on its next
 restart. `fleet-status` prints `BUN-LAYOUT`, which reads `canonical` or names the
 stray copy or plist. Bump bun fleet-wide in one pass (same version and revision

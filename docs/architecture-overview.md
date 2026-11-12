@@ -54,8 +54,7 @@ orchestration, driving the Harness Broker, tmux pane management, event
 ingestion from broker envelopes (hook, OTEL and launch-callback ingest were
 retired in T-08566), the mail hook routes and session/turn project events, and
 the federation peer surface. Addressed wrkq mail is presented to seats by the
-separately deployed `hrc-mail-injector` (not in this repo; HRC source may not
-import it).
+mail-delivery module under the praesidium kernel (not in this repo).
 
 ### Crate topology (`crates/`)
 
