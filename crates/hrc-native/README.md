@@ -206,9 +206,12 @@ exclusive admission class); otherwise the turn births a seat. Responses are
 Bun's receipt and wait-stage projection (`accepted` 202, `turn_started`,
 `terminal`), including idempotent replay. Every compile sends Bun's request:
 the normalized intent, `dispatchEnv` (also top level), `aspHome`, and the
-session's stored continuation unless reuse is disabled. Not yet native:
-stale-generation auto-rotation and fresh-context rotation (refused with
-`runtime_unavailable`), participant delivery, and format 2. Every committed
+session's stored continuation unless reuse is disabled. `freshContext: true` on a
+submission door starts the turn in a new context in the same call: admission
+terminates the session's live runtimes, archives the session, mints a successor
+generation with no continuation (`context.cleared`, reason
+`submission-<door>-fresh-context`) and births the turn there. It is refused
+for an externally owned participant address. Format 2 is refused. Every committed
 ledger write bumps `Server.ledger` (a data-free watch counter followers re-query on).
 
 The preempt door's authority is `turns::admission::preempt_admission`, which
