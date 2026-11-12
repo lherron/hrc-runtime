@@ -1,0 +1,67 @@
+id: hrc-runtime.self-brokered-seat-launch
+kind: invariant
+status: active
+owner_project: hrc-runtime
+scope: declared self-brokered participant birth, process ownership, host succession and launcher boundary
+predicate: >
+  T-13434 rev 3 sections 3 through 11, frozen in
+  architecture/contracts/self-brokered-seat-launch.md, govern the explicit
+  self-brokered launch. ASP owns the launch declaration and command array;
+  HRC owns registration, process start and stop, terminal, identities,
+  establishment, turn delivery and retirement. This path does not compile
+  an ASP execution. HRC is the registrant before spawn; the launcher reads
+  the unchanged registration response from a private file and returns the
+  complete participant descriptor. Existing identity agreement applies,
+  with the declared option to omit an offered continuation and start fresh.
+  Process lifecycle ownership and participant-served broker control are
+  distinct predicates; self-brokered seats are HRC-owned for process fate
+  and participant-served for establishment and reconnect. Participant
+  resolution classifies without writes. Remaining pre-effect admission
+  refusals precede allocation at rotation under the continuity start gate;
+  the admitted plan, run and delivery name the allocated successor session
+  and generation. No-input doors allocate and launch without an earlier
+  plan. Every subsequent birth is host succession, generation increases by
+  one per birth, and no spawn occurs before the predecessor supervisor and
+  child are confirmed gone. An establishing attempt prevents duplicate
+  birth; an identity-minted allocation without an in-process launch does
+  not indefinitely block later input. The hrcpty child is itself the broker;
+  broker.state none is expected and child exit establishes harness death.
+  Established restart uses participant establishment, never compiled broker
+  reattach. Failed starts end the lease, abandon the attempt and retire its
+  binding while keeping the reservation. On owner startup, attempts covered
+  by existing establishment recovery use it; earlier interrupted launches
+  are disposed and abandoned launch_interrupted rather than resumed.
+  External participant behavior remains unchanged. Self-restart,
+  freshContext input, HRC priming turns and half-finished launch resume are
+  outside the supported path as specified in the contract.
+authority: >
+  Lance's 2026-11-12 approval of HRC starting Foundry project seats and
+  retiring idle Foundry primaries at 60 minutes, recorded in T-13434 rev 3;
+  Daedalus APPROVE of that revision in reply to EN-52514, 2026-11-12.
+source:
+  - wrkq:T-13434
+  - architecture/contracts/self-brokered-seat-launch.md
+  - architecture/records/invariants/hrc-runtime.participant-session-lifecycle.yaml
+  - architecture/records/invariants/hrc-runtime.submission-admission-pipeline.yaml
+  - architecture/records/invariants/hrc-runtime.hrcpty-seat-supervision.yaml
+  - crates/hrc-native/src/server/turns/turns/admission.rs
+  - crates/hrc-native/src/server/turns/turns/route.rs
+  - crates/hrc-native/src/server/broker/participants/establishment.rs
+  - crates/hrc-native/src/server/broker/participants/delivery.rs
+  - crates/hrc-native/src/server/broker/hrcpty.rs
+  - crates/hrc-native/src/server/broker/lease.rs
+  - crates/hrc-store/src/participants.rs
+  - crates/hrc-store/src/participants/succession.rs
+required_tests:
+  - T-13434 rev 3 G1 through G8 isolated-daemon participant launcher e2e, including rebirth input identity, one child, active restart, child death, failed and interrupted launch disposal, and refusal without allocation
+  - T-13434 companion Foundry A1 through A6 live scratch-fleet acceptance with the real model, as referenced by the approved contract
+last_verified:
+  date: 2026-11-12
+  evidence: Design-only source review of T-13434 rev 3 against admission refusal ordering and rotation, successor session allocation and participant linkage, establishment work predicates, supervisor spawn and lease disposal. No implementation, test, build, install, restart or live acceptance result is asserted.
+reopen_when:
+  - Launch declaration, command argv, registration file, descriptor or continuation agreement changes
+  - Process ownership, broker join, terminal ownership, liveness, retirement or reconnect changes
+  - Allocation stage, admission refusal effects, successor identity, serialization or generation guarantees change
+  - Failed or interrupted launch disposal, half-launch resume or external cutover admission changes
+supersedes: []
+superseded_by: []

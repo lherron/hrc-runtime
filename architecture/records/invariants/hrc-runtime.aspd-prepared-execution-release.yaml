@@ -4,6 +4,10 @@ status: active
 owner_project: hrc-runtime
 scope: HRC v2 producer-selected execution preparation, generic hosting, frozen launch, reuse, reattachment, and matched ASP/HRC activation
 predicate: >
+  The compiled worker-hosting path below excludes the explicitly declared
+  self-brokered launch governed by hrc-runtime.self-brokered-seat-launch;
+  that path consumes ASP's declaration and participant descriptor instead
+  of a compiled selected execution and has no ASP preparation record.
   Before any worker-hosting effect HRC accepts exactly one ASP v2 selected
   execution and atomically persists the complete successful compile response,
   raw request selection carrier, execution hash, identity allocation, canonical
@@ -107,6 +111,8 @@ predicate: >
   attach.
 authority: wrkq:T-08690 producer-owned v2 consumer and cutover amendment, pending Daedalus review; wrkq:T-08207 revision 10 input/execution inventory amendment, Daedalus approval 2026-09-26; wrkq:T-08207 revision 11 request-scoped execution-format selector amendment, Daedalus approval 2026-09-26; wrkq:T-08207 revision 12 response confirmation, Daedalus approval 2026-09-26; wrkq:T-09274 revision 1 no-viewer compile constraint approved 2026-09-26, corrected by revision 2 approval 2026-09-26; revision 6 neutral v2 tmux-tui producer-route, answer fence and viewer-hosting realization approved 2026-09-26; final accepted ASP v2 evidence source 631e7b246aaede313ee6e0aacd71e766f26ae07c, coherent tuple 0.1.1-dev.20260921215301, isolated accepted release asp-631e7b246aae-20260922T025351Z-01f30b, 2026-09-22; HRC dependency advance and coordinated cutover remain pending
 source:
+  - wrkq:T-13434
+  - architecture/records/invariants/hrc-runtime.self-brokered-seat-launch.yaml
   - wrkq:T-08207
   - wrkq:T-08690
   - wrkq:T-09274
@@ -147,3 +153,8 @@ reopen_when:
   - any fallback, v1 selector adapter, profile/target resolution, driver exception, or old-plan parser is introduced
 supersedes: []
 superseded_by: []
+design_review: >
+  2026-11-12 Daedalus APPROVE of T-13434 rev 3 in reply to EN-52514.
+  Scopes the compiled preparation law away from the new declared launch;
+  all compiled execution and release fences remain unchanged. Design only;
+  last_verified retains its historical evidence.

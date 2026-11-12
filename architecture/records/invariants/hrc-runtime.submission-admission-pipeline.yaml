@@ -13,7 +13,12 @@ predicate: >
   or pane change. A replay rereads and compares the recorded frozen execution
   format before returning; a mismatch refuses and a matching replay creates
   no new work. Participants are resolved before rotation, never rotated or
-  replaced by a substitute birth, and refuse freshContext. Carried ownership
+  replaced by a substitute birth, and refuse freshContext. The declared
+  self-brokered launch in hrc-runtime.self-brokered-seat-launch is an explicit
+  exception for HRC-owned host succession: participant resolution classifies
+  without writes, all remaining pre-effect refusals precede allocation, and
+  allocation occurs at rotation before the successor-bound plan is admitted.
+  External participants retain the no-substitute rule. Carried ownership
   proof is checked against the current invocation on every applicable route.
   Preempt capability and principal/envelope authority are checked against the
   current invocation before rotation. HRC consumes broker capabilities and
@@ -44,6 +49,8 @@ predicate: >
   door-by-driver conformance covers all submission doors.
 authority: mable@foundry R1 under Lance's delegation, 2026-10-04; Daedalus approval of wrkq:T-10232 etag 6, 2026-10-04
 source:
+  - wrkq:T-13434
+  - architecture/records/invariants/hrc-runtime.self-brokered-seat-launch.yaml
   - wrkq:T-10226
   - wrkq:T-10232
   - architecture/records/invariants/hrc-runtime.harness-broker-admission-client.yaml
@@ -71,3 +78,8 @@ last_verified:
 reopen_when: Admission order, door inventory or exclusions, authority or format replay checks, plan construction, drain lease lifetime, queue continuation identity or carry, per-format uncertainty and terminality, or structural/conformance enforcement changes.
 supersedes: []
 superseded_by: []
+design_review: >
+  2026-11-12 Daedalus APPROVE of T-13434 rev 3 in reply to EN-52514.
+  Adds the HRC-owned host-succession exception at the existing rotation
+  effect stage; pre-effect refusal and external-participant guarantees
+  remain unchanged. Design only; last_verified is not refreshed.

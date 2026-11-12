@@ -4,6 +4,17 @@ status: active
 owner_project: hrc-runtime
 scope: generic participant registration, observer attempts, session continuity, and recovery under T-08344
 predicate: >
+  T-13434's self-brokered launch is the explicit exception governed by
+  hrc-runtime.self-brokered-seat-launch. HRC is its direct registrant and
+  process owner; the committed registration and runtime-derived IPC paths
+  correlate the launch without an external returning registration or launchId.
+  Its allocation precedes descriptor freeze, its participant-served broker
+  is the HRC-launched terminal child, and an offered continuation may be
+  declined by omitting it from the descriptor. Unfinished HRC-owned launch
+  disposal follows that record rather than making IDENTITY_MINTED runnable.
+  The external-registration, no-participant-broker-spawn, managed-host
+  returning-registration, and exact-continuation clauses below retain their
+  existing scope outside this explicitly declared launch.
   HRC owns protocol registration, addresses, sessions, attempt identity and
   activation. A participant's own registration message creates an available
   address without ASP admit, adapter availability, or descriptor/evidence-file
@@ -188,6 +199,8 @@ predicate: >
   coordinated cutover.
 authority: T-12431 absence-only exhausted-establishment inspect amendment approved by Daedalus in reply to EN-44920, 2026-11-03, following Mable fix-forward direction and failed production acceptance EN-44918; supersedes the existing-row refusal approved in EN-44895 / bb66cd24 (design approval only); Lance direct instruction 2026-09-15 to complete protocol join without another Daedalus round, Astra revision 7 resolves EN-12457 functional gaps and supersedes prior admission clauses; retained Daedalus approvals of T-08344 DESIGN.md rev 6 (C-21192 / EN-08780) and ADAPTER-SEAM.md rev 2 (C-21247 / EN-08846), 2026-09-09; host participant lifecycle revision 5 at 0c1fecaaebfc231f9335057504f193e58d3c6d65 (reply to EN-12283), 2026-09-15; wrkq:T-08207 revision 11 participant F1 fence, Daedalus approval 2026-09-26; Lance ruling 2026-10-20 on participant-owned direct-join continuity, T-11435 contract amendment at a0312402d2bdbd156f7db1af8266a2dd6a5de6c8 approved by Daedalus on resubmission EN-32589, contract approval only
 source:
+  - wrkq:T-13434
+  - architecture/records/invariants/hrc-runtime.self-brokered-seat-launch.yaml
   - wrkq:T-12431
   - crates/hrc-native/src/server/placement/runtime_views.rs
   - crates/hrc-native/src/server/broker/participants/establishment.rs
@@ -259,3 +272,8 @@ reopen_when:
   - managed stop readbacks host-aware lifecycle guard or queue and steer advertised class set changes
 supersedes: []
 superseded_by: []
+design_review: >
+  2026-11-12 Daedalus APPROVE of T-13434 rev 3 in reply to EN-52514.
+  Adds only the declared self-brokered exception; external participant
+  lifecycle remains unchanged. Source review only; historical last_verified
+  and existing implementation-evidence claims are not refreshed.
