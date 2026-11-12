@@ -798,6 +798,7 @@ pub(crate) mod tests {
             seat_gates: Default::default(),
             projection: Default::default(),
             subscribers: Default::default(),
+            seat_streams: Default::default(),
             wrkq: Default::default(),
             publication: Default::default(),
             handoff: Default::default(),

@@ -85,6 +85,8 @@ source:
   - architecture/records/invariants/hrc-runtime.hrcpty-seat-supervision.yaml
   - architecture/records/invariants/hrc-runtime.federated-session-read.yaml
   - architecture/contracts/praesidium-surface.yaml
+  - crates/hrc-common/src/seat_stream.rs
+  - crates/hrc-native/src/server/projection/seat_streams.rs
   - crates/hrc-pty/src/serve.rs
   - crates/hrc-pty/src/attach.rs
   - crates/hrc-native/src/server/broker/hrcpty.rs
@@ -113,7 +115,10 @@ design_review: >
   EN-52396 and commit 74426248. The rev 1a approval remains the architecture
   ruling; the slower cadence follows Lance's direction and the clarified
   kernel routing and stream-scoped capture lifetime preserve its boundaries.
-  No implementation or acceptance result was inspected or established.
+  T-13421 implements only the local pty primitive: isolated daemon and real
+  supervisor acceptance in wrkq-artifacts/T-13420/t13421-acceptance.py and
+  t13421-result.json. Screen, carry and clients remain later tasks; this
+  partial implementation makes no fleet or installed acceptance claim.
 reopen_when: >
   Seat selector or runtime-binding semantics, frame or upgrade format, stream
   kind meaning, read-only authority, replay ordering, backpressure, supervisor

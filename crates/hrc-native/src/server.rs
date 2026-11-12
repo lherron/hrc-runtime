@@ -85,6 +85,8 @@ mod messages;
 mod projection;
 #[path = "server/projection/runs.rs"]
 mod runs;
+#[path = "server/projection/seat_streams.rs"]
+mod seat_streams;
 #[path = "server/projection/seat_work.rs"]
 mod seat_work;
 #[path = "server/projection/sessions.rs"]
@@ -188,6 +190,8 @@ struct Server {
     /// Broker projection memory; lock after `store`.
     projection: Mutex<projection::Memory>,
     subscribers: Mutex<subscribers::Registry>,
+    /// Upgraded connections outlive HTTP responses; explicitly drain them at stop.
+    seat_streams: Mutex<tokio::task::JoinSet<()>>,
     wrkq: ledger::Client,
     publication: publication::State,
     handoff: handoff::State,
@@ -464,6 +468,11 @@ async fn dispatch_inner(server: &Shared, request: Request, local_only: bool) -> 
         query
             .entry(key.into_owned())
             .or_insert_with(|| value.into_owned());
+    }
+    if method == Method::GET && uri.path() == "/v1/streams/open" {
+        return seat_streams::open(server, request, &query)
+            .await
+            .unwrap_or_else(IntoResponse::into_response);
     }
     let body = match to_bytes(request.into_body(), usize::MAX).await {
         Ok(body) => body,
@@ -810,6 +819,7 @@ fn implemented(method: &Method, path: &str) -> bool {
                 "/v1/runtimes",
                 "/v1/runs",
                 "/v1/attach",
+                "/v1/streams/open",
                 "/v1/capture",
                 "/v1/targets/by-session-ref",
                 "/v1/targets",

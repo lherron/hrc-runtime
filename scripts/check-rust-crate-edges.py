@@ -15,7 +15,7 @@ allowed = {
     "hrc-cli": {"hrc-common", "hrc-store"},
     # The library hosts the kernel (T-12067 §8.1 item 1); CLI is binary-only below.
     "hrc-native": {"hrc-common", "hrc-store", "hrc-domain", "hrc-cli"},
-    "hrc-pty": set(),  # Standalone per-seat supervisor; rusthrc speaks to it over its socket.
+    "hrc-pty": {"hrc-common"},  # Shared std-only seat-stream codec; no daemon linkage.
 }
 errors = []
 for package in metadata["packages"]:

@@ -224,6 +224,7 @@ pub async fn serve(role: Role) -> Result<()> {
         seat_gates: Mutex::new(HashMap::new()),
         projection: Mutex::new(projection::Memory::default()),
         subscribers: Mutex::new(subscribers::Registry::default()),
+        seat_streams: Mutex::new(tokio::task::JoinSet::new()),
         wrkq: ledger::Client::default(),
         publication: publication::State::default(),
         handoff: handoff::State::default(),
@@ -305,6 +306,8 @@ pub async fn serve(role: Role) -> Result<()> {
             (shutdown_began.await.context("listener stopped without lifecycle shutdown")?, true)
         },
     };
+    // HTTP 101 responses have drained already, but their upgraded tasks have not.
+    seat_streams::drain(&closing).await;
     if let Some(deadline) = deadline {
         let drained = already_drained
             || match tokio::time::timeout(lifecycle::shutdown::REQUEST_DRAIN, &mut serving).await {

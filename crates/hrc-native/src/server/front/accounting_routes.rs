@@ -1,5 +1,6 @@
 // Native accounting inventory, frozen from the dispatch table at ownership cutover.
 const EXACT: &[(&str, &str)] = &[
+    ("GET", "/v1/streams/open"),
     ("POST", "/v1/participants/attach"),
     ("POST", "/v1/participants/register"),
     ("POST", "/v1/participants/unpark"),

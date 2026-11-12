@@ -665,6 +665,11 @@
       "listener": "registry",
       "method": "POST",
       "route": "/v1/federation/registry/delete"
+    },
+    {
+      "listener": "main",
+      "method": "GET",
+      "route": "/v1/streams/open"
     }
   ],
   "participantDispositionContract": {

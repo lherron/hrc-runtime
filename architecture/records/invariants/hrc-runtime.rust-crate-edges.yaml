@@ -8,6 +8,7 @@ predicate: >
   has no HRC, database, HTTP-client or async-runtime dependency. Allowed HRC
   edges are hrc-store and hrc-domain to hrc-common; hrc-cli to hrc-common
   and hrc-store; hrc-native library to hrc-common, hrc-store and hrc-domain;
+  hrc-pty to hrc-common for the std-only seat_stream codec;
   and the rusthrc binary to hrc-native library and hrc-cli. The hrc-native
   library hosts the kernel (T-12067 L2b) and also depends on the cardo crates
   cardo-core, cardo-runtime, cardo-runtime-tokio and cardo-host. hrc-domain has no
@@ -26,7 +27,9 @@ predicate: >
 authority: >
   wrkq:T-11941; T-12067 section 8.1 at 1e5109af, Daedalus approval
   EN-38698, 2026-10-29. Amendment 2026-11-02 follows praesidium-kernel
-  r1.9 step 6 and T-12360; earlier graph authority is preserved.
+  r1.9 step 6 and T-12360; earlier graph authority is preserved. Amendment 2026-11-12 (T-13421):
+  Mable approved hrc-pty to hrc-common and the matching guard amendment in
+  EN-52400 and EN-52405; the supervisor protocol and serve.rs are unchanged.
 design_approval:
   revision: 1e5109af
   evidence: EN-38698 source review; amended checker verified with its forbidden-edge negative control (T-12140)

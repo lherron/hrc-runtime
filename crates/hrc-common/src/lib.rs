@@ -5,3 +5,4 @@ pub mod js;
 pub mod metrics;
 pub mod release;
 pub mod scope;
+pub mod seat_stream;
