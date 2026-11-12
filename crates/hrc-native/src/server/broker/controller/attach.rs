@@ -1,9 +1,8 @@
 //! Durable reattach (dispatch-attach.ts attachAndReplay, dispatch-probe.ts,
 //! lifecycle.ts failReplayStale).
 use super::{
-    PROBE_TIMEOUT, after_mapped, apply_one, consume, delete_active, flush,
-    is_external_lifecycle_owner, last_projected, log, mark_closing, project_capture_state,
-    server_instance_id, set_active,
+    PROBE_TIMEOUT, after_mapped, apply_one, consume, delete_active, flush, last_projected, log,
+    mark_closing, participant_served, project_capture_state, server_instance_id, set_active,
 };
 use crate::server::{
     Server, Shared,
@@ -232,7 +231,7 @@ pub fn fail_replay_stale(
     let Some(rt) = db::runtime(&tx, runtime_id)? else {
         return Ok(());
     };
-    if is_external_lifecycle_owner(&rt) {
+    if participant_served(&rt) {
         return Ok(());
     }
     let now = hrc_store::timestamp();

@@ -369,7 +369,7 @@ pub(super) async fn lease_sweep(server: &Shared, grace: i64) -> Result<Value> {
                     }
                 }
                 // lifecycleOwner is the authority boundary: registration GC owns it.
-                if held.iter().any(|c| controller::is_external_lifecycle_owner(&c.rt)) {
+                if held.iter().any(|c| controller::external_lifecycle(&c.rt)) {
                     bump(&mut r, "preservedClaimed");
                     return Ok(());
                 }
@@ -601,7 +601,7 @@ async fn ipc_dir_sweep(
         if c.rt.controller_kind.as_deref() != Some("harness-broker") {
             return Ok(());
         }
-        let external = controller::is_external_lifecycle_owner(&c.rt);
+        let external = controller::external_lifecycle(&c.rt);
         let terminal = lease::unavailable(&c.rt.status);
         if !external && terminal && c.terminal_age(now) >= ttl {
             return Ok(());

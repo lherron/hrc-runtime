@@ -189,7 +189,7 @@ impl Store {
         drop_continuation: bool,
         reason: &str,
     ) -> Result<bool> {
-        if r["runtimeStateJson"]["lifecycleOwner"] == "external" {
+        if crate::external_lifecycle(&r["runtimeStateJson"]) {
             return Ok(false);
         }
         let tx = self.sqlite.transaction()?;

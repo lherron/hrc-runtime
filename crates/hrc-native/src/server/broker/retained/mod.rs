@@ -139,8 +139,8 @@ pub struct Row {
     pub rt: projection::db::Rt,
 }
 impl Row {
-    fn external(&self) -> bool {
-        controller::is_external_lifecycle_owner(&self.rt)
+    fn participant_served(&self) -> bool {
+        controller::participant_served(&self.rt)
     }
     fn broker(&self) -> bool {
         self.controller_kind.as_deref() == Some("harness-broker")
@@ -413,7 +413,7 @@ async fn refusal(server: &Shared, row: &Row, invocation: &str) -> Option<(&'stat
     if !row.broker() {
         return Some(("offline_read_not_harness_broker", "controller".into()));
     }
-    if row.external() {
+    if row.participant_served() {
         return Some(("offline_read_external_lifecycle", "external".into()));
     }
     let expired =

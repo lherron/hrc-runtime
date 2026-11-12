@@ -1,8 +1,6 @@
 //! Terminal invocations and lost brokers (lifecycle.ts markBrokerInvocationTerminal,
 //! markBrokerCrashTerminal; bc-events.ts condemnation check).
-use super::{
-    active, delete_active, intentional_close_reason, is_external_lifecycle_owner, mark_closing,
-};
+use super::{active, delete_active, external_lifecycle, intentional_close_reason, mark_closing};
 use crate::server::{
     Server, Shared,
     projection::{self, db},
@@ -203,7 +201,7 @@ pub fn mark_crash_terminal(
     let Some(rt) = db::runtime(&tx, runtime_id)? else {
         return Ok(());
     };
-    if rt.status == "crashed" || is_external_lifecycle_owner(&rt) {
+    if rt.status == "crashed" || external_lifecycle(&rt) {
         return Ok(());
     }
     let now = hrc_store::timestamp();

@@ -334,7 +334,7 @@ async fn tmux(socket: &str, args: &[&str]) -> Result<Option<String>> {
     bail!("{}", message.trim())
 }
 async fn liveness(server: &Server, r: &Value, facts: &Value) -> Result<Option<String>> {
-    if r["runtimeStateJson"]["lifecycleOwner"] == "external" {
+    if hrc_store::external_lifecycle(&r["runtimeStateJson"]) {
         return Ok(Some("external_lifecycle_owner".into()));
     }
     if r.get("activeRunId").is_some() {
@@ -436,7 +436,7 @@ pub(super) async fn prune_guard(
     r: &Value,
     facts: &Value,
 ) -> Result<Option<String>> {
-    if r["runtimeStateJson"]["lifecycleOwner"] == "external" {
+    if hrc_store::external_lifecycle(&r["runtimeStateJson"]) {
         return Ok(Some("external_lifecycle_owner".into()));
     }
     if held(r, facts) {
@@ -457,7 +457,7 @@ pub(super) async fn prune_guard(
 fn in_flight(r: &Value, facts: &Value) -> Option<&'static str> {
     [
         (
-            r["runtimeStateJson"]["lifecycleOwner"] == "external",
+            hrc_store::external_lifecycle(&r["runtimeStateJson"]),
             "external_lifecycle_owner",
         ),
         (r["status"] == "busy", "busy"),

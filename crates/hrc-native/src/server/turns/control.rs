@@ -441,7 +441,7 @@ pub async fn terminate(server: &Shared, body: Value) -> Result<Response, ApiErro
     let action = action(&body)?;
     let options = terminate_options(&body)?;
     let known = known(server, &action.runtime_id)?;
-    let external = controller::is_external_lifecycle_owner(&known);
+    let external = controller::external_lifecycle(&known);
     if options.disposition.is_some() && !external {
         return Err(bad(
             "disposition is only accepted for an external lifecycle owner".into(),
@@ -548,7 +548,7 @@ async fn terminate_runtime(
     rt: &db::Rt,
     o: Terminate,
 ) -> Result<Response, ApiError> {
-    if controller::is_external_lifecycle_owner(rt) {
+    if controller::external_lifecycle(rt) {
         evict_external(server, rt, o.disposition.as_deref())?;
         let mut response = action_response(rt);
         response["droppedContinuation"] = false.into();

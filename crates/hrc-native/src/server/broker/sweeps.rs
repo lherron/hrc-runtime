@@ -221,7 +221,7 @@ fn candidates(db: &Connection, cutoff_ms: i64) -> anyhow::Result<Vec<Candidate>>
         if let Some(runtime_id) = &run.runtime_id
             && let Some(rt) = db::runtime(db, runtime_id)?
         {
-            if controller::is_external_lifecycle_owner(&rt) {
+            if controller::external_lifecycle(&rt) {
                 continue;
             }
             // A run parked on a user prompt is silent while it waits.

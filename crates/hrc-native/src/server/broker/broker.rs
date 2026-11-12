@@ -634,7 +634,7 @@ fn settle_refused_start(
     };
     if rt.status != "starting"
         || rt.controller_kind.as_deref() != Some("harness-broker")
-        || controller::is_external_lifecycle_owner(&rt)
+        || controller::external_lifecycle(&rt)
         || rt.active_operation_id.as_deref() != Some(operation)
         || rt.active_invocation_id.as_deref() != Some(invocation)
         || rt.active_run_id.as_deref() != id["runId"].as_str()

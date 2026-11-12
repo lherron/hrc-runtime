@@ -265,11 +265,11 @@ pub fn refuse_participant(
     let lane = session["laneRef"].as_str().unwrap_or("");
     let participant = {
         let db = server.store.lock().unwrap();
-        let external = db
+        let served = db
             .runtimes_where("host_session_id=?", [host])?
             .into_iter()
-            .any(|r| r["runtimeStateJson"]["lifecycleOwner"] == "external");
-        external
+            .any(|r| hrc_store::participant_served(&r["runtimeStateJson"]));
+        served
             || db
                 .sqlite
                 .query_row(

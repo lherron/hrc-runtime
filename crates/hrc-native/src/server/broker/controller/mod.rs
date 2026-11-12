@@ -686,16 +686,16 @@ pub async fn after_mapped(server: &Shared, runtime: &str, envelope: &Value, outc
     }
     // Gap flushes below run broker RPCs; each takes its own guard.
     drop(write);
-    let external = {
+    let participant = {
         let db = server.store.lock().unwrap();
         db::runtime(&db.sqlite, runtime)
             .ok()
             .flatten()
-            .is_some_and(|r| is_external_lifecycle_owner(&r))
+            .is_some_and(|r| participant_served(&r))
     };
     let terminal = kind == "invocation.exited"
         || (kind == "invocation.failed" && envelope["payload"]["retryable"] != true);
-    if external && kind == "invocation.exited" {
+    if participant && kind == "invocation.exited" {
         flush_gap(server, &invocation).await;
         let Some(_write) = server.owner_writes.enter() else {
             return;
@@ -709,7 +709,7 @@ pub async fn after_mapped(server: &Shared, runtime: &str, envelope: &Value, outc
                 json!({"runtimeId":runtime,"invocationId":invocation,"error":error.to_string()}),
             );
         }
-    } else if !external && terminal {
+    } else if !participant && terminal {
         flush_gap(server, &invocation).await;
         // Local writes and a tmux reap only: no broker RPC under the guard.
         let Some(_write) = server.owner_writes.enter() else {
@@ -730,11 +730,14 @@ pub async fn after_mapped(server: &Shared, runtime: &str, envelope: &Value, outc
     }
 }
 
-pub fn is_external_lifecycle_owner(rt: &db::Rt) -> bool {
-    rt.state.as_ref().is_some_and(|s| {
-        s["lifecycleOwner"] == "external"
-            || s["participant"]["lifecycleOwner"] == "externally-owned"
-    })
+/// Someone other than HRC starts and stops this runtime's process.
+pub fn external_lifecycle(rt: &db::Rt) -> bool {
+    rt.state.as_ref().is_some_and(hrc_store::external_lifecycle)
+}
+
+/// The broker is the participant's own: HRC reconnects by establishment.
+pub fn participant_served(rt: &db::Rt) -> bool {
+    rt.state.as_ref().is_some_and(hrc_store::participant_served)
 }
 
 pub fn probe_in_background(server: &Shared, runtime_id: &str, cause: &str) {

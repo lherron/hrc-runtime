@@ -25,6 +25,8 @@ mod broker_reads;
 mod events;
 mod index;
 pub use index::retain_latest_generation;
+mod lifecycle_owner;
+pub use lifecycle_owner::{external_lifecycle, participant_served};
 mod maintenance;
 pub use maintenance::fail_unresolved_absorbed;
 pub mod collective_history;

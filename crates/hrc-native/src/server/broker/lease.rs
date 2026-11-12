@@ -310,7 +310,7 @@ pub async fn reconcile_liveness(server: &Server, runtime_id: &str) -> Result<()>
     };
     let Some(rt) = rt else { return Ok(()) };
     let supervisor = hrcpty::substrate(&rt);
-    if controller::is_external_lifecycle_owner(&rt)
+    if controller::external_lifecycle(&rt)
         || rt.controller_kind.as_deref() != Some("harness-broker")
         || !(rt.transport == "tmux" || leased_substrate(&rt) || supervisor.is_some())
         || unavailable(&rt.status)
@@ -471,7 +471,7 @@ pub async fn reap(server: &Shared, runtime_id: &str, reason: &str) {
             db::runtime(&db.sqlite, runtime_id)?
         };
         let Some(rt) = rt else { return Ok(()) };
-        if controller::is_external_lifecycle_owner(&rt)
+        if controller::external_lifecycle(&rt)
             || rt.controller_kind.as_deref() != Some("harness-broker")
         {
             return Ok(());
@@ -569,7 +569,7 @@ pub fn reap_after_summary(server: &Shared, runtime_id: &str, reason: &str) {
 
 /// hasBrokerLeasedTmux
 pub fn has_leased_tmux(rt: &db::Rt) -> bool {
-    !controller::is_external_lifecycle_owner(rt)
+    !controller::external_lifecycle(rt)
         && (leased_substrate(rt)
             || hrcpty::substrate(rt).is_some()
             || (hosting(rt).is_none() && socket_path(rt).is_some()))
@@ -577,7 +577,7 @@ pub fn has_leased_tmux(rt: &db::Rt) -> bool {
 /// teardownBrokerLeasedTmux: kill the lease session and its server, refusing
 /// a socket outside this daemon's runtime root.
 pub async fn teardown(server: &Server, rt: &db::Rt, message: &str) {
-    if controller::is_external_lifecycle_owner(rt) {
+    if controller::external_lifecycle(rt) {
         return;
     }
     if let Some((socket, pid)) = hrcpty::substrate(rt) {

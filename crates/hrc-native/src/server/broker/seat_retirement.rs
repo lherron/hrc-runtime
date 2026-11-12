@@ -64,7 +64,7 @@ async fn judge(server: &Shared, rt: &db::Rt) -> anyhow::Result<Result<Due, Strin
     } else {
         return Ok(Err("standing_seat".into()));
     };
-    if super::controller::is_external_lifecycle_owner(rt) {
+    if super::controller::external_lifecycle(rt) {
         return Ok(Err("external_lifecycle_owner".into()));
     }
     if rt.status != "ready" {

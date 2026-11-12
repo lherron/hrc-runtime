@@ -249,7 +249,7 @@ fn mark_reattach_stale(
     error: Option<&str>,
 ) -> Result<Outcome> {
     let external = with_row(server, runtime_id, |tx, rt| {
-        if controller::is_external_lifecycle_owner(rt) {
+        if controller::participant_served(rt) {
             return Ok(true);
         }
         let mut payload =
@@ -282,7 +282,7 @@ fn mark_reattach_stale(
 /// gcBrokerRuntimeOnRestart
 fn gc_on_restart(server: &Server, runtime_id: &str, reason: &str) -> Result<()> {
     with_row(server, runtime_id, |tx, rt| {
-        if controller::is_external_lifecycle_owner(rt) {
+        if controller::external_lifecycle(rt) {
             return Ok(());
         }
         let mut payload =
@@ -666,7 +666,7 @@ fn row(server: &Server, id: &str) -> Result<Option<db::Rt>> {
 fn skipped(rt: &db::Rt) -> bool {
     rt.controller_kind.as_deref() != Some("harness-broker")
         || lease::unavailable(&rt.status)
-        || controller::is_external_lifecycle_owner(rt)
+        || controller::participant_served(rt)
 }
 
 /// reconcileTerminalRuntimeActiveRuns + settleTerminalRuntimeRuns
@@ -861,10 +861,7 @@ fn legacy_sweep(server: &Server) -> Result<()> {
         ),
     )?;
     let mut marked = 0;
-    for rt in rows
-        .iter()
-        .filter(|rt| !controller::is_external_lifecycle_owner(rt))
-    {
+    for rt in rows.iter().filter(|rt| !controller::external_lifecycle(rt)) {
         let reason = if rt.controller_kind.is_none() {
             "legacy_no_controller_kind"
         } else {

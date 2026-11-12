@@ -83,7 +83,7 @@ fn candidates(db: &Connection, cutoff: i64) -> anyhow::Result<Vec<Candidate>> {
             continue;
         };
         if rt.active_run_id.as_deref() != Some(&run.run_id)
-            || controller::is_external_lifecycle_owner(&rt)
+            || controller::external_lifecycle(&rt)
             || run.transport == "headless"
         {
             continue;
@@ -374,7 +374,7 @@ fn abandoned(db: &Connection, cutoff: i64, dry_run: bool) -> anyhow::Result<Vec<
         let Some(rt) = db::runtime(db, run.runtime_id.as_deref().unwrap_or(""))? else {
             continue;
         };
-        if controller::is_external_lifecycle_owner(&rt) || !not_running(db, &rt, &run.run_id)? {
+        if controller::external_lifecycle(&rt) || !not_running(db, &rt, &run.run_id)? {
             continue;
         }
         let (observed_at, source, _) = sweeps::observed(db, &run)?;
