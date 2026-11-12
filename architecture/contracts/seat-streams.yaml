@@ -4,8 +4,8 @@ status: active
 owner_project: hrc-runtime
 scope: seat-named PTY and screen streams, authenticated one-hop carry and attach discovery
 predicate: >
-  T-13420 specification rev 1a defines a seat-stream primitive on the local
-  HRC daemon socket, independent of federation configuration. A caller names
+  T-13420 specification rev 1d retains the rev 1a seat-stream primitive on
+  the local HRC daemon socket, independent of federation configuration. A caller names
   scopeRef and laneRef; the daemon resolves the seat's current runtime at each
   open. GET /v1/streams/open selects kind pty or screen, with mode read-only
   or take-control for pty, optional terminal size for pty and styled for
@@ -31,8 +31,9 @@ predicate: >
   including for supervisors predating the daemon deployment. Socket and TCP
   backpressure reach the supervisor's existing bounded client queue, which
   drops a stalled PTY consumer.
-  Screen streams call existing capture every 500 ms without attaching, and only while a screen stream is open. Each
-  data frame is one JSON snapshot with text, cursor x/y/visible, cols, rows
+  Screen streams call existing capture every 500 ms without attaching, and
+  only while a screen stream is open. Each data frame is one JSON snapshot
+  with text, cursor x/y/visible, cols, rows
   and screen. The first snapshot is current; subsequent snapshots are sent
   only on change, at most two per second. Screen consumers send only close;
   screen observation changes neither terminal size nor attached-client count.
@@ -71,11 +72,16 @@ authority: >
   Daedalus APPROVE of T-13420 seat-streams rev 1a in reply to EN-52376,
   2026-11-12, incorporating EN-52380. Lance's carry, remote-control,
   direct-local-terminal and hover-preview rulings are recorded in the spec.
-  The submitted workflow retains Lance's review before implementation.
+  Lance's subsequent cadence ruling, reported in EN-52396 and recorded in
+  commit 74426248, changes capture to 500 ms and at most two frames per
+  second in rev 1c. Rev 1b clarifies the kernel's pass-through role; rev 1d
+  makes capture cessation after stream close explicit in G5. These retain
+  the approved ownership, authority and wire boundaries; no new ruling.
 source:
   - wrkq:T-13420
   - wrkc:EN-52376
   - wrkc:EN-52380
+  - wrkc:EN-52396
   - architecture/records/invariants/hrc-runtime.hrcpty-seat-supervision.yaml
   - architecture/records/invariants/hrc-runtime.federated-session-read.yaml
   - architecture/contracts/praesidium-surface.yaml
@@ -91,8 +97,9 @@ validation_scope: >
   Submitted G1 through G5 remain requester-owned live acceptance: remote
   typing and resize, read-only input refusal, local streams without federation,
   recovery across home-daemon restart without disturbing the seat, and passive
-  screen observation preserving terminal size and client count. Each ends in
-  a rerunnable script and result in the task artifact directory. This ruling
+  screen observation preserving terminal size and client count, with no
+  further capture calls for that seat after stream close under rev 1d G5.
+  Each ends in a rerunnable script and result in the task artifact directory. This ruling
   adds no gate and establishes no implementation, install or live acceptance.
 last_verified: >
   2026-11-12 design-only source reading of rev 1a, supervisor read-only input
@@ -101,6 +108,12 @@ last_verified: >
   authentication, capability parsing and bounded-stream relay; also kernel
   adapter foreign-seat refusal and descriptor issuance. No build, test,
   install, restart or live mutation was run for this review.
+design_review: >
+  2026-11-12 record reconciliation against T-13420 rev 1d, task etag 9,
+  EN-52396 and commit 74426248. The rev 1a approval remains the architecture
+  ruling; the slower cadence follows Lance's direction and the clarified
+  kernel routing and stream-scoped capture lifetime preserve its boundaries.
+  No implementation or acceptance result was inspected or established.
 reopen_when: >
   Seat selector or runtime-binding semantics, frame or upgrade format, stream
   kind meaning, read-only authority, replay ordering, backpressure, supervisor
