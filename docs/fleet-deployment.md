@@ -31,9 +31,9 @@ Mail is delivered by the mail-delivery module under the praesidium kernel; the
 TypeScript `hrc-mail-injector` is being retired by ACP, and a deploy that
 reinstalled it would deliver every message twice. The deploy recipes no longer
 take an injector argument: usage is `<ref> <aspd> <restart>`, and a call that
-still passes one is refused before anything runs. `just
-install-mail-injector-launchd <version>` remains only until ACP deletes the
-packages; do not run it on a node whose mail the kernel module delivers.
+still passes one is refused before anything runs. No recipe installs the
+injector: `install-mail-injector-launchd` is deleted and `launchd-install`
+takes no version and skips the injector's plist.
 
 **Unsupervised is the failure mode to watch.** On 2026-09-22 svc's aspd had died
 days earlier as a detached `aspd-start` process: a stale socket and pid file

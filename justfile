@@ -634,7 +634,7 @@ _max3-injector-version:
     [[ "$(jq -r '.node.nodeId // ""' <<<"$status")" == max3 ]] ||
       fail 'the @max3 injector target must be resolved on max3'
     job="$(launchctl print "gui/$(id -u)/com.praesidium.hrc-mail-injector" 2>/dev/null)" ||
-      fail 'launchd job com.praesidium.hrc-mail-injector is not loaded on max3; run just install-mail-injector-launchd <version> first'
+      fail 'launchd job com.praesidium.hrc-mail-injector is not loaded on max3'
     pid="$(awk '$1 == "pid" && $2 == "=" { print $3; exit }' <<<"$job")"
     [[ -n "$pid" ]] || fail 'max3 injector job is loaded but not running'
     version="$(ps -o command= -p "$pid" | grep -oE 'hrc-mail-injector@[^ /]+' | head -1 | sed 's/^hrc-mail-injector@//')"
@@ -643,8 +643,8 @@ _max3-injector-version:
 
 # A loaded HRC server keeps running until the authorized atomic-release restart.
 
-# Install shipped LaunchAgents; pin the injector via its existing deployment installer.
-launchd-install injector-version:
+# Install shipped auxiliary LaunchAgents. The retired mail injector has no plist here and no installer.
+launchd-install:
     #!/usr/bin/env bash
     set -euo pipefail
     repo="$(git rev-parse --show-toplevel)"
@@ -660,8 +660,6 @@ launchd-install injector-version:
     refused=0
     for src in "$repo"/launchd/*.plist; do
       label="$(basename "$src" .plist)"
-      # The injector has its own renderer.
-      [[ "$label" == com.praesidium.hrc-mail-injector ]] && continue
       dst="$HOME/Library/LaunchAgents/${label}.plist"
       [[ -f "$dst" ]] || continue
       sed -e "s|/Users/lherron|$(esc "$HOME")|g" "$src" > "$dst.next"
@@ -678,8 +676,6 @@ launchd-install injector-version:
     fi
     for src in "$repo"/launchd/*.plist; do
       label="$(basename "$src" .plist)"
-      # The injector has its own renderer.
-      [[ "$label" == com.praesidium.hrc-mail-injector ]] && continue
       dst="$HOME/Library/LaunchAgents/${label}.plist"
       sed -e "s|/Users/lherron|$(esc "$HOME")|g" "$src" > "$dst.next"
       plutil -lint "$dst.next" >/dev/null
@@ -693,7 +689,6 @@ launchd-install injector-version:
         sleep 2
       done
     done
-    just install-mail-injector-launchd '{{ injector-version }}'
 
 # Unload and remove every shipped LaunchAgent installed on this host.
 launchd-uninstall:
@@ -710,166 +705,6 @@ launchd-uninstall:
 # Install/reload the node-local classifier; Mable activates, key comes from env.
 install-turn-attention-launchd version:
     bun scripts/install-turn-attention-launchd.ts '{{ version }}'
-
-# Install and (re)load the supervised hrc-mail-injector on THIS node, pinned to an
-# exact version (or `latest`, resolved to one here and pinned). Replaces any
-# earlier injector serving this node's HRC socket, supervised or not: two
-# injectors against one HRC are two mail writers. Requires the injector state
-# store to already carry its one-time kicker-store import marker; a fresh node
-# needs that import before it can be supervised this way.
-
-# Install/reload this node's launchd-supervised hrc-mail-injector at a pinned version
-install-mail-injector-launchd version:
-    #!/usr/bin/env bash
-    set -euo pipefail
-    fail() { printf 'install-mail-injector: %s\n' "$*" >&2; exit 1; }
-    export PATH="$HOME/.bun/bin:/opt/homebrew/bin:/usr/local/bin:$PATH"
-
-    version='{{ version }}'
-    if [[ "$version" == latest ]]; then
-      version="$(npm view hrc-mail-injector@latest version 2>/dev/null)" ||
-        fail 'could not resolve hrc-mail-injector@latest from the configured registry'
-    fi
-    [[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.]+)?$ ]] ||
-      fail "pin an exact version, got '${version}'"
-    # One hrc-core in the tree, or unknown-session lookups throw instead of
-    # matching HrcDomainError and the node never cold-births mail (EN-23153,
-    # EN-23299: 0.1.0-dev.20261003170619 nested an old hrc-core).
-    injector_core="$(npm view "hrc-mail-injector@${version}" dependencies.hrc-core 2>/dev/null)" ||
-      fail "could not read hrc-mail-injector@${version} dependencies from the registry"
-    injector_lib="$(npm view "hrc-mail-injector@${version}" dependencies.hrc-injector-core 2>/dev/null)"
-    if [[ -n "$injector_lib" ]]; then
-      lib_core="$(npm view "hrc-injector-core@${injector_lib}" dependencies.hrc-core 2>/dev/null)" ||
-        fail "could not read hrc-injector-core@${injector_lib} dependencies from the registry"
-      [[ "$lib_core" == "$injector_core" ]] ||
-        fail "hrc-mail-injector@${version} pins hrc-core ${injector_core} but its hrc-injector-core@${injector_lib} pins ${lib_core}; two hrc-core copies break cold births. Install a coherent version (latest)."
-    fi
-
-    label=com.praesidium.hrc-mail-injector
-    uid="$(id -u)"
-    service_target="gui/${uid}/${label}"
-    source_plist="$(git rev-parse --show-toplevel)/launchd/${label}.plist"
-    installed_plist="$HOME/Library/LaunchAgents/${label}.plist"
-    hrc_plist="$HOME/Library/LaunchAgents/com.praesidium.hrc-server.plist"
-    state_path="$HOME/praesidium/var/state/acp/hrc-mail-injector.sqlite"
-    log_path="$HOME/praesidium/var/logs/hrc-runtime/hrc-mail-injector.log"
-
-    status="$(hrc server status --json 2>/dev/null)" || fail 'HRC daemon is not reachable'
-    node_id="$(jq -er '.node.nodeId' <<<"$status")" || fail 'HRC status did not report a node ID'
-    socket_path="$(jq -er '.socketPath' <<<"$status")" || fail 'HRC status did not report its socket path'
-    # The plist pins bunx by absolute path, so it must be the canonical fleet copy
-    # (T-08855), never whatever `command -v` finds in this deploy shell: a Homebrew or
-    # npm-global bunx that is later removed silently breaks the injector's next start.
-    bunx_path="$HOME/.bun/bin/bunx"
-    [[ -x "$bunx_path" ]] ||
-      fail "canonical ${bunx_path} is missing; install bun into ~/.bun and link bunx -> bun (T-08855)"
-    # The injector talks to the same canonical wrkq the node's HRC does; take it
-    # from HRC's supervisor env rather than restating it per node.
-    hrc_env="$(plutil -extract EnvironmentVariables json -o - "$hrc_plist")" ||
-      fail "cannot read EnvironmentVariables from ${hrc_plist}"
-    wrkq_db="$(jq -er '.HRC_WRKQ_DB' <<<"$hrc_env")" || fail "${hrc_plist} declares no HRC_WRKQ_DB"
-    token_file="$(jq -er '.HRC_WRKQD_TOKEN_FILE' <<<"$hrc_env")" ||
-      fail "${hrc_plist} declares no HRC_WRKQD_TOKEN_FILE"
-    [[ -f "$state_path" ]] || fail "injector state store ${state_path} does not exist"
-    imports="$(sqlite3 -readonly "$state_path" 'SELECT count(*) FROM injector_store_imports' 2>/dev/null)" ||
-      fail "${state_path} has no injector_store_imports table"
-    (( imports > 0 )) || fail "${state_path} carries no kicker-store import marker"
-
-    mkdir -p "$HOME/Library/LaunchAgents" "$HOME/praesidium/var/logs/hrc-runtime"
-    esc() { printf '%s' "$1" | sed 's/[\/&|]/\\&/g'; }
-    sed -e "s|__HOME__|$(esc "$HOME")|g" \
-        -e "s|__NODE_ID__|$(esc "$node_id")|g" \
-        -e "s|__SOCKET_PATH__|$(esc "$socket_path")|g" \
-        -e "s|__WRKQ_DB__|$(esc "$wrkq_db")|g" \
-        -e "s|__WRKQD_TOKEN_FILE__|$(esc "$token_file")|g" \
-        -e "s|__BUNX__|$(esc "$bunx_path")|g" \
-        -e "s|__VERSION__|$(esc "$version")|g" \
-        "$source_plist" > "$installed_plist.next"
-    plutil -lint "$installed_plist.next" >/dev/null
-    ! grep -q '__[A-Z_]*__' "$installed_plist.next" || fail 'unrendered placeholder in plist'
-
-    # Adopt the rendered installed candidate before comparing or unloading jobs.
-    dst="$installed_plist.next"
-    if command -v praesidium-adopt >/dev/null; then praesidium-adopt "$dst"; fi
-
-    # Current already: the loaded job runs exactly this rendered plist and pinned
-    # version, and nothing else serves this socket. Reloading anyway would drop
-    # in-flight mail work for no change.
-    running_pid="$(launchctl print "$service_target" 2>/dev/null | awk '$1 == "pid" && $2 == "=" { print $3; exit }' || true)"
-    if [[ -n "$running_pid" ]] && cmp -s "$installed_plist.next" "$installed_plist" &&
-       ps -o command= -p "$running_pid" | grep -q "hrc-mail-injector@${version}"; then
-      others=0
-      for pid in $(pgrep -u "$uid" -f 'hrc-mail-injector' || true); do
-        [[ "$pid" == "$running_pid" ]] && continue
-        ps eww -p "$pid" -o command= 2>/dev/null | tr ' ' '\n' | grep -qx "HRC_SOCKET_PATH=${socket_path}" && others=1
-      done
-      if (( others == 0 )); then
-        rm "$installed_plist.next"
-        echo "[injector] already current: ${service_target} pid ${running_pid} running hrc-mail-injector@${version}"
-        exit 0
-      fi
-    fi
-
-    install -m 0644 "$installed_plist.next" "$installed_plist"
-    rm "$installed_plist.next"
-    dst="$installed_plist"
-    if command -v praesidium-adopt >/dev/null; then praesidium-adopt "$dst"; fi
-
-    # Retire every earlier injector for this node before the new one loads:
-    # our own job, ad-hoc `launchctl submit` jobs (com.praesidium.hrc-mail-injector.<suffix>),
-    # then any loose process whose environment names this node's HRC socket.
-    # Injectors pointed at other sockets (isolated test namespaces) are left alone.
-    while read -r old; do
-      [[ -n "$old" ]] || continue
-      echo "[injector] bootout gui/${uid}/${old}"
-      launchctl bootout "gui/${uid}/${old}" 2>/dev/null || true
-    done < <(launchctl list | awk '{ print $3 }' | grep -E "^${label//./\\.}(\..+)?$" || true)
-    for _ in $(seq 1 50); do
-      launchctl print "$service_target" >/dev/null 2>&1 || break
-      sleep 0.2
-    done
-    for pid in $(pgrep -u "$uid" -f 'hrc-mail-injector' || true); do
-      if ps eww -p "$pid" -o command= 2>/dev/null | tr ' ' '\n' | grep -qx "HRC_SOCKET_PATH=${socket_path}"; then
-        echo "[injector] stopping unsupervised injector pid ${pid}"
-        kill -TERM "$pid" 2>/dev/null || true
-      fi
-    done
-    for _ in $(seq 1 50); do
-      stray=0
-      for pid in $(pgrep -u "$uid" -f 'hrc-mail-injector' || true); do
-        ps eww -p "$pid" -o command= 2>/dev/null | tr ' ' '\n' | grep -qx "HRC_SOCKET_PATH=${socket_path}" && stray=1
-      done
-      (( stray == 0 )) && break
-      sleep 0.2
-    done
-    (( stray == 0 )) || fail 'an earlier injector for this node would not exit'
-
-    log_offset="$(stat -f %z "$log_path" 2>/dev/null || echo 0)"
-    for attempt in 1 2 3 4 5; do
-      launchctl bootstrap "gui/${uid}" "$installed_plist" && break
-      [[ "$attempt" == 5 ]] && fail "could not bootstrap ${service_target}"
-      sleep 2
-    done
-
-    # Prove the outcome: the job's pid runs the pinned version, the injector
-    # reported itself running, and the same pid is still alive 10s later (a
-    # KeepAlive crash loop changes the pid and fails here).
-    pid=""
-    for _ in $(seq 1 60); do
-      pid="$(launchctl print "$service_target" 2>/dev/null | awk '$1 == "pid" && $2 == "=" { print $3; exit }' || true)"
-      if [[ -n "$pid" ]] && tail -c +"$((log_offset + 1))" "$log_path" 2>/dev/null | grep -q '"status":"running"'; then
-        break
-      fi
-      pid=""
-      sleep 1
-    done
-    [[ -n "$pid" ]] || fail "injector did not report running; see ${log_path} and ${log_path%.log}.err.log"
-    ps -o command= -p "$pid" | grep -q "hrc-mail-injector@${version}" ||
-      fail "injector pid ${pid} is not running hrc-mail-injector@${version}"
-    sleep 10
-    [[ "$(launchctl print "$service_target" 2>/dev/null | awk '$1 == "pid" && $2 == "=" { print $3; exit }')" == "$pid" ]] ||
-      fail "injector pid ${pid} did not survive 10s; it is crash-looping"
-    echo "[injector] ${service_target} pid ${pid} running hrc-mail-injector@${version} for node ${node_id}"
 
 [private]
 _deploy-node ssh-target expected-node target-ref="origin/main" aspd-ref="origin/main" restart="wait" publication="no-publish":
@@ -1363,20 +1198,15 @@ _node-readback ssh-target expected-node target-sha aspd-sha aspd-release injecto
     # A launchd bootout SIGKILLs the job ExitTimeOut seconds after SIGTERM, and the
     # default is ~5s (measured 4.6s, T-09760) — shorter than the daemon's own 30s
     # stop deadline, so a slow graceful stop dies mid-teardown with no record and
-    # the successor logs server.previous_exit_unattributed. Loud, not fatal: the
-    # injector step below must still run. Repair, then bootout/bootstrap the job.
+    # the successor logs server.previous_exit_unattributed. Loud, not fatal. Repair, then bootout/bootstrap the job.
     exit_timeout="$(plutil -extract ExitTimeOut raw -o - "$supervisor_plist" 2>/dev/null || echo 0)"
     if (( exit_timeout <= 30 )); then
       echo "[hrc] WARNING: ${supervisor_plist} ExitTimeOut=${exit_timeout} (default ~5s) is not above the daemon's 30s stop deadline; a launchd bootout will SIGKILL a graceful stop. Repair: hand-add <key>ExitTimeOut</key><integer>45</integer> to ${supervisor_plist} (not plutil/PlistBuddy: a canonical rewrite disturbs BTM attribution), then launchctl bootout ${supervisor_target} && launchctl bootstrap ${supervisor_target%/*} ${supervisor_plist}" >&2
     fi
 
-    # ---- 3. mail injector ---------------------------------------------------
-    # After HRC: the injector subscribes to the daemon's streams and must come up
-    # against the restarted one. The recipe comes from the checkout just moved to
-    # the target, so the node runs the injector lane its own release ships.
-    if [[ -n "$injector_version" ]]; then
-      just install-mail-injector-launchd "$injector_version"
-    fi
+    # The mail injector is not installed here or anywhere: the kernel's
+    # mail-delivery module delivers mail, and a started injector would deliver
+    # every message twice.
     # The turn-attention classifier is not installed here. It moves to a module
     # under the praesidium kernel node by node (praesidium-kernel T-13374), and a
     # deploy that reinstalled the launchd job would run it beside the module. A
