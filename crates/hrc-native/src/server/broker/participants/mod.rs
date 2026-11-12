@@ -250,6 +250,7 @@ pub enum Continuation {
 /// externally-owned predecessor (the cutover) it probes that endpoint first and
 /// refuses `host_binding_conflict` unless it is dead. The allocation is one
 /// store transaction; `Done` is the register route's created-registration body.
+#[cfg(test)]
 pub async fn allocate_hrc_launched(
     server: &super::Shared,
     scope: &str,
@@ -258,6 +259,30 @@ pub async fn allocate_hrc_launched(
     socket_path: &Path,
     continuation: Continuation,
     gone: &PredecessorGone,
+) -> Result<Answer, ApiError> {
+    allocate_hrc_launched_claim(
+        server,
+        scope,
+        lane,
+        workspace_cwd,
+        socket_path,
+        continuation,
+        gone,
+        None,
+    )
+    .await
+}
+
+#[allow(clippy::too_many_arguments)]
+pub async fn allocate_hrc_launched_claim(
+    server: &super::Shared,
+    scope: &str,
+    lane: &str,
+    workspace_cwd: &Path,
+    socket_path: &Path,
+    continuation: Continuation,
+    gone: &PredecessorGone,
+    claim: Option<&super::start::ClaimRow>,
 ) -> Result<Answer, ApiError> {
     let incarnation = format!("hrc-launch-{}", uuid::Uuid::new_v4());
     let body = parse_registration(json!({
@@ -298,7 +323,18 @@ pub async fn allocate_hrc_launched(
         .store
         .lock()
         .unwrap()
-        .allocate_hrc_launched_participant(&body, &home, evidence)?;
+        .allocate_hrc_launched_participant_then(&body, &home, evidence, |tx, reply| {
+            if let Some(claim) = claim {
+                // A replay after a failed/retired launch succeeds the same
+                // claim. Never rewrite a different request's global key.
+                let changed = tx.execute(
+                    "INSERT INTO roster_claims(idempotency_key,request_hash,base_scope,claimed_scope,successor_host_session_id,created_at) VALUES (?,?,?,?,?,?) ON CONFLICT(idempotency_key) DO UPDATE SET successor_host_session_id=excluded.successor_host_session_id WHERE roster_claims.request_hash=excluded.request_hash AND roster_claims.base_scope=excluded.base_scope AND roster_claims.claimed_scope=excluded.claimed_scope",
+                    rusqlite::params![claim.idempotency_key,claim.request_hash,claim.subject_scope,scope,reply["hostSessionId"].as_str(),hrc_store::timestamp()],
+                )?;
+                anyhow::ensure!(changed == 1, "claim key belongs to a different request");
+            }
+            Ok(())
+        })?;
     Ok(match joined {
         hrc_store::ParticipantJoin::Registered(v) => {
             server.ledger_committed();

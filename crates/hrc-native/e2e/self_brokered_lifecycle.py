@@ -17,7 +17,7 @@ import sqlite3
 import sys
 import time
 
-from self_brokered import Aspd, LAUNCHER, HERE, Run, LEAK, daemon_env
+from self_brokered import Aspd, LAUNCHER, HERE, Run, LEAK, daemon_env, claim_body
 from hrcpty_substrate import FakeAspd, alive, ops, descendants_of, canonical, start_hash
 from n4_federation import local_tailnet_address, free_port
 
@@ -43,6 +43,7 @@ def main():
         p.add_argument('--'+name, type=Path, required=True)
     p.add_argument('--archive-only', action='store_true', help='run repeated terminate and continuation gates only')
     p.add_argument('--baseline', action='store_true', help='reproduce termination graph leak only')
+    p.add_argument('--reproduce-claims', action='store_true', help='record T-13451 defects without requiring fixes')
     a = p.parse_args()
     root = a.scratch_root.absolute()
     assert not root.exists()
@@ -80,7 +81,7 @@ await runBrokerCli({additionalDrivers:[() => {
         "j=json.loads(Path(a['--registration']).read_text())")
     launcher.write_text('E2E='+repr(str(HERE))+'\nBROKER='+repr(str(broker))+'\n'+source)
     commands = {agent:[sys.executable, str(launcher), 'ok', str(a.broker_module)]
-                for agent in ('subject','control','interrupted','foundry','archive')}
+                for agent in ('subject','control','interrupted','foundry','archive','summoned')}
     for agent in [*commands,'ordinary']:
         directory=root/'agents'/agent
         directory.mkdir(parents=True)
@@ -172,6 +173,72 @@ await runBrokerCli({additionalDrivers:[() => {
         answer=call('/v1/terminate',body)
         assert answer[0]==200,answer
         return ended(s)
+    def claim_gates():
+        # Virgin ensure + enqueue: inspect every session, including ones the
+        # continuity projection cannot expose. A disconnected active row fails.
+        sc=scope('summoned')
+        ensured=call('/v1/targets/ensure',{'sessionRef':sc+'/lane:main','runtimeIntent':{}})
+        first=call('/v1/submissions/enqueue',{'target':sc+'/lane:main','body':'CONT first mail',
+            'origin':{'principalRef':'agent:clod','envelopeId':'EN-T13451'},'wait':True})
+        assert first[0]==200,first
+        rid=first[1]['runtimeId']; row=r.runtime(rid)
+        directory=Path(row['state']['broker']['substrate']['socketPath']).parent
+        subject={'id':rid,'host':row['host_session_id'],'generation':row['generation'],
+            'child':int((directory/'child.pid').read_text()),'supervisor':int((directory/'hrcpty.pid').read_text()),'directory':directory}
+        r.wait(lambda:r.rows("SELECT 1 FROM hrc_events WHERE run_id=? AND event_kind='turn.completed'",(first[1]['runId'],)),30)
+        sessions=r.rows('SELECT * FROM sessions WHERE scope_ref=? AND lane_ref=?',(sc,'main'))
+        continuity=r.rows('SELECT * FROM continuities WHERE scope_ref=? AND lane_ref=?',(sc,'main'))[0]
+        active=[x for x in sessions if x['status']=='active']
+        report['B']={'ensure':ensured,'enqueue':first,'sessions':sessions,'continuity':continuity,
+                     'pass':len(active)==1 and active[0]['host_session_id']==continuity['active_host_session_id']}
+        terminate(subject)
+        request=claim_body(r,sc,'T13451-retired')
+        runs=r.rows('SELECT run_id FROM runs WHERE scope_ref=?',(sc,))
+        answer=call('/v1/runtimes/start',request)
+        report['A']={'request':request,'response':answer}
+        if a.reproduce_claims:
+            report['A']['reproduced']=answer[0]==409 and answer[1]['error']['code']=='session_scope_occupied'
+            assert report['A']['reproduced'] and not report['B']['pass'],report
+            return
+        assert answer[0]==200,answer
+        born=r.runtime(answer[1]['runtimeId'])
+        newdir=Path(born['state']['broker']['substrate']['socketPath']).parent
+        reg=json.loads((newdir/'registration.json').read_text())
+        assert born['transport']=='hrcpty' and born['generation']==subject['generation']+1,born
+        assert reg['continuation']['carried'],reg
+        assert r.rows('SELECT run_id FROM runs WHERE scope_ref=?',(sc,))==runs,'summon must deliver nothing'
+        assert answer[1]['claim']['hostSessionId']==born['host_session_id'],answer
+        replay=call('/v1/runtimes/start',request)
+        assert replay[0]==200 and replay[1]['runtimeId']==born['runtime_id'] and replay[1]['claim']['replayed'],replay
+        live=call('/v1/runtimes/start',claim_body(r,sc,'T13451-live'))
+        assert live[0]==409 and live[1]['error']['code']=='session_scope_occupied',live
+        suffix=call('/v1/runtimes/start',claim_body(r,sc,'T13451-suffix','suffix'))
+        assert suffix[0]==409,suffix
+        assert len(r.rows('SELECT * FROM participant_registration_attempts WHERE runtime_id=?',(born['runtime_id'],)))==1
+        assert len(r.rows('SELECT * FROM sessions WHERE scope_ref LIKE ?',(sc+'-%',)))==0
+        report['A'].update(pass_=True,registration=reg,replay=replay,live=live,suffix=suffix)
+        # B becomes an enforced gate in the orphan-session fix.
+        call('/v1/terminate',{'runtimeId':born['runtime_id']})
+
+        # Ordinary Claude discriminator: one session on virgin ensure + turn;
+        # retired exact claims rotate and discard its reusable conversation.
+        old=ordinary(); turn(old,'CONT ordinary discriminator')
+        rows=r.rows('SELECT * FROM sessions WHERE scope_ref=?',(scope('ordinary'),))
+        assert len(rows)==1 and rows[0]['status']=='active',rows
+        live=call('/v1/runtimes/start',claim_body(r,scope('ordinary'),'T13451-ordinary-live'))
+        assert live[0]==409 and live[1]['error']['code']=='session_scope_occupied',live
+        assert call('/v1/terminate',{'runtimeId':old['id']})[0]==200
+        r.wait(lambda:not alive(old['child']),20)
+        fresh=call('/v1/runtimes/start',claim_body(r,scope('ordinary'),'T13451-ordinary-retired'))
+        assert fresh[0]==200,fresh
+        new=r.runtime(fresh[1]['runtimeId'])
+        assert new['generation']>rows[0]['generation'] and new['host_session_id']!=old['host'],new
+        frames=[json.loads(l) for l in (a.artifacts/'aspd.jsonl').read_text().splitlines()]
+        req=next(x['request']['params']['compileRequest'] for x in frames if x.get('request',{}).get('method')=='aspc.compileHarnessInvocation' and x['request']['params']['compileRequest']['identity']['runtimeId']==new['runtime_id'])
+        assert not req.get('continuation'),req
+        report['ordinaryClaimControl']={'virginSessions':rows,'live':live,'fresh':fresh,'compileRequest':req}
+        call('/v1/terminate',{'runtimeId':new['runtime_id']})
+        print('PASS summon retired/live/replay/suffix and virgin session ownership; ordinary controls',flush=True)
     def archive_gates():
         results={}
         def session(s):
@@ -239,6 +306,8 @@ await runBrokerCli({additionalDrivers:[() => {
     try:
         owner=r.up('1')
         if not a.baseline:
+            claim_gates()
+            if a.reproduce_claims: return
             archive_gates()
             if a.archive_only:
                 report['pass']=True

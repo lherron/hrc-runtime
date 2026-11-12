@@ -38,7 +38,7 @@ class Aspd(FakeAspd):
             return hello
         if method == 'aspc.resolveRuntimeDeclaration':
             c = params['context']; agent = c['agentId']
-            placement = {'pins': {}, 'homes': {c['taskId']: getattr(self, 'node_id', 'selftest')}}
+            placement = {'pins': {}, 'homes': {c.get('taskId', 'launch'): getattr(self, 'node_id', 'selftest')}}
             if agent in self.commands:
                 placement.update(launch='self-brokered', launchCommand=self.commands[agent])
             elif agent == 'held': placement['launch'] = 'participant-only'
@@ -82,6 +82,24 @@ os.environ['PARTICIPANT_EVICTION_EFFECTS']=str(root/'effects.jsonl')
 os.execvp('bun',['bun',BROKER,'run',module,'--transport','unix','--socket',a['--broker-socket'],
                        '--event-ledger',str(root/'events.ndjson'),'--join','participant-served'])
 '''
+
+def claim_body(r, scope, key, policy='reject'):
+    """Source-derived prae seat summon: praesidium-kernel hrc_writes.rs:324-415.
+
+    Mable approved direct HTTP acceptance for T-13451; installed prae is a
+    separate post-deploy boundary. No existence-dependent fields in this body.
+    """
+    agent = scope.split(':')[1]
+    resolved = r.http('POST', '/v1/declarations/resolve', {
+        'agentId': agent, 'agentRoot': str(r.root/'agents'/agent),
+        'cwd': str(r.root/'t12049'), 'projectRoot': str(r.root/'t12049'),
+        'runMode': 'task', 'interactive': False, 'preferredMode': 'nonInteractive'})
+    assert resolved[0] == 200, resolved
+    intent = resolved[1]['intent']
+    intent.setdefault('presentation', {})['operator'] = 'none'
+    return {'runtimeIntent': intent, 'idempotencyKey': key, 'conflictPolicy': policy,
+            'summonIntent': 'implicit' if policy == 'reject' else 'explicit_local',
+            'sessionRef' if policy == 'reject' else 'baseSessionRef': scope+'/lane:main'}
 
 def gates(r, root, report, call, scope, target, a_log):
     """T-13441: births caused by an input (contract 5.1): G1, G8, G2, G3, mail, lazy.

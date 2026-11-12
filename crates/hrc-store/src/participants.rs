@@ -334,6 +334,18 @@ impl Store {
         home: &str,
         evidence: PredecessorEvidence<'_>,
     ) -> Result<ParticipantJoin> {
+        self.allocate_hrc_launched_participant_then(body, home, evidence, |_, _| Ok(()))
+    }
+
+    /// Record launch-associated state in the allocation transaction. A failed
+    /// callback rolls back registration, succession and its claim together.
+    pub fn allocate_hrc_launched_participant_then(
+        &mut self,
+        body: &Value,
+        home: &str,
+        evidence: PredecessorEvidence<'_>,
+        record: impl FnOnce(&Connection, &Value) -> Result<()>,
+    ) -> Result<ParticipantJoin> {
         let scope = body["requestedSessionRef"]
             .as_str()
             .context("validated scope")?;
@@ -353,6 +365,7 @@ impl Store {
         };
         Ok(match joined {
             ParticipantJoin::Registered(reply) => {
+                record(&tx, &reply)?;
                 tx.commit()?;
                 ParticipantJoin::Registered(reply)
             }

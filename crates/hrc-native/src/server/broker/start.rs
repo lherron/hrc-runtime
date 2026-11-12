@@ -486,6 +486,11 @@ impl Claim {
 
     /// startSuffixRosterRuntime / startExactScopeRuntime on the home node.
     async fn start(&self, server: &Shared) -> Result<Value, ApiError> {
+        if let Some(command) =
+            super::federation::policy::launch_command(server, &self.scope.scope_ref).await?
+        {
+            return self.start_self_brokered(server, command).await;
+        }
         let lock = summon::namespace_lock(self.scope.mutex_key());
         let (session, slot, replayed, minted) = {
             let _held = lock.lock().await;
@@ -536,6 +541,109 @@ impl Claim {
             claim.as_object_mut().unwrap().remove("identity");
         }
         started["claim"] = claim;
+        Ok(started)
+    }
+
+    /// A self-brokered claim always names the exact participant address. Its
+    /// host succession owns session allocation and continuation selection;
+    /// ordinary claim rotation must never run here.
+    async fn start_self_brokered(
+        &self,
+        server: &Shared,
+        command: Vec<String>,
+    ) -> Result<Value, ApiError> {
+        let scope = &self.scope.scope_ref;
+        let lane = &self.scope.lane_ref;
+        if self.policy == "suffix" {
+            return Err(ApiError::domain(
+                StatusCode::CONFLICT,
+                "self_brokered_roster_unsupported",
+                "a self-brokered participant owns one exact scope; suffix claims are unsupported",
+                Some(json!({"scopeRef":scope,"laneRef":lane,"retryable":false})),
+            ));
+        }
+        let lock = summon::namespace_lock(self.scope.mutex_key());
+        let _namespace = lock.lock().await;
+        let _seat = super::broker::seat_gate(server, scope, lane).await;
+        let recorded = self.replay(server)?;
+        let replayed = recorded.is_some();
+        let session = match recorded {
+            Some((session, _)) => Some(session),
+            None => server
+                .store
+                .lock()
+                .unwrap()
+                .continuity_session(scope, lane)?,
+        };
+        if let Some(session) = &session {
+            let host = session["hostSessionId"].as_str().unwrap();
+            let ids = {
+                let db = server.store.lock().unwrap();
+                let mut stmt = db
+                    .sqlite
+                    .prepare("SELECT runtime_id FROM runtimes WHERE host_session_id=?")
+                    .map_err(anyhow::Error::from)?;
+                stmt.query_map([host], |r| r.get::<_, String>(0))
+                    .map_err(anyhow::Error::from)?
+                    .collect::<rusqlite::Result<Vec<_>>>()
+                    .map_err(anyhow::Error::from)?
+            };
+            for id in ids {
+                super::lease::reconcile_liveness(server, &id).await?;
+                let runtime = server.store.lock().unwrap().runtime(&id)?;
+                if let Some(runtime) = runtime
+                    .filter(|r| !super::lease::unavailable(r["status"].as_str().unwrap_or("")))
+                {
+                    if replayed {
+                        return self.self_brokered_response(
+                            server,
+                            json!({"runtimeId":id,
+                            "hostSessionId":host,"generation":session["generation"],
+                            "transport":runtime["transport"],"status":runtime["status"]}),
+                            true,
+                        );
+                    }
+                    return Err(ApiError::domain(
+                        StatusCode::CONFLICT,
+                        "session_scope_occupied",
+                        "the exact scope is occupied by a live session",
+                        Some(
+                            json!({"scopeRef":scope,"laneRef":lane,"sessionRef":format!("{scope}/lane:{lane}"),"occupyingHostSessionId":host,"retryable":false}),
+                        ),
+                    ));
+                }
+            }
+        }
+        summon::assert_reserved_address_allows_birth(server, scope, lane, "start").await?;
+        let claim = ClaimRow {
+            idempotency_key: self.key.clone(),
+            request_hash: self.hash.clone(),
+            subject_scope: scope.clone(),
+        };
+        let allocation = super::participants::launch::allocate_claim(
+            server,
+            scope,
+            lane,
+            session.as_ref(),
+            command,
+            Some(&claim),
+        )
+        .await?;
+        drop(_namespace);
+        let started = super::participants::launch::launch_attempt(server, allocation, None).await?;
+        self.self_brokered_response(server, started, replayed)
+    }
+
+    fn self_brokered_response(
+        &self,
+        server: &Shared,
+        started: Value,
+        replayed: bool,
+    ) -> Result<Value, ApiError> {
+        let mut started = with_identity(server, started)?;
+        started["claim"] = json!({"identity":started["identity"],"slot":self.scope.task,"scopeRef":self.scope.scope_ref,
+            "sessionRef":format!("{}/lane:{}", self.scope.scope_ref,self.scope.lane_ref),
+            "hostSessionId":started["hostSessionId"],"idempotencyKey":self.key,"replayed":replayed,"conflictPolicy":self.policy});
         Ok(started)
     }
 

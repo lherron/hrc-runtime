@@ -85,6 +85,17 @@ pub async fn allocate(
     session: Option<&Value>,
     command: Vec<String>,
 ) -> Result<Allocation, ApiError> {
+    allocate_claim(server, scope, lane, session, command, None).await
+}
+
+pub async fn allocate_claim(
+    server: &Shared,
+    scope: &str,
+    lane: &str,
+    session: Option<&Value>,
+    command: Vec<String>,
+    claim: Option<&super::super::start::ClaimRow>,
+) -> Result<Allocation, ApiError> {
     let previous = {
         let db = server.store.lock().unwrap();
         db.participant_registration_by_scope(scope)?
@@ -172,7 +183,7 @@ pub async fn allocate(
     // Allocation mints the runtime id. launch_attempt replaces this
     // unpublished provisional endpoint before any file or process exists.
     let registration = done(
-        super::allocate_hrc_launched(
+        super::allocate_hrc_launched_claim(
             server,
             scope,
             lane,
@@ -184,6 +195,7 @@ pub async fn allocate(
                     "terminal predecessor; no identified supervisor under continuity start gate"
                         .into(),
             },
+            claim,
         )
         .await?,
     )
