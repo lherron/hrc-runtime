@@ -144,8 +144,10 @@ design_review: >
   plain or styled, plus screen capability and row discovery. The client ends
   on close without reconnect. The t13431-acceptance.py isolated local and
   federated drive checks initial and changed snapshots, idle suppression,
-  cadence, passive size/client counts and cessation through actual capture
-  call-site logs after local and carried disconnect. These isolated runs
+  cadence, passive size/client counts and cessation through stream close
+  records emitted after loop exit and ops connection drop. Each stream logs
+  one opened record and one closed record with its capture count; polls do
+  not emit logs. Supervisor status exposes no ops-connection count. These isolated runs
   make no fleet or installed acceptance claim.
 reopen_when: >
   Seat selector or runtime-binding semantics, frame or upgrade format, stream
