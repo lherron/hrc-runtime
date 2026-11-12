@@ -21,7 +21,17 @@ import type {
 } from './http-contracts-dispatch.js'
 import type { HrcRuntimeStatus } from './status-contracts.js'
 
-export type OperatorAttachDescriptor = TmuxOperatorAttachDescriptor | HrcptyOperatorAttachDescriptor
+export type OperatorAttachDescriptor =
+  | TmuxOperatorAttachDescriptor
+  | HrcptyOperatorAttachDescriptor
+  | StreamOperatorAttachDescriptor
+
+/** The local daemon carries this seat attach to its home node. */
+export type StreamOperatorAttachDescriptor = {
+  transport: 'hrc-stream'
+  node: string
+  argv: string[]
+}
 
 export type TmuxOperatorAttachDescriptor = {
   transport: 'tmux'

@@ -2679,6 +2679,14 @@
     },
     {
       "package": "hrc-core",
+      "symbol": "HrcSeatStreamAttach",
+      "kind": "type",
+      "file": "packages/hrc-core/src/contracts-records.ts",
+      "hash": "hrc-core|HrcSeatStreamAttach|type",
+      "count": 1
+    },
+    {
+      "package": "hrc-core",
       "symbol": "HrcSelector",
       "kind": "type",
       "file": "packages/hrc-core/src/selectors.ts",
@@ -4715,6 +4723,14 @@
       "kind": "type",
       "file": "packages/hrc-core/src/http-contracts-dispatch.ts",
       "hash": "hrc-core|SteerSubmissionRequest|type",
+      "count": 1
+    },
+    {
+      "package": "hrc-core",
+      "symbol": "StreamOperatorAttachDescriptor",
+      "kind": "type",
+      "file": "packages/hrc-core/src/http-contracts-runtime.ts",
+      "hash": "hrc-core|StreamOperatorAttachDescriptor|type",
       "count": 1
     },
     {

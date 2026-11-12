@@ -92,6 +92,11 @@ source:
   - crates/hrc-pty/src/attach.rs
   - crates/hrc-native/src/server/broker/hrcpty.rs
   - crates/hrc-native/src/server/projection/surfaces.rs
+  - crates/hrc-native/src/server/turns/presentation.rs
+  - crates/hrc-native/src/server/turns/io.rs
+  - packages/hrc-core/src/contracts-records.ts
+  - packages/hrc-core/src/contracts-diagnostics.ts
+  - packages/hrc-core/src/http-contracts-runtime.ts
   - crates/hrc-native/src/server/placement/federation/peer_listener.rs
   - crates/hrc-native/src/server/placement/federation/projection.rs
   - crates/hrc-native/src/server/placement/federation/locate.rs
@@ -121,7 +126,19 @@ design_review: >
   t13421-result.json. T-13422 adds hrc-pty attach --seat (t13422-*). T-13423
   adds the one-hop carry, GET /v1/federation/stream and capabilities.streams
   ["pty"], with two isolated federated daemons in t13423-acceptance.py and
-  t13423-result.json. Screen remains a later task; this partial
+  t13423-result.json. T-13424 adds attach discovery on local presentation and
+  peer-health rows and the seat-selector attach door (t13424-acceptance.py,
+  t13424-result.json). The isolated two-daemon run executes the foreign
+  descriptor in a real PTY, types into the real supervisor, verifies row
+  absence for headless and ended runtimes, and compares local descriptor
+  response bytes with the pre-change build. The selector uses scopeRef,
+  optional laneRef (main by default), and mode read-only or take-control
+  (take-control by default), consistent with the stream selector. Local
+  runtimeId requests retain their previous behavior. Carry sockets use
+  TCP keepalive (10 s idle, 5 s interval, 3 probes) via existing reqwest;
+  no protocol ping or dependency was added. t13424-swift-decode.py compiles
+  the current hrc-ios Contracts sources and checks additive-member decoding.
+  Screen remains a later task; this partial
   implementation makes no fleet or installed acceptance claim.
 reopen_when: >
   Seat selector or runtime-binding semantics, frame or upgrade format, stream

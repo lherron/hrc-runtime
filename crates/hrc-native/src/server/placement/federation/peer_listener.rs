@@ -271,8 +271,12 @@ async fn route_request(server: &Shared, peer: &str, request: Request) -> Result<
                     &query,
                     false,
                     crate::server::runtimes::Terminal::Recent,
-                ) {
-                    Ok((runtimes, _)) => health["runtimes"] = runtimes.into(),
+                )
+                .and_then(|(mut runtimes, _)| {
+                    super::projection::attach_members(server, &mut runtimes)?;
+                    Ok(runtimes)
+                }) {
+                    Ok(runtimes) => health["runtimes"] = runtimes.into(),
                     // Bun's health handler throws; the peer protocol answers a generic 500.
                     Err(_) => {
                         return Ok(refusal(

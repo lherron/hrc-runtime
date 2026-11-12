@@ -33,6 +33,41 @@ fn nonempty(v: &Value) -> Option<&str> {
     v.as_str().filter(|s| !s.trim().is_empty())
 }
 
+/// Inventory rows intentionally omit runtime state. Read only the broker
+/// hosting subtree, keyed by each returned live runtime, rather than hydrating
+/// large runtime state blobs or scanning terminal history.
+pub(super) fn attach_members(server: &Server, rows: &mut [Value]) -> Result<(), ApiError> {
+    let db = server.store.lock().unwrap();
+    let mut stmt = db.sqlite.prepare(
+        "SELECT CASE WHEN json_valid(runtime_state_json) THEN json_extract(runtime_state_json,'$.broker') END FROM runtimes WHERE runtime_id=?"
+    ).map_err(anyhow::Error::from)?;
+    for row in rows {
+        if row["transport"] == "sdk"
+            || row["status"].as_str().is_none_or(|s| {
+                hrc_store::status::UNAVAILABLE.contains(&s)
+                    || matches!(
+                        s,
+                        "failed" | "disposed" | "exited" | "stopped" | "archived" | "terminal"
+                    )
+            })
+        {
+            continue;
+        }
+        let broker: Option<String> = stmt
+            .query_row([row["runtimeId"].as_str()], |r| r.get(0))
+            .map_err(anyhow::Error::from)?;
+        let mut hosting = row.clone();
+        hosting["runtimeStateJson"] =
+            json!({"broker":broker.and_then(|b| serde_json::from_str::<Value>(&b).ok())});
+        if let Some(attach) =
+            crate::server::surfaces::stream_attach(&hosting, server.federation.node_id())
+        {
+            row["attach"] = attach;
+        }
+    }
+    Ok(())
+}
+
 /// parseRuntimes: every row names a runtime, scope, lane and status.
 fn runtimes_of(body: &Value) -> Option<Value> {
     let rows = body.get("runtimes")?.as_array()?;

@@ -36,7 +36,7 @@ struct Seat {
     runtime: Option<db::Rt>,
 }
 /// Read the current continuity, never a caller-selected runtime or socket.
-fn current(server: &Shared, scope: &str, lane: &str) -> Result<Seat, ApiError> {
+fn current(server: &super::Server, scope: &str, lane: &str) -> Result<Seat, ApiError> {
     let store = server.store.lock().unwrap();
     let session = store
         .continuity_session(scope, lane)?
@@ -55,6 +55,19 @@ fn current(server: &Shared, scope: &str, lane: &str) -> Result<Seat, ApiError> {
         runtime,
     })
 }
+/// Resolve a local seat for the attach door with the stream's refusal semantics.
+pub(super) fn runtime_id(
+    server: &super::Server,
+    scope: &str,
+    lane: &str,
+) -> Result<String, ApiError> {
+    current(server, scope, lane)?
+        .runtime
+        .filter(|rt| !ended(rt))
+        .map(|rt| rt.runtime_id)
+        .ok_or_else(|| refusal("no_runtime", "seat has no live runtime"))
+}
+
 fn ended(rt: &db::Rt) -> bool {
     hrc_store::status::UNAVAILABLE.contains(&rt.status.as_str())
         || matches!(

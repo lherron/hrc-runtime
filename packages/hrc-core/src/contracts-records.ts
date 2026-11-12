@@ -136,7 +136,17 @@ export type HrcRuntimePresentationRecord = {
   viewerWindow?: string | undefined
 }
 
+/** Path-free discovery of streams served for a live seat. */
+export type HrcSeatStreamAttach = {
+  transport: 'hrcpty'
+  node: string
+  streams: Array<'pty' | 'screen'>
+  modes: Array<'read-only' | 'take-control'>
+}
+
 export type HrcRuntimeSnapshot = {
+  /** Present on peer health rows for live hrcpty seats. */
+  attach?: HrcSeatStreamAttach | undefined
   identity?: SessionIdentity | undefined
   runtimeId: string
   hostSessionId: string

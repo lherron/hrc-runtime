@@ -355,7 +355,7 @@ export type SendInFlightInputResponse = {
   pendingTurns?: number | undefined
 }
 
-/** GET /v1/attach: the operator attach descriptor, tmux or hrcpty. */
+/** GET /v1/attach: the operator attach descriptor, tmux, hrcpty or hrc-stream. */
 export type AttachDescriptor = OperatorAttachDescriptor
 
 export type SurfaceListFilter = {

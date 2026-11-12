@@ -26,6 +26,9 @@ pub async fn attach(
     server: &Shared,
     query: &HashMap<String, String>,
 ) -> Result<Response, ApiError> {
+    if query.contains_key("scopeRef") {
+        return surfaces::seat_descriptor(server, query).await;
+    }
     let id = runtime_id(query)?;
     super::runtimes::runtime(server, &id)?;
     lease::reconcile_liveness(server, &id).await?;

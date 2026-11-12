@@ -1,4 +1,4 @@
-import type { HrcRuntimePresentationRecord } from './contracts-records.js'
+import type { HrcRuntimePresentationRecord, HrcSeatStreamAttach } from './contracts-records.js'
 import type { AspContractPackage } from './contracts-status.js'
 import type { SessionIdentity, SessionMetadata } from './session-metadata.js'
 import type { HrcRuntimeStatus } from './status-contracts.js'
@@ -155,6 +155,7 @@ export type HrcRuntimePresentationEventPayload = {
  * attaches, or appends events.
  */
 export type HrcPresentationRuntimeRow = {
+  attach?: HrcSeatStreamAttach | undefined
   metadata?: SessionMetadata | undefined
   identity?: SessionIdentity | undefined
   runtimeId: string

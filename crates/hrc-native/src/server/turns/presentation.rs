@@ -10,7 +10,9 @@ use serde_json::{Value, json};
 use std::collections::HashSet;
 pub fn list(server: &Server) -> Result<Response, ApiError> {
     let db = server.store.lock().unwrap();
-    Ok(Json(hrc_store::presentation::runtimes(&db)?).into_response())
+    let mut output = hrc_store::presentation::runtimes(&db)?;
+    annotate_attach(server, &mut output);
+    Ok(Json(output).into_response())
 }
 pub async fn seats(server: &Server, body: &[u8]) -> Result<Response, ApiError> {
     let input = parse_body(body).map_err(|mut e| {
@@ -49,7 +51,18 @@ pub async fn seats(server: &Server, body: &[u8]) -> Result<Response, ApiError> {
         }
         hrc_store::presentation::seats(&db, keys)?
     };
+    annotate_attach(server, &mut output);
     super::federation::session_home::annotate(server, output["sessions"].as_array_mut().unwrap())
         .await;
     Ok(Json(output).into_response())
+}
+
+fn annotate_attach(server: &Server, output: &mut Value) {
+    if let Some(rows) = output["runtimes"].as_array_mut() {
+        for row in rows {
+            if let Some(attach) = super::surfaces::stream_attach(row, server.federation.node_id()) {
+                row["attach"] = attach;
+            }
+        }
+    }
 }

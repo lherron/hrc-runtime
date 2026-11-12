@@ -66,6 +66,75 @@ fn tmux_binary() -> String {
         .to_string_lossy()
         .into_owned()
 }
+/// Path-free stream discovery, shared by presentation and peer runtime rows.
+/// Presentation rows already carry the normalized local hrcpty target.
+pub fn stream_attach(runtime: &Value, node: &str) -> Option<Value> {
+    let live = runtime["status"].as_str().is_some_and(|s| {
+        !hrc_store::status::UNAVAILABLE.contains(&s)
+            && !matches!(
+                s,
+                "failed" | "disposed" | "exited" | "stopped" | "archived" | "terminal"
+            )
+    });
+    let hrcpty = runtime.get("hrcpty").is_some_and(Value::is_object)
+        || runtime_views::hosting(runtime).is_some_and(|h| h["presentation"]["kind"] == "hrcpty");
+    (live && hrcpty && runtime["transport"] != "sdk").then(||
+        json!({"transport":"hrcpty","node":node,"streams":["pty"],"modes":["read-only","take-control"]}))
+}
+
+/// A seat selector resolves home before runtime. Local descriptors retain the
+/// existing liveness reconciliation and direct-supervisor argv.
+pub async fn seat_descriptor(
+    server: &super::Shared,
+    query: &std::collections::HashMap<String, String>,
+) -> Result<Response, ApiError> {
+    if query.contains_key("runtimeId") {
+        return Err(ApiError::bad(
+            "scopeRef and runtimeId are mutually exclusive",
+            None,
+        ));
+    }
+    let scope = query
+        .get("scopeRef")
+        .map(|s| s.trim())
+        .filter(|s| !s.is_empty())
+        .ok_or_else(|| ApiError::bad("scopeRef is required", None))?;
+    hrc_common::scope::validate_scope(scope).map_err(|e| ApiError::bad(e, None))?;
+    let lane = hrc_common::scope::normalize_lane_ref(query.get("laneRef").map(String::as_str))
+        .map_err(|e| ApiError::bad(e.to_string(), None))?;
+    let mode = query
+        .get("mode")
+        .map(String::as_str)
+        .unwrap_or("take-control");
+    if !matches!(mode, "read-only" | "take-control") {
+        return Err(ApiError::bad(
+            "mode must be read-only or take-control",
+            None,
+        ));
+    }
+    let home = super::federation::session_home::home(server, scope).await;
+    if home["state"] == "foreign"
+        && let Some(node) = home["nodeId"].as_str()
+    {
+        super::seat_stream_carry::capable_peer(server, node, "pty").await?;
+        let mut argv = vec![
+            super::hrcpty::binary().to_string_lossy().into_owned(),
+            "attach".into(),
+            "--seat".into(),
+            scope.into(),
+            "--lane".into(),
+            lane,
+        ];
+        if mode == "read-only" {
+            argv.push("--read-only".into());
+        }
+        return Ok(Json(json!({"transport":"hrc-stream","node":node,"argv":argv})).into_response());
+    }
+    let id = super::seat_streams::runtime_id(server, scope, hrc_store::storage_lane(&lane))?;
+    super::lease::reconcile_liveness(server, &id).await?;
+    descriptor(server, &id, true)
+}
+
 pub fn attach(server: &Server, body: Value) -> Result<Response, ApiError> {
     object(&body)?;
     let id = text(&body, "runtimeId")?;

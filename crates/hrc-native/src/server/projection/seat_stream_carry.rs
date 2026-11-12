@@ -42,31 +42,26 @@ fn unsupported(home: &str, detail: &str) -> ApiError {
     )
 }
 
-/// Open `query` (the caller's raw query string) on `home` and, on its 101,
-/// commit this daemon's own 101 and relay.
-pub async fn open(
-    server: &Shared,
-    mut request: Request,
+fn peer_url(endpoint: &str, path: &str, home: &str) -> Result<reqwest::Url, ApiError> {
+    reqwest::Url::parse(endpoint)
+        .and_then(|u| u.join(path))
+        .map_err(|e| unreachable(home, e.to_string()))
+}
+
+/// Shared admission for stream opens and the seat-selector attach door.
+pub(super) async fn capable_peer(
+    server: &super::Server,
     home: &str,
-    query: &str,
     kind: &str,
-) -> Result<Response, ApiError> {
-    if server.controller.shutting_down.load(Ordering::SeqCst) {
-        return Err(super::seat_streams::stopping());
-    }
+) -> Result<hrc_common::federation::FederationPeer, ApiError> {
     // A home this node has no credentials for cannot be carried to.
     let Some(peer) = server.federation.peer(home).cloned() else {
         return Err(unsupported(home, "home is not a declared peer"));
     };
-    let url = |path: &str| {
-        reqwest::Url::parse(&peer.endpoint)
-            .and_then(|u| u.join(path))
-            .map_err(|e| unreachable(home, e.to_string()))
-    };
     let client = server.federation.http_client();
     // A carry opens only to a peer that lists the kind (old builds list none).
     let probe = client
-        .get(url("/v1/federation/health")?)
+        .get(peer_url(&peer.endpoint, "/v1/federation/health", home)?)
         .bearer_auth(&peer.token)
         .headers(federation::request_headers())
         .send();
@@ -95,9 +90,37 @@ pub async fn open(
             "peer health does not list this stream kind",
         ));
     }
+    Ok(peer)
+}
+
+/// Open `query` (the caller's raw query string) on `home` and, on its 101,
+/// commit this daemon's own 101 and relay.
+pub async fn open(
+    server: &Shared,
+    mut request: Request,
+    home: &str,
+    query: &str,
+    kind: &str,
+) -> Result<Response, ApiError> {
+    if server.controller.shutting_down.load(Ordering::SeqCst) {
+        return Err(super::seat_streams::stopping());
+    }
+    let peer = capable_peer(server, home, kind).await?;
+    // Keepalive is scoped to carry sockets, including after HTTP upgrade.
+    let client = reqwest::Client::builder()
+        .redirect(reqwest::redirect::Policy::none())
+        .tcp_keepalive(Duration::from_secs(10))
+        .tcp_keepalive_interval(Duration::from_secs(5))
+        .tcp_keepalive_retries(3)
+        .build()
+        .map_err(|e| unreachable(home, e.to_string()))?;
     super::seat_streams::upgrade_requested(&request)?;
     let carry = client
-        .get(url(&format!("{PEER_ROUTE}?{query}"))?)
+        .get(peer_url(
+            &peer.endpoint,
+            &format!("{PEER_ROUTE}?{query}"),
+            home,
+        )?)
         .bearer_auth(&peer.token)
         .headers(federation::request_headers())
         .header("connection", "Upgrade")
