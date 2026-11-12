@@ -458,17 +458,22 @@ filter and never a resume gate forbids. Keyless idle sessions stay `active` and
 stay listed; the projection window already keeps them out of unscoped reads on
 age, which is the actual defect.
 
-### Task-seat retirement (T-12236)
+### Seat retirement (T-12236, T-13432)
 
 Every 300 s (the first pass 300 s after boot, once brokers have reattached)
-rusthrc retires live task seats. A `ready` runtime whose scope names a wrkq
+rusthrc retires live task seats and idle Foundry project primaries. A `ready` runtime whose scope names a wrkq
 task (`task:T-<digits>`) is terminated when that task is `completed`
 (`wrkq.task.show`), or when its `last_activity_at` is older than
 `HRC_TASK_SEAT_IDLE_HOURS` (default 4) whatever the task's state. There is no
 other switch.
 
-It never touches `task:primary`, named standing seats (`rca`, `minisvc`,
-`primary-*`, …), app scopes, external lifecycle owners, a seat that is busy or
+A Foundry project primary (agent `foundry`, task `primary`) is terminated when
+its `last_activity_at` is 60 minutes old; it has no wrkq task, so wrkq is never
+asked about it and `task_completed` never applies. The rule is a constant table
+in `seat_retirement.rs` (Lance ruling 2026-11-12, T-13430), with no switch.
+
+It never touches any other `task:primary`, named standing seats (`rca`,
+`minisvc`, `primary-*`, …), app scopes, external lifecycle owners, a seat that is busy or
 has an active run, a nonterminal run or a protected input, or an hrcpty seat
 with a read-write client attached. The seat is first moved `ready` →
 `stopping` by a compare-and-set, so a turn admitted after the scan wins.
