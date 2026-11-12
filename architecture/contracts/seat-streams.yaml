@@ -31,10 +31,10 @@ predicate: >
   including for supervisors predating the daemon deployment. Socket and TCP
   backpressure reach the supervisor's existing bounded client queue, which
   drops a stalled PTY consumer.
-  Screen streams call existing capture every 200 ms without attaching. Each
+  Screen streams call existing capture every 500 ms without attaching, and only while a screen stream is open. Each
   data frame is one JSON snapshot with text, cursor x/y/visible, cols, rows
   and screen. The first snapshot is current; subsequent snapshots are sent
-  only on change, at most five per second. Screen consumers send only close;
+  only on change, at most two per second. Screen consumers send only close;
   screen observation changes neither terminal size nor attached-client count.
   HRC owns home discovery and peer credentials. A foreign open uses existing
   locate and GET /v1/federation/stream on the home's peer listener with the
