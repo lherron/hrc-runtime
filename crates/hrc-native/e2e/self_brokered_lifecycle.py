@@ -84,7 +84,7 @@ await runBrokerCli({additionalDrivers:[() => {
         "j=json.loads(Path(a['--registration']).read_text())")
     launcher.write_text('E2E='+repr(str(HERE))+'\nBROKER='+repr(str(broker))+'\n'+source)
     commands = {agent:[sys.executable, str(launcher), 'ok', str(a.broker_module)]
-                for agent in ('subject','control','interrupted','foundry','archive','summoned','doors')}
+                for agent in ('subject','control','interrupted','foundry','archive','summoned','doors','acktimeout')}
     for agent in [*commands,'ordinary']:
         directory=root/'agents'/agent
         directory.mkdir(parents=True)
@@ -319,18 +319,43 @@ await runBrokerCli({additionalDrivers:[() => {
             checks[door]=answer; stop(rid)
         # hrc run's prepare/resume chain, without a priming input.
         host=r.rows('SELECT active_host_session_id FROM continuities WHERE scope_ref=?',(sc,))[0]['active_host_session_id']
+        attempts_before=len(r.rows('SELECT * FROM participant_registration_attempts'))
+        runs_before=r.rows('SELECT run_id FROM runs WHERE scope_ref=?',(sc,))
         answer=call('/v1/runs/prepare-attached',{'hostSessionId':host,'intent':intent,'restartStyle':'reuse_pty'})
         assert answer[0]==200 and answer[1]['status']=='prepared',answer
         unpark=call('/v1/runs/resume-attached',{'pendingStartId':answer[1]['pendingStartId']})
-        assert unpark[0] in (200,503),unpark
-        if unpark[0]==503: assert unpark[1]['error']['detail']['code']=='broker_attached_start_not_pending',unpark
-        checks['attached']={'prepared':answer,'resumed':unpark}; stop(answer[1]['runtimeId'])
+        assert unpark[0]==200 and unpark[1]['status']=='started',unpark
+        missing=call('/v1/runs/resume-attached',{'pendingStartId':'attached-never-prepared'})
+        assert missing[0]==503 and missing[1]['error']['code']=='runtime_unavailable' and missing[1]['error']['message']=='attached run is not pending',missing
+        assert len(r.rows('SELECT * FROM participant_registration_attempts'))==attempts_before+1
+        assert r.rows('SELECT run_id FROM runs WHERE scope_ref=?',(sc,))==runs_before
+        rt=r.runtime(answer[1]['runtimeId']); directory=Path(rt['state']['broker']['substrate']['socketPath']).parent
+        child=int((directory/'child.pid').read_text()); assert alive(child)
+        checks['attached']={'prepared':answer,'resumed':unpark,'noPending':missing,'child':child,'attemptsAdded':1,'runsAdded':0}; stop(answer[1]['runtimeId'])
+        host=r.rows('SELECT active_host_session_id FROM continuities WHERE scope_ref=?',(sc,))[0]['active_host_session_id']
+        with_prompt=call('/v1/runs/prepare-attached',{'hostSessionId':host,'intent':intent,'prompt':'CONT attached prompt'})
+        assert with_prompt[0]==200 and with_prompt[1]['status']=='prepared',with_prompt
+        resumed_prompt=call('/v1/runs/resume-attached',{'pendingStartId':with_prompt[1]['pendingStartId']})
+        assert resumed_prompt[0]==200,resumed_prompt
+        run=resumed_prompt[1]['result']['runId']
+        r.wait(lambda:r.rows("SELECT 1 FROM hrc_events WHERE run_id=? AND event_kind='turn.completed'",(run,)),30)
+        checks['attachedPrompt']={'prepared':with_prompt,'resumed':resumed_prompt}
+        stop(with_prompt[1]['runtimeId'])
+        # Real attached-start timeout, no shortened daemon setting. A launcher
+        # has no priming turn: missing acknowledgement cannot own its lease.
+        timeout_scope=scope('acktimeout'); timeout_intent=claim_body(r,timeout_scope,'unused')['runtimeIntent']
+        ensured=call('/v1/targets/ensure',{'sessionRef':timeout_scope+'/lane:main','runtimeIntent':timeout_intent})
+        waiting=call('/v1/runs/prepare-attached',{'hostSessionId':ensured[1]['activeHostSessionId'],'intent':timeout_intent})
+        assert waiting[0]==200 and waiting[1]['status']=='prepared',waiting
+        timeout_start=time.monotonic()
         # A second product caller for the exact claim shape.
         argv=[str(r.binary),'start',sc,'--on-conflict','reject','--no-viewer','--json']
         result=subprocess.run(argv,env=r.env,cwd=project,text=True,capture_output=True,timeout=90)
         checks['hrcStart']={'argv':argv,'code':result.returncode,'stdout':result.stdout,'stderr':result.stderr}
         assert result.returncode==0,checks['hrcStart']
-        started=json.loads(result.stdout)['runtime']; stop(started['runtimeId'])
+        started=json.loads(result.stdout)['runtime']
+        checks['hrcStart']['sessionInvariant']=session_invariants(r)
+        stop(started['runtimeId'])
         # Explicit and implicit suffix claims refuse without creating a slot.
         for implicit in (False,True):
             request=claim_body(r,sc,'T13451-suffix-'+str(implicit),'suffix')
@@ -351,6 +376,14 @@ await runBrokerCli({additionalDrivers:[() => {
         assert live[0]==409 and live[1]['error']['code']=='resume_runtime_live',live
         checks['ordinaryResume']={'resumed':resumed,'started':started,'live':live,'runtimeCountBeforeStart':count}
         call('/v1/terminate',{'runtimeId':started[1]['runtimeId']})
+        r.wait(lambda:time.monotonic()-timeout_start>=122,130,'ordinary attached-start deadline')
+        timeout_runtime=r.runtime(waiting[1]['runtimeId'])
+        directory=Path(timeout_runtime['state']['broker']['substrate']['socketPath']).parent
+        assert timeout_runtime['status']=='ready' and alive(int((directory/'child.pid').read_text())),timeout_runtime
+        expired=call('/v1/runs/resume-attached',{'pendingStartId':waiting[1]['pendingStartId']})
+        assert expired[0]==503 and expired[1]['error']['message']=='attached run is not pending',expired
+        checks['attachedUnacknowledged']={'prepared':waiting,'afterDeadline':timeout_runtime,'resume':expired}
+        stop(waiting[1]['runtimeId'])
         print('PASS request-shape sweep: virgin exact, ensure, resume, steer, invoke, attached, hrc start, suffix',flush=True)
     def archive_gates():
         results={}

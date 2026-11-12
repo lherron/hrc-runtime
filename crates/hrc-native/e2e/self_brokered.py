@@ -336,6 +336,17 @@ def gates(r, root, report, call, scope, target, a_log):
     if runl: assert runl['host_session_id'] == reg[0]['host_session_id'], runl
     g['lazy'].update({'pass': True, 'sessions': sessions, 'run': runl})
 
+    # The operator preempt door is also capable of a cold birth. This origin
+    # is a private fixture value, never a live caller credential. The stub
+    # rejects preempt after launch; still prove allocation's session invariant.
+    preempt=call('/v1/submissions/preempt',{'target':scope('turn')+'/lane:main',
+        'body':'Reply PREEMPT','origin':{'principalRef':'human:lance'},'wait':True})
+    assert preempt[0]==200 and preempt[1]['admission']=='rejected' and preempt[1]['reason']=='unsupported:preempt',preempt
+    latest=attempts('turn')[-1]
+    assert r.runtime(latest['runtime_id'])['status']=='ready',latest
+    g['preempt']={'pass':True,'reply':preempt,'runtimeId':latest['runtime_id'],
+                  'sessionInvariant':session_invariants(r)}
+
 def main():
     p=argparse.ArgumentParser(description=__doc__)
     for name in ('binary','scratch-root','artifacts','broker-module'): p.add_argument('--'+name,type=Path,required=True)

@@ -279,7 +279,15 @@ pub async fn launch_attempt(
             tokio::time::sleep(Duration::from_millis(50)).await;
         }
         hrcpty::watch(server, runtime, &socket);
-        if let Some(gate) = attach { let _ = gate.ready.send(runtime.to_owned()); }
+        if let Some(gate) = attach {
+            let _ = gate.ready.send(runtime.to_owned());
+            // This seat has no priming invocation to release. The launch is
+            // already complete, but resume-attached must still be able to
+            // acknowledge it. Keep its receiver until the caller resumes or
+            // the attached-start deadline drops/sends through the sender.
+            // Neither outcome owns the live participant's lease.
+            tokio::spawn(async move { let _ = gate.resume.await; });
+        }
         Ok(json!({"runtimeId":runtime,"hostSessionId":registration["hostSessionId"],"generation":registration["generation"],"transport":"hrcpty","status":"ready"}))
     }.await;
     let error = match result {
