@@ -185,9 +185,23 @@ export type ExactStartRuntimeRequest = {
   restartStyle?: RestartStyle | undefined
 }
 
+/** Consent-aware roster creation. Old owners reject this policy before mutation.
+ * Without confirmedTaskId, an occupied base returns a non-mutating proposal.
+ * With it, only that alternate family member may be claimed; races re-propose.
+ */
+export type ConfirmStartRuntimeRequest = Omit<
+  SuffixStartRuntimeRequest,
+  'conflictPolicy' | 'summonIntent'
+> & {
+  conflictPolicy: 'confirm'
+  summonIntent: 'implicit'
+  confirmedTaskId?: string | undefined
+}
+
 export type StartRuntimeRequest =
   | EnsureRuntimeRequest
   | SuffixStartRuntimeRequest
+  | ConfirmStartRuntimeRequest
   | ExactStartRuntimeRequest
 
 export function isSuffixStartRuntimeRequest(
@@ -221,7 +235,7 @@ export type StartRuntimeRosterClaim = {
    * Which claim policy produced this claim. Optional on the wire so a claim
    * relayed by a pre-T-07302 peer still parses; always emitted by this build.
    */
-  conflictPolicy?: 'suffix' | 'reject' | undefined
+  conflictPolicy?: 'suffix' | 'reject' | 'confirm' | undefined
 }
 
 export type StartRuntimeResponse = (

@@ -98,7 +98,10 @@ pub async fn send(
             Some(json!({"homeNodeId":home,"retryable":true,"status":status})),
         ));
     }
-    if body["capabilities"][capability] != true {
+    if body["capabilities"][capability] != true
+        || (request["conflictPolicy"] == "confirm"
+            && body["capabilities"]["rosterConfirmation"] != true)
+    {
         return Err(upgrade_required(home, label));
     }
     let response = client

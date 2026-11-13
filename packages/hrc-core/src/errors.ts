@@ -110,6 +110,7 @@ export const HrcErrorCode = {
    * is returned with NO mutation of the occupying conversation.
    */
   SESSION_SCOPE_OCCUPIED: 'session_scope_occupied',
+  SESSION_SCOPE_CONFIRMATION_REQUIRED: 'session_scope_confirmation_required',
   /**
    * A durable idempotency key was replayed with a semantically different
    * request body (T-07118). Returned BEFORE any start path runs, so a
@@ -243,6 +244,7 @@ const HRC_ERROR_STATUS_BY_CODE: Record<HrcErrorCode, HrcHttpStatus> = {
   [HrcErrorCode.SESSION_ROSTER_EXHAUSTED]: 409,
   [HrcErrorCode.ROSTER_CLAIM_SUPERSEDED]: 409,
   [HrcErrorCode.SESSION_SCOPE_OCCUPIED]: 409,
+  [HrcErrorCode.SESSION_SCOPE_CONFIRMATION_REQUIRED]: 409,
   [HrcErrorCode.IDEMPOTENCY_KEY_CONFLICT]: 409,
   [HrcErrorCode.REGISTRATION_INSTANCES_EXHAUSTED]: 409,
   // The provisioned runtime accepted the prompt and never produced a turn: the

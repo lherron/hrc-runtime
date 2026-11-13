@@ -332,6 +332,7 @@ export type {
   ExactStartRuntimeRequest,
   StartRuntimeRosterClaim,
   SuffixStartRuntimeRequest,
+  ConfirmStartRuntimeRequest,
   HealthResponse,
   HrcAttachDescriptor,
   HrcActiveRunContributionRequest,

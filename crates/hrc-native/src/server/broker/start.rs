@@ -93,9 +93,10 @@ pub async fn handle(server: &Shared, body: Value) -> Result<Response, ApiError> 
         None => return ensure(server, &body).await,
         Some(v) if v == "reject" => "reject",
         Some(v) if v == "suffix" => "suffix",
+        Some(v) if v == "confirm" => "confirm",
         Some(_) => {
             return Err(ApiError::bad(
-                "conflictPolicy must be \"suffix\" or \"reject\" when present",
+                "conflictPolicy must be \"suffix\", \"confirm\" or \"reject\" when present",
                 Some(json!({"field":"conflictPolicy"})),
             ));
         }
@@ -280,6 +281,7 @@ fn canonical(value: &Value) -> String {
 
 struct Claim {
     policy: &'static str,
+    confirmed_task_id: Option<String>,
     scope: Scope,
     intent: Value,
     key: String,
@@ -292,7 +294,7 @@ struct Claim {
 
 impl Claim {
     fn parse(body: &Value, policy: &'static str) -> Result<Self, ApiError> {
-        let suffix = policy == "suffix";
+        let suffix = policy != "reject";
         let field = if suffix {
             "baseSessionRef"
         } else {
@@ -351,12 +353,43 @@ impl Claim {
         parse::require_harness(&body["runtimeIntent"])?;
         let intent = parse::runtime_intent(&body["runtimeIntent"]);
         let scope = Scope::parse(&session_ref, field)?;
+        let confirmed_task_id = if policy == "confirm" {
+            if summon_intent != Some("implicit") {
+                return Err(ApiError::bad(
+                    "confirm requires implicit summonIntent",
+                    None,
+                ));
+            }
+            match body.get("confirmedTaskId") {
+                None => None,
+                Some(Value::String(task)) if scope.roster().iter().skip(1).any(|t| t == task) => {
+                    Some(task.clone())
+                }
+                Some(_) => {
+                    return Err(ApiError::bad(
+                        "confirmedTaskId must name an alternate member of the base roster",
+                        Some(json!({"field":"confirmedTaskId"})),
+                    ));
+                }
+            }
+        } else {
+            if body.get("confirmedTaskId").is_some() {
+                return Err(ApiError::bad(
+                    "confirmedTaskId requires confirm policy",
+                    None,
+                ));
+            }
+            None
+        };
         // suffixStartRequestHash / exactStartRequestHash. An absent
         // restartStyle hashes as null; suffix includes summonIntent only when
         // implicit, preserving the pre-federation hash of operator retries.
         let mut hashed = json!({field:session_ref,"conflictPolicy":policy,"runtimeIntent":intent,"restartStyle":restart});
         if !suffix || summon_intent == Some("implicit") {
             hashed["summonIntent"] = "implicit".into();
+        }
+        if policy == "confirm" {
+            hashed["confirmedTaskId"] = json!(confirmed_task_id);
         }
         let hash = format!("{:x}", Sha256::digest(canonical(&hashed)));
         let mut forwarded = json!({field:session_ref,"runtimeIntent":intent,"conflictPolicy":policy,"idempotencyKey":key});
@@ -366,8 +399,12 @@ impl Claim {
         if let Some(s) = summon_intent {
             forwarded["summonIntent"] = s.into();
         }
+        if let Some(task) = &confirmed_task_id {
+            forwarded["confirmedTaskId"] = task.clone().into();
+        }
         Ok(Self {
             policy,
+            confirmed_task_id,
             scope,
             intent,
             key,
@@ -386,12 +423,12 @@ impl Claim {
     /// explicit-local (or legacy omitted) suffix start claims here without
     /// consulting placement; every implicit start resolves its home first.
     async fn start_routed(&self, server: &Shared) -> Result<Response, ApiError> {
-        if self.policy == "suffix" && self.summon_intent != Some("implicit") {
+        if self.policy != "reject" && self.summon_intent != Some("implicit") {
             return Ok(Json(self.start(server).await?).into_response());
         }
         let config = &server.federation.config;
         if !config.source_exists || config.gate_mode == "off" {
-            let message = if self.policy == "suffix" {
+            let message = if self.policy != "reject" {
                 "implicit suffix-roster provisioning requires federation configuration"
             } else {
                 "exact-scope provisioning requires federation configuration"
@@ -409,7 +446,7 @@ impl Claim {
         }
         // preflightExactScope / preflightSuffixRosterFamily: every member the
         // claim could land on must be authoritative here before anything mutates.
-        let members = if self.policy == "suffix" {
+        let members = if self.policy != "reject" {
             self.scope
                 .roster()
                 .iter()
@@ -426,7 +463,7 @@ impl Claim {
                     "stale_context",
                     format!(
                         "{} scope {member} is not authoritative on {local}",
-                        if self.policy == "suffix" {
+                        if self.policy != "reject" {
                             "suffix-roster"
                         } else {
                             "exact"
@@ -554,7 +591,7 @@ impl Claim {
     ) -> Result<Value, ApiError> {
         let scope = &self.scope.scope_ref;
         let lane = &self.scope.lane_ref;
-        if self.policy == "suffix" {
+        if self.policy != "reject" {
             return Err(ApiError::domain(
                 StatusCode::CONFLICT,
                 "self_brokered_roster_unsupported",
@@ -707,7 +744,7 @@ impl Claim {
             request_hash: self.hash.clone(),
             subject_scope: self.scope.scope_ref.clone(),
         };
-        let (reason, details) = if self.policy == "suffix" {
+        let (reason, details) = if self.policy != "reject" {
             (
                 "roster-suffix-claim",
                 json!({"baseScope":self.scope.scope_ref}),
@@ -718,7 +755,13 @@ impl Claim {
                 json!({"exactScope":self.scope.scope_ref}),
             )
         };
-        let slots = if self.policy == "suffix" {
+        let slots = if self.policy == "confirm" {
+            vec![
+                self.confirmed_task_id
+                    .clone()
+                    .unwrap_or_else(|| self.scope.task.clone()),
+            ]
+        } else if self.policy != "reject" {
             self.scope.roster()
         } else {
             vec![self.scope.task.clone()]
@@ -739,6 +782,9 @@ impl Claim {
                 ));
             };
             if !free(server, &existing)? {
+                if self.policy == "confirm" {
+                    return Err(self.propose_alternate(server, &existing)?);
+                }
                 if self.policy == "reject" {
                     let host_not_serving = server
                         .store
@@ -782,6 +828,59 @@ impl Claim {
             "every roster slot for this scope is occupied by a live session",
             Some(
                 json!({"baseScope":self.scope.scope_ref,"laneRef":lane,"slots":self.scope.roster()}),
+            ),
+        ))
+    }
+
+    /// Called under the roster namespace gate. A proposal reserves and mutates nothing.
+    fn propose_alternate(&self, server: &Shared, occupied: &Value) -> Result<ApiError, ApiError> {
+        for task in self.scope.roster().into_iter().skip(1) {
+            let scope = self.scope.with_task(&task);
+            let existing = server
+                .store
+                .lock()
+                .unwrap()
+                .continuity_session(&scope, &self.scope.lane_ref)?;
+            if let Some(session) = existing
+                && !free(server, &session)?
+            {
+                continue;
+            }
+            let host = occupied["hostSessionId"].as_str().unwrap_or("");
+            let is_live = {
+                let db = server.store.lock().unwrap();
+                let mut stmt = db
+                    .sqlite
+                    .prepare("SELECT status FROM runtimes WHERE host_session_id=?")
+                    .map_err(anyhow::Error::from)?;
+                let statuses = stmt
+                    .query_map([host], |r| r.get::<_, String>(0))
+                    .map_err(anyhow::Error::from)?
+                    .collect::<rusqlite::Result<Vec<_>>>()
+                    .map_err(anyhow::Error::from)?;
+                statuses
+                    .iter()
+                    .any(|status| !super::lease::unavailable(status))
+            };
+            let occupied_scope = occupied["scopeRef"].as_str().unwrap_or("");
+            return Ok(ApiError::domain(
+                StatusCode::CONFLICT,
+                "session_scope_confirmation_required",
+                "confirm the alternate scope before creating a session",
+                Some(json!({"scopeConfirmation":{
+                    "baseTaskId":self.scope.task, "proposedTaskId":task,
+                    "occupied":{"scopeRef":occupied_scope,
+                        "sessionRef":format!("{occupied_scope}/lane:{}", self.scope.lane_ref),
+                        "hostSessionId":host, "generation":occupied["generation"], "isLive":is_live}
+                }})),
+            ));
+        }
+        Ok(ApiError::domain(
+            StatusCode::CONFLICT,
+            "session_roster_exhausted",
+            "every alternate roster slot is occupied",
+            Some(
+                json!({"baseScope":self.scope.scope_ref,"laneRef":self.scope.lane_ref,"slots":self.scope.roster()}),
             ),
         ))
     }
