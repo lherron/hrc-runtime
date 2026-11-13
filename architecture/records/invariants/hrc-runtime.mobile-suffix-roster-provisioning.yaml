@@ -35,6 +35,29 @@ predicate: >
   responses. Operator starts without an explicit node directive remain
   explicit-local. Retryable peer failure is synchronous runtime_unavailable and
   does not use the message outbox.
+  T-13458 adds the distinct conflictPolicy confirm on the same roster placement,
+  preflight, FREE predicate and namespace claim gate. Legacy suffix is unchanged.
+  An unconfirmed free base claims normally; an occupied base returns 409
+  session_scope_confirmation_required with detail.scopeConfirmation containing
+  baseTaskId, authoritative occupied scopeRef, sessionRef, hostSessionId,
+  generation and isLive, and an exact proposedTaskId. This response claims no
+  candidate and starts no runtime. confirmedTaskId must be a non-base member of
+  this finite family. Confirmation atomically claims only that exact member,
+  even if the base has become free; an occupied candidate returns another
+  available non-base proposal without mutation, or session_roster_exhausted.
+  On a re-proposal occupied identifies the blocking confirmed candidate even
+  when the base is free. isLive reports nonterminal runtime presence, not the
+  inverse of FREE; occupied identity is nullable only if the blocking reserved
+  slot has no continuity.
+  Suggestions reserve nothing. Confirm policy and confirmedTaskId are preserved
+  in the canonical forwarded request and request hash. Successful claims retain
+  home-owned durable replay; changed logical confirmation requests use fresh
+  keys, while uncertain transport retries retain the identical request and key.
+  Confirmation retains runtime-intent, retirement, authority, placement and
+  capability admission. Remote confirmation additionally requires the home peer
+  capability rosterConfirmation, and never downgrades to suffix. Older HRC
+  rejects the unknown confirm policy before mutation. This amendment does not
+  restore the currently unavailable Rust rosterStart receiver described below.
   Known gap, not enforced since the Rust cutover of 2026-10-26: the receiver
   half of the rosterStart peer verb (independent preflight before mutation,
   runtime-intent localization, and home-side ownership of the claim and
@@ -45,8 +68,9 @@ predicate: >
   stale_context reason peer_upgrade_required (retryable false) without sending
   the start. wrkq:T-11933 (native peer listener: home-side roster-start,
   exact-start and establish) restores the receiver.
-authority: Lance / wrkq:T-07398 / wrkq:T-08407 / wrkq:T-08564 revision 4 architecture approval, 2026-09-17
+authority: Lance / wrkq:T-13458 / wrkq:T-07398 / wrkq:T-08407 / wrkq:T-08564 revision 4 architecture approval, 2026-09-17
 source:
+  - wrkq:T-13458
   - wrkq:T-12316
   - crates/hrc-native/src/server/broker/start.rs
   - hrcchat#18964
