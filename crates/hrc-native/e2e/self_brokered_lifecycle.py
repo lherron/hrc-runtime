@@ -479,7 +479,8 @@ await runBrokerCli({additionalDrivers:[() => {
         os.kill(successor['child'],signal.SIGKILL)
         r.wait(lambda:r.runtime(successor['id'])['status'] in ('stale','dead','crashed'),330,'G5 liveness pass')
         row=r.runtime(successor['id'])
-        assert row['state'].get('staleReason')=='broker_hrcpty_child_exited',row
+        # The supervisor exits right after its child; whichever the liveness pass sees first names the reason.
+        assert row['state'].get('staleReason') in ('broker_hrcpty_child_exited','broker_hrcpty_supervisor_missing'),row
         probe=r.http('GET','/v1/attach?runtimeId='+control['id'])
         assert probe[0]==200,probe
         assert r.runtime(control['id'])['status']=='ready' and alive(control['child'])
