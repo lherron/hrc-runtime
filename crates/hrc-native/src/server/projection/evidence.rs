@@ -234,6 +234,23 @@ pub fn query(server: &Server, q: &HashMap<String, String>) -> Result<Response, A
             {
                 json!({"op":op,"deliveryEvidence":p["deliveryEvidence"]})
             }
+            // No input.rejected: the broker holds queued input above the
+            // driver, so a queue.* removal (expired, withdrawn or cancelled
+            // while still held) proves nothing reached the agent. A
+            // submission.* disposition alone can come from a driver cancel
+            // and proves nothing. Per-invocation seek: queue.* rows are few.
+            ("input-rejection-evidence", None) => {
+                let held: bool = db.sqlite.query_row(
+                    &format!("SELECT EXISTS(SELECT 1 FROM broker_invocation_events INDEXED BY idx_broker_invocation_events_invocation_type_seq WHERE invocation_id IN (SELECT invocation_id FROM broker_invocations WHERE runtime_id=?1) AND type IN ('queue.expired','queue.withdrawn','queue.cancelled') AND runtime_id=?1 AND CASE WHEN json_valid(broker_event_json) THEN json_extract(broker_event_json,'$.submissionId') END=?2{fence})"),
+                    rusqlite::params_from_iter(&values),
+                    |r| r.get(0),
+                ).map_err(anyhow::Error::from)?;
+                if held {
+                    json!({"op":op,"deliveryEvidence":"not_written"})
+                } else {
+                    Value::Null
+                }
+            }
             _ => Value::Null,
         }
     };
@@ -268,6 +285,9 @@ mod tests {
                     "input.rejected",
                     json!({"inputId":"in-2","deliveryEvidence":"not_written"}),
                 ),
+                (3, "queue.expired", json!({"submissionId":"sub-3"})),
+                (4, "submission.expired", json!({"submissionId":"sub-3"})),
+                (5, "submission.withdrawn", json!({"submissionId":"sub-4"})),
             ] {
                 db.sqlite.execute("INSERT INTO broker_invocation_events(invocation_id,seq,time,type,runtime_id,broker_event_json,created_at) VALUES('inv',?,'2026-01-01T00:00:00Z',?,'rt',?,'now')", rusqlite::params![seq, kind, body.to_string()])?;
             }
@@ -309,6 +329,25 @@ mod tests {
             rejected,
             json!({"op":"input-rejection-evidence","deliveryEvidence":"not_written"})
         );
+        // A submission that left the broker queue unrun was never written.
+        let expired = ask(&[
+            ("op", "input-rejection-evidence"),
+            ("runtimeId", "rt"),
+            ("submissionId", "sub-3"),
+        ])
+        .await?;
+        assert_eq!(
+            expired,
+            json!({"op":"input-rejection-evidence","deliveryEvidence":"not_written"})
+        );
+        // Withdrawn through the driver (no queue.* removal) proves nothing.
+        let driver_withdrawn = ask(&[
+            ("op", "input-rejection-evidence"),
+            ("runtimeId", "rt"),
+            ("submissionId", "sub-4"),
+        ])
+        .await?;
+        assert_eq!(driver_withdrawn, Value::Null);
         let statements = seen.lock().unwrap().clone();
         let db = server.store.lock().unwrap();
         let mut checked = 0;
@@ -336,7 +375,7 @@ mod tests {
             );
             checked += 1;
         }
-        assert_eq!(checked, 3, "{statements:#?}");
+        assert_eq!(checked, 5, "{statements:#?}");
         Ok(())
     }
 }
