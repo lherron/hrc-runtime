@@ -10,9 +10,9 @@ type Formatter = *mut c_void;
 
 const SUCCESS: c_int = 0;
 
-const OPT_KITTY_IMAGE_STORAGE_LIMIT: c_int = 15;
-const OPT_SCROLLBACK_MAX_LINES: c_int = 28;
-const OPT_CONTINUATION_MAX_BYTES: c_int = 31;
+const OPT_KITTY_IMAGE_STORAGE_LIMIT: c_int = 16;
+const OPT_SCROLLBACK_MAX_LINES: c_int = 29;
+const OPT_CONTINUATION_MAX_BYTES: c_int = 32;
 
 const DATA_COLS: c_int = 1;
 const DATA_ROWS: c_int = 2;
@@ -40,17 +40,35 @@ const KP_Z: c_int = 12;
 const KI_WIDTH: c_int = 3;
 const KI_HEIGHT: c_int = 4;
 const KI_FORMAT: c_int = 5;
-const KI_DATA_PTR: c_int = 7;
-const KI_DATA_LEN: c_int = 8;
+const KI_PIXELS: c_int = 7;
 const KFORMAT_RGB: c_int = 0;
 const KFORMAT_RGBA: c_int = 1;
 const KFORMAT_GRAY_ALPHA: c_int = 3;
 const KFORMAT_GRAY: c_int = 4;
 
-const SYS_OPT_DECODE_PNG: c_int = 1;
+const SYS_OPT_DECODE_PNG: c_int = 2;
 
 const FORMAT_PLAIN: c_int = 0;
 const FORMAT_VT: c_int = 1;
+
+const FMT_OPT_EMIT: c_int = 1;
+const FMT_OPT_TRIM: c_int = 3;
+const FMT_OPT_SELECTION: c_int = 4;
+const FMT_OPT_EXTRAS: c_int = 5;
+
+type FormatterExtras = u32;
+const EXTRA_MODES: FormatterExtras = 1 << 1;
+const EXTRA_SCROLLING_REGION: FormatterExtras = 1 << 2;
+const EXTRA_TABSTOPS: FormatterExtras = 1 << 3;
+const EXTRA_KEYBOARD: FormatterExtras = 1 << 5;
+const EXTRA_CURSOR: FormatterExtras = 1 << 6;
+const EXTRA_STYLE: FormatterExtras = 1 << 7;
+const EXTRA_HYPERLINK: FormatterExtras = 1 << 8;
+const EXTRA_PROTECTION: FormatterExtras = 1 << 9;
+const EXTRA_KITTY_KEYBOARD: FormatterExtras = 1 << 10;
+const EXTRA_CHARSETS: FormatterExtras = 1 << 11;
+
+const SCREEN_ALTERNATE: c_int = 1;
 
 const POINT_ACTIVE: c_int = 0;
 const POINT_SCREEN: c_int = 2;
@@ -62,44 +80,14 @@ pub(crate) struct GhosttyWriter {
 }
 
 #[repr(C)]
-#[derive(Default)]
-pub(crate) struct GhosttyFormatterScreenExtra {
-    size: usize,
-    cursor: bool,
-    style: bool,
-    hyperlink: bool,
-    protection: bool,
-    kitty_keyboard: bool,
-    charsets: bool,
-}
-
-#[repr(C)]
-#[derive(Default)]
-pub(crate) struct GhosttyFormatterTerminalExtra {
-    size: usize,
-    palette: bool,
-    modes: bool,
-    scrolling_region: bool,
-    tabstops: bool,
-    pwd: bool,
-    keyboard: bool,
-    screen: GhosttyFormatterScreenExtra,
-}
-
-#[repr(C)]
-pub(crate) struct GhosttyFormatterTerminalOptions {
-    size: usize,
-    emit: c_int,
-    unwrap: bool,
-    trim: bool,
-    extra: GhosttyFormatterTerminalExtra,
-    selection: *const GhosttySelection,
+struct GhosttyString {
+    ptr: *const u8,
+    len: usize,
 }
 
 #[repr(C)]
 #[derive(Clone, Copy)]
 pub(crate) struct GhosttyGridRef {
-    size: usize,
     node: *mut c_void,
     x: u16,
     y: u16,
@@ -107,7 +95,6 @@ pub(crate) struct GhosttyGridRef {
 
 #[repr(C)]
 pub(crate) struct GhosttySelection {
-    size: usize,
     start: GhosttyGridRef,
     end: GhosttyGridRef,
     rectangle: bool,
@@ -162,8 +149,8 @@ unsafe extern "C" {
         alloc: *const c_void,
         out: *mut Formatter,
         t: Terminal,
-        options: GhosttyFormatterTerminalOptions,
     ) -> c_int;
+    fn ghostty_formatter_set(f: Formatter, option: c_int, value: *const c_void) -> c_int;
     fn ghostty_formatter_format(f: Formatter, writer: GhosttyWriter) -> c_int;
     fn ghostty_formatter_free(f: Formatter);
     #[cfg(test)]
@@ -381,7 +368,7 @@ impl Vt {
     }
 
     pub(crate) fn screen(&self) -> ScreenKind {
-        if self.get::<c_int>(DATA_ACTIVE_SCREEN) == 1 {
+        if self.get::<c_int>(DATA_ACTIVE_SCREEN) == SCREEN_ALTERNATE {
             ScreenKind::Alternate
         } else {
             ScreenKind::Primary
@@ -400,7 +387,6 @@ impl Vt {
             },
         };
         let mut out = GhosttyGridRef {
-            size: size_of::<GhosttyGridRef>(),
             node: ptr::null_mut(),
             x: 0,
             y: 0,
@@ -410,44 +396,54 @@ impl Vt {
         (rc == SUCCESS).then_some(out)
     }
 
-    fn format(&self, options: GhosttyFormatterTerminalOptions) -> anyhow::Result<Vec<u8>> {
+    /// Format the active screen as `emit` with trailing-whitespace `trim`,
+    /// the VT `extras`, and a selection (`None` formats the whole screen).
+    fn format(
+        &self,
+        emit: c_int,
+        trim: bool,
+        extras: FormatterExtras,
+        selection: Option<&GhosttySelection>,
+    ) -> anyhow::Result<Vec<u8>> {
         let mut f: Formatter = ptr::null_mut();
-        // SAFETY: options is passed by value; any selection it points at
-        // outlives this function (the caller's stack frame).
-        let rc = unsafe { ghostty_formatter_terminal_new(ptr::null(), &mut f, self.t, options) };
+        // SAFETY: out-pointer to a local; a null allocator selects the default.
+        let rc = unsafe { ghostty_formatter_terminal_new(ptr::null(), &mut f, self.t) };
         anyhow::ensure!(
             rc == SUCCESS && !f.is_null(),
             "ghostty_formatter_terminal_new failed: {rc}"
         );
-        let mut out = Vec::new();
-        // SAFETY: the writer's userdata is `out`, alive across the call.
-        let rc = unsafe { ghostty_formatter_format(f, vec_writer(&mut out)) };
+        let set = |option: c_int, value: *const c_void| {
+            // SAFETY: each value points at the option's documented type; the
+            // formatter copies it during the call.
+            let rc = unsafe { ghostty_formatter_set(f, option, value) };
+            anyhow::ensure!(
+                rc == SUCCESS,
+                "ghostty_formatter_set({option}) failed: {rc}"
+            );
+            Ok(())
+        };
+        let result = (|| {
+            set(FMT_OPT_EMIT, &emit as *const c_int as *const c_void)?;
+            set(FMT_OPT_TRIM, &trim as *const bool as *const c_void)?;
+            set(
+                FMT_OPT_EXTRAS,
+                &extras as *const FormatterExtras as *const c_void,
+            )?;
+            if let Some(sel) = selection {
+                set(
+                    FMT_OPT_SELECTION,
+                    sel as *const GhosttySelection as *const c_void,
+                )?;
+            }
+            let mut out = Vec::new();
+            // SAFETY: the writer's userdata is `out`, alive across the call.
+            let rc = unsafe { ghostty_formatter_format(f, vec_writer(&mut out)) };
+            anyhow::ensure!(rc == SUCCESS, "ghostty_formatter_format failed: {rc}");
+            Ok(out)
+        })();
         // SAFETY: f came from ghostty_formatter_terminal_new.
         unsafe { ghostty_formatter_free(f) };
-        anyhow::ensure!(rc == SUCCESS, "ghostty_formatter_format failed: {rc}");
-        Ok(out)
-    }
-
-    fn options(
-        emit: c_int,
-        trim: bool,
-        selection: *const GhosttySelection,
-    ) -> GhosttyFormatterTerminalOptions {
-        GhosttyFormatterTerminalOptions {
-            size: size_of::<GhosttyFormatterTerminalOptions>(),
-            emit,
-            unwrap: false,
-            trim,
-            extra: GhosttyFormatterTerminalExtra {
-                size: size_of::<GhosttyFormatterTerminalExtra>(),
-                screen: GhosttyFormatterScreenExtra {
-                    size: size_of::<GhosttyFormatterScreenExtra>(),
-                    ..Default::default()
-                },
-                ..Default::default()
-            },
-            selection,
-        }
+        result
     }
 
     /// Plain text of the viewport plus the last `scrollback` rows above it,
@@ -466,12 +462,11 @@ impl Vt {
             anyhow::bail!("capture: grid refs out of range");
         };
         let selection = GhosttySelection {
-            size: size_of::<GhosttySelection>(),
             start,
             end,
             rectangle: false,
         };
-        let bytes = self.format(Self::options(FORMAT_PLAIN, true, &selection))?;
+        let bytes = self.format(FORMAT_PLAIN, true, 0, Some(&selection))?;
         Ok(String::from_utf8_lossy(&bytes).into_owned())
     }
 
@@ -479,18 +474,19 @@ impl Vt {
     /// tabstops, then content and pen, and the cursor when `cursor` is set
     /// (`styled` capture; the replay places the cursor itself, after images).
     pub(crate) fn format_vt(&self, cursor: bool) -> anyhow::Result<Vec<u8>> {
-        let mut options = Self::options(FORMAT_VT, false, ptr::null());
-        options.extra.modes = true;
-        options.extra.scrolling_region = true;
-        options.extra.tabstops = true;
-        options.extra.keyboard = true;
-        options.extra.screen.cursor = cursor;
-        options.extra.screen.style = true;
-        options.extra.screen.hyperlink = true;
-        options.extra.screen.protection = true;
-        options.extra.screen.kitty_keyboard = true;
-        options.extra.screen.charsets = true;
-        self.format(options)
+        let mut extras = EXTRA_MODES
+            | EXTRA_SCROLLING_REGION
+            | EXTRA_TABSTOPS
+            | EXTRA_KEYBOARD
+            | EXTRA_STYLE
+            | EXTRA_HYPERLINK
+            | EXTRA_PROTECTION
+            | EXTRA_KITTY_KEYBOARD
+            | EXTRA_CHARSETS;
+        if cursor {
+            extras |= EXTRA_CURSOR;
+        }
+        self.format(FORMAT_VT, false, extras, None)
     }
 
     /// Bytes that complete a sequence the child left half-written, so the
@@ -628,23 +624,21 @@ impl Vt {
                     KI_FORMAT,
                     &mut format as *mut c_int as *mut c_void,
                 );
-                let mut data: *const u8 = ptr::null();
-                let mut len = 0usize;
+                // No value until the pixels arrive (a load still in flight).
+                let mut px = GhosttyString {
+                    ptr: ptr::null(),
+                    len: 0,
+                };
                 if ghostty_kitty_graphics_image_get(
                     image,
-                    KI_DATA_PTR,
-                    &mut data as *mut *const u8 as *mut c_void,
+                    KI_PIXELS,
+                    &mut px as *mut GhosttyString as *mut c_void,
                 ) != SUCCESS
-                    || data.is_null()
+                    || px.ptr.is_null()
                 {
                     continue;
                 }
-                ghostty_kitty_graphics_image_get(
-                    image,
-                    KI_DATA_LEN,
-                    &mut len as *mut usize as *mut c_void,
-                );
-                let raw = std::slice::from_raw_parts(data, len);
+                let raw = std::slice::from_raw_parts(px.ptr, px.len);
                 let (format, pixels) = match format {
                     KFORMAT_RGBA => (32, raw.to_vec()),
                     KFORMAT_RGB => (24, raw.to_vec()),
@@ -696,18 +690,8 @@ mod tests {
         let manifest: serde_json::Value = serde_json::from_str(&type_json()).unwrap();
         let types = &manifest["types"];
         for (name, size) in [
-            (
-                "GhosttyFormatterScreenExtra",
-                size_of::<GhosttyFormatterScreenExtra>(),
-            ),
-            (
-                "GhosttyFormatterTerminalExtra",
-                size_of::<GhosttyFormatterTerminalExtra>(),
-            ),
-            (
-                "GhosttyFormatterTerminalOptions",
-                size_of::<GhosttyFormatterTerminalOptions>(),
-            ),
+            ("GhosttyString", size_of::<GhosttyString>()),
+            ("GhosttySysImage", size_of::<GhosttySysImage>()),
             ("GhosttyGridRef", size_of::<GhosttyGridRef>()),
             ("GhosttySelection", size_of::<GhosttySelection>()),
             ("GhosttyPoint", size_of::<GhosttyPoint>()),
@@ -718,6 +702,103 @@ mod tests {
                 Some(size as u64),
                 "{name}: {}",
                 types[name]
+            );
+        }
+    }
+
+    /// The enum values hard-coded above are positional in libghostty-vt and
+    /// renumber between releases (1.0 shifted every terminal option by one);
+    /// check each against the manifest by name.
+    #[test]
+    fn abi_enum_values_match_manifest() {
+        let manifest: serde_json::Value = serde_json::from_str(&type_json()).unwrap();
+        let types = &manifest["types"];
+        for (ty, key, value) in [
+            ("GhosttyResult", "SUCCESS", SUCCESS),
+            (
+                "GhosttyTerminalOption",
+                "KITTY_IMAGE_STORAGE_LIMIT",
+                OPT_KITTY_IMAGE_STORAGE_LIMIT,
+            ),
+            (
+                "GhosttyTerminalOption",
+                "SCROLLBACK_MAX_LINES",
+                OPT_SCROLLBACK_MAX_LINES,
+            ),
+            (
+                "GhosttyTerminalOption",
+                "CONTINUATION_MAX_BYTES",
+                OPT_CONTINUATION_MAX_BYTES,
+            ),
+            ("GhosttyTerminalData", "COLS", DATA_COLS),
+            ("GhosttyTerminalData", "ROWS", DATA_ROWS),
+            ("GhosttyTerminalData", "CURSOR_X", DATA_CURSOR_X),
+            ("GhosttyTerminalData", "CURSOR_Y", DATA_CURSOR_Y),
+            ("GhosttyTerminalData", "ACTIVE_SCREEN", DATA_ACTIVE_SCREEN),
+            ("GhosttyTerminalData", "CURSOR_VISIBLE", DATA_CURSOR_VISIBLE),
+            (
+                "GhosttyTerminalData",
+                "KITTY_KEYBOARD_FLAGS",
+                DATA_KITTY_KEYBOARD_FLAGS,
+            ),
+            ("GhosttyTerminalData", "TOTAL_ROWS", DATA_TOTAL_ROWS),
+            ("GhosttyTerminalData", "KITTY_GRAPHICS", DATA_KITTY_GRAPHICS),
+            ("GhosttyTerminalScreen", "ALTERNATE", SCREEN_ALTERNATE),
+            (
+                "GhosttyKittyGraphicsData",
+                "PLACEMENT_ITERATOR",
+                KG_DATA_PLACEMENT_ITERATOR,
+            ),
+            ("GhosttyKittyGraphicsPlacementData", "IMAGE_ID", KP_IMAGE_ID),
+            (
+                "GhosttyKittyGraphicsPlacementData",
+                "PLACEMENT_ID",
+                KP_PLACEMENT_ID,
+            ),
+            (
+                "GhosttyKittyGraphicsPlacementData",
+                "IS_VIRTUAL",
+                KP_IS_VIRTUAL,
+            ),
+            ("GhosttyKittyGraphicsPlacementData", "X_OFFSET", KP_X_OFFSET),
+            ("GhosttyKittyGraphicsPlacementData", "Y_OFFSET", KP_Y_OFFSET),
+            ("GhosttyKittyGraphicsPlacementData", "SOURCE_X", KP_SOURCE_X),
+            ("GhosttyKittyGraphicsPlacementData", "SOURCE_Y", KP_SOURCE_Y),
+            (
+                "GhosttyKittyGraphicsPlacementData",
+                "SOURCE_WIDTH",
+                KP_SOURCE_WIDTH,
+            ),
+            (
+                "GhosttyKittyGraphicsPlacementData",
+                "SOURCE_HEIGHT",
+                KP_SOURCE_HEIGHT,
+            ),
+            ("GhosttyKittyGraphicsPlacementData", "COLUMNS", KP_COLUMNS),
+            ("GhosttyKittyGraphicsPlacementData", "ROWS", KP_ROWS),
+            ("GhosttyKittyGraphicsPlacementData", "Z", KP_Z),
+            ("GhosttyKittyGraphicsImageData", "WIDTH", KI_WIDTH),
+            ("GhosttyKittyGraphicsImageData", "HEIGHT", KI_HEIGHT),
+            ("GhosttyKittyGraphicsImageData", "FORMAT", KI_FORMAT),
+            ("GhosttyKittyGraphicsImageData", "PIXELS", KI_PIXELS),
+            ("GhosttyKittyImageFormat", "RGB", KFORMAT_RGB),
+            ("GhosttyKittyImageFormat", "RGBA", KFORMAT_RGBA),
+            ("GhosttyKittyImageFormat", "GRAY_ALPHA", KFORMAT_GRAY_ALPHA),
+            ("GhosttyKittyImageFormat", "GRAY", KFORMAT_GRAY),
+            ("GhosttySysOption", "DECODE_PNG", SYS_OPT_DECODE_PNG),
+            ("GhosttyFormatterFormat", "PLAIN", FORMAT_PLAIN),
+            ("GhosttyFormatterFormat", "VT", FORMAT_VT),
+            ("GhosttyFormatterOption", "EMIT", FMT_OPT_EMIT),
+            ("GhosttyFormatterOption", "TRIM", FMT_OPT_TRIM),
+            ("GhosttyFormatterOption", "SELECTION", FMT_OPT_SELECTION),
+            ("GhosttyFormatterOption", "EXTRAS", FMT_OPT_EXTRAS),
+            ("GhosttyPointTag", "ACTIVE", POINT_ACTIVE),
+            ("GhosttyPointTag", "SCREEN", POINT_SCREEN),
+        ] {
+            assert_eq!(
+                types[ty]["values"][key].as_i64(),
+                Some(i64::from(value)),
+                "{ty}.{key}"
             );
         }
     }
