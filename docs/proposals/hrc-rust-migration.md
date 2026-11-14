@@ -1,5 +1,39 @@
 # HRC Rust migration
 
+## Reader guide — 2026-11-14
+
+This page is the historical proposal and adoption record for the Rust port,
+including the delivered stage-1 facades and the later kernel fold. It remains
+the cited source for `architecture/contracts/hrc-rust-migration.yaml` and the
+crate-edge invariant. The dated rulings, gates, measurements and section numbers
+below retain their original meaning; they are not current deployment instructions
+or evidence that the old compatibility modes remain supported.
+
+The migration landed on 2026-10-26; the fleet runs rusthrc. Read the older text
+with these subsequent changes in mind:
+
+- **Kernel ownership (§4 and §8.1):** T-12141 retired the standalone kernel.
+  T-12360 then retired rusthrc's `hrc` document, projector, reader and attach
+  declaration. The embedded provider retains six owner operations and no
+  observation types or documents. Seat/runtime observations and attachment now
+  come from `praesidium:praesidium`. See the
+  [kernel inspection contract](../operations-runbook.md#kernel-inspection-contract)
+  and [Praesidium kernel adoption record](praesidium-kernel.md) §9 step 6.
+- **Schema ownership (§2.2, §6.2 and §12):** T-12840 separately authorized
+  production Rust migrations; T-12854/T-13056/T-13059 delivered the runner,
+  deployment path and first forward migration. Rust now initializes scratch
+  stores and migrates its own store at boot. See the
+  [owner and schema deployment contract](../fleet-deployment.md#hrc-owner-bun-or-rusthrc).
+- **Bun coexistence and fallback (§0–§2, §5–§8 and §13):** T-13157 deleted
+  the Bun daemon, CLI and store packages after the separate retirement work.
+  The old layout, dual-implementation qualification and named Bun fallback
+  describe the transition, not available recovery modes. The native front door
+  also refuses the retired Bun forwarding options. Current recovery deploys a
+  previous compatible rusthrc release; see the
+  [fleet deployment runbook](../fleet-deployment.md).
+
+## Historical proposal and amendments
+
 > 2026-10-25: native parity is now [hrc-rust-parity.md](hrc-rust-parity.md) r2 (packages N0–N6 against current main). r1 (adopted 2026-10-23, EN-33646/EN-33680) introduced independent native development and whole-node owner transfer, and r2 keeps both. Lance deleted r1's branch after the P-00869 cleanup removed the surface it was porting. Standalone Bun and the delivered kernel/facades remain supported. No activation, retirement or production migration transfer is authorized. Campaign P-00866.
 
 Status: proposal r3.2, 2026-10-20 (r3.1 answers daedalus EN-32626 F1–F4: the `/v1/events/page` ledger read, a pinned side-effect-free read set, attach from the presentation read model. r3.2 answers EN-32628 F5: `contextReading` on presentation rows. r3.3: §4.6 stage 1b ops are facade calls over existing routes with no TS change, and `seat.summon` is specified first). Owner mable@hrc-runtime:primary. Campaign P-00862. **Stage 1 delivered 2026-10-20:** gate 0 T-11441 (371cc396), kernel T-11442 (8f70c9e8..5f7e1bc9), gates 0–5 graded PASS, live on max3. Cardo F7 is green; A5 (T-11426) measurements are cardo's. Summon and restart facade amendments have since landed; native parity proceeds under P-00866, beginning with the reviewed P0 baseline. No native execution-owner transfer is delivered. Lance's rulings are marked **RULED**.
