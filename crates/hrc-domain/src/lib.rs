@@ -14,12 +14,15 @@ use serde_json::json;
 pub struct HrcError {
     pub code: String,
     pub message: String,
+    /// HRC's `error.detail`, when the owner sent one.
+    pub detail: Option<serde_json::Value>,
 }
 impl HrcError {
     pub fn new(code: impl Into<String>, message: impl Into<String>) -> Self {
         Self {
             code: code.into(),
             message: message.into(),
+            detail: None,
         }
     }
 }
@@ -32,8 +35,12 @@ impl std::error::Error for HrcError {}
 /// An owner operation's refusal keeps HRC's code for the caller.
 impl From<HrcError> for DispatchFailure {
     fn from(e: HrcError) -> Self {
+        let mut details = json!({"hrc_code":e.code,"message":e.message});
+        if let Some(detail) = e.detail {
+            details["detail"] = detail;
+        }
         DispatchFailure {
-            details: json!({"hrc_code":e.code,"message":e.message}),
+            details,
             code: e.code,
             message: e.message,
         }

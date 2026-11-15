@@ -34,10 +34,12 @@ fn reply(reply: OwnerReply, fallback: &str) -> Result<Value, HrcError> {
         return Ok(reply.body);
     }
     let error = &reply.body["error"];
-    Err(HrcError::new(
+    let mut refused = HrcError::new(
         error["code"].as_str().unwrap_or("hrc_refused"),
         error["message"].as_str().unwrap_or(fallback),
-    ))
+    );
+    refused.detail = error.get("detail").filter(|d| !d.is_null()).cloned();
+    Err(refused)
 }
 
 pub fn post(owner: &dyn OwnerCall, route: &str, body: &Value) -> Result<Value, HrcError> {

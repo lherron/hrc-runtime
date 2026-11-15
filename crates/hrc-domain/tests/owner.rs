@@ -482,3 +482,21 @@ fn steer_refuses_fences_enter_and_missing_fields_before_any_owner_call() {
     assert_eq!(SeatSend::parse(json!({"session_ref":SEAT,"text":"hi","delivery":"bogus","host_session_id":"hs","expected_generation":2})).unwrap_err().code, "invalid_input");
     // Parse is the only gate: nothing above reached an owner.
 }
+
+// A refusal keeps HRC's `error.detail`: callers classify runtime_unavailable
+// by its reason, which the message alone does not carry.
+#[test]
+fn a_refused_steer_keeps_hrc_detail() {
+    let detail = json!({"reason":"cwd_missing","cwd":"/gone"});
+    let owner = Scripted::new(vec![Ok(OwnerReply {
+        status: 503,
+        body: json!({"error":{"code":"runtime_unavailable","message":"the seat could not start","detail":detail}}),
+    })]);
+    let failure = SeatSend::parse(json!({"session_ref":SEAT,"text":"x","delivery":"steer","principal_ref":"agent:lance","idempotency_key":"req-3"}))
+        .unwrap()
+        .run(&owner)
+        .unwrap_err();
+    assert_eq!(failure.code, "runtime_unavailable");
+    assert_eq!(failure.details["detail"], detail);
+    assert_eq!(failure.details["hrc_code"], "runtime_unavailable");
+}
