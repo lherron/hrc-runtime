@@ -68,7 +68,7 @@ fn rows(db: &Store) -> Value {
             .sqlite
             .prepare(&format!("SELECT * FROM {table} ORDER BY rowid"))
             .unwrap();
-        let names: Vec<String> = q.column_names().iter().map(|s| s.to_string()).collect();
+        let names: Vec<String> = q.column_names().map(|s| s.to_string()).collect();
         let all: Vec<Value> = q
             .query_map([], |r| {
                 let mut m = serde_json::Map::new();

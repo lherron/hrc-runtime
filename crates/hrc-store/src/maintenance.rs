@@ -500,7 +500,7 @@ fn retention_plan(table: &str) -> Result<(&'static str, &'static str)> {
 impl Store {
     /// Discovery is a read; expensive ineligible prefixes never hold the writer.
     pub fn retention_candidates(
-        &self,
+        &mut self,
         table: &str,
         cutoff: &str,
         size: usize,
@@ -520,7 +520,7 @@ impl Store {
     /// A statement deadline without a transaction, for read discovery and
     /// PASSIVE checkpoint. Checkpoint I/O is not preemptible VM execution.
     pub fn retention_statement<T>(
-        &self,
+        &mut self,
         limit: std::time::Duration,
         action: impl FnOnce(&Self) -> Result<T>,
     ) -> Result<T> {
@@ -540,7 +540,7 @@ impl Store {
     /// the owner mutex; no other statement can inherit this temporary handler.
     /// Commit/fsync and rollback are not preemptible SQLite VM work.
     pub fn retention_step<T>(
-        &self,
+        &mut self,
         limit: std::time::Duration,
         action: impl FnOnce(&Self) -> Result<T>,
     ) -> Result<T> {

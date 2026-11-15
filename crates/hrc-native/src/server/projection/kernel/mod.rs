@@ -1,32 +1,24 @@
-//! The ops-only HRC provider (praesidium-kernel r1.9, T-12360): cardo's wire
-//! on `<runtimeRoot>/hrc-kernel.sock`, entering owner routes through
-//! `call_local`. No document, node types, ingest or attacher. Owner only; a
-//! kernel that fails to start is logged and HRC serves without it.
-mod adapter;
+//! HRC's protocol 3 kernel is a side surface: startup failure never stops HTTP.
+mod handlers;
 
 use super::{Shared, call_local, stderr_json};
 use anyhow::{Context, anyhow};
-use cardo_host::{HostDefault, Idle, NoWork, SingleInstance, send};
-use cardo_runtime::{service::*, wire};
-use cardo_runtime_tokio::{WireTask, spawn_wire};
+use cardo_app::parts::{self, Args, Health, Lock, Paths, Record, RecordFailure, Setup, State};
 use hrc_domain::{
     HrcError,
     owner::{OwnerCall, OwnerReply},
 };
 use serde_json::{Value, json};
 use std::{
+    path::{Path, PathBuf},
     sync::Arc,
-    time::{Duration, Instant},
+    time::Instant,
 };
 
-/// User-Agent of every kernel request, so accounting meters it (T-11541).
-// Historical client identity retained for accounting continuity across the fold.
 pub(super) const CLIENT: &str = concat!("hrc-kernel/", env!("CARGO_PKG_VERSION"));
-/// The principal of every kernel request: a kernel op's caller is not named
-/// on the cardo wire, so its annotation writes record the kernel itself.
 pub(super) const PRINCIPAL: &str = "system:hrc-kernel";
-/// The owner seam over `call_local`. Called off tokio's workers only: from
-/// op tasks on the blocking pool.
+
+/// Called from cardo's connection threads, outside tokio's workers.
 struct LocalOwner {
     server: Shared,
     runtime: tokio::runtime::Handle,
@@ -38,33 +30,37 @@ impl OwnerCall for LocalOwner {
         route: &str,
         body: Option<&Value>,
     ) -> Result<OwnerReply, HrcError> {
-        let call = call_local(&self.server, method, route, body);
-        let reply = self.runtime.block_on(call);
-        reply
+        self.runtime
+            .block_on(call_local(&self.server, method, route, body))
             .map(|(status, body)| OwnerReply { status, body })
             .map_err(|e| HrcError::new("hrc_unavailable", format!("{e:#}")))
     }
 }
 
 pub(super) struct Kernel {
-    wire: WireTask,
-    owner: RuntimeOwner,
-    _lock: SingleInstance,
+    wire: parts::Wire,
+    owner: parts::Kernel,
+    paths: Paths,
+    _lock: Lock,
 }
 impl Kernel {
-    /// After the HTTP listener stops: the wire, then the owner (§8.1 item 5).
+    /// HTTP stops first, then the wire and owner; only then release discovery and lock.
     pub(super) async fn stop(self) -> anyhow::Result<()> {
-        self.wire.stop().await.context("kernel wire")?;
-        cardo_runtime_tokio::join(self.owner)
-            .await
-            .map_err(|failure| anyhow!("kernel owner: {}", failure.message))?;
-        stderr_json("info", "kernel", "kernel.stopped", json!({}));
-        Ok(())
+        tokio::task::spawn_blocking(move || {
+            self.wire.stop();
+            let wire = self.wire.join();
+            let owner = self.owner.shutdown();
+            wire?;
+            owner?;
+            std::fs::remove_file(legacy_socket(&self.paths))?;
+            std::fs::remove_file(&self.paths.record)?;
+            stderr_json("info", "kernel", "kernel.stopped", json!({}));
+            Ok(())
+        })
+        .await?
     }
 }
 
-/// Starts the kernel, or logs `kernel.start_failed` and returns None: HRC
-/// execution never depends on the kernel.
 pub(super) async fn start(server: &Shared) -> Option<Kernel> {
     match try_start(server).await {
         Ok(kernel) => Some(kernel),
@@ -79,89 +75,123 @@ pub(super) async fn start(server: &Shared) -> Option<Kernel> {
         }
     }
 }
-// Cardo core_adapter.rs:1007–1015 requires an executor of record for every
-// provider with operations. HrcAdapter intercepts all six; this stateless
-// executor has no document or ingest and makes a routing defect explicit.
-struct AdapterRouted;
-impl cardo_runtime::core_adapter::WorkerCall for AdapterRouted {
-    fn call(&mut self, _: &str, _: Value, _: Duration) -> Result<Value, DispatchFailure> {
-        Err(DispatchFailure {
-            code: "adapter_routed".into(),
-            message: "hrc owner operations are dispatched by HrcAdapter; reaching the core worker is a routing defect".into(),
-            details: json!({}),
-        })
-    }
-    fn shutdown(&mut self) {}
+
+fn paths(runtime: &Path) -> anyhow::Result<Paths> {
+    let root = runtime
+        .parent()
+        .filter(|p| p.file_name().is_some_and(|n| n == "run"))
+        .and_then(Path::parent)
+        .filter(|_| runtime.file_name().is_some_and(|n| n == "hrc"))
+        .ok_or_else(|| {
+            anyhow!(
+                "kernel runtime root must be <root>/run/hrc: {}",
+                runtime.display()
+            )
+        })?;
+    Ok(Paths::new(
+        "hrc",
+        &Args {
+            root: Some(root.to_path_buf()),
+            ..Args::default()
+        },
+    ))
+}
+
+fn legacy_socket(paths: &Paths) -> PathBuf {
+    paths.run.join("hrc-kernel.sock")
 }
 
 async fn try_start(server: &Shared) -> anyhow::Result<Kernel> {
     let started = Instant::now();
-    let socket = server.runtime.join("hrc-kernel.sock");
-    let lock = SingleInstance::acquire(&socket).map_err(|e| anyhow!("{e}"))?;
-    let runtime = tokio::runtime::Handle::current();
-    let owner_call: Arc<dyn OwnerCall> = Arc::new(LocalOwner {
+    let paths = paths(&server.runtime)?;
+    let owner: Arc<dyn OwnerCall> = Arc::new(LocalOwner {
         server: server.clone(),
-        runtime: runtime.clone(),
+        runtime: tokio::runtime::Handle::current(),
     });
-    let mut core = cardo_runtime::core_adapter::CoreAdapter::new(
-        || cardo_core::document::CoreDomain,
-        |_| {
-            Err(cardo_core::Refusal::invalid(
-                "edit_rejected",
-                "HRC declares no edits",
-            ))
-        },
-        Duration::from_secs(60),
-    );
-    core.in_process_worker("hrc", || Box::new(AdapterRouted));
-    let owner = RuntimeOwner::start(
-        adapter::HrcAdapter {
-            core,
-            owner: owner_call,
-            pending: Default::default(),
-            runtime,
-            owner_waker: None,
-        },
-        Arc::new(NoWork),
-        Box::new(Idle),
-        RuntimeConfig {
-            ring_events: 4096,
-            ring_bytes: 32 * 1024 * 1024,
-            ..RuntimeConfig::host_default()
-        },
-    );
-    let client = owner.client(ClientRole::Tui);
-    let setup = {
-        let (client, socket) = (client.clone(), socket.clone());
-        tokio::task::spawn_blocking(move || -> anyhow::Result<wire::WireServer> {
-            send(
-                &client,
-                "registry.enable",
-                hrc_domain::declarations::declarations(),
-            )
-            .map_err(|failed| anyhow!("registry.enable: {failed:?}"))?;
-            Ok(wire::bind(client, &socket)?)
-        })
-        .await?
-    };
-    let wire = match setup {
-        Ok(wire) => spawn_wire(wire),
-        Err(error) => {
-            let _ = cardo_runtime_tokio::join(owner).await;
-            return Err(error);
+    tokio::task::spawn_blocking(move || {
+        // Only the lock holder may create or replace a registry record.
+        let lock = Lock::acquire(&paths.socket).map_err(|e| anyhow!("{e}"))?;
+        let mut record = starting_record(&paths)?;
+        let result = (|| -> anyhow::Result<_> {
+            record.write(&paths.record)?;
+            let openings = handlers::openings(owner)?;
+            let kernel = parts::Kernel::start(
+                openings,
+                Setup {
+                    mount: "hrc".into(),
+                    owner: "hrc".into(),
+                    graphs: paths.graphs.clone(),
+                    socket: Some(paths.socket.clone()),
+                },
+                Health::default(),
+            )?;
+            let wire = match kernel.bind(&paths.socket) {
+                Ok(wire) => wire,
+                Err(error) => {
+                    kernel.shutdown()?;
+                    return Err(error.into());
+                }
+            };
+            let serving = (|| -> anyhow::Result<()> {
+                let legacy = legacy_socket(&paths);
+                match std::fs::remove_file(&legacy) {
+                    Ok(()) => (),
+                    Err(e) if e.kind() == std::io::ErrorKind::NotFound => (),
+                    Err(e) => return Err(e.into()),
+                }
+                std::os::unix::fs::symlink("kernel.sock", legacy)?;
+                record.state = State::Serving;
+                record.incarnation = kernel.client().map(|c| c.host_incarnation());
+                kernel.set_status(record.to_json());
+                record.write(&paths.record)?;
+                Ok(())
+            })();
+            if let Err(error) = serving {
+                wire.stop();
+                let _ = wire.join();
+                let _ = kernel.shutdown();
+                let _ = std::fs::remove_file(legacy_socket(&paths));
+                return Err(error);
+            }
+            Ok((kernel, wire))
+        })();
+        match result {
+            Ok((owner, wire)) => {
+                stderr_json(
+                    "info",
+                    "kernel",
+                    "kernel.serving",
+                    json!({"socket":paths.socket,"elapsedMs":started.elapsed().as_millis() as u64}),
+                );
+                Ok(Kernel {
+                    wire,
+                    owner,
+                    paths,
+                    _lock: lock,
+                })
+            }
+            Err(error) => {
+                record.state = State::Failed;
+                record.failure = Some(RecordFailure {
+                    at: chrono::Utc::now().to_rfc3339(),
+                    code: "kernel_start_failed".into(),
+                    message: format!("{error:#}"),
+                    fix: "check the kernel socket directory and rusthrc log".into(),
+                    log: paths.root.join("logs/hrc-runtime/rusthrc-owner.log"),
+                });
+                record
+                    .write(&paths.record)
+                    .context(format!("record failed kernel start: {error:#}"))?;
+                Err(error)
+            }
         }
-    };
-    stderr_json(
-        "info",
-        "kernel",
-        "kernel.serving",
-        json!({"socket":socket,"elapsedMs":started.elapsed().as_millis() as u64}),
-    );
-    Ok(Kernel {
-        wire,
-        owner,
-        _lock: lock,
     })
+    .await?
+}
+
+// Supplied by cardo T-13595, pending its landed revision.
+fn starting_record(_paths: &Paths) -> anyhow::Result<Record> {
+    anyhow::bail!("pending cardo Record constructor")
 }
 
 #[cfg(test)]
@@ -178,49 +208,34 @@ mod tests {
 
     /// The fixture's runtime root is under $TMPDIR, too long for a socket
     /// path (SUN_LEN); the kernel's socket goes under a short /tmp root.
-    struct ShortRoot(std::path::PathBuf);
+    struct ShortRoot(PathBuf);
     impl Drop for ShortRoot {
         fn drop(&mut self) {
             let _ = std::fs::remove_dir_all(&self.0);
         }
     }
     fn short_root(server: &mut Shared) -> ShortRoot {
-        let root = std::path::PathBuf::from(format!(
+        let root = PathBuf::from(format!(
             "/tmp/hk-{}",
             &uuid::Uuid::new_v4().simple().to_string()[..8]
         ));
         std::fs::create_dir_all(&root).unwrap();
-        Arc::get_mut(server).expect("unshared test server").runtime = root.clone();
+        Arc::get_mut(server).expect("unshared test server").runtime = root.join("run/hrc");
         ShortRoot(root)
     }
-    #[test]
-    fn executor_of_record_refuses_direct_calls() {
-        use cardo_runtime::core_adapter::WorkerCall;
-        let failure = AdapterRouted
-            .call("seat.summon", json!({}), Duration::from_secs(1))
-            .expect_err("only HrcAdapter may dispatch owner operations");
-        assert_eq!(failure.code, "adapter_routed");
-        assert!(
-            failure
-                .message
-                .contains("reaching the core worker is a routing defect")
-        );
-        assert_eq!(failure.details, json!({}));
-    }
-
     #[tokio::test(flavor = "multi_thread")]
     async fn ops_only_provider() -> anyhow::Result<()> {
         let (_scratch, mut server) = server("off", false)?;
         let _root = short_root(&mut server);
         let kernel = try_start(&server).await?;
-        let socket = server.runtime.join("hrc-kernel.sock");
+        let socket = server.runtime.join("kernel.sock");
         let discovery = wire(&socket, "registry.discover", json!({}));
         let result = &discovery["result"];
         let ops: std::collections::BTreeSet<_> = result["operations"]
             .as_array()
             .unwrap()
             .iter()
-            .filter(|o| o["provider"] == "hrc")
+            .filter(|o| o["provider"] == "seat")
             .map(|o| o["name"].as_str().unwrap())
             .collect();
         assert_eq!(
@@ -243,15 +258,15 @@ mod tests {
                 .iter()
                 .all(|t| t["provider"] != "hrc")
         );
-        assert!(result["node_families"].as_array().unwrap().is_empty());
+        assert!(result["node_types"].as_array().unwrap().is_empty());
         assert_eq!(discovery["ok"], true, "{discovery}");
         let docs = wire(&socket, "resync", json!({}));
         eprintln!("OPS_ONLY_DOCUMENTS={docs}");
         assert_eq!(docs["ok"], true, "{docs}");
-        assert_eq!(docs["result"]["documents"], json!({}), "{docs}");
+        assert_eq!(docs["result"]["graphs"], json!({}), "{docs}");
         let unknown = wire(&socket, "seat.unknown", json!({}));
         assert_eq!(unknown["ok"], false, "{unknown}");
-        assert_eq!(unknown["error"]["code"], "unknown_declaration", "{unknown}");
+        assert_eq!(unknown["error"]["code"], "unknown_operation", "{unknown}");
         kernel.stop().await?;
         Ok(())
     }
@@ -261,7 +276,7 @@ mod tests {
     }
 
     /// One cardo wire call on the kernel socket.
-    fn wire(socket: &std::path::Path, op: &str, args: Value) -> Value {
+    fn wire(socket: &Path, op: &str, args: Value) -> Value {
         let stream = UnixStream::connect(socket).expect("kernel socket answers");
         stream
             .set_read_timeout(Some(Duration::from_secs(10)))
@@ -358,7 +373,7 @@ mod tests {
 
     /// A wire call off the test's tokio worker: an owner op's work blocks
     /// on the server's runtime until HRC answers.
-    async fn op(socket: &std::path::Path, name: &'static str, args: Value) -> Value {
+    async fn op(socket: &Path, name: &'static str, args: Value) -> Value {
         let socket = socket.to_owned();
         tokio::task::spawn_blocking(move || wire(&socket, name, args))
             .await
@@ -391,7 +406,7 @@ mod tests {
     async fn annotation_ops_dispatch_in_process_to_the_store() -> anyhow::Result<()> {
         let (_scratch, mut server) = server("off", false)?;
         let _root = short_root(&mut server);
-        let socket = server.runtime.join("hrc-kernel.sock");
+        let socket = server.runtime.join("kernel.sock");
         let kernel = start(&server).await.expect("kernel starts");
         let scope = "agent:kq:project:fold:task:annotated";
         let seat = format!("{scope}/lane:main");
@@ -531,7 +546,7 @@ mod tests {
     async fn kernel_start_failure_leaves_hrc_serving() -> anyhow::Result<()> {
         let (_scratch, mut server) = server("off", false)?;
         let _root = short_root(&mut server);
-        let _held = SingleInstance::acquire(&server.runtime.join("hrc-kernel.sock"))
+        let _held = Lock::acquire(&server.runtime.join("kernel.sock"))
             .map_err(|e| anyhow::anyhow!("{e}"))?;
         assert!(try_start(&server).await.is_err());
         assert!(start(&server).await.is_none());

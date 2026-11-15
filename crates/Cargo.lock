@@ -145,9 +145,26 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "fc652a48c352aef3ea3aed32080501cf3ef6ed5da78602a020c991775b0aff04"
 
 [[package]]
+name = "cardo-app"
+version = "0.1.0"
+source = "git+https://github.com/lherron/cardo?rev=10a8b1b#10a8b1bfd8cbe935aee1333b4f17432084291723"
+dependencies = [
+ "cardo-core",
+ "cardo-execution",
+ "cardo-runtime",
+ "cardo-store",
+ "crossbeam-channel",
+ "libc",
+ "notify",
+ "serde",
+ "serde_json",
+ "uuid",
+]
+
+[[package]]
 name = "cardo-core"
 version = "0.1.0"
-source = "git+https://github.com/lherron/cardo?rev=0dd6203856203854b97de3e9e3793c7a41cd4020#0dd6203856203854b97de3e9e3793c7a41cd4020"
+source = "git+https://github.com/lherron/cardo?rev=10a8b1b#10a8b1bfd8cbe935aee1333b4f17432084291723"
 dependencies = [
  "im",
  "regex",
@@ -158,27 +175,16 @@ dependencies = [
 [[package]]
 name = "cardo-execution"
 version = "0.1.0"
-source = "git+https://github.com/lherron/cardo?rev=0dd6203856203854b97de3e9e3793c7a41cd4020#0dd6203856203854b97de3e9e3793c7a41cd4020"
+source = "git+https://github.com/lherron/cardo?rev=10a8b1b#10a8b1bfd8cbe935aee1333b4f17432084291723"
 dependencies = [
  "cardo-core",
  "serde_json",
 ]
 
 [[package]]
-name = "cardo-host"
-version = "0.1.0"
-source = "git+https://github.com/lherron/cardo?rev=0dd6203856203854b97de3e9e3793c7a41cd4020#0dd6203856203854b97de3e9e3793c7a41cd4020"
-dependencies = [
- "cardo-runtime",
- "crossbeam-channel",
- "libc",
- "serde_json",
-]
-
-[[package]]
 name = "cardo-runtime"
 version = "0.1.0"
-source = "git+https://github.com/lherron/cardo?rev=0dd6203856203854b97de3e9e3793c7a41cd4020#0dd6203856203854b97de3e9e3793c7a41cd4020"
+source = "git+https://github.com/lherron/cardo?rev=10a8b1b#10a8b1bfd8cbe935aee1333b4f17432084291723"
 dependencies = [
  "cardo-core",
  "cardo-execution",
@@ -191,21 +197,9 @@ dependencies = [
 ]
 
 [[package]]
-name = "cardo-runtime-tokio"
-version = "0.1.0"
-source = "git+https://github.com/lherron/cardo?rev=0dd6203856203854b97de3e9e3793c7a41cd4020#0dd6203856203854b97de3e9e3793c7a41cd4020"
-dependencies = [
- "cardo-runtime",
- "cardo-store",
- "crossbeam-channel",
- "futures-core",
- "tokio",
-]
-
-[[package]]
 name = "cardo-store"
 version = "0.1.0"
-source = "git+https://github.com/lherron/cardo?rev=0dd6203856203854b97de3e9e3793c7a41cd4020#0dd6203856203854b97de3e9e3793c7a41cd4020"
+source = "git+https://github.com/lherron/cardo?rev=10a8b1b#10a8b1bfd8cbe935aee1333b4f17432084291723"
 dependencies = [
  "crossbeam-channel",
  "rusqlite",
@@ -464,14 +458,17 @@ name = "hashbrown"
 version = "0.17.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "ed5909b6e89a2db4456e54cd5f673791d7eca6732202bbf2a9cc504fe2f9b84a"
+dependencies = [
+ "foldhash",
+]
 
 [[package]]
 name = "hashlink"
-version = "0.11.1"
+version = "0.12.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "824e001ac4f3012dd16a264bec811403a67ca9deb6c102fc5049b32c4574b35f"
+checksum = "a596f1b20ed2cc5ecac41a164aaebc7258057060f06c0cf7a2ba3991ee7990fb"
 dependencies = [
- "hashbrown 0.16.1",
+ "hashbrown 0.17.1",
 ]
 
 [[package]]
@@ -519,10 +516,9 @@ dependencies = [
  "anyhow",
  "axum",
  "base64 0.22.1",
+ "cardo-app",
  "cardo-core",
- "cardo-host",
  "cardo-runtime",
- "cardo-runtime-tokio",
  "chrono",
  "crossbeam-channel",
  "form_urlencoded",
@@ -884,9 +880,9 @@ checksum = "65cd87c9a6d60536580b316ad985726104730a5151c99845f2490428ef91240a"
 
 [[package]]
 name = "libsqlite3-sys"
-version = "0.37.0"
+version = "0.39.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b1f111c8c41e7c61a49cd34e44c7619462967221a6443b0ec299e0ac30cfb9b1"
+checksum = "14a5f01b87b92705d07b433c06f96cbc764637d81a0bffb5734ce17cf0f9a2b3"
 dependencies = [
  "cc",
  "pkg-config",
@@ -1171,9 +1167,9 @@ dependencies = [
 
 [[package]]
 name = "rusqlite"
-version = "0.39.0"
+version = "0.41.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "a0d2b0146dd9661bf67bb107c0bb2a55064d556eeb3fc314151b957f313bcd4e"
+checksum = "da9bba6f3506135e120a6586df05be18b48d18896600646a4bec8f993d91a594"
 dependencies = [
  "bitflags",
  "fallible-iterator",

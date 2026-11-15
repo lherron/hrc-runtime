@@ -39,17 +39,17 @@ impl Budget {
     async fn step<T>(
         &mut self,
         s: &Server,
-        action: impl FnOnce(&hrc_store::Store, Duration) -> Result<T>,
+        action: impl FnOnce(&mut hrc_store::Store, Duration) -> Result<T>,
     ) -> Result<T> {
         self.check()?;
         let _write = s.owner_writes.enter().context("shutdown")?;
         let (result, held) = {
-            let store = s.store.lock().unwrap();
+            let mut store = s.store.lock().unwrap();
             // Recheck after waiting for the owner mutex, before taking SQLite's writer.
             self.check()?;
             let left = (self.deadline - Local::now()).to_std().unwrap_or_default();
             let started = Instant::now();
-            let result = action(&store, MAX_WRITE_HOLD.min(left));
+            let result = action(&mut store, MAX_WRITE_HOLD.min(left));
             (result, started.elapsed())
         };
         drop(_write);

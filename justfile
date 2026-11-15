@@ -175,6 +175,7 @@ cargo-check:
     {{rbuild}} --mac cargo test --manifest-path crates/Cargo.toml --locked -p hrc-pty
     {{rbuild}} --mac --pull {{mac_debug}}/rusthrc --pull {{mac_debug}}/hrc-pty cargo build --manifest-path crates/Cargo.toml --locked -p hrc-native -p hrc-pty
     python3 crates/hrc-cli/e2e/differential.py --binary {{rusthrc_mac_debug}} --artifacts "${HRC_CLI_E2E_ARTIFACTS:-/tmp/hrc-cli-e2e-$(date +%s)-$$}"
+    just conform-hrc {{rusthrc_mac_debug}}
     python3 crates/hrc-native/e2e/kernel_fold.py --binary {{rusthrc_mac_debug}} --artifacts "${HRC_NATIVE_E2E_ARTIFACTS:-/tmp/hrc-native-e2e-$(date +%s)-$$}/kernel-fold"
     python3 crates/hrc-native/e2e/runtime_created.py --binary {{rusthrc_mac_debug}} --artifacts "${HRC_NATIVE_E2E_ARTIFACTS:-/tmp/hrc-native-e2e-$(date +%s)-$$}/runtime-created"
     python3 crates/hrc-native/e2e/kernel_fd_cost.py --binary {{rusthrc_mac_debug}} --artifacts "${HRC_NATIVE_E2E_ARTIFACTS:-/tmp/hrc-native-e2e-$(date +%s)-$$}/kernel-fd-cost"
@@ -1236,3 +1237,7 @@ install-dev:
       --link-mode=on \
       --publication-mode=worktree \
       --source-root="$PWD"
+
+# Product-owned profile, importing cardo's suites at our exact Cargo pin.
+conform-hrc binary=rusthrc_mac_debug:
+    python3 conformance/hrc/run.py --binary {{binary}} --artifacts "${HRC_CARDO_CONFORMANCE_ARTIFACTS:-/tmp/hrc-cardo-conformance-$(date +%s)-$$}"

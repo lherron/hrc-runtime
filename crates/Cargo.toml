@@ -9,11 +9,10 @@ publish = false
 
 [workspace.dependencies]
 # All cardo crates share this approved main revision; never use path pins.
-cardo-core = { git = "https://github.com/lherron/cardo", rev = "0dd6203856203854b97de3e9e3793c7a41cd4020" }
-cardo-runtime = { git = "https://github.com/lherron/cardo", rev = "0dd6203856203854b97de3e9e3793c7a41cd4020" }
-cardo-store = { git = "https://github.com/lherron/cardo", rev = "0dd6203856203854b97de3e9e3793c7a41cd4020" }
-cardo-host = { git = "https://github.com/lherron/cardo", rev = "0dd6203856203854b97de3e9e3793c7a41cd4020" }
-cardo-runtime-tokio = { git = "https://github.com/lherron/cardo", rev = "0dd6203856203854b97de3e9e3793c7a41cd4020" }
+cardo-core = { git = "https://github.com/lherron/cardo", rev = "10a8b1b" }
+cardo-runtime = { git = "https://github.com/lherron/cardo", rev = "10a8b1b" }
+cardo-store = { git = "https://github.com/lherron/cardo", rev = "10a8b1b" }
+cardo-app = { git = "https://github.com/lherron/cardo", rev = "10a8b1b" }
 serde = { version = "1", features = ["derive"] }
 # Record JSON is fingerprinted in its own key order (collective_history.rs).
 serde_json = { version = "1", features = ["preserve_order", "raw_value", "float_roundtrip"] }
@@ -22,7 +21,7 @@ chrono = { version = "0.4", default-features = false, features = ["clock"] }
 crossbeam-channel = "0.5"
 unicode-segmentation = "1"
 
-rusqlite = { version = "0.39", features = ["bundled", "hooks"] }
+rusqlite = { version = "0.41", features = ["bundled", "hooks"] }
 anyhow = "1"
 uuid = { version = "1", features = ["v4"] }
 libc = "0.2"

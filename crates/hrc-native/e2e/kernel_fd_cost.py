@@ -48,7 +48,7 @@ def main():
     root.mkdir()
     a.artifacts.mkdir(parents=True, exist_ok=True)
     r, aspd, _ = substrate(root, a.artifacts, a.binary.resolve())
-    kernel = root / 'run/hrc-kernel.sock'
+    kernel = root / 'run/hrc/kernel.sock'
     report = {'n': a.n, 'phases': {}}
     try:
         daemon = r.up('fd')

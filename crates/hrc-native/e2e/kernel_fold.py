@@ -122,7 +122,7 @@ def substrate(root, artifacts, binary):
     aspd_socket = root / 'aspd.sock'
     aspd = DeclaringAspd(aspd_socket, release, artifacts / 'fake-aspd.ndjson', root / PROJECT)
     env = dict(clean)
-    env.update(HRC_RUNTIME_DIR=str(root / 'run'), HRC_STATE_DIR=str(root / 'state'), HRC_ASPD_SOCKET=str(aspd_socket),
+    env.update(HRC_RUNTIME_DIR=str(root / 'run/hrc'), HRC_STATE_DIR=str(root / 'state'), HRC_ASPD_SOCKET=str(aspd_socket),
                ASP_AGENTS_ROOT=str(root / 'agents'),
                ASP_PROJECT_ROOT_OVERRIDE=str(root / PROJECT), HRC_PROJECT_SEARCH_ROOTS=str(root / PROJECT),
                HRC_WRKQ_DB=str(root / 'wrkq.db'), WRKQ_DB=str(root / 'wrkq.db'), HRC_WRKQD_TOKEN_FILE='',
@@ -130,6 +130,7 @@ def substrate(root, artifacts, binary):
                HRC_EVENT_INGEST_SOCKET=str(root / 'run/ingest.sock'), HRC_ACP_WEBHOOK_URL='',
                HRC_BROKER_DURABLE_IPC_ENABLED='1', HRC_CLAUDE_CODE_TMUX_BROKER_ENABLED='1', ASP_HOME=str(root / 'asp-home'))
     r.env = env
+    r.socket = root / "run/hrc/hrc.sock"
     # A private wrkq ledger behind a private wrkqd (n3_scratch.py's shape): an
     # implicit birth reads the scope's birth envelope over wrkq RPC.
     for argv in (['wrkqadm', 'migrate'], [str(Path.home() / ".local/bin/wrkq"), 'mkdir', '/' + PROJECT, '--kind', 'project', '--json'],
@@ -270,7 +271,7 @@ def main():
     root.mkdir(parents=True)
     args.artifacts.mkdir(parents=True, exist_ok=True)
     r, aspd, clean = substrate(root, args.artifacts, binary)
-    kernel = root / 'run/hrc-kernel.sock'
+    kernel = root / 'run/hrc/kernel.sock'
     assert kernel.resolve() != LIVE_KERNEL.resolve()
     if args.serve:
         sys.exit(serve(r, aspd, root, kernel))
@@ -314,22 +315,42 @@ def main():
         d = discovery['result']
         expected = {'seat.summon', 'seat.send', 'seat.restart', 'seat.annotation.put',
                     'seat.annotation.act', 'seat.annotation.delete'}
-        r.check('2.exact-six-ops', {o['name'] for o in d['operations'] if o['provider'] == 'hrc'} == expected)
+        r.check('2.exact-six-ops', {o['name'] for o in d['operations'] if o['provider'] == 'seat'} == expected)
         r.check('2.no-hrc-types', not [t for t in d['node_types'] if t['provider'] == 'hrc'])
+        r.check('2.no-cardo-idempotency', all(not o.get('idempotency') for o in d['operations'] if o['name'] in expected))
         resync = wire(kernel, 'resync')
-        r.check('2.no-documents', resync.get('ok') and resync['result']['documents'] == {}, reply=resync)
+        r.check('2.no-documents', resync.get('ok') and resync['result']['graphs'] == {}, reply=resync)
         unknown = wire(kernel, 'seat.unknown')
-        r.check('2.unknown-refused', unknown.get('ok') is False and unknown['error']['code'] == 'unknown_declaration')
+        r.check('2.unknown-refused', unknown.get('ok') is False and unknown['error']['code'] == 'unknown_operation')
         status_cli = subprocess.run([str(binary), 'server', 'status', '--json'], env=r.env,
                                     capture_output=True, text=True, timeout=30)
         (args.artifacts / 'server-status.json').write_text(status_cli.stdout + status_cli.stderr)
         r.check('2.server-status-unchanged', status_cli.returncode == 0 and bool(json.loads(status_cli.stdout)), rc=status_cli.returncode)
 
         ref = f'agent:{AGENT}:project:{PROJECT}:task:pty-{uuid.uuid4().hex[:8]}/lane:main'
-        summoned = wire(kernel, 'seat.summon', dict(session_ref=ref, request_id='kf-' + uuid.uuid4().hex[:6]))
+        summon_args = dict(session_ref=ref, request_id='kf-' + uuid.uuid4().hex[:6])
+        summoned = wire(kernel, 'seat.summon', summon_args)
         r.check('3.summon', summoned.get('ok') and summoned['result']['session_ref'] == ref, reply=summoned)
         assert summoned['ok'], summoned
         host, runtime = summoned['result']['host_session_id'], summoned['result']['runtime_id']
+        # Cardo must cache no receipt: the same request key reaches HRC twice,
+        # and HRC alone decides replay. HTTP accounting is emitted by call_local.
+        def owner_starts():
+            return [e for e in events(r, '1') if e.get('event') == 'http.request'
+                    and e.get('data', {}).get('path') == '/v1/runtimes/start'
+                    and e.get('data', {}).get('client', '').startswith('hrc-kernel/')]
+        r.wait(lambda: len(owner_starts()) == 1, 10, 'first summon reaches HRC')
+        before_starts = len(owner_starts())
+        replayed = wire(kernel, 'seat.summon', summon_args)
+        r.wait(lambda: len(owner_starts()) > before_starts, 10, 'second summon reaches HRC')
+        r.check('3.hrc-owns-replay-no-cardo-receipt', replayed.get('ok')
+                and replayed['result']['replayed'] is True
+                and replayed['result']['runtime_id'] == runtime
+                and replayed['result']['host_session_id'] == host
+                and len(owner_starts()) == before_starts + 1
+                and 'receipt' not in summoned and 'receipt' not in replayed,
+                first=summoned, second=replayed, ownerStarts=len(owner_starts()))
+
         # A resume never starts fresh: a scope with no recorded conversation is
         # refused with HRC's own code, which the caller branches on.
         cold = f'agent:{AGENT}:project:{PROJECT}:task:pty-{uuid.uuid4().hex[:8]}/lane:main'
@@ -343,6 +364,13 @@ def main():
         assert put['ok'], put
         stale = wire(kernel, 'seat.annotation.put', dict(**key, body={'v': 2}, expect={'updatedAt': None}))
         r.check('3.stale-annotation', stale.get('ok') is False and stale['error']['code'] == 'stale_annotation', reply=stale)
+        details = stale['error']['details']
+        r.check('3.protocol3-owner-refusal-details', details.get('hrc_code') == 'stale_annotation'
+                and isinstance(details.get('message'), str)
+                and isinstance(details.get('violations'), list) and len(details['violations']) > 0
+                and all(v.get('rule') and v.get('message') and v.get('fix') for v in details['violations']),
+                reply=stale)
+
         act = wire(kernel, 'seat.annotation.act', dict(**key, action='sent', attributes={'ok': True}))
         r.check('3.annotation-act', act.get('ok'), reply=act)
         deleted = wire(kernel, 'seat.annotation.delete', dict(**key, expect={'updatedAt': put['result']['updated_at']}))
