@@ -37,10 +37,10 @@ pub fn put_declaration() -> Value {
     fields.insert("expect".into(), json!({"kind":"json"}));
     let mut required = KEY_REQUIRED.to_vec();
     required.push("body");
-    json!({"name":PUT,"fences":"none","effect":"write",
+    crate::declarations::described(json!({"name":PUT,"fences":"none","effect":"write",
         "description":"Create or replace one seat or generation annotation, as `hrc session annotation put`. HRC's expect {generation?, attentionAt?, updatedAt?} is the only fence (updatedAt null: must not exist); refusals keep the store's code. Idempotent by key.",
         "input":{"kind":"object","fields":fields,"required":required,"nullable":["expect"]},
-        "output":{"kind":"object","fields":{"updated_at":{"kind":"string"},"created":{"kind":"boolean"}},"required":["updated_at","created"]}})
+        "output":{"kind":"object","fields":{"updated_at":{"kind":"string"},"created":{"kind":"boolean"}},"required":["updated_at","created"]}}))
 }
 
 pub fn act_declaration() -> Value {
@@ -49,19 +49,19 @@ pub fn act_declaration() -> Value {
     fields.insert("attributes".into(), json!({"kind":"json"}));
     let mut required = KEY_REQUIRED.to_vec();
     required.push("action");
-    json!({"name":ACT,"fences":"none","effect":"write",
+    crate::declarations::described(json!({"name":ACT,"fences":"none","effect":"write",
         "description":"Record an action on one existing annotation (session.annotation.action in the ledger) without changing it, as `hrc session annotation act`; an absent annotation refuses unknown_annotation.",
         "input":{"kind":"object","fields":fields,"required":required,"nullable":["attributes"]},
-        "output":{"kind":"object","fields":{"hrc_seq":{"kind":"integer"}},"required":["hrc_seq"]}})
+        "output":{"kind":"object","fields":{"hrc_seq":{"kind":"integer"}},"required":["hrc_seq"]}}))
 }
 
 pub fn delete_declaration() -> Value {
     let mut fields = key_fields();
     fields.insert("expect".into(), json!({"kind":"json"}));
-    json!({"name":DELETE,"fences":"none","effect":"write",
+    crate::declarations::described(json!({"name":DELETE,"fences":"none","effect":"write",
         "description":"Delete one seat or generation annotation, as `hrc session annotation delete`. HRC's expect {updatedAt} is the only fence (stale_annotation keeps the store's code); deleted false when it was already absent.",
         "input":{"kind":"object","fields":fields,"required":KEY_REQUIRED.to_vec(),"nullable":["expect"]},
-        "output":{"kind":"object","fields":{"deleted":{"kind":"boolean"}},"required":["deleted"]}})
+        "output":{"kind":"object","fields":{"deleted":{"kind":"boolean"}},"required":["deleted"]}}))
 }
 
 /// The annotation key every op names, as the route's scopeRef, laneRef,

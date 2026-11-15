@@ -17,11 +17,11 @@ pub const OPERATION: &str = "seat.send";
 const STEER_REFUSES: &str = "HRC's steer route takes neither fences nor enter; a steer goes to the seat's current generation";
 
 pub fn declaration() -> Value {
-    json!({"name":OPERATION,"fences":"none","effect":"write",
+    crate::declarations::described(json!({"name":OPERATION,"fences":"none","effect":"write",
         "description":"Send text to a seat. Without delivery (or delivery enqueue): literal text to the live runtime of the selected HRC generation, as `hrc send` does; host_session_id and expected_generation are required, enter (default true) submits it; no force or retry; a rotated seat refuses stale_context; returns {session_ref, host_session_id, generation, runtime_id, run_id?}. With delivery steer: HRC's steer route (POST /v1/submissions/steer) at the seat's current generation, as HRC steers today; principal_ref (the origin) and idempotency_key (passed verbatim) are required, host_session_id, expected_generation and enter are refused; returns HRC's steer reply unchanged (admission, runId, hostSessionId, generation, runtimeId, effectiveDoor, requestedDoor, downgradeReason, disposition, reason, submissionId, replayed).",
         "input":{"kind":"object","fields":{"session_ref":{"kind":"string"},"host_session_id":{"kind":"string"},"expected_generation":{"kind":"integer","minimum":0},"text":{"kind":"string"},"enter":{"kind":"boolean"},
             "delivery":{"kind":"enum","values":["enqueue","steer"]},"principal_ref":{"kind":"string"},"idempotency_key":{"kind":"string"}},"required":["session_ref","text"]},
-        "output":{"kind":"json"}})
+        "output":{"kind":"json"}}))
 }
 
 #[derive(Debug, Deserialize)]

@@ -11,10 +11,10 @@ use serde_json::{Value, json};
 pub const OPERATION: &str = "seat.restart";
 
 pub fn declaration() -> Value {
-    json!({"name":OPERATION,"fences":"none","effect":"write",
+    crate::declarations::described(json!({"name":OPERATION,"fences":"none","effect":"write",
         "description":"Restart the selected HRC generation fresh. No force or retry; a failed launch may follow a committed rotation.",
         "input":{"kind":"object","fields":{"host_session_id":{"kind":"string"},"expected_generation":{"kind":"integer","minimum":0}},"required":["host_session_id","expected_generation"]},
-        "output":{"kind":"object","fields":{"prior_host_session_id":{"kind":"string"},"host_session_id":{"kind":"string"},"generation":{"kind":"integer"},"launch":{"kind":"json"}},"required":["prior_host_session_id","host_session_id","generation","launch"]}})
+        "output":{"kind":"object","fields":{"prior_host_session_id":{"kind":"string"},"host_session_id":{"kind":"string"},"generation":{"kind":"integer"},"launch":{"kind":"json"}},"required":["prior_host_session_id","host_session_id","generation","launch"]}}))
 }
 
 #[derive(Debug, Deserialize)]

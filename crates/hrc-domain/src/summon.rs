@@ -11,10 +11,10 @@ pub const OPERATION: &str = "seat.summon";
 const UNQUALIFIED: &str = "session_ref must name a task-qualified main-lane seat";
 
 pub fn declaration() -> Value {
-    json!({"name":OPERATION,"fences":"none","effect":"write",
+    crate::declarations::described(json!({"name":OPERATION,"fences":"none","effect":"write",
         "description":"Summon a seat through HRC's declaration and claim-and-start routes. HRC owns replay; reuse request_id on retry. continuation \"resume\" instead continues the seat's latest recorded conversation in a successor session; HRC refuses it with no_resumable_continuation or resume_runtime_live, never starts fresh, and does not replay it.",
         "input":{"kind":"object","fields":{"session_ref":{"kind":"string"},"fresh":{"kind":"boolean"},"continuation":{"kind":"string"},"request_id":{"kind":"string"}},"required":["session_ref","request_id"]},
-        "output":{"kind":"object","fields":{"session_ref":{"kind":"string"},"host_session_id":{"kind":"string"},"runtime_id":{"kind":"string"},"status":{"kind":"string"},"replayed":{"kind":"boolean"}},"required":["session_ref","host_session_id","runtime_id","status","replayed"]}})
+        "output":{"kind":"object","fields":{"session_ref":{"kind":"string"},"host_session_id":{"kind":"string"},"runtime_id":{"kind":"string"},"status":{"kind":"string"},"replayed":{"kind":"boolean"}},"required":["session_ref","host_session_id","runtime_id","status","replayed"]}}))
 }
 
 #[derive(Deserialize)]
