@@ -266,6 +266,13 @@ pub(super) fn mint(
         params![now, prior["hostSessionId"].as_str()],
     )
     .map_err(anyhow::Error::from)?;
+    // A branch from an older generation displaces the continuity's current
+    // session; it is retired with the prior so one generation stays active.
+    tx.execute(
+        "UPDATE sessions SET status='archived', updated_at=? WHERE status='active' AND host_session_id=(SELECT active_host_session_id FROM continuities WHERE scope_ref=? AND lane_ref=?)",
+        params![now, scope, lane],
+    )
+    .map_err(anyhow::Error::from)?;
     tx.execute(
         "INSERT INTO sessions (host_session_id, scope_ref, lane_ref, generation, status, prior_host_session_id, created_at, updated_at, last_applied_intent_json, continuation_json) VALUES (?, ?, ?, ?, 'active', ?, ?, ?, ?, ?)",
         params![host, scope, lane, generation, prior["hostSessionId"].as_str(), now, now, intent.as_ref().map(Value::to_string), continuation.filter(|c| !c.is_null()).map(Value::to_string)],
@@ -567,4 +574,40 @@ async fn resume_self_brokered(
         "generation":successor["generation"],"priorHostSessionId":successor["priorHostSessionId"],
         "continuation":successor["continuation"],"scopeRef":successor["scopeRef"],"laneRef":successor["laneRef"],
         "session":successor})).into_response())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::mint;
+    use serde_json::json;
+
+    /// A resume pinned to an older generation branches from it. The newer
+    /// generation it displaces must not stay active beside the new successor.
+    #[test]
+    fn a_historical_mint_archives_the_displaced_successor() -> anyhow::Result<()> {
+        let (_scratch, server) = crate::server::turns::admission::tests::server("off", false)?;
+        let mut db = server.store.lock().unwrap();
+        let scope = "agent:test:project:fixture";
+        let older = db.create_session(scope, "main")?.0;
+        let newer =
+            mint(&db.sqlite, &older, 2, None, None, json!({"created":true})).expect("successor");
+        let branch =
+            mint(&db.sqlite, &older, 3, None, None, json!({"created":true})).expect("branch");
+        let status = |host: &str| -> rusqlite::Result<String> {
+            db.sqlite.query_row(
+                "SELECT status FROM sessions WHERE host_session_id=?",
+                [host],
+                |r| r.get(0),
+            )
+        };
+        assert_eq!(status(&newer)?, "archived");
+        assert_eq!(status(&branch)?, "active");
+        let active: i64 = db.sqlite.query_row(
+            "SELECT COUNT(*) FROM sessions WHERE scope_ref=? AND status='active'",
+            [scope],
+            |r| r.get(0),
+        )?;
+        assert_eq!(active, 1);
+        Ok(())
+    }
 }
