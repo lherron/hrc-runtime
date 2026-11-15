@@ -55,10 +55,12 @@ def settle(dbpath,name):
 
 
 def cases(scope,host):
-    return [(name,'POST','/v1/federation/retire',{'scopeRef':s,'reason':reason}) for name,s,reason in [
+    retire=[(name,'POST','/v1/federation/retire',{'scopeRef':s,'reason':reason}) for name,s,reason in [
         ('unknown',scope+'-unknown','test'),('foreign',scope+'-foreign','test'),('live',scope+'-live','test'),
         ('retire',scope,' first reason '),('retry',scope,'different reason'),('registry-conflict',scope+'-conflict','conflict'),('fencer-failure',scope+'-fence-error','fault'),
     ]]
+    # The kernel drops a retired seat by re-reading it here and getting 404.
+    return retire[:5]+[('get-after-retire','GET',f'/v1/sessions/get?scopeRef={scope}&laneRef=main&localOnly=true',None)]+retire[5:]
 
 
 def observe(dbpath):
@@ -66,9 +68,11 @@ def observe(dbpath):
         ledger=list(db.execute('SELECT scope_ref,state,retirement_reason FROM placement_ledger ORDER BY scope_ref'))
         continuities=list(db.execute('SELECT scope_ref,lane_ref FROM continuities ORDER BY scope_ref,lane_ref'))
         sessions=list(db.execute('SELECT host_session_id,continuation_reuse_disabled FROM sessions ORDER BY host_session_id'))
+        statuses=list(db.execute('SELECT scope_ref,status FROM sessions ORDER BY scope_ref,host_session_id'))
+        retired=list(db.execute("SELECT scope_ref,host_session_id FROM hrc_events WHERE event_kind='session.retired' ORDER BY hrc_seq"))
     with sqlite3.connect(REGISTRY) as db:
         registry=list(db.execute('SELECT scope_ref,home_node_id FROM binding_registry ORDER BY scope_ref'))
-    return {'ledger':ledger,'continuities':continuities,'sessions':sessions,'registry':registry}
+    return {'ledger':ledger,'continuities':continuities,'sessions':sessions,'statuses':statuses,'retired':retired,'registry':registry}
 
 
 def compare(results):
@@ -94,6 +98,15 @@ def compare(results):
     assert rows['live']['response']['body']['outcome']=='live-runtime-present'
     assert len(rows['retire']['continuities'])==len(rows['unknown']['continuities'])-2
     assert sum(x[1] for x in rows['retire']['sessions'])==2
+    # The old home archives the retired scope's sessions and says so on its own
+    # stream, once: the kernel drops the seat from that event (T-13505).
+    assert [s for sc,s in rows['retire']['statuses'] if sc==SCOPE] and all(s=='archived' for sc,s in rows['retire']['statuses'] if sc==SCOPE)
+    assert [sc for sc,_ in rows['retire']['retired']].count(SCOPE)==len([1 for sc,_ in rows['retire']['statuses'] if sc==SCOPE])
+    assert rows['retry']['retired']==rows['retire']['retired']
+    assert rows['get-after-retire']['response']['status']==404,rows['get-after-retire']['response']
+    # A fencer failure rolls the archive back with the fence.
+    assert [s for sc,s in rows['fencer-failure']['statuses'] if sc==SCOPE+'-fence-error']==['active']
+    assert SCOPE+'-fence-error' not in [sc for sc,_ in rows['fencer-failure']['retired']]
 
 
 if __name__=='__main__':main(prepare=prepare,case_factory=cases,settle=settle,observe=observe,compare=compare,suite='retirement-parity',owners=('native',))

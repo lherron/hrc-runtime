@@ -89,6 +89,39 @@ pub async fn retire(server: &Shared, body: Value) -> Result<Response, ApiError> 
             .map_err(anyhow::Error::from)?;
         // Disable continuation reuse before deleting exact continuity selectors.
         tx.execute("UPDATE sessions SET continuation_reuse_disabled=1,updated_at=? WHERE host_session_id IN (SELECT active_host_session_id FROM continuities WHERE scope_ref=?)",params![hrc_store::timestamp(),scope]).map_err(anyhow::Error::from)?;
+        // The old home no longer holds the scope: archive its sessions and say
+        // so on this node's stream, once, so event-driven readers (the kernel's
+        // seat document) re-read it. A retry finds nothing active and appends
+        // nothing. The event counts as activity in session_index, by design.
+        let active: Vec<(String, String, i64)> = tx
+            .prepare("SELECT host_session_id,lane_ref,generation FROM sessions WHERE scope_ref=? AND status='active' ORDER BY host_session_id")
+            .and_then(|mut s| {
+                s.query_map([&scope], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)))?
+                    .collect()
+            })
+            .map_err(anyhow::Error::from)?;
+        let now = hrc_store::timestamp();
+        tx.execute(
+            "UPDATE sessions SET status='archived',updated_at=? WHERE scope_ref=? AND status='active'",
+            params![now, scope],
+        )
+        .map_err(anyhow::Error::from)?;
+        for (host, lane, generation) in active {
+            let ev = crate::server::projection::events::Ev {
+                ts: now.clone(),
+                host_session_id: host,
+                scope_ref: scope.clone(),
+                lane_ref: lane,
+                generation,
+                ..Default::default()
+            };
+            crate::server::projection::events::append(
+                &tx,
+                "session.retired",
+                &ev,
+                &json!({"reason":reason,"retiredAt":retired_at,"homeNodeId":node.node_id()}),
+            )?;
+        }
         tx.execute("DELETE FROM continuities WHERE scope_ref=?", [&scope])
             .map_err(anyhow::Error::from)?;
         tx.commit().map_err(anyhow::Error::from)?;

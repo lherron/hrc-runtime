@@ -15,6 +15,7 @@ pub fn category(kind: &str) -> Option<&'static str> {
         | "session.archived"
         | "session.generation_auto_rotated"
         | "session.continuation_dropped"
+        | "session.retired"
         | "session.restart_armed"
         | "session.restart_cancelled"
         | "session.restart_executed"
