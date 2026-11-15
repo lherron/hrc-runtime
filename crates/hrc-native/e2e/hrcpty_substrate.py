@@ -685,6 +685,11 @@ def main():
     if root.exists():
         raise SystemExit('root must be fresh: ' + str(root))
     root.mkdir(parents=True)
+    # Seats run in their own sessions and outlive this driver by design, so
+    # only the finally below reaps them. Python skips finally on SIGTERM and
+    # SIGHUP (a tool timeout, a closed terminal): turn both into SystemExit.
+    for sig in (signal.SIGTERM, signal.SIGHUP):
+        signal.signal(sig, lambda n, _f: sys.exit(128 + n))
     args.artifacts.mkdir(parents=True, exist_ok=True)
     for stale in [*args.artifacts.glob('bipc-*'), *args.artifacts.glob('daemon-*.log'),
                   *(args.artifacts / n for n in ('summary.json', 'fake-aspd.ndjson', 'rows.json', 'codex-tmux-shape.json', 'attached-door.json'))]:
