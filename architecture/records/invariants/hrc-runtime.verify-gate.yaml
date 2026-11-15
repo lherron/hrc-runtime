@@ -15,7 +15,14 @@ predicate: >
   path runs lock-hygiene and architecture-records under `piped: true`, then
   hands the refs to the best-effort `git.push` producer; tracked executable
   `.githooks/post-commit` enters the best-effort `git.commit` producer.
-authority: wrkq:T-06958
+  Amendment 2026-11-15 (T-13588 r2): the gate includes Cardo's conformance
+  suite at HRC's pinned revision against an in-process HRC kernel on an
+  isolated scratch root, using the HRC-owned profile and fakes. It grades
+  the registry record and states, standard operations, lattice-v1 section 8
+  surface rules and log line shape. HRC has no directory or reload surface.
+authority: >
+  wrkq:T-06958; Daedalus approval of T-13588 spec r2 submitted in EN-54676,
+  2026-11-15, under cardo-lattice-v1 r22 sections 8 and 9.4.
 source:
   - justfile
   - lefthook.yml
@@ -24,12 +31,16 @@ source:
   - package.json
   - scripts/check-architecture-records.ts
   - scripts/lefthook-boundaries.test.ts
+  - wrkq:T-13588
 required_tests:
   - just architecture-records
   - just verify
 last_verified:
   date: 2026-09-05
   evidence: T-08054 landing `just verify` green with the hook topology above
+design_review: >
+  2026-11-15 T-13588 r2 approves the conformance gate addition; it has not
+  been run or established as implemented by this design review.
 reopen_when: The verify recipe or repository validation topology changes.
 supersedes: []
 superseded_by: []

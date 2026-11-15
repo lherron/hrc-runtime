@@ -59,6 +59,12 @@ kernel_fold_amendment:
   status: design approved by Daedalus 2026-10-29 in EN-38698; implementation and activation unverified
   authority: Lance's 2026-10-29 ruling that HRC embeds its kernel (no single-process cardo platform)
   boundary: kernel runs inside the owner rusthrc; hrc-kernel process, crate and install gate retire; brokers, aspc and injector unmoved
+lattice_v1_amendment:
+  task: T-13588
+  task_slug: cardo-lattice-v1-conversion
+  revision: spec r2, submitted in EN-54676
+  status: design approved by Daedalus 2026-11-15; implementation and activation unverified
+  authority: Lance's cardo-lattice-v1 r22 HRC embedding disposition, sections 8, 9.4 and 11
 schema_migration_amendment:
   task: T-12840
   task_slug: rust-schema-migrator
@@ -95,6 +101,27 @@ predicate: >
   not detect a running legacy holder. That overlap is unsupported, as are
   a second kernel process, independent kernel restart and a kernel on a
   Bun-owned node. Brokers, aspc and injector remain external.
+  Amendment 2026-11-15 (T-13588 r2) supersedes the old socket, custom
+  adapter and startup/shutdown integration above: the owner rusthrc composes
+  cardo_app::parts, serving protocol 3 at <runtimeRoot>/kernel.sock, where
+  runtimeRoot must equal <root>/run/hrc. A nonconforming root logs a start
+  refusal without using the live root. Front mode still starts no kernel.
+  The six unfenced owner handlers run on connection threads and use the
+  unchanged hrc-domain LocalOwner/call_local seam; HRC alone decides replay,
+  with no Cardo idempotency declaration. No document, ingest or attacher is
+  introduced. Parts supply their handler panic boundary in place of the
+  retired custom adapter path. HRC retains process and lifecycle authority.
+  Only the socket lock holder writes the registry record: starting after
+  acquisition, serving after binding, failed with code, message, fix and log
+  after a subsequent startup failure. A failed lock acquisition logs
+  kernel.start_failed and writes nothing; a later startup failure writes
+  failed before dropping the lock. HRC keeps serving on kernel start failure.
+  Standard status, health and perf.snapshot are served; kernel.stop is
+  declared unsupported and directs the operator to HRC's lifecycle.
+  At daemon shutdown, after the HTTP listener stops, HRC stops and joins the
+  wire and shuts down the kernel from spawn_blocking, then removes the
+  record and drops the lock. Loggia's hrc mount moves through registry or
+  config discovery, with its config change coordinated before deployment.
   Before this fold lands, stage 1's separate kernel remains the delivered
   implementation. Since f99c8878 it projects from HRC's native
   ledger through its own read-only state.sqlite connection and sends owner
@@ -412,6 +439,7 @@ authority: >
   of T-12067 section 8.1 at 1e5109af, closing EN-38696 F1 through explicit
   per-node activation order, not a legacy-lock compatibility mechanism.
 source:
+  - wrkq:T-13588
   - wrkq:T-12840
   - wrkc:EN-48621
   - wrkc:EN-48624
@@ -510,6 +538,13 @@ validation_scope: >
   hrc-kernel.sock gate is ops-only registry discovery with six owner operations
   and no document. The former svc/hrcdev kq read gate and embedded rebuild-time
   gate are retired; Praesidium owns projection catch-up and attach verification.
+  T-13588 r2 replaces the old socket/protocol conformance premise with the
+  pinned Cardo suite in just verify against HRC's isolated profile and fakes.
+  Its task-artifact acceptance covers installed protocol 3 discovery, send
+  and refusal shape; Loggia card answers and composer send; post-lock start
+  failure with HRC still serving; lock contention preserving the holder's
+  record; and serving-record presence and clean-shutdown removal. These are
+  requester-owned acceptance obligations, not results of this design review.
   T-12067's folded implementation supplies section 8.1 item 10's four
   product gates: Loggia attach and cold summon without an hrc-kernel
   process on max3; wire_suite.py against a scratch daemon's kernel socket;

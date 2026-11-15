@@ -70,6 +70,12 @@ predicate: >
   Annotation storage, admission, semantic fences, events, home routing and
   the operator write attribution remain unchanged. Historical projection
   descriptions above do not require rusthrc to retain a read projection.
+  Amendment 2026-11-15 (T-13588 r2): the six owner operations are unfenced
+  handlers through cardo_app::parts, replacing HrcAdapter and its refusing
+  executor of record. The hrc-domain operations and LocalOwner/call_local
+  seam remain; HRC alone owns semantic fences and replay, with no Cardo
+  idempotency declaration. Kernel annotation writes retain system:hrc-kernel
+  attribution. This changes no storage, admission, events or read ownership.
 authority: >
   Daedalus approval of T-12183 seat-annotations-lineage r1.1 at e2f87751,
   submitted on the EN-39516 review thread, 2026-10-31. HRC storage ownership,
@@ -79,7 +85,10 @@ authority: >
   amends only the explicit local observation exception and peer refusal.
   The 2026-11-02 praesidium-kernel r1.9 step 6 ruling authorizes retirement
   of rusthrc reads while preserving its operator operations (T-12360).
+  Daedalus approval of T-13588 spec r2 submitted in EN-54676, 2026-11-15,
+  adopts the cardo-lattice-v1 r22 HRC embedding disposition.
 source:
+  - wrkq:T-13588
   - wrkq:T-12362
   - wrkq:T-12183
   - docs/proposals/seat-annotations.md
@@ -106,6 +115,8 @@ validation_scope: >
   T-12360 owns absence of rusthrc documents, observation types, ingest and
   attach, and dispatch/refusal coverage for the six remaining operations;
   Praesidium read parity and mount cutover are separately gated.
+  T-13588 owns protocol 3 conformance and installed Loggia card-answer and
+  composer acceptance; no such run is attested by this design approval.
 last_verified: >
   2026-10-31 design read of r1.1 against active producer contracts, store
   metadata transactions and schema ownership, projector selection and reads,
