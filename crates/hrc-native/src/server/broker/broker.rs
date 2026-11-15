@@ -197,6 +197,16 @@ async fn prepare_dispatch(server: &Shared, birth: &Birth<'_>) -> Result<(Value, 
     let intent = compile::normalize_placement(intent, session, run);
     let daemon = WriterInputs::from_process(&server.runtime);
     let dispatch_env = dispatch_environment(session, &intent, &daemon, run)?;
+    if let Some(dir) = dispatch_env["SCRATCH"].as_str()
+        && let Err(error) = fs::create_dir_all(dir)
+    {
+        // A seat without its scratch dir still starts; it can create the dir itself.
+        controller::log(
+            "warn",
+            "broker.scratch_dir_failed",
+            json!({"scratch":dir,"scopeRef":session["scopeRef"],"error":error.to_string()}),
+        );
+    }
     let mut stored = if run.is_some() { intent.clone() } else { given };
     if run.is_some()
         && let Some(map) = stored.as_object_mut()
@@ -814,6 +824,9 @@ fn dispatch_environment(
             }
         }
     }
+    if let Some(dir) = scratch_dir(daemon.runtime_root, &id) {
+        envs["SCRATCH"] = json!(dir);
+    }
     let mut handle = string(&id, "agentId")?.to_owned();
     if let Some(project) = id["projectId"].as_str() {
         handle.push('@');
@@ -906,6 +919,19 @@ fn dispatch_environment(
     }
     envs["HRC_MAIL_STOP_SOCKET"] = json!(daemon.runtime_root.join("hrc.sock"));
     Ok(envs)
+}
+
+/// The seat's scratch directory, `<var>/scratch/<project>/<task>` (a standing
+/// seat's task segment is its seat name, e.g. `primary`). The var root is read
+/// from a daemon whose runtime root is the canonical `<var>/run/hrc`; any other
+/// layout (a test root) gets none, and so does a scope with no project.
+fn scratch_dir(runtime_root: &Path, id: &Value) -> Option<PathBuf> {
+    let (project, task) = (id["projectId"].as_str()?, id["taskId"].as_str()?);
+    let run = runtime_root.parent()?;
+    if runtime_root.file_name()? != "hrc" || run.file_name()? != "run" {
+        return None;
+    }
+    Some(run.parent()?.join("scratch").join(project).join(task))
 }
 
 /// Steps 3 and 4 of the managed composition: HRC's plumbing ids over its own
