@@ -43,7 +43,7 @@ r3 replaces r2.2's stage 1 and adds the repository rules:
 - **One repository**, with independent native development and both-implementation compatibility qualification (§2).
 - **Cardo prerequisites:** all of them are on cardo main at 12bd05d (§3).
 
-This page owns the HRC side of the port: the repository layout, the stages, independent native development in stage 2, the compatibility contract, install and fleet, and the process budget. The cardo work lives in cardo's `docs/explorations/pre-hrc-cardo-gaps.md`, which this page cites by item number (`cardo B6`) and does not restate.
+This page owns the HRC side of the port: the repository layout, the stages, independent native development in stage 2, the compatibility contract, install and fleet, and the process budget. The cardo work lived in cardo's `docs/explorations/pre-hrc-cardo-gaps.md`, which this page cites by item number (`cardo B6`) and does not restate. That campaign is complete. cardo deleted the file at 46bfa67, and its content is now carried by cardo's `cardo-subscriptions-v1.md`, `cardo-projections-v1.md` and `cardo-wire-v2.md`. The last copy, for the item numbers, is `git show 043e940:docs/explorations/pre-hrc-cardo-gaps.md` in cardo.
 
 ## 0. Rulings and scope
 
