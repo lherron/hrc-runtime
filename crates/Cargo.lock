@@ -147,7 +147,7 @@ checksum = "fc652a48c352aef3ea3aed32080501cf3ef6ed5da78602a020c991775b0aff04"
 [[package]]
 name = "cardo-app"
 version = "0.1.0"
-source = "git+https://github.com/lherron/cardo?rev=56dbfb4#56dbfb48d261b5215859e66323ddf11c66a2918d"
+source = "git+https://github.com/lherron/cardo?rev=088b73e#088b73ef62c97608bef100c676af7b569d8732c4"
 dependencies = [
  "cardo-core",
  "cardo-execution",
@@ -164,7 +164,7 @@ dependencies = [
 [[package]]
 name = "cardo-core"
 version = "0.1.0"
-source = "git+https://github.com/lherron/cardo?rev=56dbfb4#56dbfb48d261b5215859e66323ddf11c66a2918d"
+source = "git+https://github.com/lherron/cardo?rev=088b73e#088b73ef62c97608bef100c676af7b569d8732c4"
 dependencies = [
  "im",
  "regex",
@@ -175,7 +175,7 @@ dependencies = [
 [[package]]
 name = "cardo-execution"
 version = "0.1.0"
-source = "git+https://github.com/lherron/cardo?rev=56dbfb4#56dbfb48d261b5215859e66323ddf11c66a2918d"
+source = "git+https://github.com/lherron/cardo?rev=088b73e#088b73ef62c97608bef100c676af7b569d8732c4"
 dependencies = [
  "cardo-core",
  "serde_json",
@@ -184,7 +184,7 @@ dependencies = [
 [[package]]
 name = "cardo-runtime"
 version = "0.1.0"
-source = "git+https://github.com/lherron/cardo?rev=56dbfb4#56dbfb48d261b5215859e66323ddf11c66a2918d"
+source = "git+https://github.com/lherron/cardo?rev=088b73e#088b73ef62c97608bef100c676af7b569d8732c4"
 dependencies = [
  "cardo-core",
  "cardo-execution",
@@ -199,7 +199,7 @@ dependencies = [
 [[package]]
 name = "cardo-store"
 version = "0.1.0"
-source = "git+https://github.com/lherron/cardo?rev=56dbfb4#56dbfb48d261b5215859e66323ddf11c66a2918d"
+source = "git+https://github.com/lherron/cardo?rev=088b73e#088b73ef62c97608bef100c676af7b569d8732c4"
 dependencies = [
  "crossbeam-channel",
  "rusqlite",
