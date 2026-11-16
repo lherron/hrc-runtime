@@ -1,8 +1,10 @@
 # HRC's cardo conformance profile
 
-`run.py` imports `wire_suite.py` and `embed_suite.py` from Cargo's checkout of
-exactly the revision pinned in `crates/Cargo.toml`. It never imports another
-project's moving checkout. The suites start private real rusthrc processes on
+`run.py` imports `wire_suite.py` and `embed_suite.py` from a revision-specific
+source cache under `crates/target/cardo-conformance`, fetched from cardo main
+and checked against exactly the revision pinned in `crates/Cargo.toml`.
+It works when rbuild supplies binaries without a local Cargo checkout. It never
+imports another project's moving checkout. The suites start private real rusthrc processes on
 short scratch roots; no installation or shared daemon is used.
 
 HRC has six unfenced owner operations, no cardo idempotency, no graphs, no
@@ -25,8 +27,9 @@ python3 conformance/hrc/run.py --binary crates/target/debug/rusthrc \
 
 The cardo CLI must be built from the same pin. `just conform-hrc` supplies it.
 
-`just verify` runs the imported embed suite. Its reload cell reports n/a because
-HRC has no directory. The wire suite remains enabled under the explicit
-`just conform-hrc <binary> wire` (or default `both`) recipe while cardo T-13595
-fixes applicability of query/replay/perf/batch to a kernel with no graphs.
-No product-side class skips or suite substitutes are used.
+`just verify` runs both imported suites. The embed reload cell reports n/a
+because HRC has no directory. The wire suite uses discovery to report its graph
+classes n/a because HRC has no graph, node type or ingest operation. Envelope,
+generation, refusal shape and discovery are graded on HRC's actual wire.
+No product-side class skips or suite substitutes are used. For a diagnostic run,
+`just conform-hrc <binary> wire` or `embed` selects one suite.

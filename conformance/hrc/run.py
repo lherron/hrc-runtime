@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Run cardo's exact pinned wire and embedder suites against private HRC hosts."""
 import argparse
+import fcntl
 import os
 from pathlib import Path
 import subprocess
@@ -13,7 +14,12 @@ ROOT = Path(__file__).resolve().parents[2]
 
 def git_environment():
     # A pre-push hook exports GIT_DIR, which otherwise overrides git -C.
-    return {k: v for k, v in os.environ.items() if not k.startswith('GIT_')}
+    routing = {'GIT_DIR', 'GIT_WORK_TREE', 'GIT_COMMON_DIR', 'GIT_INDEX_FILE',
+               'GIT_OBJECT_DIRECTORY', 'GIT_ALTERNATE_OBJECT_DIRECTORIES',
+               'GIT_PREFIX', 'GIT_INTERNAL_SUPER_PREFIX', 'GIT_SHALLOW_FILE',
+               'GIT_GRAFT_FILE', 'GIT_QUARANTINE_PATH'}
+    # Preserve Git transport/config variables: mini uses them for SSH auth.
+    return {k: v for k, v in os.environ.items() if k not in routing}
 
 
 def pinned_cardo():
@@ -22,14 +28,30 @@ def pinned_cardo():
     if len(revs) != 1:
         raise RuntimeError('cardo crates must pin one revision')
     rev = revs.pop()
-    cargo = Path(os.environ.get('CARGO_HOME', Path.home() / '.cargo'))
-    for p in (cargo / 'git/checkouts').glob('cardo-*/*'):
-        if (p / 'conformance/wire_suite.py').is_file():
-            head = subprocess.check_output(['git', '-C', str(p), 'rev-parse', 'HEAD'],
-                                           text=True, env=git_environment()).strip()
-            if head.startswith(rev):
-                return p, head
-    raise RuntimeError(f'Cargo checkout for {rev} absent; build HRC first')
+    # rbuild supplies binaries without populating the consumer's Cargo cache.
+    # Keep one immutable source checkout per pin, independent of local builds.
+    cache = ROOT / 'crates/target/cardo-conformance'
+    cache.mkdir(parents=True, exist_ok=True)
+    checkout = cache / rev
+    env = git_environment()
+    with (cache / '.lock').open('a') as lock:
+        fcntl.flock(lock, fcntl.LOCK_EX)
+        if not checkout.exists():
+            with tempfile.TemporaryDirectory(prefix='fetch-', dir=cache) as tmp:
+                subprocess.run(['git', 'init', '-q', tmp], check=True, env=env)
+                # Pins are main revisions. Fetch its history so abbreviated
+                # Cargo pins resolve too; verify the resolved commit below.
+                subprocess.run(['git', '-C', tmp, 'fetch', '--quiet', '--no-tags',
+                                'https://github.com/lherron/cardo', 'refs/heads/main'],
+                               check=True, env=env)
+                subprocess.run(['git', '-C', tmp, 'checkout', '--quiet', '--detach', rev],
+                               check=True, env=env)
+                Path(tmp).rename(checkout)
+        head = subprocess.check_output(['git', '-C', str(checkout), 'rev-parse', 'HEAD'],
+                                       text=True, env=env).strip()
+        if not head.startswith(rev):
+            raise RuntimeError(f'cardo source cache has {head}, expected {rev}')
+    return checkout, head
 
 
 def main():
