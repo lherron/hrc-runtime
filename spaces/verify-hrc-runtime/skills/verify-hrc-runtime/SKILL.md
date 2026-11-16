@@ -63,7 +63,8 @@ Scratch or live:
   `~/.bun/bin/hrc monitor show|watch|events|transcript|stats|search`, `~/.bun/bin/hrc runtime list|inspect|diagnostics`,
   `~/.bun/bin/hrc admin metrics report|routes`, `~/.bun/bin/hrc target bindings` and dry-run `admin runs`. Its log is
   `~/praesidium/var/logs/hrc-runtime/rusthrc-owner.log` (JSON lines `{ts, server:"rusthrc", level, component,
-  event, data}`); `hrc-server.log` there is the Bun owner's, frozen at 2026-10-26T15:37Z. Use live when the claim is about the installed node itself: its release, its federation, its
+  event, data}`), rotated to `rusthrc-owner.log.<stamp>.<pid>.gz` siblings (read those for anything older than the
+  current file, such as the nightly `retention.report`); `hrc-server.log` there is the Bun owner's, frozen at 2026-10-26T15:37Z. Use live when the claim is about the installed node itself: its release, its federation, its
   bindings.
 - **Never** restart or stop the live daemon (`~/.bun/bin/hrc server restart|stop`), run `just install`, publish, deploy
   or retire on live from this skill. Those belong to Mable primary (restart) and the install doctrine
@@ -72,8 +73,9 @@ Scratch or live:
 - Test **what is installed.** `hv` runs the installed `hrc` CLI (`~/.bun/bin/hrc` → the current release's
   `bin/rusthrc`, the native CLI) and a byte copy of that release as the scratch daemon, not the checkout. A
   change is not testable here until it is installed; until then say so. Since 2026-10-26 production is native
-  on both sides: the live daemon is `rusthrc server serve` from the owner tree
-  (`~/praesidium/var/hrc-owner/hrc-runtime-current`) and the CLI is `rusthrc`. Every CLI verb, its help and grammar errors are native; the hand-maintained
+  on both sides: the live daemon is `rusthrc server serve` from the owner tree's
+  signed fixed exe (`~/praesidium/var/hrc-owner/bin/rusthrc`, a re-signed copy of the owner current release's bin,
+  since the plist switch seen 2026-11-16; feature 6) and the CLI is `rusthrc`. Every CLI verb, its help and grammar errors are native; the hand-maintained
   `crates/hrc-cli/surface.json` owns the grammar. The CLI has no Bun fallback.
   `admin events drain` refuses incompatible ledgers without migrating: unsupported
   baseline/ahead sets name the runner's refusal, and pending forward migrations
@@ -94,9 +96,9 @@ hv run t-xxxxx -- ~/.bun/bin/hrc doctor       # scratch: single-node, no binding
 ```
 
 On max3 `~/.bun/bin/hrc doctor` prints one `+ placement-policy` row counting dormant bindings whose declared policy
-is unreadable (466 on 2026-11-09) and one `+ federation-peer:<node>` row per peer. It warns (`~ placement-policy`,
+is unreadable (476 on 2026-11-16) and one `+ federation-peer:<node>` row per peer. It warns (`~ placement-policy`,
 one row per cause) only for bindings with a live runtime; those are registry data, not a reason to stop, and
-`--strict` turns them into exit 1 (rc 0 on 2026-11-09, feature 1). Every `~/.bun/bin/hrc server status
+`--strict` turns them into exit 1 (rc 0 on 2026-11-16, feature 1). Every `~/.bun/bin/hrc server status
 --json` path is nested (`.release.runningEqualsInstalled`, `.node.nodeId`); a top-level read answers `null`
 for a path that doesn't exist. `~/.bun/bin/hrc info` lists the paths.
 

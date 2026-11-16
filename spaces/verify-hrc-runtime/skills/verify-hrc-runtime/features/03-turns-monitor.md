@@ -6,14 +6,19 @@ invocation ledger (invocation-local `seq`). Native code (installed `hrc` = rusth
 (events, transcript, stats), `crates/hrc-store/src/monitor_read.rs`; daemon `crates/hrc-native/src/server/turns/`,
 `server/projection/{forensics,transcript}.rs`, `server/projection/projection/{events,context}.rs`. `monitor search`
 is native (`crates/hrc-cli/src/monitor/search.rs`, with the FTS index in
-`crates/hrc-store/src/transcript_index.rs`); its route `POST /v1/transcript-search`
-is native too (`server/projection/transcript.rs`). Docs: `docs/cli-surface.md` (turn, monitor), `docs/monitor-spec.md`.
+`crates/hrc-store/src/transcript_index.rs`) and always asks the daemon (`POST /v1/transcript-search`,
+`server/projection/transcript.rs`, search.rs:279); the `hrc index status|rebuild` group and its
+`/v1/transcript-index/*` routes are gone (f682cba8; `unknown command: index`, 404, 2026-11-16). Docs: `docs/cli-surface.md` (turn, monitor), `docs/monitor-spec.md`.
 
 ## Sub-features
 
 - `~/.bun/bin/hrc turn <target> [prompt] [--dry-run] [--wait final] [--timeout D] [--as P] [--queue|--steer|--preempt]`:
   the default door is steer (`POST /v1/submissions/{steer,enqueue,preempt}`, turn/mod.rs:151; a scope with no
-  session births through `/v1/messages/turn-handoff`, :308). `--dry-run` prints the plan (`placementResolution`,
+  session births through `/v1/messages/turn-handoff`, :322; a session with no applied runtime intent falls through
+  to the same birth after its steer is refused `missing_runtime_intent`, notice "the session has no applied runtime
+  intent; birthing it with the resolved intent", :274-284, ac0783f8, source-only). `--wait` takes only `final`
+  ("unsupported --wait mode for turn", rc 2) and defaults to `--timeout 45m`; `--queue|--preempt --wait` add
+  `turnPolicy: guarded` (source-only, 2026-11-16: turn/options.rs:151-173, mod.rs:244-247). `--dry-run` prints the plan (`placementResolution`,
   `runtimeIntent`) without dispatching. `--wait final` blocks and prints one JSON with `outcome`, `effectiveDoor`,
   `stage: terminal` and `terminal.finalMessage` (2026-11-02, T-12291: `completed`, `steer`, `TWO`). A `--wait`
   timeout exits 1 `result: wait_timeout`, a failed terminal exits 4 `turn failed: <code>` (source-only, 2026-11-02:
@@ -50,9 +55,10 @@ is native too (`server/projection/transcript.rs`). Docs: `docs/cli-surface.md` (
   (2026-11-02, T-12291); stats also emits `turnCount`, `toolCallCount`, `perTurn[]` (2026-11-09, T-12756).
 - A cold-scope turn (no session; births through `/v1/messages/turn-handoff`) writes one `message.response`
   lifecycle row; a warm steer writes none (1 vs 0 on 2026-11-09, `T-12756/03-turns-monitor/drive-extra.txt`).
-- `~/.bun/bin/hrc monitor search <query> [--json]`: native FTS search, including local read-only
-  searches of the native index. Answer `{mode: "discovery", hits: [{turnRowid, invocationId,
-  runtimeId, scopeRef, generation, seqFrom, seqTo, terminalStatus, userText, finalText, …}]}`.
+- `~/.bun/bin/hrc monitor search <query> [--json]`: native FTS search through the daemon (no local path; it needs a
+  socket). Answer `{mode: "discovery", hits: [{turnRowid, invocationId, runtimeId, agent, project, task,
+  scopeRef, generation, seqFrom, seqTo, terminalStatus, userText, finalText, snippet, score, …}], index}`
+  (2026-11-16). Listed under `hrc monitor --help`, no longer in the agent-view top-level help.
   It needs neither Bun on PATH nor the retained CLI package (T-13053, T-13058).
 - `~/.bun/bin/hrc monitor session-report --runtime <id> [--json]`: `{target, runtimeId, scopeLabel, finalSummary,
   finalSummaryRecovery}`; on a ready runtime `finalSummary: null`, `state: terminal_fenced`, "runtime is ready;
@@ -93,7 +99,8 @@ hv run <task> -- ~/.bun/bin/hrc monitor session-report --runtime $R --json
   (`stage: "terminal"`, `.terminal.finalMessage`). On a cold scope (no runtime; the turn births it) it prints
   `render_frame` NDJSON instead (`{"type":"render_frame","phase":"queued"|"final","blocks":[{"t":"markdown",
   "md":"OK"}]}`, two lines) and no `.terminal`, so `jq .terminal.finalMessage` reads `null` for a turn that
-  completed (2026-11-02, T-12291 `10-hv-redrive/cold-turn.json`; product task T-12306 item 5). On a cold scope
+  completed (2026-11-02, T-12291 `10-hv-redrive/cold-turn.json`; product task T-12306 item 5; same two frames on
+  2026-11-16). On a cold scope
   read the last frame with `phase == "final"` (`hrc turn` births a cold scope on its message; no separate start is needed).
 - **`--until turn-finished` armed after the turn has finished waits for the next one.** On 2026-11-02 it armed
   4 s after the seat went idle, sat out 120 s and ended `result: timeout`, `outcome: not_matched`, `exitCode: 20`
@@ -114,11 +121,13 @@ hv run <task> -- ~/.bun/bin/hrc monitor session-report --runtime $R --json
   crates/hrc-cli/src/monitor/engine.rs:~100-105). On 2026-10-26 (Bun) `--until-all idle` armed on dead gen 1 and
   exited 12. On 2026-11-02 `$T $T --until-all idle` exited 10 on the live gen-4 runtime 5 of 5, but the live
   hsid (`c83f…`) sorted last of four, so that is no discriminator: T-11869 is neither reproduced nor cleared.
-  Same on 2026-11-09: exit 10 on live gen 3, whose hsid `cf55…` sorted last of three (`aa36…`, `39aa…`).
+  Same on 2026-11-09: exit 10 on live gen 3, whose hsid `cf55…` sorted last of three (`aa36…`, `39aa…`), and on
+  2026-11-16: live gen 3 `f550…` sorted last of `383c…`, `6ade…`.
   Read the `monitor.armed` members before you trust a set wait's exit code.
 - **A bare word is an agent, not a task.** `~/.bun/bin/hrc monitor wait bareword …` resolves `agent:bareword/lane:main`:
   `error: unknown session "agent:bareword/lane:main"`, rc 2 (2026-11-02, T-12291). For a set-shaped selector
-  in a drive, pass two selectors.
+  in a drive, pass two selectors. Still so after the selector grammar moved onto `hrc_common::scope` (6c630307;
+  2026-11-16).
 - **`monitor watch --last 10` misses the turn's `turn.user_prompt`.** One turn writes 17 rows; `--last 10`
   started at `turn.started` (2026-11-02, T-12291). Use `--last 20` or `--from-seq` from `observation.lifecycle.fromSeq`.
 - **The monitor CLI reads the store directly.** `show`, `wait`, `watch` open the dialed daemon's `/v1/status`
@@ -129,7 +138,7 @@ hv run <task> -- ~/.bun/bin/hrc monitor session-report --runtime $R --json
   the claude CLI** ("Unknown Claude attachment type: …" on 2026-10-05, "Unknown Claude transcript row type:
   api-request-blob|api-request|…" on 2026-10-19 and 10-26). The parser is ASP's (`agent-spaces/harness/
   harness-broker/src/drivers/claude-code-tmux/hook-transcript.ts`). Count them from `monitor stats --json`
-  `.eventTypes["capture.warning"]` (4 on 2026-11-09) or `~/.bun/bin/hrc runtime status --json` / `capture status`
+  `.eventTypes["capture.warning"]` (4 on 2026-11-09, 3 on 2026-11-16) or `~/.bun/bin/hrc runtime status --json` / `capture status`
   `.capture.blockedUnknown[]` (`session-owner` on 2026-11-09; feature 2). Not a turn failure; don't pin a count or a
   type list.
 - `monitor show --json` has no top-level `status`; the runtime's status is under `.runtime`.
@@ -143,7 +152,7 @@ the turns; `search` finds the prompt; `wait --until idle` exits 10;
 exits 2 and `--until-all idle` exits 10 when its armed members are the live runtimes (on a resumed scope only
 once T-11869 is fixed or the live hsid is shown not to sort last).
 
-Driven 2026-11-09 (T-12756 upkeep) on a native scratch (rusthrc, release-20261108171912823-43877, 846648d8),
-scratch `t-12756` (turn on restarted generation 3, hrcpty; eight `turn.completed` over the scratch; the set wait
+Driven 2026-11-16 (T-13633 upkeep) on a native scratch (rusthrc, release-20261116031606289-34371, 439a7d34),
+scratch `t-13633` (turn on restarted generation 3, hrcpty; seven `turn.completed` over the scratch; the set wait
 was again no T-11869 discriminator; plus the armed `turn-finished` wait and a cold-scope turn):
-`~/praesidium/var/wrkq-artifacts/T-12756/{03-turns-monitor,04-http-api,evidence/t-12756}`.
+`~/praesidium/var/wrkq-artifacts/T-13633/{03-turns-monitor,04-http-api,evidence/t-13633}`.

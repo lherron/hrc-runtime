@@ -22,22 +22,31 @@ release into `~/praesidium/var/hrc-owner/hrc-runtime-releases/` and repoints
   since 54c56b7c; ad-hoc signed `Identifier=rusthrc-<hash>`, 2026-11-09). The embedded kernel runs inside the owner rusthrc and shares its
   release and lifetime; the T-12019 separate-kernel install gate retired in T-12141.
 - The owner tree (T-11930, 16dde77a): launchd `com.praesidium.hrc-server` runs `praesidium-launch
-  ~/praesidium/var/hrc-owner/hrc-runtime-current/bin/rusthrc server serve`. `hrc-owner.sh stage` proceeds on a
+  ~/praesidium/var/hrc-owner/bin/rusthrc server serve`, the signed fixed exe (2026-11-16; through 2026-11-09 the
+  plist named `hrc-owner/hrc-runtime-current/bin/rusthrc`). That exe is the owner release's `bin/rusthrc` re-signed
+  with the identity in `var/hrc-owner/codesign.identity` (`Identifier=com.praesidium.rusthrc`, `TeamIdentifier=not
+  set`), so `cmp` against the release bin differs by design (hrc-owner.sh:323-329); prove it is current by
+  `var/hrc-owner/bin/rusthrc --version`, which names `releaseId <owner current>, sourceCommit <sha>` (the stage
+  probe requires that, hrc-owner.sh:338-346). It still reports `release.mode atomic` with the owner release as
+  `releasePath`. `hrc-owner.sh` verbs: `kind` (prints `rusthrc`), `log-path`, `schema-state`, `stage`, `log-mark`,
+  `boot-check`, `refresh-plist`, `bootstrap`. `hrc-owner.sh stage` proceeds on a
   `current` or `pending` store and backs the store up first when `pending` (T-13056). `hrc-owner.sh schema-state
   [--exe <rusthrc>]` is a read-only probe through the installed release's own `rusthrc store state` (the
   runner's read-only classification, no lock, never creates) printing `current|pending|ahead|below_baseline|
   not_hrc|absent|unreadable`; `just deploy-*` proceeds only on `current|pending`. A build that predates `store
-  state` is read through its `server status` schema, `current` only when nothing is pending. The T-12224 fixed exe
-  `var/hrc-owner/bin/rusthrc` exists but the plist does not use it; it is byte-identical to the release bin
-  (`cmp`, `TeamIdentifier=not set`; 2026-11-02, T-12291). Both `current` manifests were identical
-  (release-20261102082222127-69529, 9861ae0e, installedAt 08:23:34Z).
+  state` is read through its `server status` schema, `current` only when nothing is pending. Both `current` manifests were identical
+  (release-20261116031606289-34371, 439a7d34, installedAt 03:17:25Z, 2026-11-16); `aspContracts` lists five since
+  30c1ed3e (`agent-scope`, `cli-kit`, `spaces-harness-broker-protocol`, `spaces-harness-broker-client`,
+  `spaces-runtime-contracts`). A release is `bin/{rusthrc,hrc-pty}` plus `.inputs`, `node_modules`, the manifest and
+  the remaining TS packages (`agent-action-render`, `hrc-core`, `hrc-events`, `hrc-frame-render`, `hrc-sdk`; the
+  stage prune runs `packages/hrc-core/dist/release-prune.js`).
 - The daemon's view: `~/.bun/bin/hrc server status --json` `.release` (mode atomic, releaseId, releasePath, manifestPath,
   `hrcBuild.sourceCommit`, aspContracts, installedAt, processStartedAt, `runningEqualsInstalled`);
-  `binaryPath`/`packagePath` are the owner link spelling
-  (`…/var/hrc-owner/hrc-runtime-current/bin/rusthrc`); schema `0131_runtime_live_indexes`, `pending: []`
-  (2026-11-09, T-12756). `runningEqualsInstalled` compares releasePath with `releasePath/../../hrc-runtime-current`, the
+  `binaryPath`/`packagePath` are `current_exe`, so they follow the plist: `…/var/hrc-owner/bin/rusthrc` and
+  `…/var/hrc-owner/bin` on 2026-11-16 (the owner link spelling through 2026-11-09); schema
+  `0134_participant_hrc_launched_owner`, `pending: []` (2026-11-16). `runningEqualsInstalled` compares releasePath with `releasePath/../../hrc-runtime-current`, the
   OWNER link, so after `just install` without `hrc-owner.sh stage` it still reads `true` (source-only,
-  2026-11-09: front/release.rs:110-133). Install moves `~/.bun` current, stage moves the owner's, only `hrc
+  2026-11-16: front/release.rs:111-133). Install moves `~/.bun` current, stage moves the owner's, only `hrc
   server restart` moves "running": compare `basename "$(readlink ~/.bun/install/hrc-runtime-current)"` with
   `.release.releaseId` yourself.
 - The dirty guard: `bun scripts/install-dirty-guard.ts --source-root=$PWD` refuses tracked source
@@ -52,8 +61,8 @@ release into `~/praesidium/var/hrc-owner/hrc-runtime-releases/` and repoints
   `00-guard`); the daemon-start prune `server.start.release_prune` is Bun only. `hrc-owner.sh stage` prunes the
   owner tree as its last step (T-12695): it keeps current, the newest 5, the daemon's release and any held by a
   live process, and prints `[stage] release prune: …` or `… skipped: <reason>; nothing deleted`
-  (hrc-owner.sh:250-301). The tree went from 53 (2026-11-02) to 17 (2026-11-09, 2.8 GB): the newest 5 plus 12
-  older ones, each named by ≥1 live process argv (`T-12756/06-install-release/drive.txt`).
+  (hrc-owner.sh:212-263). The tree went from 53 (2026-11-02) to 17 (2026-11-09, 2.8 GB) to 16 (2026-11-16, 2.2 GB):
+  the newest 5 plus 11 older ones, each named by ≥1 live process argv (`T-13633/06-install-release/drive.txt`).
 - `hrc-owner.sh stage` on a `pending` store writes a `pre-activate-*.sqlite` backup with `rusthrc store backup`
   (`VACUUM INTO`, read-only, passes `quick_check`) after a free-space check (store + WAL + 2 GiB), and deletes
   no older backup (T-13056); the daemon then migrates at boot. Backups written by the retired Bun `activate` left `-shm`/`-wal` siblings behind (one 25 GB backup plus both siblings in
@@ -87,8 +96,10 @@ dirty guard from the canonical checkout. A native scratch (`hv scratch up`) is t
 readlink ~/.bun/bin/hrc ~/.bun/bin/rusthrc ~/.bun/install/hrc-runtime-current ~/praesidium/var/hrc-owner/hrc-runtime-current
 for m in ~/.bun/install ~/praesidium/var/hrc-owner; do jq -c '{releaseId, src: .hrcBuild.sourceCommit, installedAt}' $m/hrc-runtime-current/praesidium-release.json; done
 ls ~/.bun/install/hrc-runtime-releases | wc -l; ls ~/praesidium/var/hrc-owner/hrc-runtime-releases | wc -l; du -sh ~/praesidium/var/hrc-owner/hrc-runtime-releases
-plutil -extract ProgramArguments json -o - ~/Library/LaunchAgents/com.praesidium.hrc-server.plist   # link, not bin/rusthrc
-cmp ~/praesidium/var/hrc-owner/bin/rusthrc ~/.bun/install/hrc-runtime-current/bin/rusthrc && echo identical
+plutil -extract ProgramArguments json -o - ~/Library/LaunchAgents/com.praesidium.hrc-server.plist   # var/hrc-owner/bin/rusthrc (fixed exe)
+~/praesidium/var/hrc-owner/bin/rusthrc --version; codesign -dv ~/praesidium/var/hrc-owner/bin/rusthrc 2>&1 | grep -E 'Identifier|TeamIdentifier'   # releaseId = owner current; cmp differs (re-signed)
+jq -c '.aspContracts|map(.name)' ~/.bun/install/hrc-runtime-current/praesidium-release.json
+bash ~/praesidium/hrc-runtime/scripts/hrc-owner.sh kind; bash ~/praesidium/hrc-runtime/scripts/hrc-owner.sh schema-state 2>/dev/null   # rusthrc, current
 ~/.bun/bin/hrc server status --json | jq -c '{binaryPath, release: (.release|{mode, releaseId, src: .hrcBuild.sourceCommit, runningEqualsInstalled}), schema: (.schema|{storeVersion, pending, schemaAhead})}'
 basename "$(readlink ~/.bun/install/hrc-runtime-current)"         # == .release.releaseId, else install is ahead of running
 P=$(~/.bun/bin/hrc server status --json | jq -r .pid); lsof -nP -p $P | awk '{print $NF}' | grep -E 'hrc-owner|hrc-runtime-releases|rusthrc-owner' | sort -u
@@ -101,13 +112,16 @@ cd ~/praesidium/hrc-runtime && bun scripts/install-dirty-guard.ts --source-root=
 
 - **Installed lagging HEAD is the usual state.** On 2026-10-26 installed and running were 02661aeb, six commits
   behind HEAD = origin/main. On 2026-11-02 `~/.bun` current, owner current and `.release` all named 9861ae0e
-  (T-12291); on 2026-11-09 all three named 846648d8, one docs commit behind HEAD 694e6931 (T-12756). Compare the claim's commit with `.release.hrcBuild.sourceCommit` and both `current` links, not
+  (T-12291); on 2026-11-09 all three named 846648d8, one docs commit behind HEAD 694e6931 (T-12756); on 2026-11-16 all three named 439a7d34 = HEAD (T-13633). Compare the claim's commit with `.release.hrcBuild.sourceCommit` and both `current` links, not
   with HEAD.
 - **`runningEqualsInstalled: true` is not "the latest install is running" on an owner node.** It compares
   against the owner link only; an install that was never staged still reads `true` (source-only, 2026-11-02:
   front/release.rs:110-133).
-- **The daemon holds no manifest.** lsof on pid 81530 showed only the owner release's `bin/rusthrc` and
-  `rusthrc-owner.log` (2026-11-02, T-12291). "Every atomic daemon holds its own manifest for life" is Bun only.
+- **The daemon holds no manifest, and no release file at all under the fixed exe.** lsof on pid 81530 showed only the
+  owner release's `bin/rusthrc` and `rusthrc-owner.log` (2026-11-02, T-12291); pid 37077 showed only
+  `var/hrc-owner/bin/rusthrc` and the log (2026-11-16), so lsof no longer names the running release: read
+  `.release.releasePath` and the exe's `--version`. It holds `var/run/hrc/kernel.sock` (with `hrc-kernel.sock` a
+  legacy symlink to it). "Every atomic daemon holds its own manifest for life" is Bun only.
 - **A held owner release outlives its holders until the next stage.** 16 of 53 staged releases were held by
   live processes on 2026-11-02, mostly `hrc-pty` seat supervisors, some with a link-spelled argv (T-12291
   sources/06.md §0), so the owner-tree prune relies on the lsof/txt holder probe as well as argv (T-12695). In
@@ -128,15 +142,17 @@ cd ~/praesidium/hrc-runtime && bun scripts/install-dirty-guard.ts --source-root=
 
 ## Proven when
 
-`~/.bun` current, owner current, both manifests and `server status` name the same releaseId and sourceCommit
-with `runningEqualsInstalled: true`, and lsof on the daemon pid shows the owner release's `bin/rusthrc`;
+`~/.bun` current, owner current, both manifests, the fixed exe's `--version` and `server status` name the same
+releaseId and sourceCommit with `runningEqualsInstalled: true`, the plist and `binaryPath` name
+`var/hrc-owner/bin/rusthrc`, and lsof on the daemon pid shows that exe;
 `~/.bun/install/hrc-runtime-releases` holds current plus whatever the last install prune's `heldBy` named; the
 owner tree count is recorded and every release outside the newest 5 is held by a live process (stage prunes
 the rest); a native scratch
 reports `unmanaged` and leaves both trees unchanged; the dirty guard passes on a clean tree and names the files
 on a dirty one. Install → stage → restart is operator-only and is proven on the operator's run.
 
-Driven 2026-11-09 (T-12756 upkeep, live read-only + native scratch, rusthrc release-20261108171912823-43877,
-846648d8): `~/praesidium/var/wrkq-artifacts/T-12756/{06-install-release,live}` (trees identical before and after
-the scratch; dirty guard rc 0 on a clean tree; `schema-state` `current`). Not driven: install, stage, activate,
-restart (needs operator); the dirty guard's refusal (no dirty tree today).
+Driven 2026-11-16 (T-13633 upkeep, live read-only + native scratch, rusthrc release-20261116031606289-34371,
+439a7d34 = HEAD): `~/praesidium/var/wrkq-artifacts/T-13633/{06-install-release,live,00-guard}` (trees identical
+before and after the scratch; dirty guard rc 0 on a clean tree; `schema-state` `current`; 11 of 11 older owner
+releases argv-held). Not driven: install, stage, restart (needs operator); the dirty guard's refusal (no dirty
+tree today).

@@ -3,12 +3,14 @@
 The daemon's HTTP surface on its unix socket, served by `rusthrc server serve`. Every native `hrc` verb rides it
 (serve.log `client: rusthrc/0.1.0`), alongside the harness broker
 (`harness-broker/0.1.0`); ACP and the viewer are its other clients; the hosted kernel enters the dispatcher
-in-process. 103 method+path routes at 846648d8 (101 at 9861ae0e, plus `GET /v1/doctor` and `GET
-/v1/broker-stats`, 2c947087): 87 literals in `implemented()`, the `/v1/sessions/by-host/` prefix,
+in-process. 98 method+path routes at 439a7d34 (source count, 2026-11-16: 103 at 846648d8, less the seven f682cba8
+retired — GET `/v1/surfaces`, `/v1/transcript-index/status`; POST `/v1/runtimes/ensure`, `/v1/runs/recover-unstarted`,
+`/v1/surfaces/unbind`, `/v1/capture/recover`, `/v1/transcript-index/rebuild` — plus GET `/v1/streams/open` and POST
+`/v1/participants/unpark`): the literals in `implemented()`, the `/v1/sessions/by-host/` prefix,
 `GET /v1/runtimes/<id>/seat`, `GET|PUT /v1/sessions/work`, `PATCH /v1/sessions/metadata`, 5 `GET /v1/events*`, 4
 annotation routes (6 of them, the seat-handoffs and sessions/work routes, are prae-rev1's). This feature drives the
-observation routes a consumer pages. Code: `crates/hrc-native/src/server.rs` (`dispatch_inner` :448,
-`implemented` :812), `server/projection/{lifecycle_events,streams}.rs`, `server/placement/federation/routing.rs`,
+observation routes a consumer pages. Code: `crates/hrc-native/src/server.rs` (`dispatch_inner` :457,
+`implemented` :784), `server/projection/{lifecycle_events,streams}.rs`, `server/placement/federation/routing.rs`,
 `server/front/proxy.rs`, `crates/hrc-store/src/events.rs`. Contract: `docs/lifecycle-event-tail.md`.
 
 ## Sub-features
@@ -18,7 +20,12 @@ observation routes a consumer pages. Code: `crates/hrc-native/src/server.rs` (`d
 - `GET /v1/events/tail?limit=N[&beforeHrcSeq=S&ledgerIncarnationId=I][&<filters>]`: newest page in
   ascending `hrcSeq`, with `ledgerIncarnationId`, `headHrcSeq` (the global head, not the page's) and
   `truncated` (older matching rows exist). Filters: `hostSessionId`, `generation`, `scopeRef`, `laneRef`,
-  `runtimeId`, `runId`, `category`, `eventKind`, `sourceRef` (lifecycle_events.rs:65-90, tail :141-173).
+  `runtimeId`, `runId`, `category`, `eventKind`, `sourceRef`, and since d01da18b `fromTs`/`toTs` (inclusive) and
+  `liveOnly=true|false` (`evidence_origin IS NULL`) (lifecycle_events.rs:65-103, tail :154-200). `afterSeq=S` is an
+  exclusive lower bound that returns the newest `limit` rows above S. Live read-only on 2026-11-16: `afterSeq=head-10&limit=3`
+  gave the newest three, `truncated: true`; `afterSeq=-1` 400 "afterSeq must be a safe integer greater than or equal
+  to 0"; `liveOnly=x` 400 "liveOnly must be true or false"; `liveOnly=true&fromTs=…&toTs=…` stayed inside the window
+  (`T-13633/04-http-api/drive-live.txt`).
   Since 84dfd19d `category` and `eventKind` each take a comma list, and with both a row passes if it matches
   **either**: `category=session&eventKind=turn.completed` returned `session.*` rows and `turn.completed` rows
   (2026-11-09, `T-12756/04-http-api/drive-extra.txt`). An empty list (`eventKind=,`, `category=,`) is 400
@@ -29,9 +36,9 @@ observation routes a consumer pages. Code: `crates/hrc-native/src/server.rs` (`d
   none). An unresolvable home is a retryable 503 `session_home_pending|unknown|unreachable|malformed`, and `GET
   /v1/runs`, bounded-stream, `sessions/get|metadata|work|annotations` and `POST /v1/sessions/resolve` route too
   (source-only, 2026-11-02: routing.rs:52-100, :133-166, :255). `.capabilities.federatedSessionRead` is hard-coded
-  `true` (server.rs:1062). `localOnly=true` on `GET /v1/sessions/get|annotations` skips home routing on the unix
+  `true` (server.rs:1029). `localOnly=true` on `GET /v1/sessions/get|annotations` skips home routing on the unix
   socket: live minisvc `sessions/get` answered `x-hrc-home-node: svc` without it and no header with it
-  (2026-11-09); the peer listener refuses it 403 `local_only_forbidden` (source-only: peer_listener.rs:209-225).
+  (2026-11-09); the peer listener refuses it 403 `local_only_forbidden` (source-only: peer_listener.rs:226-240).
 - `GET /v1/events/page?afterSeq=S&limit=N[&ledgerIncarnationId=I]` (T-11441, the kernel's forward reader):
   `{ledgerIncarnationId, head, rows, scannedThrough}`, rows ascending from `afterSeq+1`; `scannedThrough` is the
   last row on a full page (`afterSeq=0&limit=5` → 5), else `head`. `afterSeq` is required, `limit` is 1..1000, a
@@ -39,10 +46,11 @@ observation routes a consumer pages. Code: `crates/hrc-native/src/server.rs` (`d
   allocated sequence (`sqlite_sequence`), which can exceed the tail's `MAX(hrc_seq)` after a delete (source-only,
   2026-11-02: routing.rs:52, crates/hrc-store/src/events.rs:17-27,68-82); equal on the drive (124/124).
 - Unserved routes answer Bun's plain-text `404 Not Found` and log one serve.log line each:
-  `route.not_served {method, path, servedBy: "native", reason: "not-served-natively-no-bun-socket"}`
-  (`server/front/proxy.rs:20-46`). Driven 2026-11-02 for the retired `/v1/registrations/gc`, `/v1/bridges`,
+  `route.not_served {method, path, servedBy: "native", reason: "not-served-natively"}` (the reason lost its
+  `-no-bun-socket` suffix with e60e97a3; `server/front/proxy.rs:19-27`). Driven 2026-11-02 for the retired `/v1/registrations/gc`, `/v1/bridges`,
   `/v1/launches` and the never-ported Bun routes `/v1/messages/wait`, `/v1/in-flight-input`,
-  `/v1/runtimes/capture/release` (6 × 404, 6 lines). Native 404s any unimplemented method+path, so a GET suffices.
+  `/v1/runtimes/capture/release` (6 × 404, 6 lines), and on 2026-11-16 with the f682cba8-retired
+  `/v1/transcript-index/status` too (7 × 404, 7 lines). Native 404s any unimplemented method+path, so a GET suffices.
 - `GET /v1/sessions[?latestGeneration=true]`: a bare array of host sessions; `latestGeneration` keeps only each
   scope's newest generation (T-10832; one row, gen 4 `active`, 2026-11-02). `POST /v1/sessions/restart` is what
   `~/.bun/bin/hrc restart` calls (feature 2).
@@ -56,6 +64,12 @@ observation routes a consumer pages. Code: `crates/hrc-native/src/server.rs` (`d
   (2026-11-09). `GET /v1/runtimes?omitState=true` drops `runtimeStateJson` from every row
   (`capabilities.runtimeListOmitState: true`; no CLI flag). `GET /v1/doctor` answers the doctor rows (feature 1);
   `GET /v1/broker-stats` needs a selector (400 bare; `monitor stats` calls it, feature 3).
+- `GET /v1/streams/open?scopeRef=…&laneRef=…&kind=pty|screen` is the seat stream behind `hrc seat screen` and
+  `hrc-pty attach --seat` (feature 8): without an `hrc-stream/1` upgrade 400 "hrc-stream/1 upgrade is required",
+  without `scopeRef` 400 "scopeRef is required" (2026-11-16). `GET /v1/runs` gained `acceptedSince`,
+  `acceptedBefore`, `completedSince`, `open=true`, `order=updatedAt|completedAt`, and `GET /v1/runtimes` exact
+  `runtimeId|scopeRef|laneRef` (source-only, 2026-11-16: d01da18b). `sessions/get|page` rows carry `home`,
+  `disposition`, `dispositionAt` (feature 5).
 - Not driven here: `/v1/events/bounded-stream` (the forward stream), the write routes (driven through the CLI in
   features 2, 3 and 7), the federation peer routes (TCP listener, not this socket).
 
@@ -108,9 +122,9 @@ curl -s -D- -o /dev/null --unix-socket $L 'http://hrc/v1/events/tail?limit=1&sco
 - **An `eventKind` page of exactly `limit` rows is not the total.** On 2026-11-02 `limit=5&eventKind=turn.completed`
   returned 5 distinct runIds while the scratch had 7 (`hrc_events.tsv`); read `truncated` before counting.
 - `/v1/sessions` is a bare array; `.sessions` on it is a jq error.
-- **Which daemon answered:** read serve.log's `server.listening {owner: "rusthrc", role: "native", bunSocket:
-  null}` and the per-request `http.request … servedBy: "native"` (2026-11-02, T-12291). `.api.listenSocketPath ==
-  .api.socketPath` is hard-coded on native (server.rs:1061) and proves nothing. Every non-stream request is
+- **Which daemon answered:** read serve.log's `server.listening {owner: "rusthrc", role: "native"}` (no
+  `bunSocket` since e60e97a3) and the per-request `http.request … servedBy: "native"` (2026-11-02, T-12291). `.api.listenSocketPath ==
+  .api.socketPath` is hard-coded on native (server.rs:1028) and proves nothing. Every non-stream request is
   logged now, with `caller` (from `x-praesidium-caller`, `unknown` for curl) beside `client` (the user-agent).
   The six unserved-route lines log `http.request … route: "unmatched"` too (2026-11-09).
 - `headHrcSeq` stays the global head on a history page (124 on every page on 2026-11-02; 59 on T-10297, 46 on
@@ -126,7 +140,8 @@ kind, one `turn.completed` per run the scratch drove when `truncated` is false; 
 each; serve.log shows `owner rusthrc`; on live a remote-homed scope's tail carries `x-hrc-home-node` and the local
 control does not.
 
-Driven 2026-11-09 (T-12756 upkeep) on a native scratch (rusthrc, release-20261108171912823-43877, 846648d8),
-scratch `t-12756` (107 events; pages 105-107, 102-104 and [1,2,3] `truncated: false`; eight `turn.completed`, one per
-run; `latestGeneration` kept gen 3) and live read-only for the routed tail and `localOnly` (`x-hrc-home-node: svc`):
-`~/praesidium/var/wrkq-artifacts/T-12756/{03-turns-monitor,04-http-api,evidence/t-12756}`.
+Driven 2026-11-16 (T-13633 upkeep) on a native scratch (rusthrc, release-20261116031606289-34371, 439a7d34),
+scratch `t-13633` (125 events; pages 123-125, 120-122 down to [1,2,3] `truncated: false`; seven `turn.completed`,
+one per run; `latestGeneration` kept gen 3 and the cold scope's gen 1) and live read-only for the routed tail
+(`x-hrc-home-node: svc`) and the new tail selectors:
+`~/praesidium/var/wrkq-artifacts/T-13633/{03-turns-monitor,04-http-api,evidence/t-13633}`.
