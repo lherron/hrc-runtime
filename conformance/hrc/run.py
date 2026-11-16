@@ -11,6 +11,11 @@ import tomllib
 ROOT = Path(__file__).resolve().parents[2]
 
 
+def git_environment():
+    # A pre-push hook exports GIT_DIR, which otherwise overrides git -C.
+    return {k: v for k, v in os.environ.items() if not k.startswith('GIT_')}
+
+
 def pinned_cardo():
     deps = tomllib.loads((ROOT / 'crates/Cargo.toml').read_text())['workspace']['dependencies']
     revs = {v['rev'] for k, v in deps.items() if k.startswith('cardo-')}
@@ -20,7 +25,8 @@ def pinned_cardo():
     cargo = Path(os.environ.get('CARGO_HOME', Path.home() / '.cargo'))
     for p in (cargo / 'git/checkouts').glob('cardo-*/*'):
         if (p / 'conformance/wire_suite.py').is_file():
-            head = subprocess.check_output(['git', '-C', str(p), 'rev-parse', 'HEAD'], text=True).strip()
+            head = subprocess.check_output(['git', '-C', str(p), 'rev-parse', 'HEAD'],
+                                           text=True, env=git_environment()).strip()
             if head.startswith(rev):
                 return p, head
     raise RuntimeError(f'Cargo checkout for {rev} absent; build HRC first')
@@ -38,7 +44,7 @@ def main():
     if args.cardo is None and args.suite != 'wire':
         target = ROOT / 'crates/target'
         subprocess.run(['cargo', 'build', '--manifest-path', str(checkout / 'Cargo.toml'),
-                        '--locked', '-p', 'cardo-cli', '--bin', 'cardo', '--target-dir', str(target)], check=True)
+                        '--locked', '-p', 'cardo-cli', '--bin', 'cardo', '--target-dir', str(target)], check=True, env=git_environment())
         args.cardo = target / 'debug/cardo'
     sys.path.insert(0, str(checkout / 'conformance'))
     import wire_suite as suite
