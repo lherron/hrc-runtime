@@ -286,9 +286,10 @@ pub fn query(
     if let Some(since) = recent_since {
         // Second precision compares correctly against stored RFC 3339 text
         // with or without fractional seconds. SQLite will not OR-optimize the
-        // two arms, so each arm is its own indexed lookup.
+        // two arms, so each arm is its own indexed lookup. Pin both indexes:
+        // bundled SQLite 3.54 otherwise scans the recent arm, including on max3.
         recent_clause = format!(
-            "rowid IN (SELECT rowid FROM runtimes INDEXED BY idx_runtimes_live WHERE {live} UNION SELECT rowid FROM runtimes WHERE {ACTIVITY_SQL} >= ?)"
+            "rowid IN (SELECT rowid FROM runtimes INDEXED BY idx_runtimes_live WHERE {live} UNION SELECT rowid FROM runtimes INDEXED BY idx_runtimes_recent_activity WHERE {ACTIVITY_SQL} >= ?)"
         );
         clause.push(&recent_clause);
         values.push(since.format("%Y-%m-%dT%H:%M:%S").to_string());

@@ -22,15 +22,17 @@ pub(crate) fn session_recency() -> &'static str {
 /// does, so the arms are: created, indexed activity, any runtime activity,
 /// an active run, an available runtime. `active_run_id >= ''` is
 /// `IS NOT NULL` for this TEXT column, in a form the planner indexes. Binds
-/// one named `:since` (the cutoff) at the next positional index.
+/// one named `:since` (the cutoff) at the next positional index. SQLite 3.54
+/// merges UNION arms in host-session order and otherwise scans these tables;
+/// pin the selective indexes so work remains bounded by the activity window.
 pub(crate) fn recent_sessions() -> &'static str {
     static SQL: std::sync::LazyLock<String> = std::sync::LazyLock::new(|| {
         format!(
             "s.host_session_id IN (\
-             SELECT host_session_id FROM sessions WHERE created_at >= :since \
-             UNION SELECT host_session_id FROM session_index WHERE last_activity_at >= :since \
-             UNION SELECT host_session_id FROM runtimes WHERE COALESCE(last_activity_at,created_at) >= :since \
-             UNION SELECT host_session_id FROM runtimes WHERE active_run_id >= '' \
+             SELECT host_session_id FROM sessions INDEXED BY idx_sessions_created_at WHERE created_at >= :since \
+             UNION SELECT host_session_id FROM session_index INDEXED BY idx_session_index_page WHERE last_activity_at >= :since \
+             UNION SELECT host_session_id FROM runtimes INDEXED BY idx_runtimes_session_activity WHERE COALESCE(last_activity_at,created_at) >= :since \
+             UNION SELECT host_session_id FROM runtimes INDEXED BY idx_runtimes_active_run_id WHERE active_run_id >= '' \
              UNION SELECT host_session_id FROM runtimes WHERE {})",
             crate::status::available_sql()
         )
