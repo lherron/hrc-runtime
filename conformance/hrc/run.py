@@ -64,7 +64,10 @@ def main():
     args = p.parse_args()
     checkout, rev = pinned_cardo()
     if args.cardo is None and args.suite != 'wire':
-        target = ROOT / 'crates/target'
+        # cardo's workspace gets its own target dir per pinned rev: sharing HRC's
+        # crates/target built the cardo CLI against stale cardo artifacts after a
+        # pin move (a8d7b7e -> c363992: cardo-runtime saw an older cardo-core).
+        target = ROOT / f'crates/target/cardo-conformance/{rev}-build'
         subprocess.run(['cargo', 'build', '--manifest-path', str(checkout / 'Cargo.toml'),
                         '--locked', '-p', 'cardo-cli', '--bin', 'cardo', '--target-dir', str(target)], check=True, env=git_environment())
         args.cardo = target / 'debug/cardo'
