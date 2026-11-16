@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""T-12168: fds rusthrc holds per hrc-kernel.sock connection, on one isolated
+"""T-12168: fds rusthrc holds per kernel.sock connection, on one isolated
 scratch daemon (kernel_fold.substrate: scratch HRC_STATE_DIR/HRC_RUNTIME_DIR,
 fake aspd, private wrkqd). Never the live daemon or the live kernel socket.
 

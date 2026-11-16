@@ -50,7 +50,7 @@ def main():
         result['ready'] = ready
         ref = f'agent:{AGENT}:project:{PROJECT}:task:pty-created/lane:main'
         def summon():
-            result['summon'] = wire(root / 'run/hrc-kernel.sock', 'seat.summon', dict(session_ref=ref, request_id='runtime-created'))
+            result['summon'] = wire(root / 'run/hrc/kernel.sock', 'seat.summon', dict(session_ref=ref, request_id='runtime-created'))
         birth = threading.Thread(target=summon, daemon=True)
         birth.start()
         r.wait(marker.exists, 20, 'broker invocation.start held')

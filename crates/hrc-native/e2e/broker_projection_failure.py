@@ -54,7 +54,7 @@ def main():
         # The retry must exercise a second eligible reading, not a sample that
         # the product correctly persists but suppresses as too recent.
         time.sleep(31)
-        credential = root / 'run/lifecycle' / f'{rid}.credential'
+        credential = root / 'run/hrc/lifecycle' / f'{rid}.credential'
         r.wait(credential.exists, what='lifecycle credential')
         credentials = credential.read_bytes()
         assert credentials, 'credential must exist before fault'
@@ -100,7 +100,7 @@ def main():
         assert code in (200, 202), born2
         live = born2['runtimeId']
         b2 = r.runtime(live)['state']['broker']
-        live_credential = root / 'run/lifecycle' / f'{live}.credential'
+        live_credential = root / 'run/hrc/lifecycle' / f'{live}.credential'
         r.wait(live_credential.exists, what='second lifecycle credential before close')
         live_credentials = live_credential.read_bytes()
         assert live_credentials

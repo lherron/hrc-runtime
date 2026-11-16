@@ -9,10 +9,10 @@ publish = false
 
 [workspace.dependencies]
 # All cardo crates share this approved main revision; never use path pins.
-cardo-core = { git = "https://github.com/lherron/cardo", rev = "a06df49" }
-cardo-runtime = { git = "https://github.com/lherron/cardo", rev = "a06df49" }
-cardo-store = { git = "https://github.com/lherron/cardo", rev = "a06df49" }
-cardo-app = { git = "https://github.com/lherron/cardo", rev = "a06df49" }
+cardo-core = { git = "https://github.com/lherron/cardo", rev = "56dbfb4" }
+cardo-runtime = { git = "https://github.com/lherron/cardo", rev = "56dbfb4" }
+cardo-store = { git = "https://github.com/lherron/cardo", rev = "56dbfb4" }
+cardo-app = { git = "https://github.com/lherron/cardo", rev = "56dbfb4" }
 serde = { version = "1", features = ["derive"] }
 # Record JSON is fingerprinted in its own key order (collective_history.rs).
 serde_json = { version = "1", features = ["preserve_order", "raw_value", "float_roundtrip"] }

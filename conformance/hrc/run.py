@@ -32,9 +32,10 @@ def main():
     p.add_argument('--cardo', type=Path)
     p.add_argument('--artifacts', required=True, type=Path)
     p.add_argument('--class', dest='only', action='append')
+    p.add_argument('--suite', choices=('both', 'embed', 'wire'), default='both')
     args = p.parse_args()
     checkout, rev = pinned_cardo()
-    if args.cardo is None:
+    if args.cardo is None and args.suite != 'wire':
         target = ROOT / 'crates/target'
         subprocess.run(['cargo', 'build', '--manifest-path', str(checkout / 'Cargo.toml'),
                         '--locked', '-p', 'cardo-cli', '--bin', 'cardo', '--target-dir', str(target)], check=True)
@@ -51,11 +52,16 @@ def main():
     with tempfile.TemporaryDirectory(prefix='hc13588-', dir='/tmp') as tmp:
         root = Path(tmp)
         host = Host(binary, root, args.artifacts / 'rusthrc.log')
-        profile = Profile(start=host.start, stop=host.stop, root=root, mount='hrc', socket=host.socket,
-                          log=host.log, directory=None, stop_supported=False, cli=[str(args.cardo.resolve())])
-        cells = grade(profile, args.artifacts / 'embed')
-        if any(c['status'] == 'fail' for c in cells.values()):
-            return 1
+        if args.suite != 'wire':
+            profile = Profile(start=host.start, stop=host.stop, root=root, mount='hrc', socket=host.socket,
+                              log=host.log, directory=None, stop_supported=False, cli=[str(args.cardo.resolve())])
+            cells = grade(profile, args.artifacts / 'embed')
+            for name, cell in cells.items():
+                print(f"{cell['status'].upper()} hrc {name}: {cell['reason']}", flush=True)
+            if any(c['status'] == 'fail' for c in cells.values()):
+                return 1
+            if args.suite == 'embed':
+                return 0
         # embed_suite stops the host after its lifecycle checks; run wire on a
         # fresh serving instance, retaining the same isolated root.
         host.start()
@@ -68,7 +74,7 @@ def main():
                     try:
                         return wire.call('kernel.health').get('ok')
                     finally:
-                        wire.sock.close()
+                        wire.close()
                 except OSError:
                     return False
             suite.wait_for(ready, 30, 'private HRC wire serves')

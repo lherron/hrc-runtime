@@ -463,7 +463,7 @@ def main():
         text = log_path.read_text()
         r.check('7.retired-front-refused-without-kernel', refused.returncode != 0 and '--front is retired' in text
                 and '"server.listening"' not in text and 'kernel.' not in text
-                and not kernel.exists() and not (root / 'run/hrc.sock').exists(), log=text[-2000:])
+                and not kernel.exists() and not r.socket.exists(), log=text[-2000:])
     except BaseException as error:  # noqa: BLE001
         failure = repr(error)
         r.check('harness', False, error=failure)
