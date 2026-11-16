@@ -314,6 +314,9 @@ fn not_live(server: &Server, runtime_id: &str, payload: Value) -> Result<()> {
             payload["userExitReason"] = reason.into();
             mark_terminated_after_user_exit(&tx, &rt, &payload)?;
         }
+        // A probe that began before the broker's EOF can land after the
+        // controller committed `crashed`; the terminal status stands.
+        None if hrc_store::status::BROKER_TERMINAL.contains(&rt.status.as_str()) => {}
         None => mark_stale(&tx, &rt, &payload)?,
     }
     tx.commit()?;
@@ -658,5 +661,49 @@ pub async fn teardown(server: &Server, rt: &db::Rt, message: &str) {
             message,
             json!({"runtimeId":rt.runtime_id,"socketPath":socket,"sessionName":session,"error":error.to_string()}),
         );
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::not_live;
+    use rusqlite::params;
+    use serde_json::json;
+
+    /// A liveness probe that began before the broker's EOF crash must not
+    /// rewrite the committed `crashed` as `stale` (broker_projection_failure
+    /// broker death, 2 of 3 runs on 5687e5f).
+    #[test]
+    fn a_probe_never_overwrites_a_committed_crash() -> anyhow::Result<()> {
+        let (_scratch, server) = crate::server::turns::admission::tests::server("off", false)?;
+        {
+            let mut store = server.store.lock().unwrap();
+            let session = store
+                .create_session("agent:test:project:fixture", "main")?
+                .0;
+            store.sqlite.execute(
+                "INSERT INTO runtimes(runtime_id,host_session_id,scope_ref,lane_ref,generation,transport,status,supports_inflight_input,controller_kind,created_at,updated_at) VALUES('rt-crashed',?,?,'main',1,'hrcpty','crashed',0,'harness-broker','now','now')",
+                params![session["hostSessionId"].as_str(), session["scopeRef"].as_str()],
+            )?;
+        }
+        not_live(
+            &server,
+            "rt-crashed",
+            json!({"reason":"broker_hrcpty_broker_exited"}),
+        )?;
+        let store = server.store.lock().unwrap();
+        let status: String = store.sqlite.query_row(
+            "SELECT status FROM runtimes WHERE runtime_id='rt-crashed'",
+            [],
+            |r| r.get(0),
+        )?;
+        let stale: i64 = store.sqlite.query_row(
+            "SELECT COUNT(*) FROM hrc_events WHERE runtime_id='rt-crashed' AND event_kind='runtime.stale'",
+            [],
+            |r| r.get(0),
+        )?;
+        assert_eq!(status, "crashed");
+        assert_eq!(stale, 0);
+        Ok(())
     }
 }
