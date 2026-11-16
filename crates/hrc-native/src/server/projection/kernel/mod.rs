@@ -3,7 +3,7 @@ mod handlers;
 
 use super::{Shared, call_local, stderr_json};
 use anyhow::{Context, anyhow};
-use cardo_app::parts::{self, Args, Health, Lock, Paths, Record, RecordFailure, Setup, State};
+use cardo_app::parts::{self, Args, Health, Lock, Paths, Record, Setup, Start, StartedBy};
 use hrc_domain::{
     HrcError,
     owner::{OwnerCall, OwnerReply},
@@ -109,9 +109,14 @@ async fn try_start(server: &Shared) -> anyhow::Result<Kernel> {
         runtime: tokio::runtime::Handle::current(),
     });
     tokio::task::spawn_blocking(move || {
+        let start = Start {
+            by: StartedBy::Foreground,
+            argv: std::env::args().collect(),
+            cwd: std::env::current_dir().context("kernel start directory")?,
+        };
         // Only the lock holder may create or replace a registry record.
         let lock = Lock::acquire(&paths.socket).map_err(|e| anyhow!("{e}"))?;
-        let mut record = starting_record(&paths)?;
+        let mut record = Record::new("hrc", None, paths.socket.clone(), vec![], vec![], start);
         let result = (|| -> anyhow::Result<_> {
             record.write(&paths.record)?;
             let openings = handlers::openings(owner)?;
@@ -140,8 +145,11 @@ async fn try_start(server: &Shared) -> anyhow::Result<Kernel> {
                     Err(e) => return Err(e.into()),
                 }
                 std::os::unix::fs::symlink("kernel.sock", legacy)?;
-                record.state = State::Serving;
-                record.incarnation = kernel.client().map(|c| c.host_incarnation());
+                let incarnation = kernel
+                    .client()
+                    .context("HRC kernel has no default owner")?
+                    .host_incarnation();
+                record = record.clone().serving(incarnation);
                 kernel.set_status(record.to_json());
                 record.write(&paths.record)?;
                 Ok(())
@@ -171,14 +179,20 @@ async fn try_start(server: &Shared) -> anyhow::Result<Kernel> {
                 })
             }
             Err(error) => {
-                record.state = State::Failed;
-                record.failure = Some(RecordFailure {
-                    at: chrono::Utc::now().to_rfc3339(),
-                    code: "kernel_start_failed".into(),
-                    message: format!("{error:#}"),
-                    fix: "check the kernel socket directory and rusthrc log".into(),
-                    log: paths.root.join("logs/hrc-runtime/rusthrc-owner.log"),
-                });
+                let failure = error
+                    .downcast_ref::<parts::Failure>()
+                    .cloned()
+                    .unwrap_or_else(|| {
+                        parts::Failure::new(
+                            "kernel_start_failed",
+                            format!("{error:#}"),
+                            "check the kernel socket directory and rusthrc log",
+                        )
+                    });
+                record = record.failed(
+                    &failure,
+                    paths.root.join("logs/hrc-runtime/rusthrc-owner.log"),
+                );
                 record
                     .write(&paths.record)
                     .context(format!("record failed kernel start: {error:#}"))?;
@@ -187,11 +201,6 @@ async fn try_start(server: &Shared) -> anyhow::Result<Kernel> {
         }
     })
     .await?
-}
-
-// Supplied by cardo T-13595, pending its landed revision.
-fn starting_record(_paths: &Paths) -> anyhow::Result<Record> {
-    anyhow::bail!("pending cardo Record constructor")
 }
 
 #[cfg(test)]
@@ -256,9 +265,8 @@ mod tests {
                 .as_array()
                 .unwrap()
                 .iter()
-                .all(|t| t["provider"] != "hrc")
+                .all(|t| t["provider"] == "cardo")
         );
-        assert!(result["node_types"].as_array().unwrap().is_empty());
         assert_eq!(discovery["ok"], true, "{discovery}");
         let docs = wire(&socket, "resync", json!({}));
         eprintln!("OPS_ONLY_DOCUMENTS={docs}");

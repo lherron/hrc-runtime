@@ -24,3 +24,7 @@ python3 conformance/hrc/run.py --binary crates/target/debug/rusthrc \
 ```
 
 The cardo CLI must be built from the same pin. `just conform-hrc` supplies it.
+
+The profile is staged for cardo T-13596. It will join `just verify` once that
+importable suite and the ops-only wire-suite audit are pinned; the current
+landing gate does not claim embed conformance.

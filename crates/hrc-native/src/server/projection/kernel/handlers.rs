@@ -13,6 +13,7 @@ use std::sync::Arc;
 
 pub(super) fn openings(owner: Arc<dyn OwnerCall>) -> anyhow::Result<Openings> {
     let mut openings = Openings::new();
+    openings.stop_unsupported("the kernel stops with HRC; restart HRC with `prae node restart`");
     for declaration in hrc_domain::declarations::declarations()["operations"]
         .as_array()
         .expect("operations")
