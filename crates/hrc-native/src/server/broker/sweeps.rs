@@ -368,7 +368,16 @@ fn unwritten_submission(
 /// Settle withdrawal before turn.zombied wakes delivery consumers. The RPC
 /// response can race the independent event projector, so also wait for the
 /// broker's own disposition to commit. Both waits share one three-second cap.
-async fn withdraw_zombie(server: &Shared, run: &db::Run) -> anyhow::Result<()> {
+/// Also run by reconcile-active before it fails a queued run as abandoned,
+/// so its held submission is released the same way (`trigger` names which).
+pub(super) async fn withdraw_zombie(server: &Shared, run: &db::Run) -> anyhow::Result<()> {
+    withdraw_unwritten(server, run, "run_zombie_timeout").await
+}
+pub(super) async fn withdraw_unwritten(
+    server: &Shared,
+    run: &db::Run,
+    trigger: &str,
+) -> anyhow::Result<()> {
     let target = {
         let db = server.store.lock().unwrap();
         // Re-read after earlier candidates' RPCs; their events may settle us.
@@ -388,7 +397,7 @@ async fn withdraw_zombie(server: &Shared, run: &db::Run) -> anyhow::Result<()> {
     let bound = Duration::from_secs(3);
     let attempt = tokio::time::timeout(bound, async {
         let reply = controller::submit::withdraw_within(
-            server, &runtime, json!({"submissionId":submission}), "run_zombie_timeout", bound,
+            server, &runtime, json!({"submissionId":submission}), trigger, bound,
         ).await.map_err(|e| (e.code, e.message))?;
         if reply["outcome"] == "withdrawn" {
             loop {
@@ -412,7 +421,7 @@ async fn withdraw_zombie(server: &Shared, run: &db::Run) -> anyhow::Result<()> {
                 .get("reason")
                 .or_else(|| reply.get("state"))
                 .cloned()
-                .unwrap_or(json!("run_zombie_timeout")),
+                .unwrap_or(json!(trigger)),
         ),
         Ok(Err((code, reason))) => (json!(code), json!(reason)),
         Err(_) => (
@@ -424,7 +433,7 @@ async fn withdraw_zombie(server: &Shared, run: &db::Run) -> anyhow::Result<()> {
         "info",
         "broker",
         "broker.zombie_withdraw",
-        json!({"runId":run.run_id,"submissionId":submission,"outcome":outcome,"reason":reason}),
+        json!({"runId":run.run_id,"submissionId":submission,"outcome":outcome,"reason":reason,"trigger":trigger}),
     );
     Ok(())
 }

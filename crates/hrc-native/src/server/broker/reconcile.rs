@@ -541,6 +541,31 @@ pub async fn once(
             json!({"type":"run","runId":c.run.run_id,"hostSessionId":c.run.host_session_id,"runtimeId":c.rt.runtime_id,"transport":transport(&c.run),"status":"error","reason":"runtime_unavailable_with_active_run","observedAt":c.observed_at,"observedSource":c.source,"runtimeStatus":c.rt.status,"runtimeOwnershipCleared":false,"errorCode":"internal_error","errorMessage":e.to_string()})
         }));
     }
+    if !dry_run {
+        // A queued run behind a stuck head is reaped here, not by the zombie
+        // sweep; release its held submission first, off the store lock, or
+        // the broker keeps it and mail never sees not_written (R-00673).
+        let held: Vec<db::Run> = {
+            let db = server.store.lock().unwrap();
+            abandoned(&db.sqlite, cutoff, true)?
+                .iter()
+                .filter_map(|r| r["runId"].as_str())
+                .filter_map(|id| db::run(&db.sqlite, id).ok().flatten())
+                .collect()
+        };
+        for run in &held {
+            if let Err(e) =
+                sweeps::withdraw_unwritten(server, run, "run_abandoned_by_runtime").await
+            {
+                super::stderr_json(
+                    "warn",
+                    "broker",
+                    "broker.zombie_withdraw_check_failed",
+                    json!({"runId":run.run_id,"error":e.to_string()}),
+                );
+            }
+        }
+    }
     {
         let db = server.store.lock().unwrap();
         let before = db.sqlite.total_changes();
