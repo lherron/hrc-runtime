@@ -100,10 +100,21 @@ pub(crate) fn stdout(args: std::fmt::Arguments<'_>) {
     {
         state.stdout_bytes += text.len();
     }
-    std::io::stdout()
-        .lock()
-        .write_all(text.as_bytes())
-        .expect("write stdout");
+    // Bound first so the stdout lock is released before the exit path runs.
+    let written = std::io::stdout().lock().write_all(text.as_bytes());
+    if let Err(error) = written {
+        // A reader that closed early (`| head`) is a clean exit, like
+        // seat_screen; any other stdout failure is the command's failure.
+        // Exit here: unwinding a tokio worker turned EPIPE into a panic (T-12760).
+        let code = if error.kind() == std::io::ErrorKind::BrokenPipe {
+            0
+        } else {
+            eprintln!("Error: write stdout: {error}");
+            1
+        };
+        finish(code);
+        std::process::exit(code);
+    }
 }
 pub(crate) struct Span {
     pub id: String,
