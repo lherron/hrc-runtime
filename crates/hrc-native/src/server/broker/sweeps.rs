@@ -319,23 +319,145 @@ fn zombie(db: &Connection, c: &Candidate, threshold: i64) -> anyhow::Result<Valu
     Ok(r)
 }
 
+/// Only an admitted, still unresolved submission is eligible. input.accepted
+/// is the broker's write boundary, irrespective of the run's current status.
+fn unwritten_submission(
+    db: &Connection,
+    run: &db::Run,
+) -> anyhow::Result<Option<(String, String, String)>> {
+    let (Some(runtime), Some(invocation), Some(submission)) = (
+        &run.runtime_id,
+        &run.invocation_id,
+        &run.broker_submission_id,
+    ) else {
+        return Ok(None);
+    };
+    let Some(rt) = db::runtime(db, runtime)? else {
+        return Ok(None);
+    };
+    if rt.controller_kind.as_deref() != Some("harness-broker")
+        || rt.active_invocation_id.as_deref() != Some(invocation)
+    {
+        return Ok(None);
+    }
+    let mut stmt = db.prepare("SELECT type, broker_event_json FROM broker_invocation_events WHERE invocation_id=? AND runtime_id=? AND type IN ('admission.admitted','input.accepted','input.rejected','submission.executed','submission.absorbed','submission.rejected','submission.expired','submission.withdrawn','submission.cancelled','submission.lost','queue.expired','queue.withdrawn','queue.cancelled') AND (json_extract(broker_event_json,'$.submissionId')=? OR json_extract(broker_event_json,'$.inputId')=?)")?;
+    let mut admitted = false;
+    let rows = stmt.query_map(params![invocation, runtime, submission, submission], |r| {
+        Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?))
+    })?;
+    for row in rows {
+        let (kind, raw) = row?;
+        let event: Value = serde_json::from_str(&raw)?;
+        let key = if kind.starts_with("input.") {
+            "inputId"
+        } else {
+            "submissionId"
+        };
+        if event[key].as_str() != Some(submission) {
+            continue;
+        }
+        if kind == "admission.admitted" {
+            admitted = true;
+        } else {
+            return Ok(None);
+        }
+    }
+    Ok(admitted.then(|| (runtime.clone(), invocation.clone(), submission.clone())))
+}
+
+/// Settle withdrawal before turn.zombied wakes delivery consumers. The RPC
+/// response can race the independent event projector, so also wait for the
+/// broker's own disposition to commit. Both waits share one three-second cap.
+async fn withdraw_zombie(server: &Shared, run: &db::Run) -> anyhow::Result<()> {
+    let target = {
+        let db = server.store.lock().unwrap();
+        // Re-read after earlier candidates' RPCs; their events may settle us.
+        match db::run(&db.sqlite, &run.run_id)? {
+            Some(current)
+                if current.completed_at.is_none()
+                    && matches!(current.status.as_str(), "accepted" | "started" | "running") =>
+            {
+                unwritten_submission(&db.sqlite, &current)?
+            }
+            _ => None,
+        }
+    };
+    let Some((runtime, invocation, submission)) = target else {
+        return Ok(());
+    };
+    let bound = Duration::from_secs(3);
+    let attempt = tokio::time::timeout(bound, async {
+        let reply = controller::submit::withdraw_within(
+            server, &runtime, json!({"submissionId":submission}), "run_zombie_timeout", bound,
+        ).await.map_err(|e| (e.code, e.message))?;
+        if reply["outcome"] == "withdrawn" {
+            loop {
+                let committed: bool = {
+                    let db = server.store.lock().unwrap();
+                    db.sqlite.query_row(
+                        "SELECT EXISTS(SELECT 1 FROM broker_invocation_events WHERE invocation_id=? AND runtime_id=? AND type='submission.withdrawn' AND json_extract(broker_event_json,'$.submissionId')=?)",
+                        params![invocation, runtime, submission], |r| r.get(0),
+                    ).map_err(|e| ("projection_error".to_owned(), e.to_string()))?
+                };
+                if committed { break; }
+                tokio::time::sleep(Duration::from_millis(20)).await;
+            }
+        }
+        Ok(reply)
+    }).await;
+    let (outcome, reason) = match attempt {
+        Ok(Ok(reply)) => (
+            reply["outcome"].clone(),
+            reply
+                .get("reason")
+                .or_else(|| reply.get("state"))
+                .cloned()
+                .unwrap_or(json!("run_zombie_timeout")),
+        ),
+        Ok(Err((code, reason))) => (json!(code), json!(reason)),
+        Err(_) => (
+            json!("timeout"),
+            json!("withdrawal RPC or broker event projection did not settle within 3000ms"),
+        ),
+    };
+    super::stderr_json(
+        "info",
+        "broker",
+        "broker.zombie_withdraw",
+        json!({"runId":run.run_id,"submissionId":submission,"outcome":outcome,"reason":reason}),
+    );
+    Ok(())
+}
+
 /// sweepZombieRunsOnce
-pub fn sweep_zombies(
+pub async fn sweep_zombies(
     server: &Shared,
     older_ms: i64,
     dry_run: bool,
     threshold: i64,
 ) -> Result<Value, ApiError> {
     let cutoff = chrono::Utc::now().timestamp_millis() - older_ms;
-    let db = server.store.lock().unwrap();
-    let found = candidates(&db.sqlite, cutoff)?;
+    let found = {
+        let db = server.store.lock().unwrap();
+        candidates(&db.sqlite, cutoff)?
+    };
     let mut results = Vec::new();
     for c in &found {
         if dry_run {
             results.push(result(c, "matched"));
             continue;
         }
+        // Never hold the store mutex or zombie transaction across broker I/O.
+        if let Err(e) = withdraw_zombie(server, &c.run).await {
+            super::stderr_json(
+                "warn",
+                "broker",
+                "broker.zombie_withdraw_check_failed",
+                json!({"runId":c.run.run_id,"error":e.to_string()}),
+            );
+        }
         let outcome = (|| {
+            let db = server.store.lock().unwrap();
             let tx = db.sqlite.unchecked_transaction()?;
             let r = zombie(&tx, c, threshold)?;
             tx.commit()?;
@@ -348,7 +470,6 @@ pub fn sweep_zombies(
             r
         }));
     }
-    drop(db);
     if !dry_run && !found.is_empty() {
         server.ledger_committed();
     }
@@ -358,10 +479,10 @@ pub fn sweep_zombies(
 }
 
 /// POST /v1/runs/sweep-zombies
-pub fn handle_sweep_zombies(server: &Shared, body: Value) -> Result<Response, ApiError> {
+pub async fn handle_sweep_zombies(server: &Shared, body: Value) -> Result<Response, ApiError> {
     let (older, dry_run) = request(&body)?;
     let older_ms = duration_ms(older.as_deref().unwrap_or("30m"))?;
-    Ok(Json(sweep_zombies(server, older_ms, dry_run, older_ms / 1000)?).into_response())
+    Ok(Json(sweep_zombies(server, older_ms, dry_run, older_ms / 1000).await?).into_response())
 }
 
 /// startZombieRunSweeper: once at boot, then every 300 s.
@@ -384,7 +505,9 @@ pub fn start(server: &Shared) {
                 ZOMBIE_TIMEOUT_SECS * 1000,
                 false,
                 ZOMBIE_TIMEOUT_SECS,
-            ) {
+            )
+            .await
+            {
                 super::stderr_json(
                     "warn",
                     "sweep",

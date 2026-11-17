@@ -269,7 +269,19 @@ pub async fn withdraw(
     target: Value,
     reason: &str,
 ) -> Result<Value, BrokerError> {
-    with_active(
+    withdraw_within(server, runtime, target, reason, ACTIVE_RPC_TIMEOUT).await
+}
+
+/// The zombie guard uses the same withdrawal door with a shorter bound.
+/// A timeout never retires the runtime or creates delivery evidence.
+pub async fn withdraw_within(
+    server: &Shared,
+    runtime: &str,
+    target: Value,
+    reason: &str,
+    timeout: Duration,
+) -> Result<Value, BrokerError> {
+    with_active_within(
         server,
         runtime,
         "submission.withdraw",
@@ -280,6 +292,7 @@ pub async fn withdraw(
         },
         ("broker_withdraw_failed", "broker_withdraw_timeout"),
         false,
+        timeout,
     )
     .await
     .map(|(_, v)| v)

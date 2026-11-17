@@ -645,7 +645,7 @@ async fn dispatch_inner(server: &Shared, request: Request, local_only: bool) -> 
         }
     } else if method == Method::POST && uri.path() == "/v1/runs/sweep-zombies" {
         match parse_body(&body) {
-            Ok(value) => sweeps::handle_sweep_zombies(server, value),
+            Ok(value) => sweeps::handle_sweep_zombies(server, value).await,
             Err(e) => Err(e),
         }
     } else if method == Method::POST && uri.path() == "/v1/sessions/resume-continuation" {
