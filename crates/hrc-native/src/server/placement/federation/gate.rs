@@ -257,6 +257,16 @@ fn designated_home(
     }
 }
 
+/// How a designation relates its node to the sender: the sender's home, or
+/// the node observed running an unbound sender (T-13508).
+fn sender_basis(designation: &Value) -> &'static str {
+    if designation["provenance"] == super::registry_listener::OBSERVED_PROVENANCE {
+        "the node running"
+    } else {
+        "the home of"
+    }
+}
+
 /// applyBirthDesignation: only the last tier, only implicit local summons.
 #[allow(clippy::result_large_err)]
 async fn birth_designation(
@@ -309,7 +319,8 @@ async fn birth_designation(
             ..refuse(
                 "designated-home-unreachable",
                 format!(
-                    "{scope} is designated to {home} (from the home of {}, birth envelope {}), which is not a peer this node knows. Nothing here can birth it. Add that peer, or start the scope explicitly on a node that can reach it — an explicit start supersedes the designation.",
+                    "{scope} is designated to {home} (from {} {}, birth envelope {}), which is not a peer this node knows. Nothing here can birth it. Add that peer, or start the scope explicitly on a node that can reach it — an explicit start supersedes the designation.",
+                    sender_basis(&designation),
                     designation["senderScopeRef"].as_str().unwrap_or_default(),
                     designation["birthEnvelopeId"].as_str().unwrap_or_default()
                 ),
@@ -363,7 +374,8 @@ async fn virgin_placement(
             ..refuse(
                 "birth-designated-elsewhere",
                 format!(
-                    "{scope} is designated to be born on {home}, following the home of {}, which sent its birth envelope {}. This node is {local} and takes no part in the birth; {home} births it from the same ledger insert. An explicit start, a pin, or a +node= dispatch supersedes the designation.",
+                    "{scope} is designated to be born on {home}, following {} {}, which sent its birth envelope {}. This node is {local} and takes no part in the birth; {home} births it from the same ledger insert. An explicit start, a pin, or a +node= dispatch supersedes the designation.",
+                    sender_basis(&designation),
                     designation["senderScopeRef"].as_str().unwrap_or_default(),
                     designation["birthEnvelopeId"].as_str().unwrap_or_default()
                 ),
