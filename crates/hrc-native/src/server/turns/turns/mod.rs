@@ -253,7 +253,12 @@ fn settle(
         Some((status, r.clone()))
     });
     let Some((status, terminal_run)) = terminal else {
-        return Ok(None);
+        // HRC can finish the run itself (zombie, first-turn missing, reaped,
+        // invocation end) with no broker turn terminal to follow; settle on
+        // the disposition then, or a terminal wait never returns.
+        let finished =
+            db::run(&db.sqlite, run_id)?.is_some_and(|r| db::terminal_run_status(&r.status));
+        return Ok(finished.then(|| json!({"disposition":disposition})));
     };
     let final_run = if disposition["type"] == "absorbed" {
         terminal_run.unwrap_or_else(|| run_id.to_owned())
