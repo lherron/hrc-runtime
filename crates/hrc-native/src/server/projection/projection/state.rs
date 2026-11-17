@@ -168,7 +168,7 @@ fn retained_run_terminal(
             "turn.interrupted" | "submission.cancelled" => ("cancelled", None, None),
             "submission.lost" => (
                 "failed",
-                Some("runtime_unavailable"),
+                Some(turns::SUBMISSION_LOST),
                 Some(p["reason"].as_str().unwrap_or("turn-correlation-lost")),
             ),
             _ => ("failed", None, p["reason"].as_str()),

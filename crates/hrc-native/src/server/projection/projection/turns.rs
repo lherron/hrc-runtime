@@ -14,6 +14,10 @@ fn log(event: &str, data: Value) {
     crate::server::stderr_json("warn", "broker", event, data);
 }
 
+/// A run whose submission the broker settled `submission.lost`: handed to the
+/// harness, but no turn confirmed it. Not `runtime_unavailable`: the runtime
+/// may be healthy (T-13670 follow-up).
+pub const SUBMISSION_LOST: &str = "submission_lost";
 pub const ASK_TOOLS: [&str; 2] = ["AskUserQuestion", "request_user_input"];
 pub fn is_ask_tool(name: Option<&str>) -> bool {
     name.is_some_and(|n| ASK_TOOLS.contains(&n))
@@ -542,7 +546,7 @@ pub fn project(
                         status: "failed",
                         completed_at: time,
                         updated_at: now,
-                        error_code: Some("runtime_unavailable"),
+                        error_code: Some(SUBMISSION_LOST),
                         error_message: Some(reason.unwrap_or("turn-correlation-lost")),
                     },
                 )?;
