@@ -4,6 +4,7 @@ use crate::server::{
     projection::{self, db},
 };
 use anyhow::Result;
+use rusqlite::Transaction;
 use serde_json::{Value, json};
 
 /// A participant reports its own clean exit. HRC releases observation of any
@@ -24,6 +25,7 @@ pub(super) fn mark_terminal(
         return Ok(());
     }
     let now = hrc_store::timestamp();
+    super::super::submission_loss::settle_runtime(&tx, &rt, &now, "participant_exit")?;
     super::super::lease::retire_hrc_launched(&tx, &rt, &now, "participant_exit")?;
     let occurred = envelope["time"].as_str().unwrap_or(&now);
     let message = format!(
@@ -67,5 +69,58 @@ pub(super) fn mark_terminal(
     }
     tx.commit()?;
     server.ledger_committed();
+    Ok(())
+}
+
+/// Losing HRC's attachment says nothing about the external broker's process
+/// or any of its submissions. Preserve its binding and continuation.
+pub(in crate::server) fn detach(
+    tx: &Transaction<'_>,
+    rt: &db::Rt,
+    now: &str,
+    reason: &str,
+) -> Result<()> {
+    if !super::external_lifecycle(rt)
+        || super::super::lease::unavailable(&rt.status)
+        || matches!(
+            rt.status.as_str(),
+            "failed" | "stopped" | "disposed" | "exited"
+        )
+    {
+        return Ok(());
+    }
+    let mut state = rt.state_object();
+    state["status"] = "detached".into();
+    state["updatedAt"] = now.into();
+    if !state["control"].is_object() {
+        state["control"] = json!({"mode":"broker-ipc"});
+    }
+    state["control"]["brokerAttached"] = false.into();
+    db::update_runtime(
+        tx,
+        &rt.runtime_id,
+        &[
+            ("status", db::text("detached")),
+            ("status_changed_at", db::text(now)),
+            ("updated_at", db::text(now)),
+            ("runtime_state_json", db::text(state.to_string())),
+        ],
+    )?;
+    let ev = projection::events::Ev {
+        ts: now.into(),
+        host_session_id: rt.host_session_id.clone(),
+        scope_ref: rt.scope_ref.clone(),
+        lane_ref: rt.lane_ref.clone(),
+        generation: rt.generation,
+        runtime_id: Some(rt.runtime_id.clone()),
+        transport: Some(rt.transport.clone()),
+        ..Default::default()
+    };
+    projection::events::append(
+        tx,
+        "runtime.detached",
+        &ev,
+        &json!({"reason":reason,"invocationId":rt.active_invocation_id}),
+    )?;
     Ok(())
 }

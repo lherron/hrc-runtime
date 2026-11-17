@@ -180,16 +180,16 @@ pub async fn attach_and_replay(
         state["updatedAt"] = now.as_str().into();
         state["control"] = json!({"mode":"broker-ipc","brokerAttached":true});
         state["brokerReplay"] = json!({"brokerInstanceId":proof["attach"]["brokerInstanceId"],"activeControllerInstanceId":proof["attach"]["activeControllerInstanceId"],"lastProjectedSeq":proof["lastProjectedSeq"],"replayedThroughSeq":proof["replayedThroughSeq"],"ackedThroughSeq":proof["ackedThroughSeq"],"currentSeq":proof["currentSeq"],"retentionFloorSeq":proof["retentionFloorSeq"]});
-        db::update_runtime(
-            &tx,
-            &runtime_id,
-            &[
-                ("status", db::text(status)),
-                ("active_invocation_id", db::text(invocation.as_str())),
-                ("updated_at", db::text(now.as_str())),
-                ("runtime_state_json", db::text(state.to_string())),
-            ],
-        )?;
+        let mut cols = vec![
+            ("status", db::text(status)),
+            ("active_invocation_id", db::text(invocation.as_str())),
+            ("updated_at", db::text(now.as_str())),
+            ("runtime_state_json", db::text(state.to_string())),
+        ];
+        if rt.status != status {
+            cols.push(("status_changed_at", db::text(now.as_str())));
+        }
+        db::update_runtime(&tx, &runtime_id, &cols)?;
         tx.commit()?;
         server.ledger_committed();
     }
@@ -231,10 +231,14 @@ pub fn fail_replay_stale(
     let Some(rt) = db::runtime(&tx, runtime_id)? else {
         return Ok(());
     };
+    let now = hrc_store::timestamp();
     if participant_served(&rt) {
+        super::participant::detach(&tx, &rt, &now, code)?;
+        tx.commit()?;
+        server.ledger_committed();
         return Ok(());
     }
-    let now = hrc_store::timestamp();
+    crate::server::submission_loss::settle_runtime(&tx, &rt, &now, code)?;
     let stale = code == "broker_replay_retention_gap" || code == "broker_replay_below_floor";
     db::update_invocation(
         &tx,

@@ -262,7 +262,7 @@ fn owner_alive(owner: &LockOwner) -> Result<bool> {
 }
 
 /// isLiveProcess: ESRCH is dead, EPERM is alive, anything else is an error.
-fn pid_alive(pid: i32) -> Result<bool> {
+pub(in crate::server) fn pid_alive(pid: i32) -> Result<bool> {
     if unsafe { libc::kill(pid, 0) } == 0 {
         return Ok(true);
     }

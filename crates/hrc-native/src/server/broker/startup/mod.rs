@@ -11,7 +11,7 @@ use super::{
     Server, Shared, broker, controller, hrcpty, lease, projection::db, rpc::JsonRpc, stderr_json,
 };
 use anyhow::{Context, Result, bail};
-use rusqlite::{Connection, params};
+use rusqlite::{Connection, Transaction, params};
 use serde_json::{Value, json};
 use std::{
     collections::{HashMap, HashSet},
@@ -229,7 +229,7 @@ fn outcome(state: &'static str, reason: Option<&str>) -> Outcome {
 fn with_row<T>(
     server: &Server,
     runtime_id: &str,
-    f: impl FnOnce(&Connection, &db::Rt) -> Result<T>,
+    f: impl FnOnce(&Transaction<'_>, &db::Rt) -> Result<T>,
 ) -> Result<Option<T>> {
     let db = server.store.lock().unwrap();
     let tx = db.sqlite.unchecked_transaction()?;
@@ -693,6 +693,9 @@ fn terminal_active_runs(server: &Server) -> Result<()> {
         let now = hrc_store::timestamp();
         let message =
             format!("runtime {runtime_id} is {status}; open run settled by startup reconcile");
+        if let Some(rt) = db::runtime(&tx, &runtime_id)? {
+            super::submission_loss::settle_runtime(&tx, &rt, &now, "startup_terminal_sweep")?;
+        }
         let open = db::settle_terminal_runtime_runs(&tx, &runtime_id, &now, &message)?;
         let after = run_status(&tx);
         tx.commit()?;
@@ -716,6 +719,19 @@ pub async fn reconcile(server: &Shared) -> Result<()> {
     if let Err(e) = hrcpty_log_sweep(server) {
         startup_issue("hrcpty log sweep failed", json!({}), &e);
     }
+    if let Err(e) = (|| -> Result<()> {
+        let db = server.store.lock().unwrap();
+        let tx = db.sqlite.unchecked_transaction()?;
+        super::submission_loss::settle_unavailable(
+            &tx,
+            &hrc_store::timestamp(),
+            "startup_terminal_sweep",
+        )?;
+        tx.commit()?;
+        Ok(())
+    })() {
+        startup_issue("terminal runtime submission repair failed", json!({}), &e);
+    }
     if let Err(e) = terminal_active_runs(server) {
         startup_issue("terminal runtime run repair failed", json!({}), &e);
     }
@@ -723,6 +739,23 @@ pub async fn reconcile(server: &Shared) -> Result<()> {
         let Some(rt) = row(server, &id)? else {
             continue;
         };
+        if controller::external_lifecycle(&rt) {
+            if let Err(e) = with_row(server, &id, |tx, current| {
+                controller::detach_participant(
+                    tx,
+                    current,
+                    &hrc_store::timestamp(),
+                    "startup_no_attachment",
+                )
+            }) {
+                startup_issue(
+                    "participant startup detachment failed",
+                    json!({"runtimeId":id}),
+                    &e,
+                );
+            }
+            continue;
+        }
         if rt.state_object()["participant"]["lifecycleOwner"] == hrc_store::HRC_LAUNCHED {
             // Participant establishment is armed by participants::resume after
             // this pass; never issue release-bound broker::hello for this row.

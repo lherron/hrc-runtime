@@ -51,6 +51,7 @@ pub async fn mark_invocation_terminal(
             return Ok(());
         }
         let now = hrc_store::timestamp();
+        crate::server::submission_loss::settle_runtime(&tx, &rt, &now, "invocation_terminal")?;
         let inv = db::invocation(&tx, &invocation)?;
         hrc_store::fail_unresolved_absorbed(&tx, runtime_id, Some(&invocation), &now)?;
         let run_id = inv
@@ -194,19 +195,39 @@ pub async fn mark_invocation_terminal(
 pub fn mark_crash_terminal(
     server: &Server,
     runtime_id: &str,
+    client: &super::JsonRpc,
     code: &str,
     message: &str,
 ) -> Result<()> {
-    delete_active(server, runtime_id);
     let db = server.store.lock().unwrap();
     let tx = db.sqlite.unchecked_transaction()?;
     let Some(rt) = db::runtime(&tx, runtime_id)? else {
         return Ok(());
     };
-    if rt.status == "crashed" || external_lifecycle(&rt) {
+    if !server
+        .brokers
+        .lock()
+        .unwrap()
+        .get(runtime_id)
+        .is_some_and(|current| current.same(client))
+    {
         return Ok(());
     }
     let now = hrc_store::timestamp();
+    if external_lifecycle(&rt) {
+        super::participant::detach(&tx, &rt, &now, "broker_transport_closed")?;
+        tx.commit()?;
+        delete_active(server, runtime_id);
+        server.ledger_committed();
+        return Ok(());
+    }
+    crate::server::submission_loss::settle_runtime(&tx, &rt, &now, code)?;
+    if rt.status == "crashed" {
+        tx.commit()?;
+        delete_active(server, runtime_id);
+        server.ledger_committed();
+        return Ok(());
+    }
     super::super::lease::retire_hrc_launched(&tx, &rt, &now, code)?;
     let inv = match &rt.active_invocation_id {
         Some(id) => db::invocation(&tx, id)?,
@@ -224,6 +245,7 @@ pub fn mark_crash_terminal(
             continue;
         }
         if let Some(r) = db::run(&tx, &id)?
+            && r.completed_at.is_none()
             && ["accepted", "started", "running"].contains(&r.status.as_str())
         {
             db::mark_run_completed(
@@ -300,6 +322,7 @@ pub fn mark_crash_terminal(
     };
     projection::events::append(&tx, "runtime.crashed", &ev, &payload)?;
     tx.commit()?;
+    delete_active(server, runtime_id);
     server.ledger_committed();
     Ok(())
 }

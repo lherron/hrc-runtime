@@ -249,18 +249,42 @@ fn ev(c: &Candidate, now: &str, error_code: Option<&str>) -> events::Ev {
 }
 
 /// reapActiveRun: the run failed, ownership cleared, turn.reaped.
-fn reap(db: &Connection, c: &Candidate, p: &Plan, threshold: i64) -> anyhow::Result<Value> {
+fn reap(
+    db: &rusqlite::Transaction<'_>,
+    c: &Candidate,
+    p: &Plan,
+    threshold: i64,
+) -> anyhow::Result<Value> {
     let now = hrc_store::timestamp();
     let code = p
         .error_code
         .unwrap_or("runtime_unavailable_with_active_run");
+    let preliminary = db::exists(
+        db,
+        "SELECT 1 FROM runtimes JOIN runs ON active_run_id=run_id
+         WHERE runtimes.runtime_id=? AND runs.runtime_id=?1 AND run_id=? AND runs.completed_at IS NULL
+           AND runs.status IN ('accepted','started','running')
+           AND runs.transport IN ('sdk','tmux','headless')",
+        params![c.rt.runtime_id, c.run.run_id],
+    )?;
+    if !preliminary {
+        return Ok(result(c, p, "skipped", false));
+    }
+    if let Some(current) = db::runtime(db, &c.rt.runtime_id)?
+        && lease::unavailable(p.next_status.unwrap_or(&current.status))
+    {
+        super::submission_loss::settle_runtime(db, &current, &now, "reconcile_active")?;
+    }
     let claimed = db.execute(
         "UPDATE runs SET status='failed', completed_at=?, updated_at=?, error_code=?, error_message=? WHERE run_id=? AND runtime_id=? AND status IN ('accepted','started','running') AND transport IN ('sdk','tmux','headless') AND completed_at IS NULL AND EXISTS (SELECT 1 FROM runtimes WHERE runtime_id=? AND active_run_id=?)",
         params![now, now, code, format!("{REAPED_MESSAGE}: {}", p.reason), c.run.run_id, c.rt.runtime_id, c.rt.runtime_id, c.run.run_id],
     )?;
-    if claimed == 0 {
-        return Ok(result(c, p, "skipped", false));
-    }
+    let settled = if claimed == 0 {
+        db::run(db, &c.run.run_id)?.and_then(|run| run.error_code)
+    } else {
+        None
+    };
+    let code = settled.as_deref().unwrap_or(code);
     let cleared = db.execute(
         "UPDATE runtimes SET active_run_id=NULL, status=?, updated_at=?, last_activity_at=? WHERE runtime_id=? AND active_run_id=?",
         params![p.next_status.unwrap_or(&c.rt.status), now, now, c.rt.runtime_id, c.run.run_id],
@@ -279,7 +303,9 @@ fn reap(db: &Connection, c: &Candidate, p: &Plan, threshold: i64) -> anyhow::Res
     }
     payload["runtimeOwnershipCleared"] = cleared.into();
     events::append(db, "turn.reaped", &ev(c, &now, Some(code)), &payload)?;
-    Ok(result(c, p, "reaped", cleared))
+    let mut reaped = result(c, p, "reaped", cleared);
+    reaped["errorCode"] = code.into();
+    Ok(reaped)
 }
 
 /// runtimeIsNotRunning: it claims nothing, or a run that already finished.
@@ -447,6 +473,23 @@ pub async fn once(
     dry_run: bool,
     threshold: i64,
 ) -> Result<Value, ApiError> {
+    if !dry_run {
+        let db = server.store.lock().unwrap();
+        let before = db.sqlite.total_changes();
+        let tx = db
+            .sqlite
+            .unchecked_transaction()
+            .map_err(anyhow::Error::from)?;
+        super::submission_loss::settle_unavailable(
+            &tx,
+            &hrc_store::timestamp(),
+            "reconcile_active",
+        )?;
+        tx.commit().map_err(anyhow::Error::from)?;
+        if db.sqlite.total_changes() != before {
+            server.ledger_committed();
+        }
+    }
     let cutoff = chrono::Utc::now().timestamp_millis() - older_ms;
     let found = {
         let db = server.store.lock().unwrap();

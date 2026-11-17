@@ -552,7 +552,15 @@ pub fn start(server: &Shared) {
 const SESSION_RETENTION_INTERVAL: Duration = Duration::from_secs(24 * 60 * 60);
 const TMUX_AGING_INTERVAL: Duration = Duration::from_secs(300);
 const SESSION_RECENCY: &str = "MAX(COALESCE((SELECT si.last_activity_at FROM session_index si WHERE si.host_session_id = s.host_session_id), ''), COALESCE((SELECT MAX(COALESCE(r.last_activity_at, r.created_at)) FROM runtimes r WHERE r.host_session_id = s.host_session_id), ''), s.created_at)";
-const SESSION_HAS_RUNNING_RUNTIME: &str = "EXISTS (SELECT 1 FROM runtimes r2 WHERE r2.host_session_id = s.host_session_id AND (r2.active_run_id IS NOT NULL OR r2.status NOT IN ('terminated', 'dead', 'stale', 'crashed', 'detached')))";
+const SESSION_HOLDS_RUNTIME: &str = "EXISTS (
+    SELECT 1 FROM runtimes r2 WHERE r2.host_session_id = s.host_session_id AND (
+        r2.active_run_id IS NOT NULL OR r2.status NOT IN ('terminated', 'dead', 'stale', 'crashed', 'detached')
+        OR (r2.status='detached' AND CASE WHEN json_valid(r2.runtime_state_json) THEN
+            json_extract(r2.runtime_state_json,'$.lifecycleOwner')='external'
+            OR json_extract(r2.runtime_state_json,'$.participant.lifecycleOwner')='externally-owned'
+        END)
+    )
+)";
 
 /// resolveSessionIdleArchiveDays (HRC_SESSION_IDLE_ARCHIVE_DAYS, default 7)
 fn idle_archive_days() -> f64 {
@@ -571,7 +579,7 @@ pub fn archive_idle_sessions(server: &Shared, days: f64) -> anyhow::Result<Value
     let db = server.store.lock().unwrap();
     let idle: std::collections::HashSet<String> = db
         .sqlite
-        .prepare(&format!("SELECT s.host_session_id FROM sessions s WHERE s.status = 'active' AND {SESSION_RECENCY} < ? AND NOT {SESSION_HAS_RUNNING_RUNTIME}"))?
+        .prepare(&format!("SELECT s.host_session_id FROM sessions s WHERE s.status = 'active' AND {SESSION_RECENCY} < ? AND NOT {SESSION_HOLDS_RUNTIME}"))?
         .query_map([&since], |r| r.get(0))?
         .collect::<rusqlite::Result<_>>()?;
     let rows: Vec<(String, String, String, Option<String>)> = db

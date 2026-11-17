@@ -93,7 +93,7 @@ pub fn project_retained(
     let at = envelope["time"].as_str().unwrap_or(now);
     let dispose = |disposition: &str| -> Result<()> {
         if let Some(sub) = owners::payload_submission_id(p) {
-            turns::record_disposition(db, &sub, disposition, at, true)?;
+            turns::record_disposition(db, &sub, disposition, p["reason"].as_str(), at, true)?;
         }
         Ok(())
     };

@@ -105,3 +105,17 @@ CREATE INDEX idx_participant_registration_incarnation
     )?;
     Ok(())
 }
+
+/// T-13691: HRC-authored dispositions live outside the broker sequence space.
+pub fn m0135_submission_disposition_author(conn: &Connection) -> anyhow::Result<()> {
+    conn.execute_batch(
+        "ALTER TABLE submission_admissions ADD COLUMN disposition_reason TEXT;
+         ALTER TABLE submission_admissions ADD COLUMN disposition_author TEXT
+             CHECK (disposition_author IN ('broker', 'hrc'));
+         CREATE INDEX idx_broker_admissions_runtime_envelope
+             ON broker_invocation_events(runtime_id,
+                 CASE WHEN json_valid(broker_event_json) THEN json_extract(broker_event_json, '$.origin.envelopeId') END)
+             WHERE type='admission.requested';",
+    )?;
+    Ok(())
+}

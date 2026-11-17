@@ -1,0 +1,201 @@
+//! HRC-owned broker disappearance settles mirrored format-1 admissions.
+use super::{
+    controller,
+    evidence::SUBMISSION_TERMINALS,
+    owner,
+    projection::{db, turns},
+};
+use anyhow::Result;
+use rusqlite::{Transaction, params};
+use serde_json::json;
+
+const BROKER_GONE: &str = "broker-gone";
+
+const REQUEST_SUBMISSION: &str = "CASE WHEN json_valid(request.broker_event_json)
+    THEN json_extract(request.broker_event_json, '$.submissionId') END";
+
+/// One writer transaction owns the PID verdict, disposition and attributed
+/// run completion. The local owner store contains only its own runtime rows;
+/// federation reads peer runtimes over the wire without importing their PIDs.
+pub(super) fn settle_runtime(
+    tx: &Transaction<'_>,
+    rt: &db::Rt,
+    now: &str,
+    trigger: &str,
+) -> Result<()> {
+    if controller::external_lifecycle(rt) || rt.controller_kind.as_deref() != Some("harness-broker")
+    {
+        return Ok(());
+    }
+    let state = rt.state_object();
+    if state["broker"]["substrate"]["kind"] == "external" {
+        return Ok(());
+    }
+    let current = state["invocation"]["invocationId"]
+        .as_str()
+        .or(rt.active_invocation_id.as_deref());
+    let mut stmt = tx.prepare(
+        "SELECT invocation_id, broker_pid FROM broker_invocations
+         WHERE runtime_id=? AND execution_format='format1'",
+    )?;
+    for row in stmt.query_map([&rt.runtime_id], |r| {
+        Ok((r.get::<_, String>(0)?, r.get::<_, Option<i64>>(1)?))
+    })? {
+        let (invocation, recorded_pid) = row?;
+        // Old native allocations recorded the broker PID on the runtime.
+        // That PID belongs only to the invocation described in its state.
+        let pid = recorded_pid.or_else(|| {
+            (current == Some(&invocation))
+                .then(|| state["broker"]["brokerPid"].as_i64())
+                .flatten()
+        });
+        let Some(pid) = pid.and_then(|n| i32::try_from(n).ok()).filter(|n| *n > 0) else {
+            continue;
+        };
+        // A live, inaccessible, or reused PID leaves the outcome unresolved.
+        if matches!(owner::pid_alive(pid), Ok(false)) {
+            settle_open_submissions(tx, &rt.runtime_id, &invocation, now, trigger)?;
+        }
+    }
+    Ok(())
+}
+
+fn settle_open_submissions(
+    tx: &Transaction<'_>,
+    runtime: &str,
+    invocation: &str,
+    now: &str,
+    trigger: &str,
+) -> Result<()> {
+    // Start from the mirrors, including requests whose RPC never replied.
+    let mut stmt = tx.prepare(&format!(
+        "SELECT DISTINCT {REQUEST_SUBMISSION} AS admitted_submission,
+                request.time, request.run_id, admission.run_id,
+                json_extract(request.broker_event_json,'$.class'),
+                json_extract(request.broker_event_json,'$.origin.envelopeId'),
+                json_extract(request.broker_event_json,'$.origin.principalRef')
+         FROM broker_invocation_events AS request
+         LEFT JOIN submission_admissions AS admission ON admission.submission_id=admitted_submission
+         WHERE request.invocation_id=?1 AND request.runtime_id=?2
+           AND request.type='admission.requested'
+           AND typeof(admitted_submission)='text' AND admitted_submission!=''
+           AND admission.disposition IS NULL
+           AND NOT EXISTS (
+               SELECT 1 FROM broker_invocation_events AS terminal
+                    INDEXED BY idx_broker_invocation_events_submission_disposition
+               WHERE terminal.runtime_id=request.runtime_id
+                 AND terminal.invocation_id=request.invocation_id
+                 AND CASE WHEN json_valid(terminal.broker_event_json)
+                     THEN json_extract(terminal.broker_event_json, '$.submissionId') END=admitted_submission
+                 AND terminal.type IN ({SUBMISSION_TERMINALS})
+           )"
+    ))?;
+    let rows = stmt
+        .query_map(params![invocation, runtime], |r| {
+            Ok((
+                r.get::<_, String>(0)?,
+                r.get::<_, String>(1)?,
+                r.get::<_, Option<String>>(2)?,
+                r.get::<_, Option<String>>(3)?,
+                r.get::<_, Option<String>>(4)?,
+                r.get::<_, Option<String>>(5)?,
+                r.get::<_, Option<String>>(6)?,
+            ))
+        })?
+        .collect::<rusqlite::Result<Vec<_>>>()?;
+    for (submission, admitted_at, mirror_run, recorded_run, class, envelope, principal) in rows {
+        let door = match class.as_deref() {
+            Some("queue") => Some("enqueue"),
+            Some("exclusive") => Some("invoke"),
+            Some("preempt") => Some("preempt"),
+            Some("steer") => Some("steer"),
+            _ => None,
+        };
+        let candidate = match db::run_for_input(tx, &submission)? {
+            Some(run) => Some(run),
+            None => match recorded_run.as_deref().or(mirror_run.as_deref()) {
+                Some(id) => db::run(tx, id)?,
+                None => None,
+            },
+        };
+        let run = candidate.filter(|run| {
+            run.runtime_id.as_deref() == Some(runtime)
+                && run.invocation_id.as_deref() == Some(invocation)
+                && match run
+                    .broker_submission_id
+                    .as_deref()
+                    .or(run.dispatched_input_id.as_deref())
+                {
+                    Some(id) => id == submission,
+                    None => {
+                        recorded_run.as_deref() == Some(&run.run_id)
+                            || (principal.as_deref() == Some("legacy:invocation.input")
+                                && run.launch_carried_invoke())
+                    }
+                }
+        });
+        let changed = tx.execute(
+            "INSERT INTO submission_admissions
+                (submission_id, runtime_id, invocation_id, run_id, door, envelope_id, admitted_at,
+                 disposition, disposition_reason, disposition_author, disposed_at)
+             VALUES (?, ?, ?, ?, ?, ?, ?, 'submission.lost', ?, 'hrc', ?)
+             ON CONFLICT(submission_id) DO UPDATE SET
+                runtime_id=excluded.runtime_id, invocation_id=excluded.invocation_id,
+                run_id=COALESCE(submission_admissions.run_id, excluded.run_id),
+                door=COALESCE(submission_admissions.door, excluded.door),
+                envelope_id=COALESCE(submission_admissions.envelope_id, excluded.envelope_id),
+                admitted_at=COALESCE(submission_admissions.admitted_at, excluded.admitted_at),
+                disposition=excluded.disposition, disposition_reason=excluded.disposition_reason,
+                disposition_author=excluded.disposition_author, disposed_at=excluded.disposed_at
+             WHERE submission_admissions.disposition IS NULL
+               AND (submission_admissions.runtime_id IS NULL OR submission_admissions.runtime_id=excluded.runtime_id)
+               AND (submission_admissions.invocation_id IS NULL OR submission_admissions.invocation_id=excluded.invocation_id)",
+            params![submission, runtime, invocation, run.as_ref().map(|r| r.run_id.as_str()), door, envelope, admitted_at, BROKER_GONE, now],
+        )?;
+        if changed == 0 {
+            continue;
+        }
+        if let Some(run) = run {
+            turns::complete_submission_terminal(tx, &run, "lost", Some(BROKER_GONE), now, now)?;
+        }
+        controller::log(
+            "info",
+            "broker.submission.settled",
+            json!({
+                "runtimeId":runtime,"invocationId":invocation,"submissionId":submission,"trigger":trigger
+            }),
+        );
+    }
+    Ok(())
+}
+
+/// Retry broker death after a runtime became unavailable. An indexed seek
+/// per historical invocation keeps runtimes with no mirrored admissions out
+/// of the PID probe set.
+pub(super) fn settle_unavailable(tx: &Transaction<'_>, now: &str, trigger: &str) -> Result<()> {
+    let statuses = hrc_store::status::unavailable_sql();
+    let sql = format!(
+        "SELECT runtime_id FROM runtimes
+         WHERE controller_kind='harness-broker' AND status IN ({statuses},'failed','stopped','disposed','exited')
+           AND EXISTS (
+               SELECT 1 FROM broker_invocations AS invocation
+               JOIN broker_invocation_events AS request
+                    INDEXED BY idx_broker_invocation_events_invocation_type_seq
+                    ON request.invocation_id=invocation.invocation_id
+               LEFT JOIN submission_admissions AS admission
+                    ON admission.submission_id={REQUEST_SUBMISSION}
+               WHERE invocation.runtime_id=runtimes.runtime_id AND invocation.execution_format='format1'
+                 AND request.type='admission.requested' AND admission.disposition IS NULL
+           )"
+    );
+    let mut stmt = tx.prepare(&sql)?;
+    let ids = stmt
+        .query_map([], |r| r.get::<_, String>(0))?
+        .collect::<rusqlite::Result<Vec<_>>>()?;
+    for id in ids {
+        if let Some(rt) = db::runtime(tx, &id)? {
+            settle_runtime(tx, &rt, now, trigger)?;
+        }
+    }
+    Ok(())
+}

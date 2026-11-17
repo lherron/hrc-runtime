@@ -295,15 +295,7 @@ pub(super) fn process_live(v: &Value) -> Result<bool> {
         .as_i64()
         .and_then(|n| i32::try_from(n).ok())
         .context("invalid broker PID")?;
-    if unsafe { libc::kill(pid, 0) } == 0 {
-        return Ok(true);
-    }
-    let e = std::io::Error::last_os_error();
-    match e.raw_os_error() {
-        Some(libc::ESRCH) => Ok(false),
-        Some(libc::EPERM) => Ok(true),
-        _ => Err(e.into()),
-    }
+    super::owner::pid_alive(pid)
 }
 async fn tmux(socket: &str, args: &[&str]) -> Result<Option<String>> {
     let output = tokio::time::timeout(

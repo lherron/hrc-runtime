@@ -214,7 +214,7 @@ impl Store {
         let presentation = json!({"operatorAttachable":allocation.get("tuiWindow").is_some() || hrcpty.is_some(),"viewerRequested":plan["selection"]["presentation"] == true && !operator_attach_pending});
         let tx = self.sqlite.transaction()?;
         tx.execute("UPDATE runtimes SET status=?,status_changed_at=?,runtime_state_json=?,presentation_json=?,updated_at=? WHERE runtime_id=?",params![status,now,state.to_string(),presentation.to_string(),now,s(id,"runtimeId")?])?;
-        tx.execute("UPDATE broker_invocations SET invocation_state=?,capabilities_json=?,updated_at=? WHERE invocation_id=?",params![snapshot["state"].as_str().unwrap_or("ready"),capabilities.to_string(),now,s(id,"invocationId")?])?;
+        tx.execute("UPDATE broker_invocations SET invocation_state=?,capabilities_json=?,broker_pid=?,updated_at=? WHERE invocation_id=?",params![snapshot["state"].as_str().unwrap_or("ready"),capabilities.to_string(),allocation["brokerPid"].as_i64(),now,s(id,"invocationId")?])?;
         tx.execute("UPDATE runtime_operations SET status='completed',completed_at=?,updated_at=?,capability_resolution_json=? WHERE operation_id=?",params![now,now,json!({"brokerHello":hello["capabilities"],"invocation":capabilities,"result":{"status":"started"}}).to_string(),s(id,"operationId")?])?;
         if let Some(submission) = submission {
             tx.execute(

@@ -6,7 +6,7 @@ use super::{
     projection::{db, events},
 };
 use anyhow::Result;
-use rusqlite::{Connection, params};
+use rusqlite::{Connection, Transaction, params};
 use serde_json::{Value, json};
 use std::time::Duration;
 use tokio::process::Command;
@@ -177,17 +177,19 @@ fn settle(db: &Connection, rt: &db::Rt, now: &str, state: &str, message: &str) -
             "UPDATE runtimes SET active_run_id = NULL, updated_at = ? WHERE runtime_id = ?",
             params![now, rt.runtime_id],
         )?;
-        db::mark_run_completed(
-            db,
-            run,
-            db::Completion {
-                status: "failed",
-                completed_at: now,
-                updated_at: now,
-                error_code: Some("runtime_unavailable"),
-                error_message: Some(message),
-            },
-        )?;
+        if db::run(db, run)?.is_some_and(|row| row.completed_at.is_none()) {
+            db::mark_run_completed(
+                db,
+                run,
+                db::Completion {
+                    status: "failed",
+                    completed_at: now,
+                    updated_at: now,
+                    error_code: Some("runtime_unavailable"),
+                    error_message: Some(message),
+                },
+            )?;
+        }
     }
     Ok(())
 }
@@ -215,8 +217,14 @@ pub fn retire_hrc_launched(db: &Connection, rt: &db::Rt, now: &str, reason: &str
 }
 
 /// markRuntimeStale
-pub fn mark_stale(db: &Connection, rt: &db::Rt, payload: &Value) -> Result<()> {
+pub fn mark_stale(db: &Transaction<'_>, rt: &db::Rt, payload: &Value) -> Result<()> {
     let now = hrc_store::timestamp();
+    super::submission_loss::settle_runtime(
+        db,
+        rt,
+        &now,
+        payload["reason"].as_str().unwrap_or("lease_not_live"),
+    )?;
     settle(
         db,
         rt,
@@ -257,11 +265,12 @@ pub fn mark_stale(db: &Connection, rt: &db::Rt, payload: &Value) -> Result<()> {
 }
 /// markRuntimeTerminatedAfterUserExit
 pub fn mark_terminated_after_user_exit(
-    db: &Connection,
+    db: &Transaction<'_>,
     rt: &db::Rt,
     payload: &Value,
 ) -> Result<()> {
     let now = hrc_store::timestamp();
+    super::submission_loss::settle_runtime(db, rt, &now, "user_exit_not_live")?;
     settle(
         db,
         rt,
@@ -316,7 +325,14 @@ fn not_live(server: &Server, runtime_id: &str, payload: Value) -> Result<()> {
         }
         // A probe that began before the broker's EOF can land after the
         // controller committed `crashed`; the terminal status stands.
-        None if hrc_store::status::BROKER_TERMINAL.contains(&rt.status.as_str()) => {}
+        None if hrc_store::status::BROKER_TERMINAL.contains(&rt.status.as_str()) => {
+            super::submission_loss::settle_runtime(
+                &tx,
+                &rt,
+                &hrc_store::timestamp(),
+                "lease_not_live",
+            )?;
+        }
         None => mark_stale(&tx, &rt, &payload)?,
     }
     tx.commit()?;

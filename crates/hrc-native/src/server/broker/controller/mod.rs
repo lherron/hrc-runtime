@@ -24,8 +24,9 @@ pub mod seat;
 pub mod submit;
 mod terminal;
 pub use attach::{attach_and_replay, recover_final_summary};
+pub(in crate::server) use participant::detach as detach_participant;
+pub use terminal::mark_invocation_terminal;
 use terminal::{broker_pane_alive, user_exit_reason};
-pub use terminal::{mark_crash_terminal, mark_invocation_terminal};
 
 const GAP_BACKFILL_DELAY: Duration = Duration::from_millis(250);
 const BUSY_RETRY_WINDOW: Duration = Duration::from_secs(30);
@@ -831,6 +832,24 @@ pub fn consume(
             return;
         }
         let error = "broker transport closed".to_owned();
+        let runtime = {
+            let db = server.store.lock().unwrap();
+            db::runtime(&db.sqlite, &runtime_id).ok().flatten()
+        };
+        if runtime.as_ref().is_some_and(external_lifecycle) {
+            let Some(_write) = server.owner_writes.enter() else {
+                return;
+            };
+            try_mark_crash(
+                server.clone(),
+                runtime_id,
+                client,
+                error,
+                1,
+                std::time::Instant::now(),
+            );
+            return;
+        }
         if let Some(reason) = intentional_close_reason(&server, &runtime_id) {
             log(
                 "info",
@@ -861,16 +880,9 @@ pub fn consume(
             super::lease::reap(&server, &runtime_id, "broker_close").await;
             return;
         }
-        let self_brokered = {
-            let db = server.store.lock().unwrap();
-            db::runtime(&db.sqlite, &runtime_id)
-                .ok()
-                .flatten()
-                .is_some_and(|rt| {
-                    rt.state_object()["participant"]["lifecycleOwner"] == hrc_store::HRC_LAUNCHED
-                })
-        };
-        if self_brokered {
+        if runtime.is_some_and(|rt| {
+            rt.state_object()["participant"]["lifecycleOwner"] == hrc_store::HRC_LAUNCHED
+        }) {
             // A closed participant connection need not mean process death.
             // Let the child/supervisor verdict own the terminal reason.
             if let Err(error) = super::lease::reconcile_liveness(&server, &runtime_id).await {
@@ -903,6 +915,7 @@ pub fn consume(
         try_mark_crash(
             server.clone(),
             runtime_id.clone(),
+            client,
             error,
             1,
             std::time::Instant::now(),
@@ -916,6 +929,7 @@ pub fn consume(
 fn try_mark_crash(
     server: Shared,
     runtime_id: String,
+    client: JsonRpc,
     error: String,
     attempt: u32,
     started: std::time::Instant,
@@ -923,9 +937,13 @@ fn try_mark_crash(
     if shutting(&server) {
         return;
     }
-    let Err(store_error) =
-        mark_crash_terminal(&server, &runtime_id, "broker_process_closed", &error)
-    else {
+    let Err(store_error) = terminal::mark_crash_terminal(
+        &server,
+        &runtime_id,
+        &client,
+        "broker_process_closed",
+        &error,
+    ) else {
         return;
     };
     let sqlite_busy = busy(&store_error);
@@ -955,6 +973,6 @@ fn try_mark_crash(
         let Some(_write) = server.owner_writes.enter() else {
             return;
         };
-        try_mark_crash(server.clone(), runtime_id, error, next, started);
+        try_mark_crash(server.clone(), runtime_id, client, error, next, started);
     });
 }

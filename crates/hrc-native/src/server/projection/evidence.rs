@@ -21,6 +21,76 @@ const OPS: [&str; 5] = [
 /// type index and walks every row of that type (T-12413).
 const EVENT_INPUT_ID: &str =
     "CASE WHEN json_valid(broker_event_json) THEN json_extract(broker_event_json, '$.inputId') END";
+const EVENT_ENVELOPE_ID: &str = "CASE WHEN json_valid(broker_event_json) THEN json_extract(broker_event_json, '$.origin.envelopeId') END";
+pub(super) const SUBMISSION_TERMINALS: &str = "'submission.absorbed', 'submission.executed', 'submission.rejected', 'submission.expired', 'submission.withdrawn', 'submission.cancelled', 'submission.lost'";
+
+fn unique_submission(
+    db: &rusqlite::Connection,
+    q: &HashMap<String, String>,
+    runtime: &str,
+    fence: &str,
+) -> Result<Value, ApiError> {
+    let invocation = q
+        .contains_key("invocationId")
+        .then(|| param(q, "invocationId"))
+        .transpose()?;
+    if invocation.is_none() && q.contains_key("afterSeq") {
+        return Err(ApiError::bad(
+            "afterSeq requires invocationId",
+            Some(json!({"field":"afterSeq"})),
+        ));
+    }
+    let after_seq = q
+        .contains_key("afterSeq")
+        .then(|| nonnegative(q, "afterSeq"))
+        .transpose()?;
+    let after_time = q
+        .get("afterTime")
+        .map(|raw| {
+            chrono::DateTime::parse_from_rfc3339(raw).map_err(|_| {
+                ApiError::bad(
+                    "afterTime must be RFC 3339",
+                    Some(json!({"field":"afterTime"})),
+                )
+            })
+        })
+        .transpose()?;
+    let mut stmt = db
+        .prepare(&format!(
+            "SELECT json_extract(broker_event_json,'$.submissionId'), time
+         FROM broker_invocation_events INDEXED BY idx_broker_admissions_runtime_envelope
+         WHERE runtime_id=?1 AND {EVENT_ENVELOPE_ID}=?2 AND type='admission.requested'
+           AND (?3 IS NULL OR invocation_id=?3) AND (?4 IS NULL OR seq>?4){fence}"
+        ))
+        .map_err(anyhow::Error::from)?;
+    let mut rows = stmt
+        .query(rusqlite::params![
+            runtime,
+            param(q, "envelopeId")?,
+            invocation,
+            after_seq
+        ])
+        .map_err(anyhow::Error::from)?;
+    let mut ids = std::collections::HashSet::new();
+    while let Some(row) = rows.next().map_err(anyhow::Error::from)? {
+        let id: Option<String> = row.get(0).map_err(anyhow::Error::from)?;
+        if let Some(bound) = after_time {
+            let time: String = row.get(1).map_err(anyhow::Error::from)?;
+            if !chrono::DateTime::parse_from_rfc3339(&time).is_ok_and(|time| time > bound) {
+                continue;
+            }
+        }
+        if let Some(id) = id {
+            ids.insert(id);
+        }
+    }
+    Ok(match ids.len() {
+        0 => Value::Null,
+        1 => json!({"op":"unique-submission-after","submissionId":ids.iter().next(),"matches":1}),
+        n => json!({"op":"unique-submission-ambiguous","matches":n}),
+    })
+}
+
 fn retained(q: &HashMap<String, String>) -> Result<bool, ApiError> {
     match q.get("includeRetained").map(String::as_str) {
         None | Some("false") => Ok(false),
@@ -151,6 +221,10 @@ pub fn query(server: &Server, q: &HashMap<String, String>) -> Result<Response, A
     } else {
         " AND (evidence_origin IS NULL OR evidence_origin!='retained')"
     };
+    if op == "unique-submission-after" {
+        let result = unique_submission(&db.sqlite, q, runtime, fence)?;
+        return Ok(Json(json!({"result":result})).into_response());
+    }
     let text = |s: &str| Sql::Text(s.to_owned());
     let (sql, values) = match op {
         "input-accepted" => (
@@ -167,7 +241,7 @@ pub fn query(server: &Server, q: &HashMap<String, String>) -> Result<Response, A
         ),
         "disposition" => (
             format!(
-                "SELECT json_set(broker_event_json,'$.type',type) FROM broker_invocation_events WHERE runtime_id=? AND CASE WHEN json_valid(broker_event_json) THEN json_extract(broker_event_json,'$.submissionId') END=? AND type IN ('submission.absorbed','submission.executed','submission.rejected','submission.expired','submission.withdrawn','submission.cancelled','submission.lost'){fence} ORDER BY time ASC,seq ASC LIMIT 1"
+                "SELECT json_set(broker_event_json,'$.type',type) FROM broker_invocation_events WHERE runtime_id=? AND CASE WHEN json_valid(broker_event_json) THEN json_extract(broker_event_json,'$.submissionId') END=? AND type IN ({SUBMISSION_TERMINALS}){fence} ORDER BY time ASC,seq ASC LIMIT 1"
             ),
             vec![text(runtime), text(param(q, "submissionId")?)],
         ),
@@ -177,34 +251,10 @@ pub fn query(server: &Server, q: &HashMap<String, String>) -> Result<Response, A
             ),
             vec![text(runtime), text(param(q, "submissionId")?)],
         ),
-        _ => (
-            format!(
-                "SELECT DISTINCT json_extract(broker_event_json,'$.submissionId') FROM broker_invocation_events WHERE runtime_id=? AND invocation_id=? AND seq>? AND type='admission.requested' AND json_extract(broker_event_json,'$.origin.envelopeId')=?{fence}"
-            ),
-            vec![
-                text(runtime),
-                text(param(q, "invocationId")?),
-                Sql::Integer(nonnegative(q, "afterSeq")?),
-                text(param(q, "envelopeId")?),
-            ],
-        ),
+        _ => unreachable!("validated query operation"),
     };
     let mut stmt = db.sqlite.prepare(&sql).map_err(anyhow::Error::from)?;
-    let result = if op == "unique-submission-after" {
-        let rows = stmt
-            .query_map(rusqlite::params_from_iter(&values), |r| {
-                r.get::<_, Option<String>>(0)
-            })
-            .map_err(anyhow::Error::from)?
-            .collect::<rusqlite::Result<Vec<_>>>()
-            .map_err(anyhow::Error::from)?;
-        let ids: Vec<_> = rows.into_iter().flatten().collect();
-        if ids.len() == 1 {
-            json!({"op":op,"submissionId":ids[0]})
-        } else {
-            Value::Null
-        }
-    } else {
+    let result = {
         let row: Option<String> = stmt
             .query_row(rusqlite::params_from_iter(&values), |r| r.get(0))
             .optional()
@@ -228,6 +278,12 @@ pub fn query(server: &Server, q: &HashMap<String, String>) -> Result<Response, A
                 }
                 v
             }
+            ("disposition", None) => db.sqlite.query_row(
+                "SELECT disposition, disposition_reason FROM submission_admissions
+                 WHERE runtime_id=? AND submission_id=? AND disposition_author='hrc'",
+                rusqlite::params![runtime, param(q, "submissionId")?],
+                |r| Ok(json!({"op":op,"type":r.get::<_,String>(0)?,"reason":r.get::<_,String>(1)?,"authoredBy":"hrc"})),
+            ).optional().map_err(anyhow::Error::from)?.unwrap_or(Value::Null),
             ("input-rejection-evidence", Some(p))
                 if p["deliveryEvidence"] == "not_written"
                     || p["deliveryEvidence"] == "possibly_written" =>

@@ -192,7 +192,7 @@ fn action_response(rt: &db::Rt) -> Value {
 }
 fn commit(
     server: &Shared,
-    f: impl FnOnce(&Connection) -> anyhow::Result<()>,
+    f: impl FnOnce(&rusqlite::Transaction<'_>) -> anyhow::Result<()>,
 ) -> Result<(), ApiError> {
     let db = server.store.lock().unwrap();
     let tx = db
@@ -763,24 +763,33 @@ fn launched(server: &Shared, rt: &db::Rt) -> bool {
 }
 
 /// finalizeRuntimeTermination
-pub(super) fn finalize(db: &Connection, rt: &db::Rt, now: &str) -> anyhow::Result<()> {
+pub(super) fn finalize(
+    db: &rusqlite::Transaction<'_>,
+    rt: &db::Rt,
+    now: &str,
+) -> anyhow::Result<()> {
+    if let Some(current) = db::runtime(db, &rt.runtime_id)? {
+        super::submission_loss::settle_runtime(db, &current, now, "operator_termination")?;
+    }
     lease::retire_hrc_launched(db, rt, now, "runtime_terminated")?;
     if let Some(run) = &rt.active_run_id {
         db.execute(
             "UPDATE runtimes SET active_run_id=NULL, updated_at=? WHERE runtime_id=?",
             params![now, rt.runtime_id],
         )?;
-        db::mark_run_completed(
-            db,
-            run,
-            db::Completion {
-                status: "failed",
-                completed_at: now,
-                updated_at: now,
-                error_code: Some("runtime_unavailable"),
-                error_message: Some(&format!("runtime {} was terminated", rt.runtime_id)),
-            },
-        )?;
+        if db::run(db, run)?.is_some_and(|row| row.completed_at.is_none()) {
+            db::mark_run_completed(
+                db,
+                run,
+                db::Completion {
+                    status: "failed",
+                    completed_at: now,
+                    updated_at: now,
+                    error_code: Some("runtime_unavailable"),
+                    error_message: Some(&format!("runtime {} was terminated", rt.runtime_id)),
+                },
+            )?;
+        }
     }
     db::update_runtime(
         db,

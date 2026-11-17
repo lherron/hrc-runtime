@@ -967,6 +967,12 @@ impl Store {
         } else {
             tx.execute("INSERT INTO broker_invocations(invocation_id,operation_id,runtime_id,execution_format,broker_protocol,broker_driver,invocation_state,capabilities_json,spec_hash,start_request_hash,selected_profile_hash,spec_projection_json,start_request_projection_json,lifecycle_policy_hash,created_at,updated_at) VALUES (?,?,?,'format1',?,?,'ready',?,?,?,?,?,?,?,?,?)",params![attempt["invocation_id"].as_str(),attempt["operation_id"].as_str(),attempt["runtime_id"].as_str(),hello["protocolVersion"].as_str(),descriptor["brokerDriver"].as_str(),hello.get("capabilities").unwrap_or(&json!({})).to_string(),descriptor["harnessInvocation"]["specHash"].as_str(),descriptor["harnessInvocation"]["startRequestHash"].as_str(),descriptor["descriptorHash"].as_str(),start["spec"].to_string(),start.to_string(),intent["lifecyclePolicy"]["policyHash"].as_str(),now,now])?;
         }
+        if launched {
+            tx.execute(
+                "UPDATE broker_invocations SET broker_pid=COALESCE(broker_pid,?) WHERE invocation_id=?",
+                params![realized["brokerPid"].as_i64(), attempt["invocation_id"].as_str()],
+            )?;
+        }
         tx.commit()?;
         Ok(())
     }

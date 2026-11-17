@@ -66,6 +66,8 @@ mod seat_retirement;
 mod start;
 #[path = "server/broker/startup/mod.rs"]
 mod startup;
+#[path = "server/broker/submission_loss.rs"]
+mod submission_loss;
 #[path = "server/broker/sweeps.rs"]
 mod sweeps;
 

@@ -34,6 +34,7 @@ pub fn category(kind: &str) -> Option<&'static str> {
         | "broker.provider_transcript_artifact.warning"
         | "runtime.crashed"
         | "runtime.stale"
+        | "runtime.detached"
         | "runtime.reassociated"
         | "runtime.settled"
         | "runtime.presentation"

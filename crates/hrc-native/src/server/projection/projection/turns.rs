@@ -365,12 +365,13 @@ pub(super) fn record_disposition(
     db: &Connection,
     submission: &str,
     disposition: &str,
+    reason: Option<&str>,
     at: &str,
     only_if_open: bool,
 ) -> Result<()> {
     db.execute(
-        "INSERT INTO submission_admissions (submission_id, disposition, disposed_at) VALUES (?, ?, ?) ON CONFLICT(submission_id) DO UPDATE SET disposition = excluded.disposition, disposed_at = excluded.disposed_at WHERE NOT ? OR submission_admissions.disposition IS NULL",
-        params![submission, disposition, at, only_if_open],
+        "INSERT INTO submission_admissions (submission_id, disposition, disposition_reason, disposition_author, disposed_at) VALUES (?, ?, ?, 'broker', ?) ON CONFLICT(submission_id) DO UPDATE SET disposition = excluded.disposition, disposition_reason = excluded.disposition_reason, disposition_author = excluded.disposition_author, disposed_at = excluded.disposed_at WHERE NOT ? OR submission_admissions.disposition IS NULL",
+        params![submission, disposition, reason, at, only_if_open],
     )?;
     Ok(())
 }
@@ -417,6 +418,7 @@ pub(super) fn project_submission_terminal(
         db,
         &submission,
         disposition,
+        payload["reason"].as_str(),
         time,
         ctx.evidence_origin.is_some(),
     )?;
@@ -453,6 +455,32 @@ pub(super) fn project_submission_terminal(
         return Ok(());
     }
     let reason = payload["reason"].as_str();
+    if complete_submission_terminal(db, &row, disposition, reason, time, now)? {
+        db.execute("UPDATE runtimes SET active_run_id = NULL, updated_at = ? WHERE runtime_id = ? AND active_run_id = ?", params![now, ctx.runtime_id, run_id])?;
+        let mut ev = ctx.ev(now);
+        ev.error_code = reason.map(str::to_owned);
+        events::append(
+            db,
+            "turn.reaped",
+            &ev,
+            &json!({"runId":run_id,"runtimeId":ctx.runtime_id,"invocationId":invocation,"submissionId":submission,"reason":reason,"finalizedRunStatus":"failed","source":"accepted-run-recovery"}),
+        )?;
+    }
+    Ok(())
+}
+
+/// The run transition shared by broker and HRC-authored submission terminals.
+pub(in crate::server) fn complete_submission_terminal(
+    db: &Connection,
+    row: &db::Run,
+    disposition: &str,
+    reason: Option<&str>,
+    time: &str,
+    now: &str,
+) -> Result<bool> {
+    if row.completed_at.is_some() {
+        return Ok(false);
+    }
     let never_started = disposition == "withdrawn"
         && reason == Some("accepted_run_never_started")
         && row.status == "accepted"
@@ -474,7 +502,7 @@ pub(super) fn project_submission_terminal(
     };
     db::mark_run_completed(
         db,
-        run_id,
+        &row.run_id,
         Completion {
             status,
             completed_at: if never_started { now } else { time },
@@ -483,18 +511,7 @@ pub(super) fn project_submission_terminal(
             error_message: message,
         },
     )?;
-    if never_started {
-        db.execute("UPDATE runtimes SET active_run_id = NULL, updated_at = ? WHERE runtime_id = ? AND active_run_id = ?", params![now, ctx.runtime_id, run_id])?;
-        let mut ev = ctx.ev(now);
-        ev.error_code = code.map(str::to_owned);
-        events::append(
-            db,
-            "turn.reaped",
-            &ev,
-            &json!({"runId":run_id,"runtimeId":ctx.runtime_id,"invocationId":invocation,"submissionId":submission,"reason":reason,"finalizedRunStatus":status,"source":"accepted-run-recovery"}),
-        )?;
-    }
-    Ok(())
+    Ok(never_started)
 }
 
 pub(super) fn project_queue_disposition(
@@ -509,7 +526,14 @@ pub(super) fn project_queue_disposition(
             .and_then(|s| s.strip_prefix("queue.")),
     ) {
         let at = envelope["time"].as_str().unwrap_or(now);
-        record_disposition(db, &submission, disposition, at, true)?;
+        record_disposition(
+            db,
+            &submission,
+            disposition,
+            envelope["payload"]["reason"].as_str(),
+            at,
+            true,
+        )?;
     }
     Ok(())
 }
@@ -583,6 +607,7 @@ pub fn project(
                     db,
                     sub,
                     if executed { "executed" } else { "absorbed" },
+                    payload["reason"].as_str(),
                     time,
                     false,
                 )?;
