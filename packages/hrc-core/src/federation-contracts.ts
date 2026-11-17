@@ -32,10 +32,14 @@ export type BirthDesignationEstablishmentDecision =
     }
   | { readonly action: 'enforce-designated-home' }
 
-/** The tier-5 provenances a birth designation can produce (T-07655). */
+/**
+ * The tier-5 provenances a birth designation can produce (T-07655). An
+ * unbound, unretired sender designates the one node running it (T-13508).
+ */
 export type BirthDesignationProvenance =
   | 'default_home_node(sender)'
   | 'default_home_node(sender-retired)'
+  | 'observed_runtime_node(sender)'
 
 /**
  * A recorded tier-5 birth designation: the node one virgin scope is born on,

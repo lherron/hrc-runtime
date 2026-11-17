@@ -3,6 +3,8 @@
 //! registry-reply.ts) and the one home-authority resolution
 //! (home-authority.ts) that locate and scope-read routing share.
 pub mod claim_start;
+#[cfg(test)]
+mod designation_tests;
 pub(super) mod gate;
 pub mod history;
 mod locate;
@@ -288,24 +290,15 @@ fn registry_endpoint(peer: &FederationPeer) -> Result<Url, RegistryError> {
     Ok(url)
 }
 
-/// federation-repositories.ts `createRegistryDatabase` (fresh schema only).
-fn open_registry(path: &Path) -> rusqlite::Result<Connection> {
-    if let Some(dir) = path.parent() {
-        let _ = std::fs::create_dir_all(dir);
-    }
-    let db = Connection::open(path)?;
-    db.busy_timeout(Duration::from_millis(5_000))?;
-    db.pragma_update(None, "journal_mode", "WAL")?;
-    db.execute_batch(
-        "CREATE TABLE IF NOT EXISTS binding_registry (
-           scope_ref TEXT PRIMARY KEY, home_node_id TEXT NOT NULL,
-           created_at TEXT NOT NULL, updated_at TEXT NOT NULL);
-         CREATE TABLE IF NOT EXISTS birth_designation (
+/// `birth_designation`'s columns and constraints, for both its creation and
+/// the one-time rebuild that widens the provenance CHECK.
+const BIRTH_DESIGNATION_SCHEMA: &str = "(
            scope_ref TEXT NOT NULL,
            designation_epoch INTEGER NOT NULL CHECK (designation_epoch >= 1),
            home_node_id TEXT NOT NULL,
            provenance TEXT NOT NULL CHECK (
-             provenance IN ('default_home_node(sender)', 'default_home_node(sender-retired)')),
+             provenance IN ('default_home_node(sender)', 'default_home_node(sender-retired)',
+                            'observed_runtime_node(sender)')),
            birth_envelope_id TEXT NOT NULL, sender_scope_ref TEXT NOT NULL,
            designated_at TEXT NOT NULL,
            state TEXT NOT NULL CHECK (state IN ('live', 'superseded')),
@@ -313,14 +306,63 @@ fn open_registry(path: &Path) -> rusqlite::Result<Connection> {
            PRIMARY KEY (scope_ref, designation_epoch),
            CHECK (
              (state = 'live' AND superseded_by IS NULL AND superseded_at IS NULL) OR
-             (state = 'superseded' AND superseded_by IS NOT NULL AND superseded_at IS NOT NULL)));
-         CREATE UNIQUE INDEX IF NOT EXISTS birth_designation_live_idx
-           ON birth_designation(scope_ref) WHERE state = 'live';
+             (state = 'superseded' AND superseded_by IS NOT NULL AND superseded_at IS NOT NULL)))";
+const BIRTH_DESIGNATION_LIVE_INDEX: &str =
+    "CREATE UNIQUE INDEX IF NOT EXISTS birth_designation_live_idx
+           ON birth_designation(scope_ref) WHERE state = 'live'";
+
+/// federation-repositories.ts `createRegistryDatabase`, plus the T-13508
+/// rebuild of a `birth_designation` created with the older provenance CHECK.
+fn open_registry(path: &Path) -> rusqlite::Result<Connection> {
+    if let Some(dir) = path.parent() {
+        let _ = std::fs::create_dir_all(dir);
+    }
+    let mut db = Connection::open(path)?;
+    db.busy_timeout(Duration::from_millis(5_000))?;
+    db.pragma_update(None, "journal_mode", "WAL")?;
+    db.execute_batch(&format!(
+        "CREATE TABLE IF NOT EXISTS binding_registry (
+           scope_ref TEXT PRIMARY KEY, home_node_id TEXT NOT NULL,
+           created_at TEXT NOT NULL, updated_at TEXT NOT NULL);
+         CREATE TABLE IF NOT EXISTS birth_designation {BIRTH_DESIGNATION_SCHEMA};
+         {BIRTH_DESIGNATION_LIVE_INDEX};
          CREATE TABLE IF NOT EXISTS binding_retirement_audit (
            scope_ref TEXT PRIMARY KEY, last_home_node_id TEXT NOT NULL,
-           retired_at TEXT NOT NULL);",
-    )?;
+           retired_at TEXT NOT NULL);"
+    ))?;
+    widen_designation_provenance(&mut db)?;
     Ok(db)
+}
+
+/// `CREATE TABLE IF NOT EXISTS` keeps an existing table's CHECK, so a registry
+/// created before `observed_runtime_node(sender)` is rebuilt once, in one
+/// transaction, with every row copied; afterwards this is a no-op.
+fn widen_designation_provenance(db: &mut Connection) -> rusqlite::Result<()> {
+    let sql: String = db.query_row(
+        "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'birth_designation'",
+        [],
+        |r| r.get(0),
+    )?;
+    if sql.contains("observed_runtime_node(sender)") {
+        return Ok(());
+    }
+    let tx = db.transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)?;
+    tx.execute_batch(&format!(
+        "CREATE TABLE birth_designation_next {BIRTH_DESIGNATION_SCHEMA};
+         INSERT INTO birth_designation_next ({DESIGNATION_COLUMNS})
+           SELECT {DESIGNATION_COLUMNS} FROM birth_designation;
+         DROP TABLE birth_designation;
+         ALTER TABLE birth_designation_next RENAME TO birth_designation;
+         {BIRTH_DESIGNATION_LIVE_INDEX};"
+    ))?;
+    let rows: i64 = tx.query_row("SELECT COUNT(*) FROM birth_designation", [], |r| r.get(0))?;
+    tx.commit()?;
+    log(
+        "info",
+        "federation.registry.birth_designation_rebuilt",
+        json!({"rows":rows,"addedProvenance":"observed_runtime_node(sender)"}),
+    );
+    Ok(())
 }
 
 const DESIGNATION_COLUMNS: &str = "scope_ref, designation_epoch, home_node_id, provenance, \
@@ -375,6 +417,7 @@ fn parse_designation(value: &Value, scope: &str) -> Option<Value> {
         || ![
             "default_home_node(sender)",
             "default_home_node(sender-retired)",
+            "observed_runtime_node(sender)",
         ]
         .contains(&provenance)
         || nonempty(&value["birthEnvelopeId"]).is_none()

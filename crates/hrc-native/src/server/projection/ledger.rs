@@ -87,6 +87,14 @@ impl Peer {
     }
 }
 impl Client {
+    /// A client whose wrkq is `program`: a test double.
+    #[cfg(test)]
+    pub(crate) fn with_program(program: std::path::PathBuf) -> Self {
+        Self {
+            program: Some(program),
+            ..Default::default()
+        }
+    }
     pub async fn request(&self, method: &str, params: Value) -> Result<Value> {
         let mut peer = self.peer.lock().await;
         let result = tokio::time::timeout(Duration::from_secs(15), async {

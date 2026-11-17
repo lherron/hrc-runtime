@@ -16,6 +16,7 @@ availability is discovered from health capabilities and route presence.
 | --- | --- | --- |
 | `GET` | `/v1/federation/health` | Health, observation time, and additive capabilities; optional runtime projection. |
 | `POST` | `/v1/federation/locate` | Resolve one scope using the receiver's local placement view. |
+| `POST` | `/v1/federation/observed-runtimes` | This node's runtimes for one scope (`{scopeRef}`), from the local store only; the registry host asks every peer when an unbound sender's first mail needs a birth designation (T-13508). A `404` (older release) counts as not running it. |
 | `POST` | `/v1/federation/establish` | Ask the selected home to perform an ordinary implicit establishment. |
 | `POST` | `/v1/federation/roster-start` | Start through the authenticated home-node roster surface. |
 | `POST` | `/v1/federation/exact-start` | Provision one exact scope on its authoritative home. |

@@ -3,7 +3,10 @@
 //! Bearer-authenticated against each peer's accepted tokens. The home answers
 //! forwarded reads localOnly, so a forwarded read never takes a second hop.
 //! Verbs native does not serve yet answer Bun's own "not here" refusals.
-use super::{history, locate::locate_for_peer};
+use super::{
+    history,
+    locate::{locate_for_peer, observed_for_peer},
+};
 use crate::server::{Shared, accounting, dispatch_local, stderr_json};
 use anyhow::{Context, Result};
 use axum::{
@@ -16,7 +19,7 @@ use axum::{
 use hrc_store::timestamp;
 use serde_json::{Map, Value, json};
 
-pub const ROUTE_KEYS: [&str; 27] = [
+pub const ROUTE_KEYS: [&str; 28] = [
     "GET /v1/federation/health",
     "GET /v1/sessions/work",
     "PUT /v1/sessions/work",
@@ -35,6 +38,7 @@ pub const ROUTE_KEYS: [&str; 27] = [
     "GET /v1/events/bounded-stream",
     "GET /v1/runs",
     "POST /v1/federation/locate",
+    "POST /v1/federation/observed-runtimes",
     "POST /v1/federation/roster-start",
     "POST /v1/federation/exact-start",
     "POST /v1/federation/establish",
@@ -386,6 +390,13 @@ async fn route_request(server: &Shared, peer: &str, request: Request) -> Result<
                 ),
             })
         }
+        ("POST", "/v1/federation/observed-runtimes") => {
+            // T-13508: the registry asks which node runs a birth's sender.
+            let body = record(&body)?;
+            let scope = required(&body, "scopeRef")?;
+            let answer = observed_for_peer(server, &scope).ok_or(Invalid)?;
+            Ok(reply(answer, StatusCode::OK))
+        }
         ("POST", "/v1/federation/establish") => {
             let body = record(&body)?;
             if body
@@ -580,7 +591,7 @@ mod tests {
 
     #[test]
     fn allowlist_names_the_session_writes_once() {
-        assert_eq!(ROUTE_KEYS.len(), 27);
+        assert_eq!(ROUTE_KEYS.len(), 28);
         assert_eq!(
             ROUTE_KEYS.iter().collect::<HashSet<_>>().len(),
             ROUTE_KEYS.len()

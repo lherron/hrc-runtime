@@ -604,6 +604,11 @@
     {
       "listener": "peer",
       "method": "POST",
+      "route": "/v1/federation/observed-runtimes"
+    },
+    {
+      "listener": "peer",
+      "method": "POST",
       "route": "/v1/federation/roster-start"
     },
     {

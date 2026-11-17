@@ -88,6 +88,7 @@ source:
   - crates/hrc-native/src/server/placement/federation/registry_listener.rs
   - crates/hrc-native/src/server/placement/federation/locate.rs
   - crates/hrc-native/src/server/placement/federation/mod.rs
+  - crates/hrc-native/src/server/placement/federation/designation_tests.rs
   - wrkq:T-12316
   - crates/hrc-native/src/server/broker/start.rs
   - hrcchat#19456

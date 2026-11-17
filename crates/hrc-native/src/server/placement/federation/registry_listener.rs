@@ -485,6 +485,59 @@ fn sender_scope(raw: &str) -> Option<String> {
         .then_some(scope)
 }
 
+/// The provenance of a designation to the one node running the sender (T-13508).
+pub(super) const OBSERVED_PROVENANCE: &str = "observed_runtime_node(sender)";
+
+/// The one node, this registry host included, holding a `ready` or `busy`
+/// runtime for an unbound, unretired sender. Zero or several nodes is `None`;
+/// a peer that is unreachable, refuses or predates the route counts as not
+/// running it. Every node's answer is logged, so a `none` can be explained.
+async fn observe_sender(server: &Shared, scope: &str, sender: &str) -> Option<String> {
+    let node = &server.federation;
+    let local = super::locate::scope_runtimes(server, sender);
+    let running = local
+        .iter()
+        .filter(|r| super::locate::is_running(r))
+        .count();
+    let mut answers = vec![
+        json!({"nodeId":node.node_id(),"state":"answered","runtimeCount":local.len(),"running":running}),
+    ];
+    answers.extend(
+        futures_util::future::join_all(
+            node.config
+                .peers
+                .iter()
+                .map(|peer| super::locate::observe_peer(node, peer, sender)),
+        )
+        .await,
+    );
+    let homes: Vec<&str> = answers
+        .iter()
+        .filter(|a| a["running"].as_u64().is_some_and(|n| n > 0))
+        .filter_map(|a| a["nodeId"].as_str())
+        .collect();
+    let home = match homes.as_slice() {
+        [home] => Some((*home).to_owned()),
+        _ => None,
+    };
+    let mut data = json!({"scopeRef":scope,"senderScopeRef":sender,"answers":answers});
+    match &home {
+        Some(home) => {
+            data["homeNodeId"] = home.as_str().into();
+            log("info", "federation.registry.designate_birth.observed", data);
+        }
+        None => {
+            data["runningNodes"] = homes.into();
+            log(
+                "info",
+                "federation.registry.designate_birth.unobserved",
+                data,
+            );
+        }
+    }
+    home
+}
+
 /// designateBirthOnHost: the live designation, or one recorded from the
 /// sender of the scope's birth envelope; never a guess when wrkq is down.
 pub(super) async fn designate_birth(
@@ -507,23 +560,30 @@ pub(super) async fn designate_birth(
     else {
         return Ok(json!({"kind":"none"}));
     };
-    let mut db = db.lock().unwrap();
-    let home = binding(&db, &sender).map_err(BirthError::Store)?;
-    let (home, provenance) = match home {
-        Some(b) => (
-            b["homeNodeId"].as_str().unwrap_or_default().to_owned(),
-            "default_home_node(sender)",
-        ),
-        None => match db
-            .query_row(
-                "SELECT last_home_node_id FROM binding_retirement_audit WHERE scope_ref = ?",
-                [&sender],
-                |r| r.get::<_, String>(0),
-            )
-            .optional()
-            .map_err(BirthError::Store)?
-        {
-            Some(retired) => (retired, "default_home_node(sender-retired)"),
+    // The binding, then the retirement record; the db lock is released before
+    // any fan-out (T-13508).
+    let recorded = {
+        let db = db.lock().unwrap();
+        match binding(&db, &sender).map_err(BirthError::Store)? {
+            Some(b) => Some((
+                b["homeNodeId"].as_str().unwrap_or_default().to_owned(),
+                "default_home_node(sender)",
+            )),
+            None => db
+                .query_row(
+                    "SELECT last_home_node_id FROM binding_retirement_audit WHERE scope_ref = ?",
+                    [&sender],
+                    |r| r.get::<_, String>(0),
+                )
+                .optional()
+                .map_err(BirthError::Store)?
+                .map(|retired| (retired, "default_home_node(sender-retired)")),
+        }
+    };
+    let (home, provenance) = match recorded {
+        Some(found) => found,
+        None => match observe_sender(server, scope, &sender).await {
+            Some(home) => (home, OBSERVED_PROVENANCE),
             None => return Ok(json!({"kind":"none"})),
         },
     };
@@ -531,6 +591,7 @@ pub(super) async fn designate_birth(
         .as_str()
         .unwrap_or_default()
         .to_owned();
+    let mut db = db.lock().unwrap();
     let tx = db
         .transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)
         .map_err(BirthError::Store)?;

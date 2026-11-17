@@ -196,6 +196,91 @@ async fn locate_peer(node: &Node, peer: &FederationPeer, scope: &str) -> Value {
     json!({"nodeId":peer.node_id,"state":"answered","checkedAt":checked,"answeredAt":timestamp(),"latencyMs":elapsed(started),"location":location})
 }
 
+/// This node's runtimes for one scope, oldest first: locate's `observed`
+/// block and the peer `observed-runtimes` answer read the same rows.
+pub(super) fn scope_runtimes(server: &Server, scope: &str) -> Vec<Value> {
+    let db = server.store.lock().unwrap();
+    db.sqlite
+        .prepare(
+            "SELECT runtime_id, lane_ref, status, transport, updated_at FROM runtimes
+              WHERE scope_ref = ? ORDER BY created_at ASC, runtime_id ASC",
+        )
+        .and_then(|mut stmt| {
+            stmt.query_map([scope], |r| {
+                Ok(json!({"runtimeId":r.get::<_,String>(0)?,"laneRef":r.get::<_,String>(1)?,"status":r.get::<_,String>(2)?,"transport":r.get::<_,String>(3)?,"updatedAt":r.get::<_,String>(4)?}))
+            })?
+            .collect::<rusqlite::Result<Vec<_>>>()
+        })
+        .unwrap_or_default()
+}
+
+/// A runtime that is running the scope now: `ready` or `busy` (T-13508).
+pub(super) fn is_running(runtime: &Value) -> bool {
+    matches!(runtime["status"].as_str(), Some("ready" | "busy"))
+}
+
+/// The peer listener's POST /v1/federation/observed-runtimes: this node's
+/// runtimes for the scope from the local store alone, with no registry
+/// consult, policy resolve or further peer hop. `None` for an invalid scope.
+pub fn observed_for_peer(server: &Server, scope: &str) -> Option<Value> {
+    let scope = hrc_common::scope::canonical_scope_ref(scope.trim())?;
+    let runtimes = scope_runtimes(server, &scope);
+    Some(
+        json!({"ok":true,"nodeId":server.federation.node_id(),"scopeRef":scope,"runtimes":runtimes}),
+    )
+}
+
+/// One peer's `observed-runtimes` answer for the birth designation: `state`
+/// is answered, unreachable, refused, unsupported (an older release's 404) or
+/// invalid-response; only an answered peer carries `running`.
+pub(super) async fn observe_peer(node: &Node, peer: &FederationPeer, scope: &str) -> Value {
+    let started = Instant::now();
+    let failure = |state: &str, detail: String| json!({"nodeId":peer.node_id,"state":state,"latencyMs":elapsed(started),"detail":detail});
+    let Ok(url) = reqwest::Url::parse(&peer.endpoint)
+        .and_then(|u| u.join("/v1/federation/observed-runtimes"))
+    else {
+        return failure("unreachable", "Invalid URL".into());
+    };
+    let call = async {
+        let response = node
+            .http_client()
+            .post(url)
+            .header("authorization", format!("Bearer {}", peer.token))
+            .headers(request_headers())
+            .header("content-type", "application/json")
+            .body(json!({"scopeRef":scope}).to_string())
+            .send()
+            .await?;
+        let status = response.status();
+        Ok::<_, reqwest::Error>((
+            status,
+            response.json::<Value>().await.unwrap_or(Value::Null),
+        ))
+    };
+    let (status, body) = match tokio::time::timeout(PEER_OBSERVE_TIMEOUT, call).await {
+        Err(_) => return failure("unreachable", "probe timed out".into()),
+        Ok(Err(error)) => return failure("unreachable", transport_text(&error)),
+        Ok(Ok(answer)) => answer,
+    };
+    if status == reqwest::StatusCode::NOT_FOUND {
+        return failure("unsupported", format!("HTTP {}", status.as_u16()));
+    }
+    if !status.is_success() {
+        let code = body["error"]["code"].as_str().unwrap_or("refused");
+        return failure("refused", format!("{code} (HTTP {})", status.as_u16()));
+    }
+    let Some(runtimes) = body["runtimes"].as_array().filter(|_| {
+        body["ok"] == true && body["nodeId"] == peer.node_id.as_str() && body["scopeRef"] == scope
+    }) else {
+        return failure(
+            "invalid-response",
+            "malformed observed-runtimes response".into(),
+        );
+    };
+    let running = runtimes.iter().filter(|r| is_running(r)).count();
+    json!({"nodeId":peer.node_id,"state":"answered","latencyMs":elapsed(started),"runtimeCount":runtimes.len(),"running":running})
+}
+
 /// locate.ts `locateScope` over locate-server.ts deps.
 async fn locate_scope(server: &Server, scope: &str) -> Value {
     let node = &server.federation;
@@ -214,21 +299,7 @@ async fn locate_scope(server: &Server, scope: &str) -> Value {
     if let Some(retirement) = &retirement {
         notes.push(json!({"code":"scope-retired","detail":format!("This node permanently retired the scope ({}).", retirement["reason"].as_str().unwrap_or(""))}));
     }
-    let runtimes = {
-        let db = server.store.lock().unwrap();
-        db.sqlite
-            .prepare(
-                "SELECT runtime_id, lane_ref, status, transport, updated_at FROM runtimes
-                  WHERE scope_ref = ? ORDER BY created_at ASC, runtime_id ASC",
-            )
-            .and_then(|mut stmt| {
-                stmt.query_map([scope], |r| {
-                    Ok(json!({"runtimeId":r.get::<_,String>(0)?,"laneRef":r.get::<_,String>(1)?,"status":r.get::<_,String>(2)?,"transport":r.get::<_,String>(3)?,"updatedAt":r.get::<_,String>(4)?}))
-                })?
-                .collect::<rusqlite::Result<Vec<_>>>()
-            })
-            .unwrap_or_default()
-    };
+    let runtimes = scope_runtimes(server, scope);
     let mut location = json!({
         "scopeRef": scope,
         "localNodeId": node.node_id(),
