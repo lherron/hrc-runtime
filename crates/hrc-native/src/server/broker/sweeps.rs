@@ -122,6 +122,7 @@ pub fn priming_active(db: &Connection, rt: &db::Rt) -> rusqlite::Result<bool> {
         if matches!(
             kind.as_str(),
             "submission.rejected"
+                | "submission.withdrawn"
                 | "submission.expired"
                 | "submission.cancelled"
                 | "submission.lost"
@@ -208,6 +209,28 @@ pub fn observed(
     })
 }
 
+fn pending_permission(
+    db: &Connection,
+    invocation: &str,
+    run_id: &str,
+    active_run_id: Option<&str>,
+) -> anyhow::Result<bool> {
+    db::exists(
+        db,
+        "SELECT 1 FROM broker_invocation_events AS request
+         WHERE request.invocation_id=?1 AND request.type='permission.requested'
+           AND (request.run_id=?2 OR (request.run_id IS NULL AND ?2=?3))
+           AND NOT EXISTS (
+             SELECT 1 FROM broker_invocation_events AS close
+             WHERE close.invocation_id=request.invocation_id AND close.seq>request.seq
+               AND close.type IN ('permission.resolved','permission.cancelled')
+               AND json_extract(close.broker_event_json,'$.permissionRequestId')=
+                   json_extract(request.broker_event_json,'$.permissionRequestId')
+           ) LIMIT 1",
+        params![invocation, run_id, active_run_id],
+    )
+}
+
 fn candidates(db: &Connection, cutoff_ms: i64) -> anyhow::Result<Vec<Candidate>> {
     let ids: Vec<String> = db
         .prepare("SELECT run_id FROM runs WHERE status IN ('accepted','started','running') AND transport='headless' AND completed_at IS NULL ORDER BY updated_at ASC, run_id ASC")?
@@ -226,7 +249,13 @@ fn candidates(db: &Connection, cutoff_ms: i64) -> anyhow::Result<Vec<Candidate>>
             }
             // A run parked on a user prompt is silent while it waits.
             if let Some(invocation) = &rt.active_invocation_id
-                && projected::open_ask(db, invocation, &run.run_id)?
+                && (projected::open_ask(db, invocation, &run.run_id)?
+                    || pending_permission(
+                        db,
+                        invocation,
+                        &run.run_id,
+                        rt.active_run_id.as_deref(),
+                    )?)
             {
                 continue;
             }
@@ -321,7 +350,7 @@ fn zombie(db: &Connection, c: &Candidate, threshold: i64) -> anyhow::Result<Valu
 
 /// Only an admitted, still unresolved submission is eligible. input.accepted
 /// is the broker's write boundary, irrespective of the run's current status.
-fn unwritten_submission(
+pub(super) fn unwritten_submission(
     db: &Connection,
     run: &db::Run,
 ) -> anyhow::Result<Option<(String, String, String)>> {
@@ -340,29 +369,18 @@ fn unwritten_submission(
     {
         return Ok(None);
     }
-    let mut stmt = db.prepare("SELECT type, broker_event_json FROM broker_invocation_events WHERE invocation_id=? AND runtime_id=? AND type IN ('admission.admitted','input.accepted','input.rejected','submission.executed','submission.absorbed','submission.rejected','submission.expired','submission.withdrawn','submission.cancelled','submission.lost','queue.expired','queue.withdrawn','queue.cancelled') AND (json_extract(broker_event_json,'$.submissionId')=? OR json_extract(broker_event_json,'$.inputId')=?)")?;
-    let mut admitted = false;
-    let rows = stmt.query_map(params![invocation, runtime, submission, submission], |r| {
-        Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?))
-    })?;
-    for row in rows {
-        let (kind, raw) = row?;
-        let event: Value = serde_json::from_str(&raw)?;
-        let key = if kind.starts_with("input.") {
-            "inputId"
-        } else {
-            "submissionId"
-        };
-        if event[key].as_str() != Some(submission) {
-            continue;
-        }
-        if kind == "admission.admitted" {
-            admitted = true;
-        } else {
-            return Ok(None);
-        }
-    }
-    Ok(admitted.then(|| (runtime.clone(), invocation.clone(), submission.clone())))
+    let eligible = db::exists(
+        db,
+        "SELECT 1 FROM submission_admissions
+         WHERE submission_id=?1 AND runtime_id=?2 AND invocation_id=?3 AND disposition IS NULL
+           AND NOT EXISTS (
+             SELECT 1 FROM broker_invocation_events
+             WHERE type='input.accepted' AND runtime_id=?2 AND invocation_id=?3
+               AND CASE WHEN json_valid(broker_event_json) THEN json_extract(broker_event_json,'$.inputId') END=?1
+           )",
+        params![submission, runtime, invocation],
+    )?;
+    Ok(eligible.then(|| (runtime.clone(), invocation.clone(), submission.clone())))
 }
 
 /// Settle withdrawal before turn.zombied wakes delivery consumers. The RPC
@@ -680,3 +698,7 @@ pub fn start_retention(server: &Shared) {
         });
     }
 }
+
+#[cfg(test)]
+#[path = "submission_terminal_tests.rs"]
+mod submission_terminal_tests;

@@ -1,7 +1,7 @@
 //! POST /v1/runs/reconcile-active and its 300 s recurring job
 //! (sweep-reconcile-active.ts). Runs a runtime still owns but no longer
-//! executes are reaped or finalized from broker evidence; runs a runtime let go
-//! of are failed; corrupt awaiting_input runtimes are surfaced, never healed.
+//! executes are reaped when the lifecycle is incompatible. Open submissions
+//! on live invocations are left to the broker to settle.
 //! The accepted-never-started settlement pass (settleUnstartedSubmissionRuns,
 //! T-11306) is not yet native.
 use super::{
@@ -34,7 +34,6 @@ struct Plan {
     reason: &'static str,
     error_code: Option<&'static str>,
     next_status: Option<&'static str>,
-    finalize_status: Option<&'static str>,
 }
 impl Plan {
     fn suspect(reason: &'static str) -> Self {
@@ -43,7 +42,6 @@ impl Plan {
             reason,
             error_code: None,
             next_status: None,
-            finalize_status: None,
         }
     }
     fn reap(reason: &'static str, code: &'static str, next: Option<&'static str>) -> Self {
@@ -52,7 +50,6 @@ impl Plan {
             reason,
             error_code: Some(code),
             next_status: next,
-            finalize_status: None,
         }
     }
 }
@@ -102,49 +99,22 @@ fn candidates(db: &Connection, cutoff: i64) -> anyhow::Result<Vec<Candidate>> {
     Ok(out)
 }
 
-/// planFinalizeFromOrphanTerminal: the run's turn reached a terminal the
-/// ledger could not attribute, and no other active run could own it.
-fn orphan_terminal(db: &Connection, c: &Candidate) -> anyhow::Result<Option<Plan>> {
-    let (Some(invocation), Some(input)) = (&c.rt.active_invocation_id, &c.run.dispatched_input_id)
+/// A live invocation can still settle a submission independently of a turn.
+fn awaits_submission(db: &Connection, run: &db::Run, rt: &db::Rt) -> anyhow::Result<bool> {
+    let (Some(submission), Some(invocation)) = (&run.broker_submission_id, &run.invocation_id)
     else {
-        return Ok(None);
+        return Ok(false);
     };
-    let competing: bool = db.query_row(
-        "SELECT EXISTS (SELECT 1 FROM runs WHERE runtime_id=? AND run_id<>? AND status IN ('accepted','started','running'))",
-        params![c.rt.runtime_id, c.run.run_id],
-        |r| r.get(0),
-    )?;
-    if competing {
-        return Ok(None);
+    if rt.active_invocation_id.as_ref() != Some(invocation)
+        || hrc_store::status::UNAVAILABLE.contains(&rt.status.as_str())
+    {
+        return Ok(false);
     }
-    let accepted: Option<i64> = db
-        .query_row(
-            "SELECT seq FROM broker_invocation_events WHERE invocation_id=? AND type='input.accepted' AND json_extract(broker_event_json,'$.inputId')=? ORDER BY seq DESC LIMIT 1",
-            params![invocation, input],
-            |r| r.get(0),
-        )
-        .ok();
-    let Some(seq) = accepted else { return Ok(None) };
-    let terminal: Option<String> = db
-        .query_row(
-            "SELECT type FROM broker_invocation_events WHERE invocation_id=? AND type IN ('turn.completed','turn.failed','turn.interrupted') AND (run_id IS NULL OR run_id='') AND seq>? ORDER BY seq ASC LIMIT 1",
-            params![invocation, seq],
-            |r| r.get(0),
-        )
-        .ok();
-    let status = match terminal.as_deref() {
-        Some("turn.completed") => "completed",
-        Some("turn.failed") => "failed",
-        Some("turn.interrupted") => "cancelled",
-        _ => return Ok(None),
-    };
-    Ok(Some(Plan {
-        action: "finalize",
-        reason: "runtime_active_run_reconciled_from_terminal",
-        error_code: None,
-        next_status: Some("ready"),
-        finalize_status: Some(status),
-    }))
+    db::exists(
+        db,
+        "SELECT 1 FROM submission_admissions WHERE submission_id=? AND runtime_id=? AND invocation_id=? AND disposition IS NULL",
+        params![submission, rt.runtime_id, invocation],
+    )
 }
 
 /// planActiveRunReconcile
@@ -157,8 +127,8 @@ async fn plan(server: &Shared, c: &Candidate) -> anyhow::Result<Plan> {
         {
             return Ok(Plan::suspect("runtime_awaiting_user_input"));
         }
-        if let Some(p) = orphan_terminal(&db.sqlite, c)? {
-            return Ok(p);
+        if awaits_submission(&db.sqlite, &c.run, &c.rt)? {
+            return Ok(Plan::suspect("runtime_awaiting_submission_terminal"));
         }
     }
     match c.rt.status.as_str() {
@@ -278,43 +248,6 @@ fn ev(c: &Candidate, now: &str, error_code: Option<&str>) -> events::Ev {
     }
 }
 
-/// finalizeActiveRun: the evidence-derived terminal, ownership cleared.
-fn finalize(db: &Connection, c: &Candidate, p: &Plan) -> anyhow::Result<Value> {
-    let now = hrc_store::timestamp();
-    let status = p.finalize_status.unwrap_or("completed");
-    let claimed = db.execute(
-        "UPDATE runs SET status=?, completed_at=?, updated_at=? WHERE run_id=? AND runtime_id=? AND status IN ('accepted','started','running') AND completed_at IS NULL AND EXISTS (SELECT 1 FROM runtimes WHERE runtime_id=? AND active_run_id=?)",
-        params![status, now, now, c.run.run_id, c.rt.runtime_id, c.rt.runtime_id, c.run.run_id],
-    )?;
-    if claimed == 0 {
-        return Ok(result(c, p, "skipped", false));
-    }
-    let cleared = db.execute(
-        "UPDATE runtimes SET active_run_id=NULL, status=?, updated_at=?, last_activity_at=? WHERE runtime_id=? AND active_run_id=?",
-        params![p.next_status.unwrap_or("ready"), now, now, c.rt.runtime_id, c.run.run_id],
-    )? > 0;
-    let kind = match status {
-        "completed" => "turn.completed",
-        "failed" => "turn.failed",
-        _ => "turn.interrupted",
-    };
-    events::append(
-        db,
-        kind,
-        &ev(c, &now, None),
-        &json!({"success":status == "completed","source":"active-run-reconcile","reason":p.reason,"finalizedRunStatus":status,"runId":c.run.run_id,"runtimeId":c.rt.runtime_id}),
-    )?;
-    super::stderr_json(
-        "info",
-        "sweep",
-        "active_run_reconcile.repaired_from_terminal",
-        json!({"runId":c.run.run_id,"runtimeId":c.rt.runtime_id,"finalizedRunStatus":status,"runtimeOwnershipCleared":cleared}),
-    );
-    let mut r = result(c, p, "repaired", cleared);
-    r["finalizedRunStatus"] = status.into();
-    Ok(r)
-}
-
 /// reapActiveRun: the run failed, ownership cleared, turn.reaped.
 fn reap(db: &Connection, c: &Candidate, p: &Plan, threshold: i64) -> anyhow::Result<Value> {
     let now = hrc_store::timestamp();
@@ -390,6 +323,13 @@ fn abandoned(db: &Connection, cutoff: i64, dry_run: bool) -> anyhow::Result<Vec<
             .as_deref()
             .and_then(db::parse_ms)
             .is_some_and(|ms| ms <= cutoff)
+        {
+            continue;
+        }
+        // A dry run may identify an unwritten submission for withdrawal. A
+        // live run is reaped here only when there is no open broker submission.
+        if awaits_submission(db, &run, &rt)?
+            && (!dry_run || sweeps::unwritten_submission(db, &run)?.is_none())
         {
             continue;
         }
@@ -524,11 +464,7 @@ pub async fn once(
                 (|| {
                     let before = db.sqlite.total_changes();
                     let tx = db.sqlite.unchecked_transaction()?;
-                    let r = if p.action == "finalize" {
-                        finalize(&tx, c, &p)?
-                    } else {
-                        reap(&tx, c, &p, threshold)?
-                    };
+                    let r = reap(&tx, c, &p, threshold)?;
                     tx.commit()?;
                     if db.sqlite.total_changes() != before {
                         server.ledger_committed();
@@ -542,9 +478,8 @@ pub async fn once(
         }));
     }
     if !dry_run {
-        // A queued run behind a stuck head is reaped here, not by the zombie
-        // sweep; release its held submission first, off the store lock, or
-        // the broker keeps it and mail never sees not_written (R-00673).
+        // Release held submissions for abandoned runs off the store lock.
+        // Their terminal projection can finish them before the reaper runs.
         let held: Vec<db::Run> = {
             let db = server.store.lock().unwrap();
             abandoned(&db.sqlite, cutoff, true)?

@@ -82,7 +82,9 @@ pub async fn mark_invocation_terminal(
                 .to_owned()
         };
         if let Some(active_run) = &rt.active_run_id {
+            // Teardown may already have completed the run with submission.lost.
             if let Some(r) = db::run(&tx, active_run)?
+                && r.completed_at.is_none()
                 && ["accepted", "started", "running"].contains(&r.status.as_str())
             {
                 let message = if let Some(u) = &user_exit {

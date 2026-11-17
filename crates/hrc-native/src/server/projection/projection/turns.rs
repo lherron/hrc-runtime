@@ -361,15 +361,16 @@ fn late_start(
     Ok(())
 }
 
-fn record_disposition(
+pub(super) fn record_disposition(
     db: &Connection,
     submission: &str,
     disposition: &str,
     at: &str,
+    only_if_open: bool,
 ) -> Result<()> {
     db.execute(
-        "INSERT INTO submission_admissions (submission_id, disposition, disposed_at) VALUES (?, ?, ?) ON CONFLICT(submission_id) DO UPDATE SET disposition = excluded.disposition, disposed_at = excluded.disposed_at",
-        params![submission, disposition, at],
+        "INSERT INTO submission_admissions (submission_id, disposition, disposed_at) VALUES (?, ?, ?) ON CONFLICT(submission_id) DO UPDATE SET disposition = excluded.disposition, disposed_at = excluded.disposed_at WHERE NOT ? OR submission_admissions.disposition IS NULL",
+        params![submission, disposition, at, only_if_open],
     )?;
     Ok(())
 }
@@ -390,6 +391,125 @@ fn upsert_admission(
 fn complete_if_open(db: &Connection, run_id: &str, c: Completion<'_>) -> Result<()> {
     if run(db, run_id)?.is_some_and(|r| r.completed_at.is_none()) {
         db::mark_run_completed(db, run_id, c)?;
+    }
+    Ok(())
+}
+
+/// Apply a non-landed terminal to its submission in live or retained projection.
+pub(super) fn project_submission_terminal(
+    db: &Connection,
+    envelope: &Value,
+    ctx: &Ctx,
+    now: &str,
+) -> Result<()> {
+    let Some(disposition) = envelope["type"]
+        .as_str()
+        .and_then(|s| s.strip_prefix("submission."))
+    else {
+        return Ok(());
+    };
+    let payload = &envelope["payload"];
+    let Some(submission) = owners::payload_submission_id(payload) else {
+        return Ok(());
+    };
+    let time = envelope["time"].as_str().unwrap_or(now);
+    record_disposition(
+        db,
+        &submission,
+        disposition,
+        time,
+        ctx.evidence_origin.is_some(),
+    )?;
+    let Some(run_id) = ctx.run_id.as_deref() else {
+        return Ok(());
+    };
+    let invocation = envelope["invocationId"].as_str().unwrap_or("");
+    let Some(row) = run(db, run_id)?.filter(|r| {
+        r.completed_at.is_none()
+            && r.runtime_id.as_deref() == Some(ctx.runtime_id.as_str())
+            && r.invocation_id.as_deref() == Some(invocation)
+    }) else {
+        return Ok(());
+    };
+    let named = row
+        .broker_submission_id
+        .as_deref()
+        .or(row.dispatched_input_id.as_deref());
+    // A launch-carried input may settle before its first executed event can
+    // bind the ID to the run. Its native admission already names the run.
+    let belongs = match named {
+        Some(id) => id == submission,
+        None if row.launch_carried_invoke() => db::exists(
+            db,
+            "SELECT 1 FROM broker_invocation_events
+             WHERE invocation_id=? AND seq<? AND type='admission.requested' AND run_id=?
+               AND json_extract(broker_event_json,'$.submissionId')=?
+               AND json_extract(broker_event_json,'$.origin.principalRef')='legacy:invocation.input'",
+            params![invocation, envelope["seq"].as_i64(), run_id, submission],
+        )?,
+        None => false,
+    };
+    if !belongs {
+        return Ok(());
+    }
+    let reason = payload["reason"].as_str();
+    let never_started = disposition == "withdrawn"
+        && reason == Some("accepted_run_never_started")
+        && row.status == "accepted"
+        && row.started_at.is_none();
+    let (status, code, message) = match disposition {
+        "lost" => (
+            "failed",
+            Some(SUBMISSION_LOST),
+            Some(reason.unwrap_or("turn-correlation-lost")),
+        ),
+        "withdrawn" if never_started => (
+            "failed",
+            reason,
+            Some("accepted broker submission was withdrawn before a turn started"),
+        ),
+        "withdrawn" => ("cancelled", Some("submission_withdrawn"), reason),
+        "cancelled" => ("cancelled", None, reason),
+        _ => ("failed", None, reason),
+    };
+    db::mark_run_completed(
+        db,
+        run_id,
+        Completion {
+            status,
+            completed_at: if never_started { now } else { time },
+            updated_at: now,
+            error_code: code,
+            error_message: message,
+        },
+    )?;
+    if never_started {
+        db.execute("UPDATE runtimes SET active_run_id = NULL, updated_at = ? WHERE runtime_id = ? AND active_run_id = ?", params![now, ctx.runtime_id, run_id])?;
+        let mut ev = ctx.ev(now);
+        ev.error_code = code.map(str::to_owned);
+        events::append(
+            db,
+            "turn.reaped",
+            &ev,
+            &json!({"runId":run_id,"runtimeId":ctx.runtime_id,"invocationId":invocation,"submissionId":submission,"reason":reason,"finalizedRunStatus":status,"source":"accepted-run-recovery"}),
+        )?;
+    }
+    Ok(())
+}
+
+pub(super) fn project_queue_disposition(
+    db: &Connection,
+    envelope: &Value,
+    now: &str,
+) -> Result<()> {
+    if let (Some(submission), Some(disposition)) = (
+        owners::payload_submission_id(&envelope["payload"]),
+        envelope["type"]
+            .as_str()
+            .and_then(|s| s.strip_prefix("queue.")),
+    ) {
+        let at = envelope["time"].as_str().unwrap_or(now);
+        record_disposition(db, &submission, disposition, at, true)?;
     }
     Ok(())
 }
@@ -449,19 +569,10 @@ pub fn project(
     let payload = &envelope["payload"];
     let time = envelope["time"].as_str().unwrap_or(now);
     let run_id = ctx.run_id.as_deref();
-    let reason = payload["reason"].as_str();
     match kind {
         "input.accepted" | "input.rejected" | "input.queued" => {
             if let Some(r) = run_id {
                 db::update_run(db, r, &[("updated_at", text(now))])?;
-            }
-        }
-        "queue.withdrawn" | "submission.withdrawn" => {
-            if let Some(r) = run_id {
-                db::update_run(db, r, &[("updated_at", text(now))])?;
-            }
-            if let Some(sub) = owners::payload_submission_id(payload) {
-                record_disposition(db, &sub, "withdrawn", time)?;
             }
         }
         "submission.executed" | "submission.absorbed" => {
@@ -473,6 +584,7 @@ pub fn project(
                     sub,
                     if executed { "executed" } else { "absorbed" },
                     time,
+                    false,
                 )?;
             }
             if let Some(r) = run_id {
@@ -507,50 +619,12 @@ pub fn project(
                 owners::settle_absorbed(db, envelope, &owner, now)?;
             }
         }
-        "submission.rejected" | "submission.expired" | "submission.cancelled" => {
-            if let Some(sub) = owners::payload_submission_id(payload) {
-                let d = match kind {
-                    "submission.rejected" => "rejected",
-                    "submission.expired" => "expired",
-                    _ => "cancelled",
-                };
-                record_disposition(db, &sub, d, time)?;
-            }
-            if let Some(r) = run_id {
-                complete_if_open(
-                    db,
-                    r,
-                    Completion {
-                        status: if kind == "submission.cancelled" {
-                            "cancelled"
-                        } else {
-                            "failed"
-                        },
-                        completed_at: time,
-                        updated_at: now,
-                        error_code: None,
-                        error_message: reason,
-                    },
-                )?;
-            }
-        }
-        "submission.lost" => {
-            if let Some(sub) = owners::payload_submission_id(payload) {
-                record_disposition(db, &sub, "lost", time)?;
-            }
-            if let Some(r) = run_id {
-                complete_if_open(
-                    db,
-                    r,
-                    Completion {
-                        status: "failed",
-                        completed_at: time,
-                        updated_at: now,
-                        error_code: Some(SUBMISSION_LOST),
-                        error_message: Some(reason.unwrap_or("turn-correlation-lost")),
-                    },
-                )?;
-            }
+        "submission.rejected"
+        | "submission.withdrawn"
+        | "submission.expired"
+        | "submission.cancelled"
+        | "submission.lost" => {
+            project_submission_terminal(db, envelope, ctx, now)?;
         }
         "turn.started" => {
             first_turn_started(db, &ctx.runtime_id, ctx.generation, time);
