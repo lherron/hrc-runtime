@@ -789,6 +789,18 @@ _deploy-node ssh-target expected-node target-ref="origin/main" aspd-ref="origin/
           "$aspd_supervisor" == "$aspd_label" ]]; then
       aspd_current=1
     fi
+    # A sole node (raspd serves alone, frontDoor.sole) keeps a stale
+    # supervisor.label, and `aspd-activate` is not proven to keep sole mode.
+    # So there aspd is current when it serves the target, and any other sha
+    # refuses instead of reinstalling (mable@hrc-runtime:hrcdev, 2026-11-17).
+    if [[ "$(jq -r '.frontDoor.sole // false' "$aspd_ns/service/config.json")" == true ]]; then
+      if [[ "$(jq -r '.reachable // false' <<<"$aspd_now")" == true &&
+            "$(jq -r '.release.sourceCommit // ""' <<<"$aspd_now")" == "$aspd_sha" ]]; then
+        aspd_current=1
+      else
+        fail "sole node: aspd serves $(jq -r '.release.sourceCommit // "nothing reachable"' <<<"$aspd_now"), not ${aspd_sha}; aspd moves go through agent-spaces' activation"
+      fi
+    fi
     # An HRC deploy never moves aspd backwards. A stale aspd target from an
     # earlier brief rolled svc back from dc36ba6f to a9fb61a4 (2026-10-23);
     # deliberate aspd rollbacks go through agent-spaces' own activation.
