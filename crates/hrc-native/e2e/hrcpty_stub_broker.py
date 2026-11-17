@@ -308,7 +308,9 @@ def handle(conn, method, params):
     # T-12360: ops-only seat.send submits through the real owner on the
     # claude hrcpty fixture too; keep the same acknowledgement/event protocol.
     if method in ('submission.invoke', 'submission.enqueue', 'submission.steer') and (state['driver'] == 'codex-app-server' or ARGS.get('ops-only') == '1'):
-        submission = 'sub-' + os.urandom(6).hex()
+        # A broker at or above agent-spaces 8ce36a9d answers with the
+        # caller-minted id (T-13689); HRC mints one on every call (T-13704).
+        submission = params.get('submissionId') or 'sub-' + os.urandom(6).hex()
         body = params.get('body') or {}
         text = json.dumps(body)[:200]
         if 'REFUSE' in text:
@@ -365,7 +367,7 @@ def handle(conn, method, params):
 def stalled_steer(conn, frame):
     """T-12228: a steer the harness takes 25 s to hand off; the reply comes late."""
     time.sleep(25)
-    submission = 'sub-' + os.urandom(6).hex()
+    submission = (frame.get('params') or {}).get('submissionId') or 'sub-' + os.urandom(6).hex()
     reply = {'jsonrpc': '2.0', 'id': frame.get('id'),
              'result': {'submissionId': submission, 'admission': 'admitted', 'inputId': submission}}
     log('reply', method=frame['method'], reply=reply, stalledS=25)

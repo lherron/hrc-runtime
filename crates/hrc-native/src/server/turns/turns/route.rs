@@ -9,7 +9,7 @@ use crate::server::{
     projection::{db, events, turns as projected},
 };
 use axum::http::StatusCode;
-use rusqlite::params;
+use rusqlite::{OptionalExtension, params};
 use serde_json::{Value, json};
 use std::time::Duration;
 
@@ -222,6 +222,10 @@ async fn input_turn(
     };
     crate::server::response_format::assert_runtime(server, rt, o.response_format, route)?;
     let door = plan.effective_door.as_str();
+    // The submission id, minted and committed before the call so the run's
+    // events are found by id however they interleave with the reply
+    // (T-13704). Attribution only: admission is still written from the reply.
+    let minted = format!("hrc-{}", uuid::Uuid::new_v4());
     {
         let db = server.store.lock().unwrap();
         let now = hrc_store::timestamp();
@@ -242,13 +246,14 @@ async fn input_turn(
                         "operation_id",
                         db::opt_text(rt.active_operation_id.as_deref()),
                     ),
+                    ("minted_submission_id", db::text(minted.as_str())),
                     ("updated_at", db::text(now.as_str())),
                 ],
             )?,
             None => {
                 db.sqlite.execute(
-                    "INSERT INTO runs (run_id, host_session_id, runtime_id, scope_ref, lane_ref, generation, transport, status, accepted_at, updated_at, invocation_id, operation_id, dispatch_idempotency_key, origin_actor, origin_kind, origin_causation_ref, execution_format) VALUES (?, ?, ?, ?, ?, ?, ?, 'accepted', ?, ?, ?, ?, ?, ?, ?, ?, 'format1')",
-                    params![o.run_id, session["hostSessionId"].as_str(), rt.runtime_id, session["scopeRef"].as_str(), session["laneRef"].as_str().map(hrc_store::storage_lane), session["generation"].as_i64(), transport, now, now, invocation, rt.active_operation_id, o.idempotency_key, o.origin.and_then(|x| x["actor"].as_str()), o.origin.and_then(|x| x["kind"].as_str()), o.origin.and_then(|x| x["causationRef"].as_str())],
+                    "INSERT INTO runs (run_id, host_session_id, runtime_id, scope_ref, lane_ref, generation, transport, status, accepted_at, updated_at, invocation_id, operation_id, dispatch_idempotency_key, origin_actor, origin_kind, origin_causation_ref, execution_format, minted_submission_id) VALUES (?, ?, ?, ?, ?, ?, ?, 'accepted', ?, ?, ?, ?, ?, ?, ?, ?, 'format1', ?)",
+                    params![o.run_id, session["hostSessionId"].as_str(), rt.runtime_id, session["scopeRef"].as_str(), session["laneRef"].as_str().map(hrc_store::storage_lane), session["generation"].as_i64(), transport, now, now, invocation, rt.active_operation_id, o.idempotency_key, o.origin.and_then(|x| x["actor"].as_str()), o.origin.and_then(|x| x["kind"].as_str()), o.origin.and_then(|x| x["causationRef"].as_str()), minted],
                 ).map_err(anyhow::Error::from)?;
             }
         }
@@ -303,6 +308,7 @@ async fn input_turn(
         Submit {
             runtime_id: &rt.runtime_id,
             run_id: Some(o.run_id),
+            submission_id: &minted,
             door,
             body: o.prompt,
             origin: &origin,
@@ -316,6 +322,18 @@ async fn input_turn(
     let base = |status: &str| json!({"runId":o.run_id,"hostSessionId":session["hostSessionId"],"generation":session["generation"],"runtimeId":rt.runtime_id,"transport":transport,"status":status,"supportsInFlightInput":interactive});
     let response = match result {
         Ok(response) => response,
+        Err(error)
+            if error.code == controller::submit::SUBMISSION_SETTLED
+                || error.code == controller::submit::SUBMISSION_TIMEOUT =>
+        {
+            if error.code == controller::submit::SUBMISSION_TIMEOUT
+                && let Some(api) =
+                    submission_timeout(server, rt, o.run_id, &invocation, route, error)
+            {
+                return Err(api);
+            }
+            return committed(server, o.run_id, base, label, route);
+        }
         Err(error) => {
             return Err(input_failure(
                 server,
@@ -345,7 +363,10 @@ async fn input_turn(
             "INSERT INTO submission_admissions (submission_id, run_id, runtime_id, invocation_id, door, envelope_id, admitted_at) VALUES (?, ?, ?, ?, ?, ?, ?) ON CONFLICT(submission_id) DO UPDATE SET run_id = excluded.run_id, runtime_id = excluded.runtime_id, invocation_id = excluded.invocation_id, door = COALESCE(excluded.door, submission_admissions.door), envelope_id = COALESCE(excluded.envelope_id, submission_admissions.envelope_id), admitted_at = excluded.admitted_at",
             params![submission, o.run_id, rt.runtime_id, invocation, door, origin["envelopeId"].as_str(), now],
         ).map_err(anyhow::Error::from)?;
-        if response["admission"] == "rejected" {
+        // A reply that lands after the run completed from its own events
+        // records its admission but never reopens or restates the run.
+        let open = db::run(&db.sqlite, o.run_id)?.is_some_and(|r| r.completed_at.is_none());
+        if response["admission"] == "rejected" && open {
             let reason = response["reason"]
                 .as_str()
                 .unwrap_or("broker rejected submission");
@@ -463,9 +484,6 @@ fn input_failure(
     error: controller::submit::BrokerError,
 ) -> ApiError {
     let message = error.message.clone();
-    if error.code == controller::submit::SUBMISSION_TIMEOUT {
-        return submission_timeout(server, rt, run_id, invocation, route, error);
-    }
     let timeout = error.code.ends_with("_timeout");
     let binding_missing = error.code == "broker_runtime_not_active";
     let result: anyhow::Result<bool> = (|| {
@@ -553,9 +571,12 @@ fn input_failure(
     unavailable(headline, detail)
 }
 
-/// A slow submission into a seat whose broker still answers (T-12228): this
-/// run fails, fenced so a late admission is never attributed to it; the
-/// runtime, its active run and its binding are left as they are.
+/// Every attempt of a submission into a seat whose broker still answers went
+/// unanswered (T-12228, T-13704): this run fails, fenced so a late admission
+/// is never attributed to it; the runtime, its active run and its binding are
+/// left as they are. Fence and failure are one write on a still-open run:
+/// `None` when the run already completed from its own events, whose outcome
+/// the caller answers with instead.
 fn submission_timeout(
     server: &Shared,
     rt: &db::Rt,
@@ -563,36 +584,81 @@ fn submission_timeout(
     invocation: &str,
     route: &str,
     error: controller::submit::BrokerError,
-) -> ApiError {
-    let result: anyhow::Result<()> = (|| {
+) -> Option<ApiError> {
+    let result: anyhow::Result<usize> = (|| {
         let db = server.store.lock().unwrap();
         let now = hrc_store::timestamp();
-        db.sqlite.execute("UPDATE runs SET broker_input_fenced_at=?, broker_input_fence_reason=?, updated_at=? WHERE run_id=?", params![now, error.code, now, run_id])?;
-        db::mark_run_completed(
-            &db.sqlite,
-            run_id,
-            db::Completion {
-                status: "failed",
-                completed_at: &now,
-                updated_at: &now,
-                error_code: Some("runtime_unavailable"),
-                error_message: Some(&error.message),
-            },
-        )?;
-        Ok(())
+        Ok(db.sqlite.execute(
+            "UPDATE runs SET broker_input_fenced_at=?1, broker_input_fence_reason=?2, status='failed', completed_at=?1, updated_at=?1, error_code='runtime_unavailable', error_message=?3 WHERE run_id=?4 AND completed_at IS NULL",
+            params![now, error.code, error.message, run_id],
+        )?)
     })();
     server.ledger_committed();
-    if let Err(e) = result {
-        controller::log(
+    match result {
+        Ok(0) => return None,
+        Ok(_) => {}
+        Err(e) => controller::log(
             "warn",
             "broker submission timeout bookkeeping failed",
             json!({"runtimeId":rt.runtime_id,"runId":run_id,"error":e.to_string()}),
-        );
+        ),
     }
-    unavailable(
+    Some(unavailable(
         "broker submission timed out; the seat is live and keeps its binding",
         json!({"runtimeId":rt.runtime_id,"runId":run_id,"invocationId":invocation,"route":route,"reason":error.code,"bindingRetained":true,"timeoutMs":error.detail["timeoutMs"],"cause":error.message,"error":error.message,"recommendation":"the seat is busy, not gone: retry later on the same runtime"}),
-    )
+    ))
+}
+
+/// The run completed from its own events while its submission reply was
+/// lost (T-13704): answer with that committed outcome, not the timeout. Its
+/// admission identity is the one the projection recorded from the broker's
+/// own executed/absorbed event, never the id HRC minted.
+fn committed(
+    server: &Shared,
+    run_id: &str,
+    base: impl Fn(&str) -> Value,
+    label: &str,
+    route: &str,
+) -> Result<Value, ApiError> {
+    let (row, admitted) = {
+        let db = server.store.lock().unwrap();
+        let row = db
+            .sqlite
+            .query_row(
+                "SELECT status, error_code, error_message FROM runs WHERE run_id=?",
+                [run_id],
+                |x| {
+                    Ok((
+                        x.get::<_, String>(0)?,
+                        x.get::<_, Option<String>>(1)?,
+                        x.get::<_, Option<String>>(2)?,
+                    ))
+                },
+            )
+            .map_err(anyhow::Error::from)?;
+        let admitted: Option<String> = db
+            .sqlite
+            .query_row(
+                "SELECT submission_id FROM submission_admissions WHERE run_id=? ORDER BY admitted_at ASC LIMIT 1",
+                [run_id],
+                |x| x.get(0),
+            )
+            .optional()
+            .map_err(anyhow::Error::from)?;
+        (row, admitted)
+    };
+    if row.0 == "completed" || row.0 == "coalesced" {
+        let mut body = base(&row.0);
+        if let Some(id) = admitted {
+            body["submissionId"] = id.into();
+            body["admission"] = "admitted".into();
+        }
+        return Ok(body);
+    }
+    Err(unavailable(
+        format!("{label} broker turn failed"),
+        json!({"runId":run_id,"route":route,"status":row.0,"errorCode":row.1,"errorMessage":row.2}),
+    ))
 }
 
 /// The scope's latest broker runtime when it is out of service but its broker
@@ -794,15 +860,15 @@ mod tests {
     fn a_kept_binding_timeout_fails_only_its_run() -> anyhow::Result<()> {
         let (_scratch, server) = server("off", false)?;
         let rt = seat(&server)?;
-        let api = input_failure(
+        let api = submission_timeout(
             &server,
             &rt,
             "run-steer",
             "inv",
-            "headless",
             "broker",
             error(controller::submit::SUBMISSION_TIMEOUT),
-        );
+        )
+        .expect("an open run is fenced");
         let detail = api.detail.clone().unwrap_or_default();
         assert_eq!(
             (api.status.as_u16(), api.code),

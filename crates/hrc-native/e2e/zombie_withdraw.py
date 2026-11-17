@@ -26,7 +26,9 @@ CLIENT_TIMEOUT_S = 20
 # Inject only task-specific broker behavior into a private copy of the stub.
 STUB = r'''    if method in ('submission.steer', 'submission.enqueue') and str(params.get('body','')).startswith('ZOMBIE-'):
         mode = params['body'].split('-',1)[1]
-        sub = 'sub-' + mode.lower()
+        # The caller-minted id (T-13704), remembered with its fixture mode.
+        sub = params.get('submissionId') or 'sub-' + mode.lower()
+        state.setdefault('zombieModes', {})[sub] = mode.lower()
         emit('admission.admitted', {'submissionId':sub, 'class':'steer'})
         if mode == 'WRITE':
             emit('input.accepted', {'inputId':sub}, sub)
@@ -35,14 +37,16 @@ STUB = r'''    if method in ('submission.steer', 'submission.enqueue') and str(p
         return {'submissionId':sub, 'inputId':sub, 'admission':'admitted'}
     if method == 'submission.withdraw':
         sub = params['submissionId']
-        if sub == 'sub-timeout':
+        mode = state.get('zombieModes', {}).get(sub, sub.removeprefix('sub-'))
+        sub_mode = 'sub-' + mode
+        if sub_mode == 'sub-timeout':
             time.sleep(15)
             return {'outcome':'unknown'}
-        if sub == 'sub-error':
+        if sub_mode == 'sub-error':
             raise RuntimeError('withdraw fixture refusal')
-        if sub == 'sub-noevent':
+        if sub_mode == 'sub-noevent':
             return {'outcome':'withdrawn'}
-        if sub == 'sub-refuse':
+        if sub_mode == 'sub-refuse':
             return {'outcome':'not_held', 'state':'accepted'}
         # Delay publication beyond the RPC response to exercise projection ordering.
         def publish():

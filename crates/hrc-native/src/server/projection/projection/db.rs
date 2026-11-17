@@ -172,6 +172,8 @@ pub struct Run {
     pub invocation_id: Option<String>,
     pub dispatched_input_id: Option<String>,
     pub broker_submission_id: Option<String>,
+    /// Attribution only (T-13704): never read to decide or report admission.
+    pub minted_submission_id: Option<String>,
     pub broker_input_fenced_at: Option<String>,
     pub broker_input_fence_reason: Option<String>,
     pub coalesced_into_run_id: Option<String>,
@@ -196,6 +198,7 @@ fn run_row(r: &Row<'_>) -> rusqlite::Result<Run> {
         invocation_id: r.get("invocation_id")?,
         dispatched_input_id: r.get("dispatched_input_id")?,
         broker_submission_id: r.get("broker_submission_id")?,
+        minted_submission_id: r.get("minted_submission_id")?,
         broker_input_fenced_at: r.get("broker_input_fenced_at")?,
         broker_input_fence_reason: r.get("broker_input_fence_reason")?,
         coalesced_into_run_id: r.get("coalesced_into_run_id")?,
@@ -213,11 +216,19 @@ fn run_where(db: &Connection, clause: &str, key: &str) -> Result<Option<Run>> {
 pub fn run(db: &Connection, id: &str) -> Result<Option<Run>> {
     run_where(db, "run_id=?", id)
 }
+/// The column the admission reply wrote, then the id HRC minted before the
+/// call (T-13704), so a run is found by id before its reply lands.
+fn run_by_id(db: &Connection, column: &str, id: &str) -> Result<Option<Run>> {
+    match run_where(db, &format!("{column}=?"), id)? {
+        Some(r) => Ok(Some(r)),
+        None => run_where(db, "minted_submission_id=?", id),
+    }
+}
 pub fn run_by_dispatched_input(db: &Connection, id: &str) -> Result<Option<Run>> {
-    run_where(db, "dispatched_input_id=?", id)
+    run_by_id(db, "dispatched_input_id", id)
 }
 pub fn run_by_submission(db: &Connection, id: &str) -> Result<Option<Run>> {
-    run_where(db, "broker_submission_id=?", id)
+    run_by_id(db, "broker_submission_id", id)
 }
 /// runs.getByDispatchedInputId ?? runs.getByBrokerSubmissionId
 pub fn run_for_input(db: &Connection, id: &str) -> Result<Option<Run>> {

@@ -583,13 +583,13 @@ fn prior_input_accepted(
     seq: i64,
 ) -> Result<Option<(String, i64)>> {
     let row: Option<(i64, Option<String>)> = db.query_row(
-        "SELECT seq, json_extract(broker_event_json, '$.inputId') AS inputId FROM broker_invocation_events WHERE invocation_id = ? AND type = 'input.accepted' AND seq <= ? AND NOT EXISTS (SELECT 1 FROM runs WHERE runs.dispatched_input_id = json_extract(broker_invocation_events.broker_event_json, '$.inputId') AND runs.broker_input_fenced_at IS NOT NULL) ORDER BY seq DESC LIMIT 1",
+        "SELECT seq, json_extract(broker_event_json, '$.inputId') AS inputId FROM broker_invocation_events WHERE invocation_id = ? AND type = 'input.accepted' AND seq <= ? AND NOT EXISTS (SELECT 1 FROM runs WHERE (runs.dispatched_input_id = json_extract(broker_invocation_events.broker_event_json, '$.inputId') OR runs.minted_submission_id = json_extract(broker_invocation_events.broker_event_json, '$.inputId')) AND runs.broker_input_fenced_at IS NOT NULL) ORDER BY seq DESC LIMIT 1",
         params![invocation, seq], |r| Ok((r.get(0)?, r.get(1)?))).optional()?;
     Ok(row.and_then(|(s, id)| id.filter(|i| !i.is_empty()).map(|i| (i, s))))
 }
 fn prior_fenced_input(db: &Connection, invocation: &str, seq: i64) -> Result<Option<String>> {
     let row: Option<(Option<String>, Option<String>)> = db.query_row(
-        "SELECT json_extract(broker_invocation_events.broker_event_json, '$.inputId'), runs.run_id FROM broker_invocation_events JOIN runs ON runs.dispatched_input_id = json_extract(broker_invocation_events.broker_event_json, '$.inputId') AND runs.broker_input_fenced_at IS NOT NULL WHERE broker_invocation_events.invocation_id = ? AND broker_invocation_events.type = 'input.accepted' AND broker_invocation_events.seq <= ? ORDER BY broker_invocation_events.seq DESC LIMIT 1",
+        "SELECT json_extract(broker_invocation_events.broker_event_json, '$.inputId'), runs.run_id FROM broker_invocation_events JOIN runs ON (runs.dispatched_input_id = json_extract(broker_invocation_events.broker_event_json, '$.inputId') OR runs.minted_submission_id = json_extract(broker_invocation_events.broker_event_json, '$.inputId')) AND runs.broker_input_fenced_at IS NOT NULL WHERE broker_invocation_events.invocation_id = ? AND broker_invocation_events.type = 'input.accepted' AND broker_invocation_events.seq <= ? ORDER BY broker_invocation_events.seq DESC LIMIT 1",
         params![invocation, seq], |r| Ok((r.get(0)?, r.get(1)?))).optional()?;
     Ok(row.and_then(|(i, r)| i.filter(|s| !s.is_empty()).and(r.filter(|s| !s.is_empty()))))
 }
@@ -696,6 +696,13 @@ pub fn resolve_run_id(
                 return Ok(Some(r.run_id));
             }
             return Ok(None);
+        }
+        // The open turn names its input: find the run by that id before the
+        // order-based reading of the latest accepted input (T-13704).
+        if let Some(input) = turn_started_input(db, envelope, started)?
+            && let Some(r) = run_for_input(db, &input)?
+        {
+            return Ok(Some(r.run_id));
         }
         if let Some((input, _)) = prior_input_accepted(db, &inv.invocation_id, started)? {
             if let Some(r) = run_for_input(db, &input)? {

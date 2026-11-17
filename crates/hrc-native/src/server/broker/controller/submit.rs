@@ -28,6 +28,11 @@ impl BrokerError {
 /// A submission RPC that timed out while its broker still answers: that
 /// submission fails, the binding stays (T-12228).
 pub const SUBMISSION_TIMEOUT: &str = "submission_timeout";
+/// The run completed from its own events while HRC retried a lost reply
+/// (T-13704): the caller answers with the run's committed outcome.
+pub const SUBMISSION_SETTLED: &str = "submission_settled";
+/// Attempts of one submission whose reply is lost while the broker answers.
+pub const SUBMISSION_ATTEMPTS: u32 = 3;
 
 /// One RPC on the active binding. With `retire_on_timeout`, a timeout retires
 /// the binding only on positive death evidence: the broker fails the liveness
@@ -134,6 +139,9 @@ async fn with_active_within(
 pub struct Submit<'a> {
     pub runtime_id: &'a str,
     pub run_id: Option<&'a str>,
+    /// Minted by HRC before the call and sent as `submissionId` (T-13704), so
+    /// a retry of a lost reply is the same submission to the broker.
+    pub submission_id: &'a str,
     /// The HRC submission door recorded on milestones (steer|enqueue|invoke|preempt).
     pub door: &'a str,
     pub body: &'a str,
@@ -181,7 +189,7 @@ pub async fn submit(server: &Shared, s: Submit<'_>) -> Result<Value, BrokerError
             json!({"runtimeId":s.runtime_id,"invocationId":i,"principalRef":s.origin["principalRef"]}),
         );
         return Ok(
-            json!({"submissionId":format!("hrc-rejected-{}",uuid::Uuid::new_v4()),"admission":"rejected","reason":"unsupported:preempt"}),
+            json!({"submissionId":s.submission_id,"admission":"rejected","reason":"unsupported:preempt"}),
         );
     }
     let codes = match s.door {
@@ -191,32 +199,41 @@ pub async fn submit(server: &Shared, s: Submit<'_>) -> Result<Value, BrokerError
         _ => ("broker_invoke_failed", "broker_invoke_timeout"),
     };
     let queued = method == "submission.enqueue" || method == "submission.preempt";
-    let (invocation, response) = with_active(
-        server,
-        s.runtime_id,
-        method,
-        |invocation| {
-            let mut p = json!({"invocationId":invocation,"origin":s.origin,"body":s.body});
-            if let Some(f) = s.response_format {
-                p["responseFormat"] = f.clone();
-            }
-            if let Some(f) = s.fresh_context {
-                p["freshContext"] = f.into();
-            }
-            if queued && let Some(t) = s.ttl_ms {
-                p["ttlMs"] = t.into();
-            }
-            if s.door != "steer"
-                && let Some(t) = s.turn_policy
-            {
-                p["turnPolicy"] = t.into();
-            }
-            p
-        },
-        codes,
-        true,
-    )
-    .await?;
+    let params = |invocation: &str| {
+        let mut p = json!({"invocationId":invocation,"submissionId":s.submission_id,"origin":s.origin,"body":s.body});
+        if let Some(f) = s.response_format {
+            p["responseFormat"] = f.clone();
+        }
+        if let Some(f) = s.fresh_context {
+            p["freshContext"] = f.into();
+        }
+        if queued && let Some(t) = s.ttl_ms {
+            p["ttlMs"] = t.into();
+        }
+        if s.door != "steer"
+            && let Some(t) = s.turn_policy
+        {
+            p["turnPolicy"] = t.into();
+        }
+        p
+    };
+    let (invocation, response) =
+        with_retries(server, &s, method, &params, codes, ACTIVE_RPC_TIMEOUT).await?;
+    if response["submissionId"].as_str() != Some(s.submission_id) {
+        log(
+            "error",
+            "broker.submission_id_mismatch",
+            json!({"runtimeId":s.runtime_id,"invocationId":invocation,"runId":s.run_id,"method":method,"mintedSubmissionId":s.submission_id,"replySubmissionId":response["submissionId"]}),
+        );
+        return Err(BrokerError {
+            code: codes.0.into(),
+            message: format!(
+                "broker {method} answered submission {} for minted submission {}",
+                response["submissionId"], s.submission_id
+            ),
+            detail: json!({"name":"BrokerSubmissionIdMismatch","mintedSubmissionId":s.submission_id,"replySubmissionId":response["submissionId"]}),
+        });
+    }
     if response["admission"] == "admitted" {
         let observed = hrc_store::timestamp();
         let result = {
@@ -251,6 +268,91 @@ pub async fn submit(server: &Shared, s: Submit<'_>) -> Result<Value, BrokerError
         );
     }
     Ok(response)
+}
+
+/// One submission over the active binding, resending the identical params on
+/// the same binding when a reply is lost while the broker still answers
+/// (T-13704). The broker returns the original reply for a repeated
+/// `submissionId`, so a retry never creates a second submission. Before each
+/// retry the run is re-read: one that completed from its own events (its
+/// terminal projected by the minted id, or the watchdog fired) ends the
+/// retries with [`SUBMISSION_SETTLED`]. The last timeout is returned as is.
+async fn with_retries(
+    server: &Shared,
+    s: &Submit<'_>,
+    method: &str,
+    params: &(dyn Fn(&str) -> Value + Sync),
+    codes: (&str, &str),
+    timeout: Duration,
+) -> Result<(String, Value), BrokerError> {
+    let mut bound: Option<String> = None;
+    let mut attempt = 1;
+    loop {
+        if let Some(first) = &bound
+            && active(server, s.runtime_id).map(|(i, _)| i).as_ref() != Some(first)
+        {
+            return Err(BrokerError::not_active(s.runtime_id));
+        }
+        let result = with_active_within(
+            server,
+            s.runtime_id,
+            method,
+            |invocation| {
+                bound.get_or_insert_with(|| invocation.to_owned());
+                params(invocation)
+            },
+            codes,
+            true,
+            timeout,
+        )
+        .await;
+        let error = match result {
+            Ok(reply) => return Ok(reply),
+            Err(e) if e.code == SUBMISSION_TIMEOUT => e,
+            Err(e) => {
+                if attempt > 1 && e.detail["brokerRpcCode"] == -32602 {
+                    log(
+                        "error",
+                        "broker.submission_retry_refused",
+                        json!({"runtimeId":s.runtime_id,"runId":s.run_id,"method":method,"submissionId":s.submission_id,"attempt":attempt,"error":e.message}),
+                    );
+                }
+                return Err(e);
+            }
+        };
+        if attempt >= SUBMISSION_ATTEMPTS {
+            return Err(error);
+        }
+        if let Some(run_id) = s.run_id {
+            let completed = {
+                let db = server.store.lock().unwrap();
+                db::run(&db.sqlite, run_id)
+                    .ok()
+                    .flatten()
+                    .and_then(|r| r.completed_at.map(|_| r.status))
+            };
+            if let Some(status) = completed {
+                log(
+                    "info",
+                    "broker.submission_retry_stopped",
+                    json!({"runtimeId":s.runtime_id,"runId":run_id,"method":method,"submissionId":s.submission_id,"attempt":attempt,"runStatus":status}),
+                );
+                return Err(BrokerError {
+                    code: SUBMISSION_SETTLED.into(),
+                    message: format!(
+                        "run {run_id} completed ({status}) while its {method} reply was lost"
+                    ),
+                    detail: json!({"runtimeId":s.runtime_id,"runId":run_id,"runStatus":status}),
+                });
+            }
+        }
+        attempt += 1;
+        log(
+            "warn",
+            "broker.submission_retry",
+            json!({"runtimeId":s.runtime_id,"runId":s.run_id,"method":method,"submissionId":s.submission_id,"attempt":attempt,"timeoutMs":error.detail["timeoutMs"]}),
+        );
+    }
 }
 
 /// submission.withdraw (no retire on timeout).

@@ -436,7 +436,8 @@ pub(super) fn project_submission_terminal(
     let named = row
         .broker_submission_id
         .as_deref()
-        .or(row.dispatched_input_id.as_deref());
+        .or(row.dispatched_input_id.as_deref())
+        .or(row.minted_submission_id.as_deref());
     // A launch-carried input may settle before its first executed event can
     // bind the ID to the run. Its native admission already names the run.
     let belongs = match named {

@@ -119,3 +119,16 @@ pub fn m0135_submission_disposition_author(conn: &Connection) -> anyhow::Result<
     )?;
     Ok(())
 }
+
+/// T-13704: the submission id HRC mints before a broker submission call.
+/// Attribution only: owner lookups match it so a run's events are found by
+/// id however they interleave with the admission reply. Nothing that decides
+/// or reports admission reads it.
+pub fn m0136_runs_minted_submission_id(conn: &Connection) -> anyhow::Result<()> {
+    conn.execute_batch(
+        "ALTER TABLE runs ADD COLUMN minted_submission_id TEXT;
+         CREATE INDEX idx_runs_minted_submission_id
+                 ON runs(minted_submission_id) WHERE minted_submission_id IS NOT NULL;",
+    )?;
+    Ok(())
+}
