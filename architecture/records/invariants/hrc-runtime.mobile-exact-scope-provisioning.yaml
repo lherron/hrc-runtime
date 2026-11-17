@@ -15,13 +15,28 @@ predicate: >
   persisted tier-5 birth designation. It derives that designation itself from
   wrkq's globally earliest reply-required envelope for the target and one
   registry consult of that envelope's scoped sender: a bound sender contributes
-  its binding home and a retired sender its immutable retired home. The first
+  its binding home and a retired sender its immutable retired home. When both
+  lookups miss, T-13508 permits the registry host to observe the canonical
+  sender scope in its own runtime store and on every configured peer through
+  authenticated POST /v1/federation/observed-runtimes. That route reads only
+  the receiving node's runtime store, without registry, policy or peer calls.
+  Observation runs outside the registry database lock, with concurrent peer
+  probes bounded to 1.5 seconds. Exactly one node reporting a ready or busy
+  runtime contributes the default with provenance observed_runtime_node(sender).
+  Unreachable, refusing and older peers contribute no positive observation;
+  zero or multiple positive nodes return none. This is a designation input,
+  not a participant-home registration, established binding or continuing claim
+  of runtime liveness. The immediate transaction rechecks for a live
+  designation before insertion, retaining the unique live designation per
+  scope. The provenance-constraint migration preserves every designation row
+  and the unique live index in one transaction. The first
   designation is recorded before response and every later ask returns it
   unchanged. Only its home may establish with sender-derived provenance;
   non-homing kickers finish without starting. Every higher-precedence
   establishment remains admissible and atomically supersedes a live
-  designation. No designation is recorded for no birth envelope or an absent or
-  unbound sender, and inability to consult wrkq or the registry is a typed
+  designation. No designation is recorded for no birth envelope, an absent
+  sender, or an unbound sender without one positive runtime-node observation;
+  inability to consult wrkq or the registry is a typed
   retryable refusal with no local fallback. A declared roster base reserves its
   closed suffix namespace on that home, and profile validation rejects pins or
   homes for reserved members. An explicit node directive is admissible only
@@ -30,7 +45,8 @@ predicate: >
   conflicts are typed refusals before mutation. No placement is inferred from
   ambient caller identity, transport, connection, or environment; the mail
   default is derived only by the registry host from the authoritative ledger
-  envelope and registry state. A remote home is invoked only through the
+  envelope, registry state and the narrow sender-runtime observation above.
+  A remote home is invoked only through the
   authenticated, capability-advertised exactStart peer verb, whose receiver
   independently validates retirement, authority, binding, placement, and
   materialization capability before mutation and localizes runtime intent. On
@@ -66,8 +82,12 @@ predicate: >
   stale_context reason peer_upgrade_required (retryable false) without sending
   the start. wrkq:T-11933 (native peer listener: home-side roster-start,
   exact-start and establish) restores the receiver.
-authority: Lance / wrkq:T-07398 / wrkq:T-07655 / wrkq:T-08407
+authority: Lance / wrkq:T-07398 / wrkq:T-07655 / wrkq:T-08407; T-13508 r1 sender-runtime designation amendment approved by Daedalus in reply to EN-56871, 2026-11-17
 source:
+  - wrkq:T-13508
+  - crates/hrc-native/src/server/placement/federation/registry_listener.rs
+  - crates/hrc-native/src/server/placement/federation/locate.rs
+  - crates/hrc-native/src/server/placement/federation/mod.rs
   - wrkq:T-12316
   - crates/hrc-native/src/server/broker/start.rs
   - hrcchat#19456
@@ -81,6 +101,9 @@ source:
   - crates/hrc-native/src/server/placement/federation/peer_listener.rs
   - wrkq:T-11933
 required_tests:
+  - T-13508 real registry and peer listener outcomes for one ready sender node, multiple nodes, terminal runtimes, unreachable sender node, and binding precedence
+  - T-13508 old-CHECK registry migration retains live and superseded rows and accepts observed_runtime_node(sender)
+  - T-13508 five installed fleet participant dispatches with fresh targets prove max3 designation and binding plus svc non-birth evidence
   - python3 crates/hrc-native/e2e/runtimes_start.py --deferred-message-only (T-12316 deferred claim binding and pinned-turn replay)
   - just verify
   - wrkq:T-07302 exact/suffix overlap tests in both winner orders and after restart
@@ -101,5 +124,13 @@ reopen_when: >
   birth-envelope selection, birth-designation authority or lifecycle,
   sender-derived provenance, mobile suffix-versus-exact selection, or exact
   placement routing changes.
+design_review: >
+  2026-11-17 T-13508 r1 APPROVE in reply to EN-56871 amends only the
+  unbound-sender designation source and its registry schema migration.
+  Source verification covered registry serialization, gate precedence,
+  store-only runtime observation, peer authentication and provenance parsing.
+  Implementation and installed acceptance remain unverified; historical
+  last_verified evidence is unchanged. No build, runtime test or installed
+  acceptance was run; commit hooks check record structure and projections.
 supersedes: []
 superseded_by: []
