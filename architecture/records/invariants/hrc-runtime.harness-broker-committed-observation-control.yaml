@@ -11,6 +11,16 @@ predicate: >
   hrc_events, and advances a contiguous projection cursor or records a typed
   fenced disposition. The cursor advances across intentionally non-mirrored
   high-volume deltas without treating mirror retention as a source gap.
+  For a native format-1 invocation with an HRC-launched and HRC-owned broker,
+  HRC may settle a mirrored admission without a disposition when the recorded
+  broker PID on the owning node returns ESRCH. The probe identifies the broker
+  process itself. An unknown PID, an indeterminate probe, a supervisor or
+  terminal-child exit, and lifecycle classification alone grant no settlement
+  authority. An unavailable runtime with unresolved submissions remains
+  eligible for startup and periodic reconciliation of this evidence. HRC
+  records its outcome and any still-open attributed run's failure in the same
+  transaction. External participant submissions remain under broker authority
+  through detach and replacement.
   broker_projection_dispositions is replay/hash metadata, not a keep-forever
   observation ledger. Standing retention may delete an orphan disposition with
   no broker_invocations owner, or a disposition at or below its owner's durable
@@ -192,6 +202,9 @@ predicate: >
   hrc-runtime.participant-session-lifecycle.
 authority: wrkq:T-13219 specification etag 2, Daedalus approval EN-50466 of unavailable-runtime operator termination with independent outcome holds, 2026-11-10; wrkq:T-11700 broker disposition retention design approval (EN-34727; Mable rule acceptance EN-34723), 2026-10-23; wrkq:T-10632 spec revision 2 age-bound directory holds and expired-revivable death-evidence admission (Daedalus approval), 2026-10-09; wrkq:T-08566 H1 directory-hold reconciliation revision 3 (Daedalus approval), 2026-09-17; wrkq:T-08566 stages 2-3 retained-evidence consumer and verifier revision 5 (Daedalus approval), 2026-09-16; wrkq:T-08566 stage-1 launch-wrapper ingest retirement (Daedalus approval EN-13178), 2026-09-17; Lance HCS T-07827 / Daedalus approvals wrkq:T-07853, companion design wrkq:T-08098, wrkq:T-08201 revision 5 (C-19938), and wrkq:T-08207 revisions 10 and 11 (2026-09-26)
 source:
+  - wrkq:T-13691
+  - crates/hrc-native/src/server/broker/lease.rs
+  - crates/hrc-native/src/server/projection/evidence.rs
   - wrkq:T-13219
   - crates/hrc-native/src/server/turns/control.rs
   - crates/hrc-native/src/server/broker/retained/mod.rs
@@ -256,6 +269,10 @@ last_verified:
   date: 2026-09-06
   evidence: T-08098 observed-mode mapper gates verify durable own foreign and unknown attribution, no nearest-input borrowing, no foreign terminalization, later own completion, and sequence-stable idempotent replay. Earlier authority is Daedalus source-grounded approval of revised T-07853 after resolution of Pi authority, retention ownership, and permission-timeout authority flaws. T-08201 revision 5 was source-reviewed and approved in C-19938 on 2026-09-07; its implementation and installed gates remain pending, and this date is not refreshed by design approval.
 design_review: >
+  2026-11-17 Daedalus approved T-13691 revision 5, etag 13, answering
+  EN-57501. Source review established the owned-broker death-evidence boundary
+  and separation of HRC settlement from broker projection. Implementation
+  evidence is pending and last_verified is unchanged.
   2026-11-10 T-13219 specification etag 2 approved in EN-50466 by source
   reading of terminate, lease teardown, and the retained-evidence hold predicate.
   This supersedes the prior direct-stale-termination refusal expectation, without
@@ -267,6 +284,7 @@ design_review: >
   cleanup, or service-health result is established; implementation gates remain
   the requester's work. Existing last_verified evidence is unchanged.
 reopen_when:
+  - HRC-authored broker-loss settlement changes its ownership, PID evidence, reconciliation, or run-completion boundary
   - unavailable-runtime operator termination admission or its independence from retained-evidence disposition changes
   - disposition terminal-age bound, owner identity, orphan eligibility, compaction cursor fence, or compacted-prefix conflict guarantee changes
   - HRC projects an uncommitted broker fact or BrokerEventMapper ceases to be the sole interpreter

@@ -30,8 +30,17 @@ predicate: >
   wait, obligation, or own-response option and resolves only through truthful
   absorbed or executed disposition. Every obligation-bearing call uses enqueue,
   invoke, or preempt; blocking callers correlate by submission disposition and
-  then the identified turn terminal rather than by delivery inference. For a
-  frozen format-1 invocation, an indeterminate submission.lost retains its
+  then the identified turn terminal rather than by delivery inference. The
+  native disposition query may answer HRC-authored submission.lost with
+  reason broker-gone for an unresolved format-1 submission under
+  hrc-runtime.harness-broker-committed-observation-control. This denotes an
+  ambiguous delivery outcome. The result identifies HRC as author and a
+  broker terminal visible to the query takes precedence. Broker follow and the
+  broker sequence space contain only broker-authored observations. Runtime-wide
+  envelope lookup applies only to the named runtime and distinguishes zero,
+  one, and multiple matching submission IDs. A broker sequence fence requires
+  its invocation ID. For a frozen format-1 invocation, a broker-reported
+  indeterminate submission.lost retains its
   legacy terminal-failed run disposition: HRC settles that legacy run, then the
   following non-retryable invocation.failed marks the runtime crashed and closes
   the broker client. For format 2, submission.lost is correlation uncertainty on
@@ -96,6 +105,8 @@ predicate: >
   Each hold/preempt request remains an immediate isolated admission decision.
 authority: Lance principal rulings 2026-09-01 through 2026-09-05, including wrkq:T-07920 cold-birth ruling, wrkq:T-07926 mail-hint direction, and the 2026-09-05 ruling in spec wrkq:T-08092 that supersedes wrkq:T-07914 / Daedalus approvals wrkq:T-07843 rev 7, wrkq:T-07926 rev 2, wrkq:T-07962 rev 3, wrkq:T-08012 corrected design rev 3, wrkq:T-08098 companion design, and wrkq:T-08207 revisions 10 and 11 (2026-09-26); wrkq:T-08207 revision 12 response confirmation, Daedalus approval 2026-09-26 / T-08562 Daedalus approval EN-13574 adds a launch-provenance preservation test without changing the predicate, 2026-09-17
 source:
+  - wrkq:T-13691
+  - crates/hrc-native/src/server/projection/evidence.rs
   - wrkq:T-08207
   - wrkq:T-08562
   - wrkq:T-07843
@@ -145,6 +156,7 @@ last_verified:
   date: 2026-09-17
   evidence: T-08562 design approval EN-13574 adds only the aspd-prepared Claude launch-provenance preservation gate; the predicate is unchanged and implementation evidence is pending. T-08098 unit gates verify capability-driven invoke-to-queue mapping with distinct visible door and admitted class, preserve direct exclusive invocation, and hold mail on an unattributed turn-observed seat. T-08012 corrected design rev 3 established an invoke-only terminal rendezvous plus registration-to-ledger coverage and run-scoped agent-loop lifecycle cleanup. T-07962 rev 3 established terminal lost-disposition consumption and non-retryable fresh-runtime recovery. T-07926 rev 2 established the count-only, non-presenting PostToolUse mail-hint boundary. T-07920 verified launch-carried cold summons behavior. T-08094 replaced the HRC-held batch with steer-first one-envelope-per-submission delivery.
 reopen_when:
+  - disposition authorship or precedence, broker follow ownership, or envelope lookup scope or ambiguity semantics change
   - HRC adds removes or parameterizes an admission-class submit method
   - an obligation or wait can ride steer or a blocking caller stops owning an originating turn
   - cross-seat scheduling moves into the broker or per-seat mechanism moves into HRC
@@ -161,3 +173,7 @@ reopen_when:
 supersedes:
   - wrkq:T-07914
 superseded_by: []
+design_review: >
+  2026-11-17 Daedalus approved T-13691 revision 5, etag 13, answering
+  EN-57501. Records the native disposition and envelope lookup contracts.
+  Implementation evidence is pending and last_verified is unchanged.

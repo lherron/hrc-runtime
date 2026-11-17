@@ -86,8 +86,15 @@ predicate: >
   extension; the retired Bun reference did not provide it either. Mail to an absent
   bound host remains pending and never births a substitute. processToken is opaque
   compatibility input ignored for joining, not persisted HRC identity, an HRC
-  comparison key, or replacement authority. Registration remains durable when observation is
-  unavailable. Each durable attempt has one invocation identity. Identity
+  comparison key, or replacement authority. Registration remains durable when
+  observation is unavailable. A ready external participant requires HRC's
+  current live broker attachment. Loss of that attachment, including an
+  unavailable attachment at startup, projects the existing runtime as detached
+  and emits runtime.detached. Detachment reports observation availability and
+  preserves the runtime, continuation, address, and participant authority.
+  Reattachment restores the status supported by the current broker. Neither
+  detachment nor replacement creates an HRC-authored submission terminal for
+  the external participant. Each durable attempt has one invocation identity. Identity
   installation, hello, resident
   invocation establishment, attach confirmation, and activation are distinct.
   HRC persists the immutable start request and dispatch options before requesting
@@ -199,6 +206,8 @@ predicate: >
   coordinated cutover.
 authority: T-12431 absence-only exhausted-establishment inspect amendment approved by Daedalus in reply to EN-44920, 2026-11-03, following Mable fix-forward direction and failed production acceptance EN-44918; supersedes the existing-row refusal approved in EN-44895 / bb66cd24 (design approval only); Lance direct instruction 2026-09-15 to complete protocol join without another Daedalus round, Astra revision 7 resolves EN-12457 functional gaps and supersedes prior admission clauses; retained Daedalus approvals of T-08344 DESIGN.md rev 6 (C-21192 / EN-08780) and ADAPTER-SEAM.md rev 2 (C-21247 / EN-08846), 2026-09-09; host participant lifecycle revision 5 at 0c1fecaaebfc231f9335057504f193e58d3c6d65 (reply to EN-12283), 2026-09-15; wrkq:T-08207 revision 11 participant F1 fence, Daedalus approval 2026-09-26; Lance ruling 2026-10-20 on participant-owned direct-join continuity, T-11435 contract amendment at a0312402d2bdbd156f7db1af8266a2dd6a5de6c8 approved by Daedalus on resubmission EN-32589, contract approval only
 source:
+  - wrkq:T-13691
+  - crates/hrc-native/src/server/broker/controller/terminal.rs
   - wrkq:T-13434
   - architecture/records/invariants/hrc-runtime.self-brokered-seat-launch.yaml
   - wrkq:T-12431
@@ -256,6 +265,7 @@ last_verified:
   date: 2026-09-15
   evidence: Revision 7 records Lance operator direction and Astra functional resolutions of EN-12457; not Daedalus approval. T-08349 accepted at 0e5a0557 under its previous contract; T-08504 implementation and installed proof remain pending. Phase 5 completeness remains withheld.
 reopen_when:
+  - external participant attachment status, runtime.detached meaning, or external submission settlement authority changes
   - exhausted-establishment inspect refusal admission or preservation of existing runtime views changes
   - protocol join optional post-join preparation or the pre-hosting post-realization and pre-ensure persistence boundaries change
   - registration policy or session identity changes, or any adapter or producer evidence path is reintroduced
@@ -273,6 +283,10 @@ reopen_when:
 supersedes: []
 superseded_by: []
 design_review: >
+  2026-11-17 Daedalus approved T-13691 revision 5, etag 13, answering
+  EN-57501. External detachment records lost observation and leaves the
+  broker's settlement authority intact. Implementation evidence is pending
+  and last_verified is unchanged.
   2026-11-12 Daedalus APPROVE of T-13434 rev 3 in reply to EN-52514.
   Adds only the declared self-brokered exception; external participant
   lifecycle remains unchanged. Source review only; historical last_verified
