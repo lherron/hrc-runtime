@@ -5,6 +5,14 @@ use rusqlite::{Connection, OptionalExtension, params};
 use serde_json::{Value, json};
 /// start_broker_graph's refusal when the identity's host session is retired.
 pub const HOST_SESSION_RETIRED: &str = "host_session_retired";
+/// The release a broker reports about itself in its `broker.hello` reply:
+/// `{releaseId, sourceCommit, builtAt}`, or None when it reports none.
+pub(crate) fn hello_release(hello: &Value) -> Option<Value> {
+    let h = hello.get("release").filter(|h| h.is_object())?;
+    Some(
+        json!({"releaseId":h["releaseId"],"sourceCommit":h["sourceCommit"],"builtAt":h["builtAt"]}),
+    )
+}
 fn s<'a>(v: &'a Value, k: &str) -> Result<&'a str> {
     v[k].as_str().with_context(|| format!("missing {k}"))
 }
@@ -159,8 +167,8 @@ impl Store {
         // response verbatim (it also carries worker.hostedDrivers).
         let rel = &record["executionRelease"];
         let mut release = json!({"source":"aspd","operationId":id["operationId"],"releaseId":rel["releaseId"],"sourceCommit":rel["sourceCommit"],"builtAt":rel["builtAt"],"releaseRoot":rel["releaseRoot"],"worker":{"protocol":rel["worker"]["protocol"],"executable":record["hosting"]["executable"],"argvPrefix":rel["worker"]["argvPrefix"]}});
-        if let Some(h) = hello.get("release").filter(|h| h.is_object()) {
-            release["helloRelease"] = json!({"releaseId":h["releaseId"],"sourceCommit":h["sourceCommit"],"builtAt":h["builtAt"]});
+        if let Some(h) = hello_release(hello) {
+            release["helloRelease"] = h;
         }
         let paths = &record["hosting"]["paths"];
         let mut broker = json!({"protocolVersion":hello["protocolVersion"],"multiInvocation":hello["capabilities"]["multiInvocation"],"startedAt":now,"ownerServerInstanceId":format!("hrc-server:{}",std::process::id()),"inspection":hello["capabilities"]["inspection"]});

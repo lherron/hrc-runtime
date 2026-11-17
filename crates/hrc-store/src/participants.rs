@@ -970,6 +970,47 @@ impl Store {
         tx.commit()?;
         Ok(())
     }
+    /// A participant's release is what its own broker reports in `broker.hello`
+    /// (T-13703): stored as `executionRelease` with source `broker.hello`, so
+    /// the aspd-release readers (`source == "aspd"`) never take it for a frozen
+    /// worker. Every establishment overwrites it, so a respawned broker's
+    /// release replaces its predecessor's; a hello without one removes it.
+    pub fn participant_execution_release(&self, runtime_id: &str, hello: &Value) -> Result<()> {
+        let tx = self.sqlite.unchecked_transaction()?;
+        let raw: Option<String> = tx
+            .query_row(
+                "SELECT runtime_state_json FROM runtimes WHERE runtime_id=?",
+                [runtime_id],
+                |r| r.get(0),
+            )
+            .optional()?
+            .flatten();
+        let Some(raw) = raw else {
+            return Ok(());
+        };
+        let mut state: Value = serde_json::from_str(&raw)?;
+        let release = crate::broker::hello_release(hello).map(|mut r| {
+            r["source"] = "broker.hello".into();
+            r
+        });
+        if state.get("executionRelease") == release.as_ref() {
+            return Ok(());
+        }
+        match release {
+            Some(r) => state["executionRelease"] = r,
+            None => {
+                if let Some(o) = state.as_object_mut() {
+                    o.remove("executionRelease");
+                }
+            }
+        }
+        tx.execute(
+            "UPDATE runtimes SET runtime_state_json=?,updated_at=? WHERE runtime_id=?",
+            params![state.to_string(), timestamp(), runtime_id],
+        )?;
+        tx.commit()?;
+        Ok(())
+    }
     /// Commit continuity activation before publishing the held controller.
     pub fn activate_participant(&self, reg: &Value, attempt: &Value) -> Result<()> {
         let now = timestamp();

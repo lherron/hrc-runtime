@@ -434,6 +434,13 @@ async fn establish(server: &Shared, reg: &Value, attempt: &Value) -> Result<()> 
             .unwrap()
             .participant_broker_graph(reg, &a, &hello)?;
     }
+    // Fresh, re-registered and reconnected establishments all said hello to
+    // the broker now serving this runtime; its release is the runtime's.
+    server
+        .store
+        .lock()
+        .unwrap()
+        .participant_execution_release(string(&a, "runtime_id")?, &hello)?;
     attach_and_activate(server, reg, &a, &intent, &identity, &ack).await
 }
 
