@@ -111,6 +111,33 @@ impl Trace {
         }
     }
 }
+/// `deliveryEvidence` on an error whose input provably never landed.
+pub const NOT_WRITTEN: &str = "not_written";
+
+/// Mark an error whose input provably never reached the harness.
+pub fn not_written(mut error: ApiError) -> ApiError {
+    let detail = error.detail.get_or_insert_with(|| json!({}));
+    if detail.is_object() {
+        detail["deliveryEvidence"] = NOT_WRITTEN.into();
+    }
+    error
+}
+
+/// A route that failed after admission: a refusal when the error carries
+/// typed not-written evidence, otherwise a possible write (timeouts, lost
+/// replies, anything unproven).
+pub fn failed(error: &ApiError) -> Outcome<'_> {
+    if error
+        .detail
+        .as_ref()
+        .is_some_and(|d| d["deliveryEvidence"] == NOT_WRITTEN)
+    {
+        Outcome::Refused(error)
+    } else {
+        Outcome::PossibleWrite(error)
+    }
+}
+
 pub enum Outcome<'a> {
     Refused(&'a ApiError),
     RefusedWith(&'static str),
@@ -234,37 +261,26 @@ fn admission_classes(conn: &rusqlite::Connection, rt: &db::Rt) -> Option<Vec<Str
             .collect()
     })
 }
-/// submissionDoorReport
-fn door_report(
+/// submissionDoorReport: the one place a door is downgraded. A steer is sent
+/// as a steer on every driver; the broker lands it in every seat state. An
+/// invoke into a seat whose classes lack `exclusive` goes through the queue.
+pub(crate) fn door_report(
     conn: &rusqlite::Connection,
     session: &Value,
     door: &str,
 ) -> anyhow::Result<(Value, Option<db::Rt>)> {
-    if door != "steer" && door != "invoke" {
+    if door != "invoke" {
         return Ok((json!({"effectiveDoor":door}), None));
     }
     let rt = active_broker_runtime(conn, session["hostSessionId"].as_str().unwrap_or(""))?;
-    let keep = match &rt {
-        None => true,
-        Some(rt) => {
-            let classes = admission_classes(conn, rt);
-            if door == "steer" {
-                !classes.is_some_and(|c| !c.iter().any(|x| x == "steer"))
-            } else {
-                classes.is_some_and(|c| c.iter().any(|x| x == "exclusive"))
-            }
-        }
-    };
+    let keep = rt.as_ref().is_none_or(|rt| {
+        admission_classes(conn, rt).is_some_and(|c| c.iter().any(|x| x == "exclusive"))
+    });
     if keep {
         return Ok((json!({"effectiveDoor":door}), None));
     }
-    let reason = if door == "steer" {
-        "steer_not_supported"
-    } else {
-        "invoke_exclusive_not_supported"
-    };
     Ok((
-        json!({"effectiveDoor":"enqueue","requestedDoor":door,"downgradeReason":reason}),
+        json!({"effectiveDoor":"enqueue","requestedDoor":door,"downgradeReason":"invoke_exclusive_not_supported"}),
         rt,
     ))
 }
@@ -1040,11 +1056,11 @@ pub(crate) mod tests {
                 "enqueue",
             ),
             (
-                "steer-downgrade",
+                "steer-without-steer-class",
                 "steer",
                 Some(json!(["exclusive"])),
                 None,
-                "enqueue",
+                "accepted",
             ),
             ("idempotent-replay", "invoke", None, None, "replayed"),
             (

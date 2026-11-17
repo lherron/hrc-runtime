@@ -420,10 +420,7 @@ pub async fn birth(server: &Shared, birth: Birth<'_>) -> Result<Value, ApiError>
     .await;
     let (client, events, hello, allocation, started, attach_pending) = match launched {
         Ok(launched) => launched,
-        Err(error) => {
-            release_failed_start(server, &record, &attempt, &error).await;
-            return Err(error);
-        }
+        Err(error) => return Err(failed_start(server, &record, &attempt, error).await),
     };
     let execution = &record["admission"]["execution"];
     let snapshot = client
@@ -514,6 +511,21 @@ struct StartAttempt {
     start_sent: bool,
     refusal: Option<Value>,
     error: String,
+}
+
+/// Settle a failed start; an error reply to invocation.start proves the
+/// prompt it carried was never written.
+async fn failed_start(
+    server: &Shared,
+    record: &Value,
+    attempt: &StartAttempt,
+    error: ApiError,
+) -> ApiError {
+    release_failed_start(server, record, attempt, &error).await;
+    match attempt.refusal {
+        Some(_) => crate::server::turns::admission::not_written(error),
+        None => error,
+    }
 }
 
 /// releaseNeverStartedLease: a lease that never carried invocation.start

@@ -1,5 +1,5 @@
 //! Live seat probes (bc-submission.ts probeSeat/startSeatMonitor,
-//! dispatch-observability.ts recordSeatProbe/warnStalledSubmissions,
+//! dispatch-observability.ts recordSeatProbe,
 //! event-mapper/runtime-state.ts settleRuntimeOnIdleSeat).
 use super::{active, log, shutting};
 use crate::server::{
@@ -219,69 +219,6 @@ fn settle_idle(
     Ok(true)
 }
 
-/// warnStalledSubmissions: accepted submissions with no start past the threshold.
-fn warn_stalled(
-    db: &Connection,
-    runtime_id: &str,
-    invocation: &str,
-    observed: &str,
-    seat_state: &str,
-) -> Result<()> {
-    let Some(rt) = db::runtime(db, runtime_id)? else {
-        return Ok(());
-    };
-    let phase =
-        db::invocation(db, invocation)?.map_or("unknown".to_owned(), |i| i.invocation_state);
-    let now = db::parse_ms(observed).unwrap_or(0);
-    let submissions = diagnostics(&rt.state_object())["submissions"]
-        .as_array()
-        .cloned()
-        .unwrap_or_default();
-    for s in submissions {
-        if s["acceptedAt"].is_null()
-            || !s["turnStartedAt"].is_null()
-            || s.get("stalledWarnedAt").is_some()
-            || !s["absorbedAt"].is_null()
-        {
-            continue;
-        }
-        if s["door"] == "steer" && !s["handedToHarnessAt"].is_null() {
-            continue;
-        }
-        let Some(accepted) = s["acceptedAt"].as_str().and_then(db::parse_ms) else {
-            continue;
-        };
-        let duration = now - accepted;
-        if duration < STALL_THRESHOLD_MS {
-            continue;
-        }
-        let rt = db::runtime(db, runtime_id)?.unwrap();
-        let mut state = rt.state_object();
-        let mut d = diagnostics(&state);
-        if let Some(list) = d["submissions"].as_array_mut() {
-            for e in list
-                .iter_mut()
-                .filter(|e| e["submissionId"] == s["submissionId"])
-            {
-                e["stalledWarnedAt"] = observed.into();
-            }
-        }
-        state["brokerDispatchDiagnostics"] = d;
-        db::update_runtime_state(db, runtime_id, &state, observed)?;
-        let fields = json!({"runtimeId":runtime_id,"invocationId":invocation,"submissionId":s["submissionId"],"runId":s["runId"],"acceptedAt":s["acceptedAt"],"durationMs":duration,"thresholdMs":STALL_THRESHOLD_MS,"lastCompletedMilestone":s["lastMilestone"],"seatState":seat_state,"invocationPhase":phase});
-        durable(
-            db,
-            &rt,
-            "broker.submission.stalled",
-            &fields,
-            observed,
-            s["runId"].as_str(),
-        )?;
-        log("warn", "broker.submission.stalled", fields);
-    }
-    Ok(())
-}
-
 /// probeSeat: seat.probe on the active binding and its recorded consequences.
 pub async fn probe(server: &Shared, runtime_id: &str, cause: &str) -> Result<Value, Value> {
     let result = super::submit::with_active(
@@ -317,14 +254,9 @@ pub async fn probe(server: &Shared, runtime_id: &str, cause: &str) -> Result<Val
                     let observation = record(
                         &db.sqlite, runtime_id, invocation, response, &observed, cause,
                     )?;
-                    let state = observation["state"]
-                        .as_str()
-                        .unwrap_or("unknown")
-                        .to_owned();
-                    if state == "idle" {
+                    if observation["state"] == "idle" {
                         settle_idle(&db.sqlite, runtime_id, invocation, &observed)?;
                     }
-                    warn_stalled(&db.sqlite, runtime_id, invocation, &observed, &state)?;
                 }
                 (Ok(_), _) => record_unavailable(
                     &db.sqlite,
@@ -347,7 +279,7 @@ pub async fn probe(server: &Shared, runtime_id: &str, cause: &str) -> Result<Val
         })();
         (recorded, db.sqlite.total_changes() != before)
     };
-    // Settlement and stall warnings can write even when the probe is equal.
+    // Settlement and the seat stall warning can write even when the probe is equal.
     // Also notify on a partial write followed by a recording error.
     if changed {
         server.ledger_committed();

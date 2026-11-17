@@ -155,30 +155,22 @@ fn classes(server: &Shared, invocation: &str) -> Option<Vec<String>> {
     })
 }
 
-/// steer/enqueue/invoke/preempt through the active broker.
+/// steer/enqueue/invoke/preempt through the active broker. The door is the
+/// one admission decided (an invoke without `exclusive` arrives as enqueue).
 pub async fn submit(server: &Shared, s: Submit<'_>) -> Result<Value, BrokerError> {
-    let mut class = match s.door {
+    let class = match s.door {
         "steer" => "steer",
         "enqueue" => "queue",
         "preempt" => "preempt",
         _ => "exclusive",
     };
-    let mut method = match s.door {
+    let method = match s.door {
         "steer" => "submission.steer",
         "enqueue" => "submission.enqueue",
         "preempt" => "submission.preempt",
         _ => "submission.invoke",
     };
     let invocation = active(server, s.runtime_id).map(|(i, _)| i);
-    if s.door == "invoke"
-        && let Some(i) = &invocation
-        && !classes(server, i).is_some_and(|c| c.iter().any(|x| x == "exclusive"))
-    {
-        // A multi-origin seat cannot offer the exclusive class: admit the
-        // invoke through the queue class.
-        class = "queue";
-        method = "submission.enqueue";
-    }
     if s.door == "preempt"
         && let Some(i) = &invocation
         && classes(server, i).is_some_and(|c| !c.iter().any(|x| x == "preempt"))

@@ -34,6 +34,12 @@ initial prompt containing `NOLAUNCH` never runs its turn (a seat that never
 launched); a turn whose prompt contains `CONT` emits continuation.updated
 {provider openai, kind thread, key thread-stub-<socket hash>} before it completes.
 
+T-13701 controls, codex driver only: an initial prompt containing
+`CLASSES[a,b]` advertises capabilities.admission.classes [a, b] in the
+invocation.start reply; one containing `SLOWSTART` holds that reply 4 s
+(the seat is starting meanwhile); a `submission.*` whose body contains
+`REFUSE` answers a JSON-RPC error "Cannot accept input in state: starting".
+
 `stub.localTurn` emits a turn no HRC input started (a prompt typed in a TUI).
 `stub.usage` {turnId, usedTokens, windowTokens}, sent on its own connection,
 emits one usage.updated for that turn (kernel_fold.py --serve's turnContext).
@@ -261,15 +267,26 @@ def handle(conn, method, params):
         with lock:
             state['child'] = child
         initial = start.get('initialInput')
+        text = ''.join(p.get('text', '') for p in (initial or {}).get('content', []) if isinstance(p, dict))
+        capabilities = {'interrupt': True, 'stop': True}
+        if state['driver'] == 'codex-app-server' and 'CLASSES[' in text:
+            listed = text[text.index('CLASSES[') + 8:].split(']', 1)[0]
+            capabilities['admission'] = {'classes': [c for c in listed.split(',') if c]}
+        if state['driver'] == 'codex-app-server' and 'SLOWSTART' in text:
+            with lock:
+                state['state'] = 'starting'
+            log('slowstart', seconds=4)
+            time.sleep(4)
+            with lock:
+                state['state'] = 'ready'
         if initial:
-            text = ''.join(p.get('text', '') for p in initial.get('content', []) if isinstance(p, dict))
             if 'NOLAUNCH' in text:
                 log('nolaunch', inputId=initial['inputId'])
                 initial = None
         if initial:
             threading.Thread(target=run_turn, args=(initial['inputId'], text), daemon=True).start()
         return {'invocationId': state['invocation'], 'state': 'ready', 'childPid': child,
-                'capabilities': {'interrupt': True, 'stop': True}}
+                'capabilities': capabilities}
     if method == 'invocation.snapshot':
         state['snapshotSeen'].set()
         return snapshot()
@@ -294,6 +311,8 @@ def handle(conn, method, params):
         submission = 'sub-' + os.urandom(6).hex()
         body = params.get('body') or {}
         text = json.dumps(body)[:200]
+        if 'REFUSE' in text:
+            raise RuntimeError('Cannot accept input in state: starting')
         threading.Thread(target=run_turn, args=(submission, text), daemon=True).start()
         return {'submissionId': submission, 'admission': 'admitted', 'inputId': submission}
     if method == 'seat.probe' and ARGS.get('ops-only') == '1':

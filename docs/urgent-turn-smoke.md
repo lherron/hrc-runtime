@@ -24,17 +24,18 @@ or starts one when none is running. Steer is the default door of `hrc turn`.
 | Command | Door | Expected disposition |
 |---|---|---|
 | `hrc turn <target> 'idle steer'` | steer | `executed{turnId}`: the steer starts its own turn |
-| `hrc turn <target> 'mid-turn note'` while busy | steer | `absorbed{turnId}` when the active turn is open; enqueue downgrade when steer is unsupported; typed rejection when guarded |
+| `hrc turn <target> 'mid-turn note'` while busy | steer | `absorbed{turnId}` when the active turn is open; typed rejection when guarded |
 | `hrc turn <target> --wait final 'note'` | steer + wait | waits for `executed` or `absorbed{turnId}` and THAT turn's terminal |
 | `hrc turn <target> --queue 'idle enqueue'` | enqueue | `executed{turnId}` and its own terminal |
 | `hrc turn <target> --queue 'boundary enqueue'` while busy | enqueue | `queue.enqueued`, then `executed{turnId}` at the boundary |
 | `hrc turn <target> --queue --wait final 'guarded work'` | enqueue + guarded | waits for this submission's `executed{turnId}` and that turn's terminal |
 | `hrc turn <target> --preempt 'operator takeover'` | preempt | interrupted active terminal, then the preempting submission's own turn |
 
-When the effective door is downgraded, require `requestedDoor: steer`,
-`effectiveDoor: enqueue` and the `downgradeReason`; grade the queued submission's
-own terminal rather than treating it as an absorbed steer. Authority and other
-admission failures still return typed refusals.
+A steer is always sent as `submission.steer` and reports `effectiveDoor: steer`;
+the broker lands it in every seat state (T-13701). Only an invoke into a seat
+without the `exclusive` class is downgraded, reporting `requestedDoor: invoke`,
+`effectiveDoor: enqueue` and `downgradeReason: invoke_exclusive_not_supported`.
+Authority and other admission failures still return typed refusals.
 
 `--steer` is accepted as a no-op alias of the default. `--ttl <duration>` is
 accepted only with `--queue` or `--preempt`, and `--reply-to` only with

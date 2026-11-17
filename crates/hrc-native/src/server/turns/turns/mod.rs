@@ -500,7 +500,7 @@ async fn admitted(
     {
         Ok(body) => body,
         Err(error) => {
-            admission::record(server, &req, &mut trace, Outcome::PossibleWrite(&error));
+            admission::record(server, &req, &mut trace, admission::failed(&error));
             return Err(error);
         }
     };
@@ -563,17 +563,15 @@ async fn admitted(
     Ok(Admit::Receipt(routed, false, door_report))
 }
 
-/// publicDoorReport: steer always reports its door; invoke only when downgraded.
+/// publicDoorReport: a steer reports its door (always `steer`); an invoke
+/// reports only its downgrade to enqueue.
 fn public_door_report(requested: &str, report: &Value) -> Option<Value> {
-    if requested != "steer" && report.get("requestedDoor").is_none() {
-        return None;
+    match report.get("requestedDoor") {
+        Some(r) => Some(
+            json!({"effectiveDoor":report["effectiveDoor"],"requestedDoor":r,"downgradeReason":report["downgradeReason"]}),
+        ),
+        None => (requested == "steer").then(|| json!({"effectiveDoor":"steer"})),
     }
-    Some(match report.get("requestedDoor") {
-        None => json!({"effectiveDoor":report["effectiveDoor"]}),
-        Some(r) => {
-            json!({"effectiveDoor":report["effectiveDoor"],"requestedDoor":r,"downgradeReason":report["downgradeReason"]})
-        }
-    })
 }
 
 /// POST /v1/turns
@@ -780,7 +778,7 @@ pub async fn literal_flush(
     {
         Ok(rt) => rt,
         Err(error) => {
-            admission::record(server, &req, &mut trace, Outcome::PossibleWrite(&error));
+            admission::record(server, &req, &mut trace, admission::failed(&error));
             return Err(error);
         }
     };
@@ -799,7 +797,7 @@ pub async fn literal_flush(
         }) {
         Ok(body) => body,
         Err(error) => {
-            admission::record(server, &req, &mut trace, Outcome::PossibleWrite(&error));
+            admission::record(server, &req, &mut trace, admission::failed(&error));
             return Err(error);
         }
     };
@@ -875,7 +873,7 @@ pub async fn attached_turn(
     let body = match route::execute(server, &plan, &options).await {
         Ok(body) => body,
         Err(error) => {
-            admission::record(server, &req, &mut trace, Outcome::PossibleWrite(&error));
+            admission::record(server, &req, &mut trace, admission::failed(&error));
             return Err(error);
         }
     };
@@ -901,24 +899,29 @@ pub async fn continue_cold(
     cold: &Value,
 ) -> Result<Value, ApiError> {
     let dispatch = &cold["dispatch"];
-    let door = dispatch["submissionDoor"]
-        .as_str()
-        .unwrap_or("invoke")
-        .to_owned();
-    let lifecycle_from_seq = {
+    let requested = dispatch["submissionDoor"].as_str().unwrap_or("invoke");
+    // The admitted run's door, decided where admission decides it.
+    let (door_report, lifecycle_from_seq) = {
         let db = server.store.lock().unwrap();
-        db.sqlite
+        let (report, _) = admission::door_report(&db.sqlite, &session, requested)?;
+        let seq = db
+            .sqlite
             .query_row(
                 "SELECT COALESCE(MAX(hrc_seq),0)+1 FROM hrc_events",
                 [],
                 |r| r.get::<_, i64>(0),
             )
-            .map_err(anyhow::Error::from)?
+            .map_err(anyhow::Error::from)?;
+        (report, seq)
     };
+    let door = door_report["effectiveDoor"]
+        .as_str()
+        .unwrap_or(requested)
+        .to_owned();
     let plan = admission::Plan {
         session,
-        effective_door: door.clone(),
-        door_report: json!({"effectiveDoor":door}),
+        effective_door: door,
+        door_report,
         report_runtime: None,
         run_id: Some(run_id.to_owned()),
         intent: Value::Null,

@@ -185,17 +185,6 @@ fn check_failed(args: &Parsed<'_>, response: &Value) -> Result<()> {
         exit(4, format!("turn failed: {code}{suffix}")),
     ))
 }
-fn downgrade(value: &Value) {
-    if let (Some(from), Some(to)) = (
-        value["requestedDoor"].as_str(),
-        value["effectiveDoor"].as_str(),
-    ) {
-        eprintln!(
-            "notice: {from} downgraded to {to} ({}): the message runs after the current turn",
-            value["downgradeReason"].as_str().unwrap_or("unknown")
-        );
-    }
-}
 fn dispatch(
     args: &Parsed<'_>,
     opts: &Options,
@@ -284,7 +273,6 @@ fn dispatch(
             }
             result => {
                 let result = result?;
-                downgrade(&result);
                 if wait
                     || result["admission"] != "admitted"
                     || !result["runId"].is_string()
@@ -301,7 +289,7 @@ fn dispatch(
                 return Ok(Some(Observation {
                     handoff: json!({"sessionRef":session_ref,"scopeRef":scope.scope,"laneRef":scope.lane,"hostSessionId":result["hostSessionId"],"runtimeId":result.get("runtimeId").unwrap_or(&json!("")),"runId":result["runId"],"generation":result["generation"],"fromSeq":result["observation"]["lifecycle"].get("fromSeq").unwrap_or(&json!(0))}),
                     catch_up: None,
-                    follow_seat: result["effectiveDoor"] != "enqueue",
+                    follow_seat: true,
                 }));
             }
         }

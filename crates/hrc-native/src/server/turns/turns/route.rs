@@ -171,6 +171,33 @@ fn run_active(status: &str) -> bool {
     matches!(status, "accepted" | "started" | "running")
 }
 
+/// The seat is mid-turn: its invocation or last seat probe reports a live
+/// turn, or another active run owns the runtime. A steer then joins that turn.
+fn turn_live(
+    conn: &rusqlite::Connection,
+    rt: &db::Rt,
+    invocation: &str,
+    run_id: &str,
+) -> anyhow::Result<bool> {
+    let Some(current) = db::runtime(conn, &rt.runtime_id)? else {
+        return Ok(false);
+    };
+    if db::invocation(conn, invocation)?.is_some_and(|i| i.invocation_state == "turn_active") {
+        return Ok(true);
+    }
+    let probe = &current.state_object()["brokerDispatchDiagnostics"]["liveSeatProbe"];
+    if probe["invocationId"] == invocation
+        && (probe["state"] == "turn-active" || probe["state"] == "turn-observed")
+    {
+        return Ok(true);
+    }
+    Ok(match current.active_run_id.as_deref() {
+        Some(active) if active != run_id => db::run(conn, active)?
+            .is_some_and(|r| r.completed_at.is_none() && run_active(&r.status)),
+        _ => false,
+    })
+}
+
 /// executeInteractiveBrokerInputTurn / executeHeadlessBrokerInputTurn
 async fn input_turn(
     server: &Shared,
@@ -233,7 +260,11 @@ async fn input_turn(
                 )
                 .map_err(anyhow::Error::from)?;
         }
-        if door != "enqueue" && door != "steer" {
+        // A steer that starts a turn arms the first-turn watch like an invoke;
+        // one absorbed into a live turn does not.
+        if door != "enqueue"
+            && (door != "steer" || !turn_live(&db.sqlite, rt, &invocation, o.run_id)?)
+        {
             let identity = json!({"runtimeId":rt.runtime_id,"generation":session["generation"],"runId":o.run_id,"invocationId":invocation});
             projected::arm_first_turn(
                 &db.sqlite,
@@ -445,18 +476,14 @@ fn input_failure(
         let reaped = current
             .as_ref()
             .is_some_and(|c| lease::unavailable(&c.status));
-        let state = inv_state.as_deref().unwrap_or("");
+        // Typed evidence only: a reaped runtime or a dead invocation state
+        // (`stopping` counts as dead). A starting seat holds its input.
         let reprovision = reaped
             || matches!(
-                state,
-                "exited" | "failed" | "disposed" | "starting" | "stopping"
+                inv_state.as_deref(),
+                Some("exited" | "failed" | "disposed" | "stopping")
             )
-            || timeout
-            || message.contains("Cannot accept input in state: exited")
-            || message.contains("Cannot accept input in state: failed")
-            || message.contains("Cannot accept input in state: disposed")
-            || message.contains("Cannot accept input in state: starting")
-            || message.contains("Cannot accept input in state: stopping");
+            || timeout;
         if timeout {
             db.sqlite.execute("UPDATE runs SET broker_input_fenced_at=?, broker_input_fence_reason=?, updated_at=? WHERE run_id=?", params![now, error.code, now, run_id])?;
         }
@@ -516,10 +543,14 @@ fn input_failure(
             "inspect hrc server logs and retry after the broker is healthy".to_owned(),
         )
     };
-    unavailable(
-        headline,
-        json!({"runtimeId":rt.runtime_id,"runId":run_id,"invocationId":invocation,"route":route,"cause":message,"error":message,"recommendation":recommendation}),
-    )
+    let mut detail = json!({"runtimeId":rt.runtime_id,"runId":run_id,"invocationId":invocation,"route":route,"cause":message,"error":message,"recommendation":recommendation});
+    // Nothing reached the broker (no binding) or it answered the call with a
+    // JSON-RPC error: the input was not written. A timeout proves nothing.
+    if !timeout && (binding_missing || error.detail["name"] == "BrokerRpcError") {
+        detail["reason"] = error.code.into();
+        detail["deliveryEvidence"] = super::admission::NOT_WRITTEN.into();
+    }
+    unavailable(headline, detail)
 }
 
 /// A slow submission into a seat whose broker still answers (T-12228): this

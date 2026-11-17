@@ -290,7 +290,7 @@ pub async fn submit(server: &Shared, body: &Value) -> Result<Value, ApiError> {
             Ok(response)
         }
         Err(error) => {
-            admission::record(server, &req, &mut trace, Outcome::PossibleWrite(&error));
+            admission::record(server, &req, &mut trace, admission::failed(&error));
             Err(error)
         }
     }

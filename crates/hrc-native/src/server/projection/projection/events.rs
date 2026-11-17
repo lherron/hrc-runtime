@@ -78,7 +78,6 @@ pub fn category(kind: &str) -> Option<&'static str> {
         | "input.terminal"
         | "input.correlation"
         | "broker.submission.milestone"
-        | "broker.submission.stalled"
         | "submission.door_downgraded"
         | "submission.admission" => "input",
         "inflight.accepted" | "inflight.rejected" => "inflight",
