@@ -793,7 +793,10 @@ _deploy-node ssh-target expected-node target-ref="origin/main" aspd-ref="origin/
     # supervisor.label, and `aspd-activate` is not proven to keep sole mode.
     # So there aspd is current when it serves the target, and any other sha
     # refuses instead of reinstalling (mable@hrc-runtime:hrcdev, 2026-11-17).
+    # The launchd job that serves aspd: raspd's own on a sole node.
+    aspd_serving_label="$aspd_label"
     if [[ "$(jq -r '.frontDoor.sole // false' "$aspd_ns/service/config.json")" == true ]]; then
+      aspd_serving_label="$(jq -r '.frontDoor.label // "com.praesidium.raspd"' "$aspd_ns/service/config.json")"
       if [[ "$(jq -r '.reachable // false' <<<"$aspd_now")" == true &&
             "$(jq -r '.release.sourceCommit // ""' <<<"$aspd_now")" == "$aspd_sha" ]]; then
         aspd_current=1
@@ -829,7 +832,7 @@ _deploy-node ssh-target expected-node target-ref="origin/main" aspd-ref="origin/
     # proven through HRC's own live probe, not through aspd's pid file (a stale
     # pid file and socket are exactly what a dead unsupervised aspd leaves).
     if (( aspd_current == 1 )); then
-      echo "[aspd] already serving ${aspd_sha} under ${aspd_label}"
+      echo "[aspd] already serving ${aspd_sha} under ${aspd_serving_label}"
     else
       # Under $HOME: rbuild mirrors these at the same absolute path on build1, which
       # the absolute --target-dir, --pull and remap paths in asp-release rely on.
@@ -875,11 +878,11 @@ _deploy-node ssh-target expected-node target-ref="origin/main" aspd-ref="origin/
       sleep 3
     done
     [[ -n "$aspd_now" ]] || fail "HRC does not see aspd serving ${aspd_sha}: $(aspd_probe 1)"
-    aspd_job_pid="$(launchctl print "gui/$(id -u)/${aspd_label}" 2>/dev/null |
+    aspd_job_pid="$(launchctl print "gui/$(id -u)/${aspd_serving_label}" 2>/dev/null |
       awk '$1 == "pid" && $2 == "=" { print $3; exit }' || true)"
-    [[ -n "$aspd_job_pid" ]] || fail "aspd is serving but launchd job ${aspd_label} owns no running pid"
+    [[ -n "$aspd_job_pid" ]] || fail "aspd is serving but launchd job ${aspd_serving_label} owns no running pid"
     aspd_release="$(jq -r '.release.releaseId' <<<"$aspd_now")"
-    echo "[aspd] ${aspd_label} pid ${aspd_job_pid} serving ${aspd_release} (${aspd_sha})"
+    echo "[aspd] ${aspd_serving_label} pid ${aspd_job_pid} serving ${aspd_release} (${aspd_sha})"
 
     # ---- 2. rusthrc ---------------------------------------------------------
     cd "$repo"
