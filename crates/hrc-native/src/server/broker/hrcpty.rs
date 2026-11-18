@@ -247,6 +247,36 @@ pub fn alive(pid: i64) -> bool {
     // SAFETY: signal 0 only probes for existence.
     pid > 0 && unsafe { libc::kill(pid as i32, 0) } == 0
 }
+/// `pid` is alive and may still be the process recorded before `bound_ms`:
+/// one the OS started after that bound is a reused pid, not it. Without a
+/// bound or a start time the answer stays the conservative `alive`.
+pub fn alive_before(pid: i64, bound_ms: Option<i64>) -> bool {
+    alive(pid)
+        && match (bound_ms, started_at_ms(pid)) {
+            (Some(bound), Some(started)) => started <= bound,
+            _ => true,
+        }
+}
+#[cfg(target_os = "macos")]
+fn started_at_ms(pid: i64) -> Option<i64> {
+    let mut info: libc::proc_bsdinfo = unsafe { std::mem::zeroed() };
+    let size = size_of::<libc::proc_bsdinfo>() as libc::c_int;
+    // SAFETY: proc_pidinfo writes at most `size` bytes into `info`.
+    let n = unsafe {
+        libc::proc_pidinfo(
+            pid as libc::c_int,
+            libc::PROC_PIDTBSDINFO,
+            0,
+            (&mut info as *mut libc::proc_bsdinfo).cast(),
+            size,
+        )
+    };
+    (n == size).then(|| info.pbi_start_tvsec as i64 * 1000 + info.pbi_start_tvusec as i64 / 1000)
+}
+#[cfg(not(target_os = "macos"))]
+fn started_at_ms(_pid: i64) -> Option<i64> {
+    None
+}
 /// The supervisor of `socket` (T-12536): the pid its ops socket reports in
 /// `hello`, else the recorded pid when it is identified by pid. A pid that is
 /// merely in use is no identity: the OS reuses pids, and a pid file in bipc
@@ -460,4 +490,43 @@ fn record(server: &Server, runtime_id: &str, key: &str, exit: &Value) -> Result<
     drop(db);
     server.ledger_committed();
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::alive_before;
+
+    // T-13727 follow-up: a terminated self-brokered runtime's recorded broker
+    // pid was reused by an unrelated process (foundry@taskboard:primary,
+    // 2026-11-18); `alive` alone kept refusing every relaunch.
+    #[test]
+    fn a_pid_started_after_the_bound_is_not_the_recorded_process() {
+        let me = std::process::id() as i64;
+        let now_ms = chrono::Utc::now().timestamp_millis();
+        assert!(
+            alive_before(me, Some(now_ms + 3_600_000)),
+            "started before the bound"
+        );
+        assert!(
+            alive_before(me, None),
+            "no bound: keep the conservative answer"
+        );
+        assert!(
+            !alive_before(i32::MAX as i64, Some(now_ms)),
+            "no such process"
+        );
+        // Where the OS withholds the start time (the sandboxed rbuild host),
+        // the answer stays the conservative `alive`; the bound applies only
+        // when the start time is readable (max3, svc, hrcdev).
+        match super::started_at_ms(me) {
+            Some(started) => {
+                assert!(started <= now_ms, "{started} after {now_ms}");
+                assert!(
+                    !alive_before(me, Some(1_000)),
+                    "started after the bound: a reused pid"
+                );
+            }
+            None => assert!(alive_before(me, Some(1_000)), "no start time: conservative"),
+        }
+    }
 }

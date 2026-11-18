@@ -129,10 +129,18 @@ pub async fn allocate_claim(
                 .as_str()
                 .is_some_and(|s| hrc_store::status::LISTED_TERMINAL.contains(&s))
         });
+        // A recorded broker pid counts only if that process started before
+        // the predecessor attempt last changed: the OS reuses pids, and one
+        // reused by an unrelated process refused every relaunch
+        // (foundry@taskboard:primary, 2026-11-18).
+        let attempt_end = previous["updated_at"]
+            .as_str()
+            .and_then(|s| chrono::DateTime::parse_from_rfc3339(s).ok())
+            .map(|t| t.timestamp_millis());
         let child_alive = row
             .as_ref()
             .and_then(|r| r["runtimeStateJson"]["broker"]["brokerPid"].as_i64())
-            .is_some_and(hrcpty::alive);
+            .is_some_and(|pid| hrcpty::alive_before(pid, attempt_end));
         if !ended || !row_terminal || child_alive || hrcpty::identify(&socket, pid).await.is_some()
         {
             return Err(busy(
