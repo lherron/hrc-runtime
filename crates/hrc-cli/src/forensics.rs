@@ -285,12 +285,15 @@ pub(crate) fn events(args: &Parsed<'_>) -> Result<()> {
     Ok(())
 }
 
-fn transcript_kind(ty: &str) -> Option<&'static str> {
-    match ty {
+/// A turn that ends without its final message must not read as a pause: its
+/// failure, an unterminated tool call and error diagnostics render too.
+fn transcript_kind(event: &Value) -> Option<&'static str> {
+    match event["type"].as_str()? {
         "user.message" => Some("user"),
-        "tool.call.started" | "tool.call.completed" => Some("exec"),
+        "tool.call.started" | "tool.call.completed" | "tool.call.failed" => Some("exec"),
         "assistant.message.completed" => Some("cot"),
-        "driver.notice" => Some("notice"),
+        "driver.notice" | "turn.failed" => Some("notice"),
+        "diagnostic" if event["payload"]["level"] == "error" => Some("notice"),
         _ => None,
     }
 }
@@ -366,6 +369,21 @@ fn render_transcript(event: &Value, full: bool) -> String {
         "assistant.message.completed" => {
             format!("{seq} SAYS | {}", clip(&one_line(&text_or_payload()), full))
         }
+        "tool.call.failed" => format!(
+            "{seq} FAILED {} {} | {}",
+            tool_name(payload),
+            payload["code"].as_str().unwrap_or("-"),
+            clip(&one_line(&text_or_payload()), full)
+        ),
+        "turn.failed" => format!(
+            "{seq} TURN FAILED {} | {}",
+            payload["code"].as_str().unwrap_or("-"),
+            clip(&one_line(&text_or_payload()), full)
+        ),
+        "diagnostic" => format!(
+            "{seq} ERROR | {}",
+            clip(&one_line(&text_or_payload()), full)
+        ),
         _ => format!("{seq} NOTE | {}", clip(&one_line(&text_or_payload()), full)),
     }
 }
@@ -397,11 +415,7 @@ pub(crate) fn transcript(args: &Parsed<'_>) -> Result<()> {
     let filtered = events_of(&result)
         .into_iter()
         .filter(|e| {
-            e["type"]
-                .as_str()
-                .and_then(transcript_kind)
-                .is_some_and(|k| kinds.iter().any(|x| x == k))
-                && in_range(e, range)
+            transcript_kind(e).is_some_and(|k| kinds.iter().any(|x| x == k)) && in_range(e, range)
         })
         .collect::<Vec<_>>();
     let start = tail.map_or(0, |t| filtered.len().saturating_sub(t as usize));
