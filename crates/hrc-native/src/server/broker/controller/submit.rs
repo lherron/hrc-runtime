@@ -163,6 +163,18 @@ fn classes(server: &Shared, invocation: &str) -> Option<Vec<String>> {
     })
 }
 
+/// The broker's own validation refused `submissionId` as an unknown param:
+/// JSON-RPC -32602 with the issue {path: params.submissionId, code:
+/// unexpected_key}. Only that typed issue counts, never the message text.
+fn refuses_caller_minted_id(error: &BrokerError) -> bool {
+    error.detail["brokerRpcCode"] == -32602
+        && error.detail["issues"].as_array().is_some_and(|issues| {
+            issues
+                .iter()
+                .any(|i| i["path"] == "params.submissionId" && i["code"] == "unexpected_key")
+        })
+}
+
 /// steer/enqueue/invoke/preempt through the active broker. The door is the
 /// one admission decided (an invoke without `exclusive` arrives as enqueue).
 pub async fn submit(server: &Shared, s: Submit<'_>) -> Result<Value, BrokerError> {
@@ -217,9 +229,41 @@ pub async fn submit(server: &Shared, s: Submit<'_>) -> Result<Value, BrokerError
         }
         p
     };
-    let (invocation, response) =
-        with_retries(server, &s, method, &params, codes, ACTIVE_RPC_TIMEOUT).await?;
-    if response["submissionId"].as_str() != Some(s.submission_id) {
+    let (invocation, response, minted) = match with_retries(
+        server,
+        &s,
+        method,
+        &params,
+        codes,
+        ACTIVE_RPC_TIMEOUT,
+    )
+    .await
+    {
+        // A broker below agent-spaces 8ce36a9d (T-13689) refuses the
+        // caller-minted id as an unexpected key (Foundry's pinned broker,
+        // T-13727). Nothing was written: send the same submission once
+        // without it and let that broker mint the id, as before T-13704.
+        Err(error) if refuses_caller_minted_id(&error) => {
+            log(
+                "warn",
+                "broker.submission_id_unsupported",
+                json!({"runtimeId":s.runtime_id,"runId":s.run_id,"method":method,"mintedSubmissionId":s.submission_id}),
+            );
+            let legacy = |invocation: &str| {
+                let mut p = params(invocation);
+                p.as_object_mut().map(|o| o.remove("submissionId"));
+                p
+            };
+            let (invocation, response) =
+                with_active(server, s.runtime_id, method, legacy, codes, true).await?;
+            (invocation, response, false)
+        }
+        other => {
+            let (invocation, response) = other?;
+            (invocation, response, true)
+        }
+    };
+    if minted && response["submissionId"].as_str() != Some(s.submission_id) {
         log(
             "error",
             "broker.submission_id_mismatch",

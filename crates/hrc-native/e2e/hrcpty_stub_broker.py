@@ -39,6 +39,9 @@ T-13701 controls, codex driver only: an initial prompt containing
 invocation.start reply; one containing `SLOWSTART` holds that reply 4 s
 (the seat is starting meanwhile); a `submission.*` whose body contains
 `REFUSE` answers a JSON-RPC error "Cannot accept input in state: starting".
+An initial prompt containing `LEGACYPARAMS` makes the seat a pre-8ce36a9d
+broker: every `submission.*` carrying `submissionId` gets -32602 with the
+issue {path: params.submissionId, code: unexpected_key} (Foundry T-13727).
 
 `stub.localTurn` emits a turn no HRC input started (a prompt typed in a TUI).
 `stub.usage` {turnId, usedTokens, windowTokens}, sent on its own connection,
@@ -75,6 +78,14 @@ lock = threading.RLock()
 state = {'invocation': None, 'events': [], 'acked': 0, 'controller': None, 'lease': None,
          'child': None, 'state': 'ready', 'start': None, 'snapshotSeen': threading.Event(), 'driver': None,
          'held': None}
+
+
+class RpcError(Exception):
+    """A JSON-RPC error reply with a code and data, as the real broker sends."""
+
+    def __init__(self, code, message, data=None):
+        super().__init__(message)
+        self.code, self.message, self.data = code, message, data
 
 
 def now():
@@ -272,6 +283,9 @@ def handle(conn, method, params):
         if state['driver'] == 'codex-app-server' and 'CLASSES[' in text:
             listed = text[text.index('CLASSES[') + 8:].split(']', 1)[0]
             capabilities['admission'] = {'classes': [c for c in listed.split(',') if c]}
+        if state['driver'] == 'codex-app-server' and 'LEGACYPARAMS' in text:
+            with lock:
+                state['legacyParams'] = True
         if state['driver'] == 'codex-app-server' and 'SLOWSTART' in text:
             with lock:
                 state['state'] = 'starting'
@@ -308,6 +322,10 @@ def handle(conn, method, params):
     # T-12360: ops-only seat.send submits through the real owner on the
     # claude hrcpty fixture too; keep the same acknowledgement/event protocol.
     if method in ('submission.invoke', 'submission.enqueue', 'submission.steer') and (state['driver'] == 'codex-app-server' or ARGS.get('ops-only') == '1'):
+        # A broker below agent-spaces 8ce36a9d (Foundry's pinned
+        # 0.1.1-dev.20261104 build) refuses the param exactly like this.
+        if state.get('legacyParams') and 'submissionId' in params:
+            raise RpcError(-32602, 'Invalid params', {'issues': [{'path': 'params.submissionId', 'code': 'unexpected_key', 'message': 'submissionId is not accepted'}]})
         # A broker at or above agent-spaces 8ce36a9d answers with the
         # caller-minted id (T-13689); HRC mints one on every call (T-13704).
         submission = params.get('submissionId') or 'sub-' + os.urandom(6).hex()
@@ -391,6 +409,8 @@ def serve_connection(conn):
         try:
             result = handle(conn, frame['method'], frame.get('params') or {})
             reply = {'jsonrpc': '2.0', 'id': frame.get('id'), 'result': result}
+        except RpcError as error:
+            reply = {'jsonrpc': '2.0', 'id': frame.get('id'), 'error': {'code': error.code, 'message': error.message, 'data': error.data}}
         except KeyError as error:
             reply = {'jsonrpc': '2.0', 'id': frame.get('id'), 'error': {'code': -32601, 'message': f'method not found: {error}'}}
         except Exception as error:  # noqa: BLE001 - every failure is an RPC error
