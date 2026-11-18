@@ -8,19 +8,7 @@ use axum::{
 use rusqlite::{OptionalExtension, types::Value as Sql};
 use serde_json::{Value, json};
 use std::collections::HashMap;
-const OPS: [&str; 5] = [
-    "admission-rejection",
-    "input-accepted",
-    "unique-submission-after",
-    "disposition",
-    "input-rejection-evidence",
-];
-/// The inputId expression of idx_broker_invocation_events_input_id and
-/// _input_rejected, verbatim: the planner matches index expressions by text,
-/// and with no sqlite_stat1 (max3) a bare json_extract falls back to the
-/// type index and walks every row of that type (T-12413).
-const EVENT_INPUT_ID: &str =
-    "CASE WHEN json_valid(broker_event_json) THEN json_extract(broker_event_json, '$.inputId') END";
+const OPS: [&str; 2] = ["unique-submission-after", "disposition"];
 const EVENT_ENVELOPE_ID: &str = "CASE WHEN json_valid(broker_event_json) THEN json_extract(broker_event_json, '$.origin.envelopeId') END";
 pub(super) const SUBMISSION_TERMINALS: &str = "'submission.absorbed', 'submission.executed', 'submission.rejected', 'submission.expired', 'submission.withdrawn', 'submission.cancelled', 'submission.lost'";
 
@@ -225,213 +213,43 @@ pub fn query(server: &Server, q: &HashMap<String, String>) -> Result<Response, A
         let result = unique_submission(&db.sqlite, q, runtime, fence)?;
         return Ok(Json(json!({"result":result})).into_response());
     }
-    let text = |s: &str| Sql::Text(s.to_owned());
-    let (sql, values) = match op {
-        "input-accepted" => (
-            format!(
-                "SELECT broker_event_json FROM broker_invocation_events INDEXED BY idx_broker_invocation_events_input_id WHERE invocation_id IN (SELECT invocation_id FROM broker_invocations WHERE runtime_id=?1) AND {EVENT_INPUT_ID}=?2 AND runtime_id=?1 AND type='input.accepted'{fence} LIMIT 1"
-            ),
-            vec![text(runtime), text(param(q, "inputId")?)],
-        ),
-        "admission-rejection" => (
-            format!(
-                "SELECT broker_event_json FROM broker_invocation_events WHERE runtime_id=? AND type='admission.rejected' AND json_extract(broker_event_json,'$.submissionId')=?{fence} ORDER BY time DESC,seq DESC LIMIT 1"
-            ),
-            vec![text(runtime), text(param(q, "submissionId")?)],
-        ),
-        "disposition" => (
-            format!(
-                "SELECT json_set(broker_event_json,'$.type',type) FROM broker_invocation_events WHERE runtime_id=? AND CASE WHEN json_valid(broker_event_json) THEN json_extract(broker_event_json,'$.submissionId') END=? AND type IN ({SUBMISSION_TERMINALS}){fence} ORDER BY time ASC,seq ASC LIMIT 1"
-            ),
-            vec![text(runtime), text(param(q, "submissionId")?)],
-        ),
-        "input-rejection-evidence" => (
-            format!(
-                "SELECT broker_event_json FROM broker_invocation_events INDEXED BY idx_broker_invocation_events_input_rejected WHERE {EVENT_INPUT_ID}=?2 AND runtime_id=?1 AND type='input.rejected'{fence} ORDER BY time ASC,seq ASC LIMIT 1"
-            ),
-            vec![text(runtime), text(param(q, "submissionId")?)],
-        ),
-        _ => unreachable!("validated query operation"),
-    };
-    let mut stmt = db.sqlite.prepare(&sql).map_err(anyhow::Error::from)?;
-    let result = {
-        let row: Option<String> = stmt
-            .query_row(rusqlite::params_from_iter(&values), |r| r.get(0))
-            .optional()
-            .map_err(anyhow::Error::from)?;
-        let payload = row
-            .as_deref()
-            .map(serde_json::from_str::<Value>)
-            .transpose()
-            .map_err(anyhow::Error::from)?;
-        match (op, payload) {
-            ("input-accepted", p) => json!({"op":op,"accepted":p.is_some()}),
-            ("admission-rejection", Some(p)) if !p["layer"].is_null() => {
-                json!({"op":op,"layer":p["layer"],"reason":p.get("reason").filter(|v|!v.is_null()).cloned().unwrap_or(json!(""))})
-            }
-            ("disposition", Some(p)) => {
-                let mut v = json!({"op":op,"type":p["type"]});
-                for key in ["turnId", "reason"] {
-                    if let Some(value) = p.get(key).filter(|v| !v.is_null()) {
-                        v[key] = value.clone();
-                    }
+    let submission = param(q, "submissionId")?;
+    let sql = format!(
+        "SELECT json_set(broker_event_json,'$.type',type) FROM broker_invocation_events WHERE runtime_id=? AND CASE WHEN json_valid(broker_event_json) THEN json_extract(broker_event_json,'$.submissionId') END=? AND type IN ({SUBMISSION_TERMINALS}){fence} ORDER BY time ASC,seq ASC LIMIT 1"
+    );
+    let row: Option<String> = db
+        .sqlite
+        .query_row(&sql, rusqlite::params![runtime, submission], |r| r.get(0))
+        .optional()
+        .map_err(anyhow::Error::from)?;
+    let payload = row
+        .as_deref()
+        .map(serde_json::from_str::<Value>)
+        .transpose()
+        .map_err(anyhow::Error::from)?;
+    // A broker-written terminal wins; otherwise HRC's own `lost{broker-gone}`
+    // (T-13691), which is ambiguous by definition and never `not_written`.
+    let result = match payload {
+        Some(p) => {
+            let mut v = json!({"op":op,"type":p["type"]});
+            for key in ["turnId", "reason"] {
+                if let Some(value) = p.get(key).filter(|v| !v.is_null()) {
+                    v[key] = value.clone();
                 }
-                v
             }
-            ("disposition", None) => db.sqlite.query_row(
+            v
+        }
+        None => db
+            .sqlite
+            .query_row(
                 "SELECT disposition, disposition_reason FROM submission_admissions
                  WHERE runtime_id=? AND submission_id=? AND disposition_author='hrc'",
-                rusqlite::params![runtime, param(q, "submissionId")?],
+                rusqlite::params![runtime, submission],
                 |r| Ok(json!({"op":op,"type":r.get::<_,String>(0)?,"reason":r.get::<_,String>(1)?,"authoredBy":"hrc"})),
-            ).optional().map_err(anyhow::Error::from)?.unwrap_or(Value::Null),
-            ("input-rejection-evidence", Some(p))
-                if p["deliveryEvidence"] == "not_written"
-                    || p["deliveryEvidence"] == "possibly_written" =>
-            {
-                json!({"op":op,"deliveryEvidence":p["deliveryEvidence"]})
-            }
-            // No input.rejected: the broker holds queued input above the
-            // driver, so a queue.* removal (expired, withdrawn or cancelled
-            // while still held) proves nothing reached the agent. A
-            // submission.* disposition alone can come from a driver cancel
-            // and proves nothing. Per-invocation seek: queue.* rows are few.
-            ("input-rejection-evidence", None) => {
-                let held: bool = db.sqlite.query_row(
-                    &format!("SELECT EXISTS(SELECT 1 FROM broker_invocation_events INDEXED BY idx_broker_invocation_events_invocation_type_seq WHERE invocation_id IN (SELECT invocation_id FROM broker_invocations WHERE runtime_id=?1) AND type IN ('queue.expired','queue.withdrawn','queue.cancelled') AND runtime_id=?1 AND CASE WHEN json_valid(broker_event_json) THEN json_extract(broker_event_json,'$.submissionId') END=?2{fence})"),
-                    rusqlite::params_from_iter(&values),
-                    |r| r.get(0),
-                ).map_err(anyhow::Error::from)?;
-                if held {
-                    json!({"op":op,"deliveryEvidence":"not_written"})
-                } else {
-                    Value::Null
-                }
-            }
-            _ => Value::Null,
-        }
+            )
+            .optional()
+            .map_err(anyhow::Error::from)?
+            .unwrap_or(Value::Null),
     };
     Ok(Json(json!({"result":result})).into_response())
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::server::turns::admission::tests::server;
-
-    // Regression (T-12413 phase 3): with no sqlite_stat1 the inputId lookups
-    // were served from idx_broker_invocation_events_type, walking every
-    // input.accepted row of the ledger (~1 s each, 40 per 12 min on max3). Each
-    // must seek an inputId expression index, and still find its row.
-    #[tokio::test]
-    async fn input_id_lookups_seek_an_input_id_index() -> anyhow::Result<()> {
-        let (_scratch, server) = server("off", false)?;
-        let seen = std::sync::Arc::new(std::sync::Mutex::new(Vec::<String>::new()));
-        {
-            let mut db = server.store.lock().unwrap();
-            let host = db.create_session("agent:test:project:fixture", "main")?.0["hostSessionId"]
-                .as_str()
-                .unwrap()
-                .to_owned();
-            db.sqlite.execute("INSERT INTO runtimes(runtime_id,host_session_id,scope_ref,lane_ref,generation,transport,status,supports_inflight_input,controller_kind,created_at,updated_at) VALUES('rt',?,'agent:test:project:fixture','main',1,'headless','ready',0,'harness-broker','now','now')", [&host])?;
-            db.sqlite.execute("INSERT INTO broker_invocations(invocation_id,operation_id,runtime_id,broker_protocol,broker_driver,invocation_state,capabilities_json,spec_hash,start_request_hash,selected_profile_hash,spec_projection_json,created_at,updated_at) VALUES('inv','op','rt','harness-broker/0.2','test','running','{}','h','h','h','{}','now','now')", [])?;
-            for (seq, kind, body) in [
-                (1, "input.accepted", json!({"inputId":"in-1"})),
-                (
-                    2,
-                    "input.rejected",
-                    json!({"inputId":"in-2","deliveryEvidence":"not_written"}),
-                ),
-                (3, "queue.expired", json!({"submissionId":"sub-3"})),
-                (4, "submission.expired", json!({"submissionId":"sub-3"})),
-                (5, "submission.withdrawn", json!({"submissionId":"sub-4"})),
-            ] {
-                db.sqlite.execute("INSERT INTO broker_invocation_events(invocation_id,seq,time,type,runtime_id,broker_event_json,created_at) VALUES('inv',?,'2026-01-01T00:00:00Z',?,'rt',?,'now')", rusqlite::params![seq, kind, body.to_string()])?;
-            }
-            let sink = seen.clone();
-            db.instrument_statements(0.0, move |s| sink.lock().unwrap().push(s.sql))?;
-        }
-        let ask = |pairs: &[(&str, &str)]| {
-            let q: HashMap<String, String> = pairs
-                .iter()
-                .map(|(k, v)| ((*k).into(), (*v).into()))
-                .collect();
-            let response = query(&server, &q).map_err(|e| anyhow::anyhow!("{e:?}"));
-            async move {
-                let body = axum::body::to_bytes(response?.into_body(), usize::MAX).await?;
-                anyhow::Ok(serde_json::from_slice::<Value>(&body)?["result"].clone())
-            }
-        };
-        let accepted = ask(&[
-            ("op", "input-accepted"),
-            ("runtimeId", "rt"),
-            ("inputId", "in-1"),
-        ])
-        .await?;
-        assert_eq!(accepted, json!({"op":"input-accepted","accepted":true}));
-        let missing = ask(&[
-            ("op", "input-accepted"),
-            ("runtimeId", "rt"),
-            ("inputId", "in-2"),
-        ])
-        .await?;
-        assert_eq!(missing, json!({"op":"input-accepted","accepted":false}));
-        let rejected = ask(&[
-            ("op", "input-rejection-evidence"),
-            ("runtimeId", "rt"),
-            ("submissionId", "in-2"),
-        ])
-        .await?;
-        assert_eq!(
-            rejected,
-            json!({"op":"input-rejection-evidence","deliveryEvidence":"not_written"})
-        );
-        // A submission that left the broker queue unrun was never written.
-        let expired = ask(&[
-            ("op", "input-rejection-evidence"),
-            ("runtimeId", "rt"),
-            ("submissionId", "sub-3"),
-        ])
-        .await?;
-        assert_eq!(
-            expired,
-            json!({"op":"input-rejection-evidence","deliveryEvidence":"not_written"})
-        );
-        // Withdrawn through the driver (no queue.* removal) proves nothing.
-        let driver_withdrawn = ask(&[
-            ("op", "input-rejection-evidence"),
-            ("runtimeId", "rt"),
-            ("submissionId", "sub-4"),
-        ])
-        .await?;
-        assert_eq!(driver_withdrawn, Value::Null);
-        let statements = seen.lock().unwrap().clone();
-        let db = server.store.lock().unwrap();
-        let mut checked = 0;
-        for sql in statements.iter().filter(|s| s.contains("inputId")) {
-            let mut stmt = db.sqlite.prepare(&format!("EXPLAIN QUERY PLAN {sql}"))?;
-            let unbound = vec![rusqlite::types::Value::Null; stmt.parameter_count()];
-            let plan: Vec<String> = stmt
-                .query_map(rusqlite::params_from_iter(unbound), |r| {
-                    r.get::<_, String>(3)
-                })?
-                .collect::<rusqlite::Result<_>>()?;
-            let events: Vec<&String> = plan
-                .iter()
-                .filter(|l| l.contains("broker_invocation_events"))
-                .collect();
-            assert!(
-                !events.is_empty()
-                    && events.iter().all(|l| {
-                        l.starts_with("SEARCH")
-                            && (l.contains("idx_broker_invocation_events_input_id ")
-                                || l.contains("idx_broker_invocation_events_input_rejected "))
-                            && l.contains("<expr>=?")
-                    }),
-                "inputId lookup not seeking an inputId index:\n{sql}\n{plan:#?}"
-            );
-            checked += 1;
-        }
-        assert_eq!(checked, 5, "{statements:#?}");
-        Ok(())
-    }
 }

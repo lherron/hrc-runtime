@@ -30,9 +30,9 @@ def exercise(s,runtime):
     boundary=page['nextCommit'];again=call('inclusive-retry','GET',follow+f'?afterCommit={boundary}&limit=2',headers=headers)[1];assert again['events'][0]['commitOrdinal']==boundary
     for name,body in [('unknown-ack',{'subscriberId':'none','receiptToken':token,'seq':1}),('bad-token',{'subscriberId':id,'receiptToken':'wrong','seq':1}),('ahead',{'subscriberId':id,'receiptToken':token,'seq':999999}),('zero',{'subscriberId':id,'receiptToken':token,'seq':0}),('advanced',{'subscriberId':id,'receiptToken':token,'seq':again['nextCommit']}),('duplicate',{'subscriberId':id,'receiptToken':token,'seq':again['nextCommit']}),('stale',{'subscriberId':id,'receiptToken':token,'seq':1})]:call(name,'POST',root+'/ack',body)
     call('snapshot','GET',root)
-    for op,param in [('input-accepted','inputId'),('admission-rejection','submissionId'),('disposition','submissionId'),('input-rejection-evidence','submissionId')]:call('query-'+op,'GET',f'/v1/broker-events/query?op={op}&runtimeId={runtime}&{param}=absent')
+    call('query-disposition','GET',f'/v1/broker-events/query?op=disposition&runtimeId={runtime}&submissionId=absent')
     call('query-unique','GET',f'/v1/broker-events/query?op=unique-submission-after&runtimeId={runtime}&invocationId=none&envelopeId=none&afterSeq=0')
-    for suffix in ['', '?op=invalid','?op=input-accepted','?op=input-accepted&runtimeId=missing&inputId=x']:call('invalid-query'+suffix,'GET','/v1/broker-events/query'+suffix)
+    for suffix in ['', '?op=invalid','?op=input-accepted','?op=disposition&runtimeId=missing&submissionId=x']:call('invalid-query'+suffix,'GET','/v1/broker-events/query'+suffix)
     call('hint','POST','/v1/internal/mail/hint-decision',{'runtimeId':runtime})
     call('clear-stop','POST','/v1/internal/mail/stop-decision',{'runtimeId':runtime})
     return out
@@ -53,7 +53,7 @@ def main():
         want={**{'bad-declare-'+str(i):400 for i in range(6)},'declare':200,
               'page':200,'retained':400,'bad-retained':400,'missing-after':400,'bad-limit':400,'inclusive-retry':200,
               'zero':400,'advanced':200,'duplicate':200,'snapshot':200,'hint':200,'clear-stop':200,
-              **{'invalid-query'+q:400 for q in ['','?op=invalid','?op=input-accepted']},'invalid-query?op=input-accepted&runtimeId=missing&inputId=x':404}
+              **{'invalid-query'+q:400 for q in ['','?op=invalid','?op=input-accepted']},'invalid-query?op=disposition&runtimeId=missing&submissionId=x':404}
         wrong={k:out[k] for k,v in want.items() if status[k]!=v}
         # Undeclared consumers, a wrong token, an unknown subscriber and a
         # receipt past the served head are refused, whatever the code.

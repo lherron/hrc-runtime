@@ -293,30 +293,34 @@ export type EventsHeadResponse = {
 }
 
 export type BrokerEventsQueryOp =
-  | { op: 'admission-rejection'; runtimeId: string; submissionId: string }
-  | { op: 'input-accepted'; runtimeId: string; inputId: string }
   | {
       op: 'unique-submission-after'
       runtimeId: string
-      invocationId: string
       envelopeId: string
-      afterSeq: number
+      /** Omit to search every invocation of the runtime. */
+      invocationId?: string | undefined
+      /** Only together with invocationId. */
+      afterSeq?: number | undefined
+      /** RFC 3339; admissions requested strictly after it. */
+      afterTime?: string | undefined
     }
   | { op: 'disposition'; runtimeId: string; submissionId: string }
-  | { op: 'input-rejection-evidence'; runtimeId: string; submissionId: string }
 
 export type BrokerEventsQueryResult =
-  | { op: 'admission-rejection'; layer: string; reason: string }
-  | { op: 'input-accepted'; accepted: boolean }
-  | { op: 'unique-submission-after'; submissionId: string }
-  | { op: 'disposition'; type: string; turnId?: string | undefined; reason?: string | undefined }
+  | { op: 'unique-submission-after'; submissionId: string; matches: 1 }
+  /** More than one admission carried the envelope; null means none did. */
+  | { op: 'unique-submission-ambiguous'; matches: number }
   | {
-      op: 'input-rejection-evidence'
-      deliveryEvidence: 'not_written' | 'possibly_written'
+      op: 'disposition'
+      type: string
+      turnId?: string | undefined
+      reason?: string | undefined
+      /** Present only on HRC's own `submission.lost{broker-gone}` fallback. */
+      authoredBy?: 'hrc' | undefined
     }
 
 /**
- * `GET /v1/broker-events/query` — one of event-drive's five committed-evidence
+ * `GET /v1/broker-events/query` — one of the two committed-evidence
  * queries. `result` is null when the ledger holds no matching row; the
  * retained fence applies inside the query (a retained-only match reads as
  * absent without `includeRetained: true`).

@@ -33,7 +33,10 @@ STUB = r'''    if method in ('submission.steer', 'submission.enqueue') and str(p
         if mode == 'WRITE':
             emit('input.accepted', {'inputId':sub}, sub)
         if mode == 'TERMINAL':
+            # A real broker (agent-spaces >= 8ce36a9d) follows every queue.*
+            # removal with the submission's own terminal.
             emit('queue.cancelled', {'submissionId':sub})
+            emit('submission.cancelled', {'submissionId':sub})
         return {'submissionId':sub, 'inputId':sub, 'admission':'admitted'}
     if method == 'submission.withdraw':
         sub = params['submissionId']
@@ -166,21 +169,27 @@ def main():
         r.check('sweep.bounded', status == 200 and elapsed < 10, elapsed=elapsed, response=swept)
         for mode, case in cases.items():
             row = r.rows('SELECT * FROM runs WHERE run_id=?', (case['run'],))[0]
-            r.check(mode + '.zombied', row['status'] == 'zombie', status=row['status'])
-            query = urlencode({'op':'input-rejection-evidence','runtimeId':rid,'submissionId':case['sub']})
+            # A not-written terminal completes its own run (T-13702): HELD is
+            # settled by the sweep's withdrawal, TERMINAL by its cancel, so
+            # neither is zombied.
+            settled = mode in ('HELD', 'TERMINAL')
+            r.check(mode + ('.settled-by-terminal' if settled else '.zombied'),
+                    row['status'] == ('cancelled' if settled else 'zombie'), status=row['status'])
+            query = urlencode({'op':'disposition','runtimeId':rid,'submissionId':case['sub']})
             status, evidence = r.http('GET', '/v1/broker-events/query?' + query)
-            expected = {'op':'input-rejection-evidence','deliveryEvidence':'not_written'} if mode in ('HELD','TERMINAL') else None
-            r.check(mode + '.evidence', status == 200 and evidence['result'] == expected, response=evidence)
+            kind = (evidence.get('result') or {}).get('type')
+            # Not written: rejected, withdrawn, expired, cancelled (agent-spaces terminal semantics).
+            not_written = kind in ('submission.rejected','submission.withdrawn','submission.expired','submission.cancelled')
+            r.check(mode + '.evidence', status == 200 and not_written == (mode in ('HELD','TERMINAL')), response=evidence)
             order = r.rows('SELECT * FROM zombie_order WHERE run_id=?', (case['run'],))
             if mode == 'HELD':
-                r.check('HELD.withdraw-before-zombie', len(order)==1 and order[0]['withdrawal_present']==1, observed=order)
+                r.check('HELD.no-zombie-after-withdraw', order == [], observed=order)
         requests = [json.loads(line) for f in (root/'run/bipc').glob('*/stub.ndjson') for line in f.read_text().splitlines()]
         withdrawals = [e['params']['submissionId'] for e in requests if e.get('kind')=='request' and e.get('method')=='submission.withdraw']
         for mode, case in cases.items():
             r.check(mode + '.withdraw-count', withdrawals.count(case['sub']) == (0 if mode in ('WRITE','TERMINAL') else 1), withdrawals=withdrawals)
-        status, accepted = r.http('GET', '/v1/broker-events/query?' + urlencode(
-            {'op':'input-accepted','runtimeId':rid,'inputId':cases['WRITE']['sub']}))
-        r.check('WRITE.acceptance-preserved', status == 200 and accepted['result'] == {'op':'input-accepted','accepted':True}, response=accepted)
+        accepted = r.rows("SELECT 1 FROM broker_invocation_events WHERE type='input.accepted' AND json_extract(broker_event_json,'$.inputId')=?", (cases['WRITE']['sub'],))
+        r.check('WRITE.acceptance-preserved', len(accepted) == 1, observed=len(accepted))
         attempts = [json.loads(line)['data'] for line in (args.artifacts/'daemon-1.log').read_text().splitlines()
                     if '"broker.zombie_withdraw"' in line]
         expected_attempts = {case['sub'] for mode, case in cases.items() if mode not in ('WRITE','TERMINAL')}
