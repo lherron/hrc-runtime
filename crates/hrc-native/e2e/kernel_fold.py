@@ -27,7 +27,8 @@ LIVE_KERNEL = Path.home() / 'praesidium/var/run/hrc/hrc-kernel.sock'
 
 
 class DeclaringAspd(FakeAspd):
-    """Adds the declaration seat.summon resolves before it starts a runtime."""
+    """Adds the declaration seat.summon resolves before it starts a runtime.
+    Like aspc, it applies provisionDirectives over an empty profile."""
     def __init__(self, path, release, log, project_root):
         self.project_root = str(project_root)
         super().__init__(path, release, log)
@@ -45,7 +46,8 @@ class DeclaringAspd(FakeAspd):
                                   'projectRoot': self.project_root,
                                   'cwd': self.project_root, 'runMode': context['runMode'],
                                   'bundle': {'kind': 'compose', 'compose': []}},
-                    'agentSources': {}, 'provisioning': {'scalars': {}}, 'diagnostics': []}
+                    'agentSources': {}, 'provisioning': {'scalars': dict(context.get('provisionDirectives') or {})},
+                    'diagnostics': []}
         return super().handle(method, params)
 
 
@@ -413,6 +415,56 @@ def main():
                 and bool(active) and active[0]['status'] in ('accepted', 'started', 'running'),
                 code=code, reply=queued, run=[dict(a) for a in active])
         (args.artifacts / 'ops.json').write_text(json.dumps(dict(summon=summoned, put=put, act=act, delete=deleted, send=sent, restart=restarted), indent=2) + '\n')
+
+        # == 4. provision directives (T-13798) ==============================
+        # A summon without provision resolves with no directives at all.
+        def frames(method):
+            out = []
+            for line in (args.artifacts / 'fake-aspd.ndjson').read_text().splitlines():
+                request = json.loads(line).get('request') if line.strip() else None
+                if isinstance(request, dict) and request.get('method') == method:
+                    out.append(request.get('params') or {})
+            return out
+        resolves = frames('aspc.resolveRuntimeDeclaration')
+        plain = [f for f in resolves if 'provisionDirectives' in f.get('context', {})]
+        r.check('4.plain-summon-no-directives', resolves and not plain, resolves=len(resolves), withDirectives=plain)
+        # Refused by the op itself (its own message), not by Cardo's schema check.
+        for name, bad, says in (('yolo', {'yolo': True}, 'provision key yolo is not supported'),
+                                ('sandbox', {'sandbox': 'off'}, 'provision key sandbox is not supported'),
+                                ('unknown', {'bogus': 'x'}, 'provision key bogus is not supported'),
+                                ('non-scalar', {'model': {'id': 'x'}}, 'provision.model must be a scalar')):
+            refused = wire(kernel, 'seat.summon', dict(session_ref=held_ref, request_id='kf-bad-' + name, provision=bad))
+            r.check('4.refused-' + name, refused.get('ok') is False and refused['error']['code'] == 'invalid_input'
+                    and says in json.dumps(refused['error']), reply=refused)
+        alias = 'kf-alias-' + uuid.uuid4().hex[:4]
+        prov_ref = f'agent:{AGENT}:project:{PROJECT}:task:pty-{uuid.uuid4().hex[:8]}/lane:main'
+        provisioned = wire(kernel, 'seat.summon', dict(session_ref=prov_ref, request_id='kf-' + uuid.uuid4().hex[:6],
+                                                       provision={'model': alias}))
+        r.check('4.provision-summon', provisioned.get('ok'), reply=provisioned)
+        assert provisioned['ok'], provisioned
+        directed = [f for f in frames('aspc.resolveRuntimeDeclaration')
+                    if f.get('context', {}).get('provisionDirectives') == {'model': alias}]
+        r.check('4.resolve-carries-directive', len(directed) == 1, frames=directed)
+        def compiles_with_alias():
+            return [f for f in frames('aspc.compileHarnessInvocation')
+                    if f.get('compileRequest', {}).get('selectionContext', {}).get('summonDirectives', {}).get('model') == alias]
+        r.wait(lambda: compiles_with_alias(), 20, 'provisioned birth compiles')
+        def applied(host_id):
+            row = r.rows("SELECT last_applied_intent_json FROM sessions WHERE host_session_id=?", (host_id,))
+            return json.loads(row[0]['last_applied_intent_json'] or '{}') if row else {}
+        first = applied(provisioned['result']['host_session_id'])
+        r.check('4.recorded-model', first.get('provision', {}).get('model') == alias
+                and first.get('summonDirectives', {}).get('model') == alias, intent=first)
+        compiles_before = len(compiles_with_alias())
+        prov_restart = wire(kernel, 'seat.restart', dict(host_session_id=provisioned['result']['host_session_id'],
+                                                         expected_generation=1))
+        r.check('4.restart', prov_restart.get('ok') and prov_restart['result']['launch']['status'] == 'started', reply=prov_restart)
+        assert prov_restart['ok'], prov_restart
+        r.wait(lambda: len(compiles_with_alias()) > compiles_before, 20, 'restart recompiles with the override')
+        second = applied(prov_restart['result']['host_session_id'])
+        r.check('4.restart-keeps-override', second.get('summonDirectives', {}).get('model') == alias, intent=second)
+        (args.artifacts / 'provision.json').write_text(json.dumps(dict(summon=provisioned, restart=prov_restart,
+                                                                       firstIntent=first, restartIntent=second), indent=2) + '\n')
 
         # == 9. clear-context owner lifecycle (T-12360 F3) ==================
         assert restarted['ok'], restarted

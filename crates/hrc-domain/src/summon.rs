@@ -5,15 +5,15 @@ use crate::{
 };
 use cardo_runtime::service::DispatchFailure;
 use serde::Deserialize;
-use serde_json::{Value, json};
+use serde_json::{Map, Value, json};
 
 pub const OPERATION: &str = "seat.summon";
 const UNQUALIFIED: &str = "session_ref must name a task-qualified main-lane seat";
 
 pub fn declaration() -> Value {
     crate::declarations::described(json!({"name":OPERATION,"fences":"none","effect":"write",
-        "description":"Summon a seat through HRC's declaration and claim-and-start routes. HRC owns replay; reuse request_id on retry. continuation \"resume\" instead continues the seat's latest recorded conversation in a successor session; HRC refuses it with no_resumable_continuation or resume_runtime_live, never starts fresh, and does not replay it.",
-        "input":{"kind":"object","fields":{"session_ref":{"kind":"string"},"fresh":{"kind":"boolean"},"continuation":{"kind":"string"},"request_id":{"kind":"string"}},"required":["session_ref","request_id"]},
+        "description":"Summon a seat through HRC's declaration and claim-and-start routes. HRC owns replay; reuse request_id on retry. continuation \"resume\" instead continues the seat's latest recorded conversation in a successor session; HRC refuses it with no_resumable_continuation or resume_runtime_live, never starts fresh, and does not replay it. provision overrides the profile for this birth with scalar directives (harness, model_provider, model, reasoning_effort, presentation, node, approval, remote).",
+        "input":{"kind":"object","fields":{"session_ref":{"kind":"string"},"fresh":{"kind":"boolean"},"continuation":{"kind":"string"},"request_id":{"kind":"string"},"provision":{"kind":"map","values":{"kind":"json"}}},"required":["session_ref","request_id"]},
         "output":{"kind":"object","fields":{"session_ref":{"kind":"string"},"host_session_id":{"kind":"string"},"runtime_id":{"kind":"string"},"status":{"kind":"string"},"replayed":{"kind":"boolean"}},"required":["session_ref","host_session_id","runtime_id","status","replayed"]}}))
 }
 
@@ -26,7 +26,23 @@ pub struct Summon {
     #[serde(default)]
     continuation: Option<Continuation>,
     request_id: String,
+    #[serde(default)]
+    provision: Option<Map<String, Value>>,
 }
+
+/// The aspc directive keys a summon may set. aspc also takes yolo and
+/// sandbox, but HRC's resolve drops them, so the op refuses them rather than
+/// accept an override that would never apply.
+const PROVISION_KEYS: [&str; 8] = [
+    "harness",
+    "model_provider",
+    "model",
+    "reasoning_effort",
+    "presentation",
+    "node",
+    "approval",
+    "remote",
+];
 
 #[derive(Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -62,6 +78,17 @@ impl Summon {
         if args.fresh && args.continuation.is_some() {
             return Err(invalid("fresh and continuation are mutually exclusive"));
         }
+        for (key, value) in args.provision.iter().flatten() {
+            if !PROVISION_KEYS.contains(&key.as_str()) {
+                return Err(invalid(&format!(
+                    "provision key {key} is not supported; use one of {}",
+                    PROVISION_KEYS.join(", ")
+                )));
+            }
+            if !(value.is_string() || value.is_boolean() || value.is_number()) {
+                return Err(invalid(&format!("provision.{key} must be a scalar")));
+            }
+        }
         Ok(args)
     }
 
@@ -82,13 +109,15 @@ impl Summon {
             .session_ref
             .strip_suffix("/lane:main")
             .ok_or_else(|| HrcError::new("invalid_input", UNQUALIFIED))?;
-        let resolved = owner::post(
-            owner,
-            "/v1/declarations/resolve",
-            &json!({
-                "scopeRef":scope,"runMode":"task","interactive":true,"preferredMode":"headless"
-            }),
-        )?;
+        let mut resolve = json!({
+            "scopeRef":scope,"runMode":"task","interactive":true,"preferredMode":"headless"
+        });
+        // Fresh, keyed and resume births all take their intent from this one
+        // resolve, so the override reaches all three.
+        if let Some(provision) = self.provision.as_ref().filter(|p| !p.is_empty()) {
+            resolve["provision"] = Value::Object(provision.clone());
+        }
+        let resolved = owner::post(owner, "/v1/declarations/resolve", &resolve)?;
         let mut intent = resolved
             .get("intent")
             .filter(|v| v.is_object())
@@ -142,6 +171,31 @@ impl Summon {
             "host_session_id":string(&response["hostSessionId"])?,"runtime_id":string(&response["runtimeId"])?,
             "status":string(&response["status"])?,"replayed":response["claim"]["replayed"].as_bool().ok_or_else(invalid)?}),
         )
+    }
+}
+
+#[cfg(test)]
+mod provision {
+    use serde_json::json;
+    fn parse(provision: serde_json::Value) -> Result<super::Summon, String> {
+        super::Summon::parse(json!({"session_ref":"agent:a:project:p:task:t/lane:main","request_id":"id","provision":provision}))
+            .map_err(|e| e.message)
+    }
+    #[test]
+    fn refuses_keys_resolve_would_drop_and_non_scalars() {
+        assert!(
+            parse(json!({"model":"fable","presentation":true,"reasoning_effort":"high"})).is_ok()
+        );
+        for bad in [
+            json!({"yolo":true}),
+            json!({"sandbox":"x"}),
+            json!({"bogus":"x"}),
+            json!({"model":{"x":1}}),
+            json!({"model":null}),
+        ] {
+            assert!(parse(bad.clone()).is_err(), "{bad}");
+        }
+        assert!(parse(json!("model=fable")).is_err());
     }
 }
 

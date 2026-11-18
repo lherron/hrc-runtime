@@ -13,6 +13,8 @@ pub(crate) fn described(mut declaration: Value) -> Value {
             "fresh" => "Create a fresh seat, allowing HRC to suffix its name.",
             "continuation" => "Use resume to continue the seat's recorded conversation.",
             "request_id" => "The request identity HRC uses to replay a summon.",
+            "provision" =>
+                "Scalar profile overrides for this birth, such as {\"model\":\"fable\"}.",
             "text" => "The literal text to deliver to the seat.",
             "enter" => "Submit the literal text; defaults to true.",
             "delivery" => "Enqueue literal input or steer the current generation.",

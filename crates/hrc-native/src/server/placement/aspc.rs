@@ -333,7 +333,6 @@ pub async fn resolve_intent(server: &super::Server, input: Value) -> Result<Valu
             "projectId",
             "projectRoot",
             "cwd",
-            "provision",
             "agentSources",
         ] {
             if input.get(field).is_some() {
