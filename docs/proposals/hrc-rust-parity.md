@@ -1,6 +1,6 @@
 # HRC Rust parity
 
-Status: r2, 2026-10-25, draft for Daedalus review (T-11816). Owner mable@hrc-runtime:primary. Campaign P-00866. r2 replaces r1 (T-11525, c720ad33). Lance ruled 2026-10-25 to delete r1's implementation branch and restart from current main. The P-00869 cleanup had deleted routes, tables and store methods that r1's P1/P2 work and its frozen inventory were built to match.
+Status: r2, 2026-10-25. Daedalus approved it as a design on EN-35271 (T-11816), and the F front-door package on EN-35519 (T-11822). max3 moved to rusthrc on 2026-10-26. The Bun packages this plan runs beside and passes through to (`packages/hrc-server`, `packages/hrc-cli`) were deleted in T-13157 (2026-11-10). The Progress section is frozen at 2026-10-26; wrkq is authoritative for anything after that, starting with campaign P-00866. Original status: draft for Daedalus review (T-11816). Owner mable@hrc-runtime:primary. Campaign P-00866. r2 replaces r1 (T-11525, c720ad33). Lance ruled 2026-10-25 to delete r1's implementation branch and restart from current main. The P-00869 cleanup had deleted routes, tables and store methods that r1's P1/P2 work and its frozen inventory were built to match.
 
 ## What carries over from r1
 
