@@ -217,10 +217,15 @@ class FakeAspd:
         the profile's provisioning.harness as raspd reports it)."""
         root = (context.get('project') or {}).get('projectRoot') or self.agent_root
         absent = {'state': 'absent'}
+        # f3/f4: a task named gate-<harness>-* resolves that hrcpty profile.
+        task = context.get('taskId') or ''
+        provider, frontend, harness = {'claude-hrcpty': ('anthropic', 'claude-code', 'claude-hrcpty'),
+                                       'codex-hrcpty': ('openai', 'codex-cli', 'codex-hrcpty')}.get(
+            task[5:-9] if task.startswith('gate-') else '', ('google', 'antigravity-cli', 'antigravity-hrcpty'))
         return {'schemaVersion': 'aspc-resolve-runtime-declaration-response/v1', 'ok': True,
                 'placement': {'agentRoot': self.agent_root, 'projectRoot': root, 'cwd': root, 'runMode': 'task',
                               'bundle': {'kind': 'compose', 'compose': []}},
-                'provisioning': {'provider': 'google', 'frontend': 'antigravity-cli', 'effectiveHarness': 'antigravity-hrcpty',
+                'provisioning': {'provider': provider, 'frontend': frontend, 'effectiveHarness': harness,
                                  'transport': 'pty', 'scalars': {}},
                 'policy': {'claimsTask': False, 'placement': {'pins': [], 'homes': []}},
                 'identity': {'operator': None}, 'agentSources': {}, 'searchedAgentRoots': [self.agent_root], 'bundle': {},
@@ -484,6 +489,9 @@ class GateLeg:
       f1 the intent names harness.id `antigravity-cli` (the placement hint)
       f2 no intent (mail and summon births): the declaration aspd resolves
          reports effectiveHarness `antigravity-hrcpty` (the observed branch)
+      f3/f4 the same observed branch for claude-hrcpty and codex-hrcpty
+         profiles (adapters claude, codex; their credential checks read this
+         host's HOME, so they pass where claude/codex are signed in)
     The pre-change binary refuses both: "names no supported driver"."""
     def __init__(self, r, root, aspd):
         self.r, self.root, self.aspd = r, root, aspd
@@ -493,8 +501,8 @@ class GateLeg:
         return [f['request']['params'].get('harness') for f in frames
                 if 'request' in f and f['request'].get('method') == 'aspc.observeRuntimeCapability']
 
-    def resolve(self, name, intent):
-        ref = f'agent:{AGENT}:project:{PROJECT}:task:agy-{name}-{uuid.uuid4().hex[:8]}/lane:main'
+    def resolve(self, task, intent):
+        ref = f'agent:{AGENT}:project:{PROJECT}:task:{task}-{uuid.uuid4().hex[:8]}/lane:main'
         body = {'sessionRef': ref, 'create': True}
         # Local ledger authority (n4_federation LEDGER_ACTIVE) sends the gate
         # straight to the capability stage under test; a virgin scope would
@@ -514,11 +522,14 @@ class GateLeg:
         hint = {'placement': {'agentRoot': here, 'projectRoot': here, 'cwd': here, 'runMode': 'task',
                               'bundle': {'kind': 'compose', 'compose': []}, 'dryRun': False},
                 'harness': {'id': 'antigravity-cli', 'provider': 'google', 'interactive': True}}
-        for check, name, intent in (('CE.f1.hint-antigravity-cli-passes-gate', 'hint', hint),
-                                    ('CE.f2.observed-antigravity-hrcpty-passes-gate', 'observed', None)):
-            status, out, observed = self.resolve(name, intent)
+        for check, task, intent, adapter in (
+                ('CE.f1.hint-antigravity-cli-passes-gate', 'agy-hint', hint, 'antigravity'),
+                ('CE.f2.observed-antigravity-hrcpty-passes-gate', 'agy-observed', None, 'antigravity'),
+                ('CE.f3.observed-claude-hrcpty-passes-gate', 'gate-claude-hrcpty', None, 'claude'),
+                ('CE.f4.observed-codex-hrcpty-passes-gate', 'gate-codex-hrcpty', None, 'codex')):
+            status, out, observed = self.resolve(task, intent)
             text = json.dumps(out)
-            r.check(check, status == 200 and isinstance(out, dict) and out.get('hostSessionId') and observed == ['antigravity']
+            r.check(check, status == 200 and isinstance(out, dict) and out.get('hostSessionId') and observed == [adapter]
                     and 'names no supported driver' not in text and 'credentials not observed' not in text,
                     status=status, response=out, observedHarnesses=observed)
 

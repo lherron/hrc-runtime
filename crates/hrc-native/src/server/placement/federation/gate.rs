@@ -626,8 +626,10 @@ fn adapter_id(hint: Option<&Value>, observed: Option<&str>) -> Option<&'static s
         "pi-sdk" => Some("pi-sdk"),
         "codex" => Some("codex"),
         "muse" => Some("muse"),
-        // An unhinted Antigravity birth observes the profile's
-        // provisioning.harness (raspd declaration.rs).
+        // An unhinted birth observes the profile's provisioning.harness
+        // (raspd declaration.rs) unchanged.
+        "claude-hrcpty" => Some("claude"),
+        "codex-hrcpty" => Some("codex"),
         "antigravity-hrcpty" => Some("antigravity"),
         _ => None,
     }
