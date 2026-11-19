@@ -470,6 +470,34 @@ impl Vt {
         Ok(String::from_utf8_lossy(&bytes).into_owned())
     }
 
+    /// Styled text of exactly the rows `capture_plain` returns, one line per
+    /// row: row N here is row N there. Each row is formatted on its own, so
+    /// its SGR starts from the default pen and soft wraps never merge rows.
+    /// No modes, tabstops or cursor: this is for reading a row's style, not
+    /// for replay (that is `format_vt`).
+    pub(crate) fn capture_styled_rows(&self, scrollback: usize) -> anyhow::Result<String> {
+        let (cols, rows) = self.size();
+        let total = self.get::<usize>(DATA_TOTAL_ROWS);
+        let top = total.saturating_sub(rows as usize + scrollback);
+        let mut lines = Vec::with_capacity(total - top);
+        for y in top..total {
+            let start = self.grid_ref(POINT_SCREEN, 0, y as u32);
+            let end = self.grid_ref(POINT_SCREEN, cols.saturating_sub(1), y as u32);
+            let (Some(start), Some(end)) = (start, end) else {
+                anyhow::bail!("capture: grid refs out of range");
+            };
+            let selection = GhosttySelection {
+                start,
+                end,
+                rectangle: false,
+            };
+            let bytes = self.format(FORMAT_VT, true, 0, Some(&selection))?;
+            let line = String::from_utf8_lossy(&bytes);
+            lines.push(line.trim_end_matches(['\r', '\n']).to_owned());
+        }
+        Ok(lines.join("\n"))
+    }
+
     /// The active screen as VT: modes, keyboard state, scrolling region,
     /// tabstops, then content and pen, and the cursor when `cursor` is set
     /// (`styled` capture; the replay places the cursor itself, after images).

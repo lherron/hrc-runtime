@@ -872,15 +872,26 @@ fn status(shared: &Shared) -> Value {
 fn capture(shared: &Shared, params: &Value) -> anyhow::Result<Value> {
     let st = shared.state.lock().unwrap();
     let vt = st.vt.as_ref().context("no_child: nothing spawned yet")?;
-    let text = if params["styled"].as_bool().unwrap_or(false) {
-        String::from_utf8_lossy(&vt.format_vt(true)?).into_owned()
-    } else {
-        vt.capture_plain(params["scrollback"].as_u64().unwrap_or(0) as usize)?
+    let scrollback = params["scrollback"].as_u64().unwrap_or(0) as usize;
+    let styled = params["styled"].as_bool().unwrap_or(false);
+    // `rows` aligns styled text with plain: one line per viewport row (plus
+    // `scrollback`), styled row N = plain row N. Without it, styled is the
+    // replay stream: whole screen, modes, pen and cursor, not a row grid.
+    // `layout` names what `text` is, so a caller can tell an older hrc-pty
+    // (no field, `rows` ignored) from one that honoured it.
+    let (text, layout) = match (styled, params["rows"].as_bool().unwrap_or(false)) {
+        (true, true) => (vt.capture_styled_rows(scrollback)?, "styled-rows"),
+        (true, false) => (
+            String::from_utf8_lossy(&vt.format_vt(true)?).into_owned(),
+            "styled-replay",
+        ),
+        (false, _) => (vt.capture_plain(scrollback)?, "plain-rows"),
     };
     let (x, y) = vt.cursor();
     let (cols, rows) = vt.size();
     Ok(json!({
         "text": text,
+        "layout": layout,
         "cursor": {"x": x, "y": y, "visible": vt.cursor_visible()},
         "cols": cols,
         "rows": rows,
