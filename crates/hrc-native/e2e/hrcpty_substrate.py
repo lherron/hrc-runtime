@@ -70,6 +70,11 @@ substituted; hosting, presentation and driver blocks are the producer's bytes.
      (--federation-host) for the peer listener bind.
 Run on the pre-change binary, C1 records the admit refusal (discriminator).
 
+Child-exit leg (T-13961, spec T-13956 §7): scope `...:task:agy-*` compiles an
+antigravity-hrcpty shape (driver antigravity-cli-hrcpty, provider google,
+executionTransport pty); see ChildExitLeg for checks CE.a-e. `--only
+child-exit` runs that leg alone.
+
 Never touches the live daemon (its socket is refused), the live aspd, or any
 shared service. Every process and root it creates is removed on exit.
 """
@@ -203,6 +208,12 @@ class FakeAspd:
             return self.codex(req, scope)
         tmux = ':task:tmux-' in scope
         driver, host = ('claude-code-tmux', 'tmux') if tmux else ('claude-code-hrcpty', 'hrcpty')
+        # T-13961: `...:task:agy-*` compiles the antigravity-hrcpty shape (the
+        # agy TUI is the pty child, as Claude is); everything else is Claude's.
+        agy = ':task:agy-' in scope
+        provider, harness, recipe = ('anthropic', 'claude' if tmux else 'claude-hrcpty', 'claude-code')
+        if agy:
+            driver, provider, harness, recipe = 'antigravity-cli-hrcpty', 'google', 'antigravity-hrcpty', 'antigravity'
         hosting = {'executionTransport': 'pty', 'terminalRequired': True, 'terminalHost': host,
                    'processExecution': 'broker-process' if tmux else 'supervisor-process'}
         correlation = {k: ident[k] for k in ('requestId', 'hostSessionId', 'operationId', 'runtimeId', 'runId',
@@ -210,7 +221,7 @@ class FakeAspd:
         correlation.update(scopeRef=scope, laneRef='main')
         cwd = req['placement']['cwd']
         spec = {'specVersion': 'harness-broker.invocation/v1', 'invocationId': ident['invocationId'],
-                'harness': {'frontend': 'stub', 'provider': 'anthropic', 'driver': driver},
+                'harness': {'frontend': 'stub', 'provider': provider, 'driver': driver},
                 'process': {'command': sys.executable, 'args': ['-u', '-c', CHILD], 'cwd': cwd,
                             'env': {'HOME': str(Path.home()), 'PATH': '/usr/bin:/bin:/usr/sbin:/sbin', 'LANG': 'en_US.UTF-8'},
                             'lockedEnv': {}, 'harnessTransport': {'kind': 'pty'}},
@@ -221,15 +232,16 @@ class FakeAspd:
             text = req['materialization'].get('initialPrompt', '')
             start['initialInput'] = {'inputId': ident['initialInputId'], 'content': [{'type': 'text', 'text': text}]}
         digest = lambda s: hashlib.sha256(s.encode()).hexdigest()
-        execution = {'recipeId': 'claude-code', 'driver': driver, 'protocol': 'harness-broker/0.2', 'hosting': hosting,
+        tag = 'agy-' + host if agy else host
+        execution = {'recipeId': recipe, 'driver': driver, 'protocol': 'harness-broker/0.2', 'hosting': hosting,
                      'presentationFulfillment': 'intrinsic',
-                     'profile': {'profileId': 'profile_stub_' + host, 'profileHash': digest('profile' + host),
-                                 'compatibilityHash': digest('compat' + host), 'startRequestHash': start_hash(start)},
+                     'profile': {'profileId': 'profile_stub_' + tag, 'profileHash': digest('profile' + tag),
+                                 'compatibilityHash': digest('compat' + tag), 'startRequestHash': start_hash(start)},
                      'dispatchRequest': {'startRequest': start}}
         plan = {'schemaVersion': 'agent-runtime-plan/v2', 'compiler': {'name': 'fake-aspd', 'version': '0'},
                 'compileId': 'compile_' + uuid.uuid4().hex, 'createdAt': time.strftime('%Y-%m-%dT%H:%M:%SZ', time.gmtime()),
                 'agent': {'id': req['agent']['id']}, 'identity': ident, 'placement': req['placement'],
-                'selection': {'harness': 'claude' if tmux else 'claude-hrcpty', 'modelProvider': 'anthropic', 'model': 'stub',
+                'selection': {'harness': harness, 'modelProvider': provider, 'model': 'stub',
                               'presentation': True,
                               'provenance': {'harness': 'compile-request', 'modelProvider': 'compile-request',
                                              'model': 'compile-request', 'presentation': 'compile-request'}},
@@ -270,6 +282,171 @@ class FakeAspd:
 
     def close(self):
         self.server.close()
+
+
+class LegOnly(Exception):
+    """--only ran its leg; the rest of the substrate is skipped."""
+
+
+class ChildExitLeg:
+    """Which pty child exit ends a seat (T-13961, spec T-13956 §7).
+
+    A seat whose recorded executionTransport is `pty` (Claude, Antigravity:
+    the harness IS the pty child) is judged dead when that child exits; a
+    codex-hrcpty seat (jsonrpc-stdio; its pty child is a TUI respawned on
+    attach) is not. A row without the recorded hosting keeps the old
+    harness-name check. GET /v1/attach reconciles one runtime's liveness
+    without a birth, so it is the judge here.
+      CE.a antigravity child exit: stale, broker_hrcpty_child_exited
+      CE.b codex-hrcpty child exit: still live (control)
+      CE.c claude-hrcpty child exit: stale, broker_hrcpty_child_exited
+      CE.d a row with no hosting record: claude still dies (name check), an
+           antigravity seat does not (the name check, not the transport)
+      CE.e a google continuation the antigravity broker reported is carried
+           into the relaunch's compile request
+      CE.label `admin broker-verify candidates` labels the seat antigravity
+    """
+    def __init__(self, r, try_birth, aspd_log):
+        self.r, self.try_birth, self.aspd_log = r, try_birth, aspd_log
+
+    def seat(self, prefix, prompt):
+        r = self.r
+        ref, host, status, out = self.try_birth(prefix + uuid.uuid4().hex[:8], prompt)
+        assert status in (200, 202), ('birth', prefix, status, out)
+        rid = out['runtimeId']
+        row = r.runtime(rid)
+        sub = row['state'].get('broker', {}).get('substrate', {})
+        sock = Path(sub['socketPath'])
+        return {'ref': ref, 'host': host, 'rt': rid, 'run': out.get('runId'), 'sock': sock,
+                'token': sock.parent / 'attach.token', 'pid': sub.get('pid'), 'row': row}
+
+    def status(self, s):
+        return ops(s['sock'], s['token'], 'status')['status']
+
+    def end_child(self, s):
+        """SIGKILL the pty child the broker spawned; hrc-pty keeps the lease (remain-on-exit).
+
+        With a run active the daemon's hrc-pty event subscription judges the
+        seat on child.exited itself, and a dead verdict ends the lease (the
+        socket goes); otherwise the lease stays until GET /v1/attach judges it.
+        """
+        child = (self.status(s).get('child') or {}).get('pid')
+        assert child and alive(child), ('no running child', self.status(s))
+        os.kill(int(child), signal.SIGKILL)
+
+        def settled():
+            if self.r.runtime(s['rt'])['status'] == 'stale':
+                return {'judgedBy': 'daemon child.exited subscription'}
+            try:
+                st = self.status(s)
+            except OSError:
+                return None
+            return st if (st.get('child') or {}).get('state') == 'exited' else None
+        return child, self.r.wait(settled, 20, 'child exited')
+
+    def judge(self, s):
+        status, out = self.r.http('GET', f'/v1/attach?runtimeId={s["rt"]}')
+        row = self.r.runtime(s['rt'])
+        return {'attachStatus': status, 'attach': out if status != 200 else 'descriptor', 'status': row['status'],
+                'staleReason': row['state'].get('staleReason')}
+
+    def strip_hosting(self, s):
+        with sqlite3.connect(self.r.db_path, timeout=30) as db:
+            db.execute("UPDATE runtimes SET runtime_state_json=json_remove(runtime_state_json,'$.hosting') WHERE runtime_id=?", (s['rt'],))
+        return self.r.runtime(s['rt'])['state'].get('hosting')
+
+    def settled(self, s):
+        self.r.wait(lambda: self.r.rows("SELECT 1 FROM runs WHERE run_id=? AND status='completed'", (s['run'],)), 60, 'first turn')
+
+    def dead(self, j):
+        return j['status'] == 'stale' and j['staleReason'] == 'broker_hrcpty_child_exited'
+
+    def run(self):
+        r = self.r
+        # -- a + e: antigravity seat, its continuation, its child exit -------
+        agy = self.seat('agy-', 'antigravity first turn CONT')
+        self.settled(agy)
+        hosting = agy['row']['state'].get('hosting')
+        r.check('CE.a.hosting-recorded', hosting == {'executionTransport': 'pty', 'terminalHost': 'hrcpty'}
+                and agy['row']['state']['selection'].get('harness') == 'antigravity-hrcpty', hosting=hosting,
+                selection=agy['row']['state'].get('selection'))
+        scope = agy['ref'].split('/lane:')[0]
+        cli = subprocess.run([str(r.binary), 'admin', 'broker-verify', 'candidates', scope, '--json'], capture_output=True, text=True,
+                             env={**r.env, 'HRC_METRICS': '0'}, timeout=30)
+        try:
+            labels = [(c['provider'], c['driver']) for c in json.loads(cli.stdout)['candidates']]
+        except (ValueError, KeyError):
+            labels = None
+        r.check('CE.label.broker-verify-antigravity', cli.returncode == 0 and labels == [('antigravity', 'antigravity-cli-hrcpty')],
+                exit=cli.returncode, labels=labels, stdout=cli.stdout[-1500:], stderr=cli.stderr[-500:])
+        cont = r.rows('SELECT continuation_json FROM sessions WHERE host_session_id=?', (agy['host'],))
+        cont = json.loads(cont[0]['continuation_json'] or 'null') if cont else None
+        r.check('CE.e.google-continuation-recorded', (cont or {}).get('provider') == 'google'
+                and (cont or {}).get('kind') == 'conversation', continuation=cont)
+        child, st = self.end_child(agy)
+        j = self.judge(agy)
+        r.check('CE.a.antigravity-child-exit-dead', self.dead(j), child=child, hrcptyStatus=st, judged=j)
+        status, out = r.http('POST', '/v1/turns', {'hostSessionId': agy['host'], 'prompt': 'antigravity relaunch'})
+        new_rt = out.get('runtimeId') if isinstance(out, dict) else None
+        compiles = [json.loads(l) for l in self.aspd_log.read_text().splitlines()]
+        compiles = [f['request']['params']['compileRequest'] for f in compiles
+                    if 'request' in f and f['request'].get('method') == 'aspc.compileHarnessInvocation'
+                    and f['request']['params']['compileRequest']['identity'].get('hostSessionId') == agy['host']]
+        carried = compiles[-1].get('continuation') if len(compiles) >= 2 else None
+        r.check('CE.e.relaunch-carries-google-continuation', status in (200, 202) and new_rt and new_rt != agy['rt']
+                and len(compiles) == 2 and compiles[0].get('continuation') is None
+                and (carried or {}).get('hrc', {}).get('provider') == 'google'
+                and carried['hrc'].get('key') == (cont or {}).get('key')
+                and (carried.get('broker') or {}).get('kind') == 'conversation',
+                status=status, response=out, compiles=len(compiles), carried=carried, recorded=cont)
+        if new_rt:
+            done = r.wait(lambda: r.rows("SELECT status FROM runs WHERE run_id=? AND status='completed'", (out.get('runId'),)),
+                          60, 'relaunch turn')
+            r.check('CE.e.relaunch-turn-completed', done, runId=out.get('runId'), runtimeId=new_rt)
+
+        # -- b: codex-hrcpty child exit (control) ----------------------------
+        codex = self.seat('codex-ce-', 'codex child-exit control first turn')
+        self.settled(codex)
+        hosting = codex['row']['state'].get('hosting')
+        env = {k: v for k, v in os.environ.items() if not k.startswith(LEAK)}
+        env['SHELL'] = '/bin/sh'
+        spawned = ops(codex['sock'], codex['token'], 'spawn', {'argv': ['/bin/sh', '-c', 'exit 0'], 'env': env,
+                                                                'cwd': str(r.root), 'cols': 80, 'rows': 24})['spawn']
+        st = r.wait(lambda: (lambda x: x if (x.get('child') or {}).get('state') == 'exited' else None)(self.status(codex)),
+                    20, 'codex child exited')
+        j = self.judge(codex)
+        r.check('CE.b.codex-child-exit-live', hosting == {'executionTransport': 'jsonrpc-stdio', 'terminalHost': 'hrcpty'}
+                and st['broker'].get('state') == 'running' and j['status'] not in ('stale', 'dead', 'terminated', 'crashed')
+                and j['attachStatus'] == 200, hosting=hosting, spawned=spawned, hrcptyStatus=st, judged=j)
+
+        # -- c: claude-hrcpty child exit -------------------------------------
+        claude = self.seat('pty-ce-', 'claude child-exit first turn')
+        hosting = claude['row']['state'].get('hosting')
+        child, st = self.end_child(claude)
+        j = self.judge(claude)
+        r.check('CE.c.claude-child-exit-dead', hosting == {'executionTransport': 'pty', 'terminalHost': 'hrcpty'}
+                and self.dead(j), hosting=hosting, child=child, hrcptyStatus=st, judged=j)
+
+        # -- d: rows born before the hosting record --------------------------
+        old_claude = self.seat('pty-old-', 'claude pre-hosting row first turn')
+        r.wait(lambda: r.rows("SELECT 1 FROM hrc_events WHERE run_id=? AND event_kind='turn.tool_call'", (old_claude['run'],)),
+               60, 'claude ask tool call')
+        left = self.strip_hosting(old_claude)
+        child, st = self.end_child(old_claude)
+        j = self.judge(old_claude)
+        r.check('CE.d.no-hosting-claude-dead-by-name', left is None and self.dead(j), hostingAfterStrip=left, child=child,
+                hrcptyStatus=st, judged=j)
+        old_agy = self.seat('agy-old-', 'antigravity pre-hosting row first turn')
+        self.settled(old_agy)
+        left = self.strip_hosting(old_agy)
+        child, st = self.end_child(old_agy)
+        j = self.judge(old_agy)
+        r.check('CE.d.no-hosting-antigravity-live-by-name', left is None and j['status'] not in ('stale', 'dead', 'terminated', 'crashed')
+                and j['attachStatus'] == 200, hostingAfterStrip=left, child=child, hrcptyStatus=st, judged=j)
+        for s in (codex, old_agy):
+            r.http('POST', '/v1/terminate', {'runtimeId': s['rt']})
+        if new_rt:
+            r.http('POST', '/v1/terminate', {'runtimeId': new_rt})
 
 
 # -- harness -----------------------------------------------------------------
@@ -676,6 +853,7 @@ def main():
     p.add_argument('--root', type=Path, default=Path(f'/tmp/h12049-{os.getpid()}'))
     p.add_argument('--artifacts', type=Path, default=Path.home() / 'praesidium/var/wrkq-artifacts/T-12049/e2e')
     p.add_argument('--keep', action='store_true', help='leave the root (processes are still stopped)')
+    p.add_argument('--only', choices=['child-exit'], help='run only this leg (T-13961 child-exit: no tailnet peer needed)')
     p.add_argument('--federation-host', default='100.73.60.81',
                    help="this machine's tailnet address; the C8 peer listener must bind a tailnet host")
     args = p.parse_args()
@@ -705,7 +883,8 @@ def main():
     release = {'releaseId': 'stub-broker-t12049', 'sourceCommit': '1' * 40, 'builtAt': '2026-10-29T00:00:00.000Z',
                'releaseRoot': str(release_root),
                'worker': {'protocol': 'harness-broker/0.2', 'executable': str(stub), 'argvPrefix': [],
-                          'hostedDrivers': ['claude-code-hrcpty', 'claude-code-tmux', 'codex-app-server']}}
+                          'hostedDrivers': ['claude-code-hrcpty', 'claude-code-tmux', 'codex-app-server',
+                                            'antigravity-cli-hrcpty']}}
     (release_root / 'release.json').write_text(json.dumps({**{k: release[k] for k in ('releaseId', 'sourceCommit', 'builtAt')},
                                                            'protocol': 'harness-broker/0.2',
                                                            'hostedDrivers': release['worker']['hostedDrivers']}))
@@ -769,6 +948,11 @@ def main():
             assert status in (200, 202), ('birth', task, status, out)
             return ref, host, out
         codex = CodexLeg(r, root, binary, try_birth)
+        child_exit = ChildExitLeg(r, try_birth, args.artifacts / 'fake-aspd.ndjson')
+        if args.only == 'child-exit':
+            child_exit.run()
+            r.down(daemon)
+            raise LegOnly
 
         # == 1. hrcpty birth ===================================================
         pty_ref, pty_host, born = birth('pty-' + uuid.uuid4().hex[:8], 'hrcpty e2e first turn')
@@ -980,9 +1164,12 @@ def main():
                 serverAlive=alive(int(tmux_server_pid)))
         codex.terminate()
         codex.crash()
+        child_exit.run()
         r.check('0.pty-rt-tmux-rt-coexisted', pty_rt != tmux_rt and r.runtime(pty_rt)['transport'] == 'hrcpty'
                 and trow['transport'] == 'tmux', hrcpty=pty_rt, tmux=tmux_rt)
         r.down(daemon)
+    except LegOnly:
+        pass
     except Exception as error:  # noqa: BLE001 - recorded as a failed check
         import traceback
         failure = traceback.format_exc()

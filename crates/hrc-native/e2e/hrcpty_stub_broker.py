@@ -34,6 +34,11 @@ initial prompt containing `NOLAUNCH` never runs its turn (a seat that never
 launched); a turn whose prompt contains `CONT` emits continuation.updated
 {provider openai, kind thread, key thread-stub-<socket hash>} before it completes.
 
+T-13961 controls, antigravity driver: the TUI child takes the lease as a
+Claude child does, but a turn completes without the AskUserQuestion round
+trip; a prompt containing `CONT` emits continuation.updated {provider google,
+kind conversation, key conv-stub-<socket hash>} first.
+
 T-13701 controls, codex driver only: an initial prompt containing
 `CLASSES[a,b]` advertises capabilities.admission.classes [a, b] in the
 invocation.start reply; one containing `SLOWSTART` holds that reply 4 s
@@ -217,7 +222,10 @@ def run_turn(input_id, prompt):
     if state['driver'] == 'codex-app-server' and 'CONT' in prompt:
         emit('continuation.updated', {'provider': 'openai', 'kind': 'thread',
                                       'key': 'thread-stub-' + str(abs(hash(SOCKET)) % 10**8)}, input_id)
-    if not lease or lease['kind'] != 'hrcpty' or state['driver'] == 'codex-app-server':
+    if state['driver'] == 'antigravity-cli-hrcpty' and 'CONT' in prompt:
+        emit('continuation.updated', {'provider': 'google', 'kind': 'conversation',
+                                      'key': 'conv-stub-' + str(abs(hash(SOCKET)) % 10**8)}, input_id)
+    if not lease or lease['kind'] != 'hrcpty' or state['driver'] in ('codex-app-server', 'antigravity-cli-hrcpty'):
         emit('assistant.message.completed', {'content': [{'type': 'text', 'text': 'stub ok'}], 'final': True}, input_id)
         emit('turn.completed', {}, input_id)
         with lock:

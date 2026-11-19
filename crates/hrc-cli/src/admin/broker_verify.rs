@@ -46,6 +46,8 @@ fn provider(provider: Option<&str>, driver: &str) -> &'static str {
         "codex"
     } else if provider == Some("anthropic") || driver.contains("claude") {
         "claude-code"
+    } else if provider == Some("google") || driver.contains("antigravity") {
+        "antigravity"
     } else {
         "unknown"
     }

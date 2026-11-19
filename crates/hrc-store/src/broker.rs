@@ -100,7 +100,7 @@ impl Store {
             transport
         };
         let tmux = broker_tmux(execution, allocation, &id["generation"], true);
-        let state = json!({"schemaVersion":"runtime-state/v1","kind":"harness-broker","runtimeId":id["runtimeId"],"hostSessionId":id["hostSessionId"],"generation":id["generation"],"status":"starting","selection":plan["selection"],"hrcPolicy":{},"tmux":broker_tmux(execution, allocation, &id["generation"], false)});
+        let state = json!({"schemaVersion":"runtime-state/v1","kind":"harness-broker","runtimeId":id["runtimeId"],"hostSessionId":id["hostSessionId"],"generation":id["generation"],"status":"starting","selection":plan["selection"],"hosting":hosting_state(execution),"hrcPolicy":{},"tmux":broker_tmux(execution, allocation, &id["generation"], false)});
         let tx = self.sqlite.transaction()?;
         let changed = tx.execute("UPDATE runtime_operations SET status='starting',started_at=?,updated_at=?,capability_resolution_json=? WHERE operation_id=? AND status='prepared'",params![now,now,json!({"brokerHello":hello["capabilities"],"drivers":hello["drivers"],"result":{"status":"admitted"}}).to_string(),s(id,"operationId")?])?;
         ensure!(changed == 1, "aspd_preparation_not_prepared");
@@ -209,7 +209,7 @@ impl Store {
             .or_else(|| snapshot.get("capabilities"))
             .cloned()
             .unwrap_or(json!({}));
-        let state = json!({"schemaVersion":"runtime-state/v1","kind":"harness-broker","runtimeId":id["runtimeId"],"hostSessionId":id["hostSessionId"],"generation":id["generation"],"status":status,"executionRelease":release,"selection":plan["selection"],"hrcPolicy":{},"createdAt":now,"updatedAt":now,"compile":{"compileId":plan["compileId"],"planHash":plan["planHash"],"selectedProfileId":execution["profile"]["profileId"],"selectedProfileHash":execution["profile"]["profileHash"],"specHash":record["admission"]["specHash"],"startRequestHash":execution["profile"]["startRequestHash"],"selection":plan["selection"]},"broker":broker,"control":{"mode":"broker-ipc","brokerAttached":true},"tmux":tmux,"invocation":{"invocationId":id["invocationId"],"state":snapshot["state"],"driver":execution["driver"],"harnessRuntime":plan["selection"]["harness"],"capabilities":capabilities},"permission":{"negotiated":true,"pending":[]},"input":{"pendingDepth":0}});
+        let state = json!({"schemaVersion":"runtime-state/v1","kind":"harness-broker","runtimeId":id["runtimeId"],"hostSessionId":id["hostSessionId"],"generation":id["generation"],"status":status,"executionRelease":release,"selection":plan["selection"],"hosting":hosting_state(execution),"hrcPolicy":{},"createdAt":now,"updatedAt":now,"compile":{"compileId":plan["compileId"],"planHash":plan["planHash"],"selectedProfileId":execution["profile"]["profileId"],"selectedProfileHash":execution["profile"]["profileHash"],"specHash":record["admission"]["specHash"],"startRequestHash":execution["profile"]["startRequestHash"],"selection":plan["selection"]},"broker":broker,"control":{"mode":"broker-ipc","brokerAttached":true},"tmux":tmux,"invocation":{"invocationId":id["invocationId"],"state":snapshot["state"],"driver":execution["driver"],"harnessRuntime":plan["selection"]["harness"],"capabilities":capabilities},"permission":{"negotiated":true,"pending":[]},"input":{"pendingDepth":0}});
         // An operator attaching through the attached door needs no viewer window.
         let presentation = json!({"operatorAttachable":allocation.get("tuiWindow").is_some() || hrcpty.is_some(),"viewerRequested":plan["selection"]["presentation"] == true && !operator_attach_pending});
         let tx = self.sqlite.transaction()?;
@@ -255,6 +255,12 @@ impl Store {
         tx.commit()?;
         Ok(())
     }
+}
+/// The compiled process shape a seat's liveness reads after birth (T-13961):
+/// an executionTransport of `pty` means the pty child is the harness.
+fn hosting_state(execution: &Value) -> Value {
+    let hosting = &execution["hosting"];
+    json!({"executionTransport":hosting["executionTransport"],"terminalHost":hosting["terminalHost"]})
 }
 fn event(
     db: &Connection,

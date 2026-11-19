@@ -45,6 +45,7 @@ fn provider_family(provider: &str) -> Option<&'static str> {
         "anthropic" => Some("anthropic"),
         "openai" | "codex" | "openai-codex" => Some("openai"),
         "meta" | "muse" => Some("meta"),
+        "google" => Some("google"),
         _ => None,
     }
 }

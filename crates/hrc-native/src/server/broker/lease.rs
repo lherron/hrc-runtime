@@ -438,9 +438,10 @@ pub(crate) async fn hrcpty_broker_alive(
 }
 
 /// Why a supervisor `status` (None: no supervisor answers as the recorded
-/// pid) shows the seat dead. A Claude seat's pty child IS Claude and is never
-/// respawned, so its exit ends the seat (remain-on-exit keeps the lease); a
-/// Codex seat's pty child is a TUI respawned on the next attach (T-12236).
+/// pid) shows the seat dead. A harness whose process runs on the pty (Claude,
+/// Antigravity) IS the pty child and is never respawned, so its exit ends the
+/// seat (remain-on-exit keeps the lease); a Codex seat's pty child is a TUI
+/// respawned on the next attach (T-12236).
 pub(crate) fn hrcpty_dead_reason(rt: &db::Rt, status: Option<&Value>) -> Option<&'static str> {
     let Some(status) = status else {
         return Some("broker_hrcpty_supervisor_missing");
@@ -453,12 +454,20 @@ pub(crate) fn hrcpty_dead_reason(rt: &db::Rt, status: Option<&Value>) -> Option<
     if status["broker"]["state"] != "running" {
         return Some("broker_hrcpty_broker_exited");
     }
-    if status["child"]["state"] == "exited"
-        && rt.state_object()["selection"]["harness"] == "claude-hrcpty"
-    {
+    if status["child"]["state"] == "exited" && pty_child_is_harness(&rt.state_object()) {
         return Some("broker_hrcpty_child_exited");
     }
     None
+}
+
+/// Whether the seat's pty child is the harness itself: the executionTransport
+/// recorded at birth is `pty` (T-13961). A row born before that record keeps
+/// the harness-name check.
+fn pty_child_is_harness(state: &Value) -> bool {
+    match state["hosting"]["executionTransport"].as_str() {
+        Some(transport) => transport == "pty",
+        None => state["selection"]["harness"] == "claude-hrcpty",
+    }
 }
 
 pub(crate) async fn hrcpty_status(socket: &std::path::Path, pid: Option<i64>) -> Option<Value> {
