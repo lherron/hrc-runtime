@@ -615,6 +615,7 @@ fn adapter_id(hint: Option<&Value>, observed: Option<&str>) -> Option<&'static s
             "pi" | "pi-cli" => Some("pi"),
             "pi-sdk" => Some("pi-sdk"),
             "muse-cli" => Some("muse"),
+            "antigravity-cli" => Some("antigravity"),
             _ => None,
         };
     }
@@ -625,6 +626,7 @@ fn adapter_id(hint: Option<&Value>, observed: Option<&str>) -> Option<&'static s
         "pi-sdk" => Some("pi-sdk"),
         "codex" => Some("codex"),
         "muse" => Some("muse"),
+        "antigravity" => Some("antigravity"),
         _ => None,
     }
 }
@@ -649,6 +651,9 @@ fn credential_refusal(harness: &str, home: &str) -> Option<String> {
         "pi" | "pi-sdk" => (!home.join(".pi/agent/auth.json").exists()).then(|| {
             "pi credentials not observed: no ~/.pi/agent/auth.json — configure Pi authentication as this user".into()
         }),
+        // Antigravity signs in through the OS keychain; aspd's
+        // observeRuntimeCapability owns that check, HRC never probes it.
+        "antigravity" => None,
         _ => None,
     }
 }

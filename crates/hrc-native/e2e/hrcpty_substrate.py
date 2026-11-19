@@ -97,6 +97,7 @@ import time
 import uuid
 
 from n2_scratch import UnixHTTP, reap_root
+from n4_federation import LEDGER_ACTIVE
 
 HERE = Path(__file__).resolve().parent
 REPO = HERE.parents[2]
@@ -195,11 +196,36 @@ class FakeAspd:
         if method == 'aspc.hello':
             return {'protocolVersion': 'aspc/0.1', 'release': {'releaseId': 'fake-aspd-t12049', 'sourceCommit': '0' * 40,
                                                                'builtAt': '2026-10-29T00:00:00.000Z'},
-                    'capabilities': {'compileHarnessInvocation': True, 'transports': ['unix-jsonrpc-ndjson']},
+                    'capabilities': {'compileHarnessInvocation': True, 'observeRuntimeCapability': True, 'resolveRuntimeDeclaration': True,
+                                     'transports': ['unix-jsonrpc-ndjson']},
                     'facadeInfo': {'name': 'hrcpty_substrate.py fake aspd'}}
         if method == 'aspc.compileHarnessInvocation':
             return self.compile(params['compileRequest'])
+        if method == 'aspc.resolveRuntimeDeclaration':
+            return self.declaration(params['context'])
+        if method == 'aspc.observeRuntimeCapability':
+            # T-13961 CE.f: aspd owns sign-in; every facet observed present.
+            present = {'state': 'present', 'code': 'ok'}
+            return {'schemaVersion': 'aspc-observe-runtime-capability-response/v1', 'ok': True, 'harness': params['harness'],
+                    'registration': present, 'nativeRuntime': present, 'credentials': present, 'preparation': present,
+                    'diagnostics': []}
         raise KeyError(method)
+
+    def declaration(self, context):
+        """CE.f: an agent with no [placement] stanza whose profile resolves the
+        antigravity harness (frontend antigravity-cli, effectiveHarness antigravity)."""
+        root = (context.get('project') or {}).get('projectRoot') or self.agent_root
+        absent = {'state': 'absent'}
+        return {'schemaVersion': 'aspc-resolve-runtime-declaration-response/v1', 'ok': True,
+                'placement': {'agentRoot': self.agent_root, 'projectRoot': root, 'cwd': root, 'runMode': 'task',
+                              'bundle': {'kind': 'compose', 'compose': []}},
+                'provisioning': {'provider': 'google', 'frontend': 'antigravity-cli', 'effectiveHarness': 'antigravity',
+                                 'transport': 'pty', 'scalars': {}},
+                'policy': {'claimsTask': False, 'placement': {'pins': [], 'homes': []}},
+                'identity': {'operator': None}, 'agentSources': {}, 'searchedAgentRoots': [self.agent_root], 'bundle': {},
+                'source': {'agentProfile': {'state': 'present'}, 'projectTargets': absent, 'selectedTarget': absent,
+                           'priming': absent},
+                'diagnostics': []}
 
     def compile(self, req):
         ident = req['identity']
@@ -447,6 +473,53 @@ class ChildExitLeg:
             r.http('POST', '/v1/terminate', {'runtimeId': s['rt']})
         if new_rt:
             r.http('POST', '/v1/terminate', {'runtimeId': new_rt})
+
+
+class GateLeg:
+    """CE.f (T-13961 item 3): with the gate enforcing, a virgin implicit summon
+    (POST /v1/sessions/resolve create) on a scope this node's ledger holds passes the adapter and credential steps
+    for Antigravity on both gate paths and reaches aspd's
+    observeRuntimeCapability with harness `antigravity`, which admits:
+      f1 the intent names harness.id `antigravity-cli` (the placement hint)
+      f2 no intent (mail and summon births): the declaration aspd resolves
+         reports effectiveHarness `antigravity` (the observed branch)
+    The pre-change binary refuses both: "names no supported driver"."""
+    def __init__(self, r, root, aspd):
+        self.r, self.root, self.aspd = r, root, aspd
+
+    def observed(self):
+        frames = [json.loads(l) for l in Path(self.aspd.log).read_text().splitlines()]
+        return [f['request']['params'].get('harness') for f in frames
+                if 'request' in f and f['request'].get('method') == 'aspc.observeRuntimeCapability']
+
+    def resolve(self, name, intent):
+        ref = f'agent:{AGENT}:project:{PROJECT}:task:agy-{name}-{uuid.uuid4().hex[:8]}/lane:main'
+        body = {'sessionRef': ref, 'create': True}
+        # Local ledger authority (n4_federation LEDGER_ACTIVE) sends the gate
+        # straight to the capability stage under test; a virgin scope would
+        # first need the wrkq birth envelope this root does not run.
+        now = time.strftime('%Y-%m-%dT%H:%M:%S.000Z', time.gmtime())
+        with sqlite3.connect(self.r.db_path, timeout=30) as db:
+            db.execute(LEDGER_ACTIVE, (ref.split('/lane:')[0], NODE_ID, now, now))
+        if intent:
+            body['runtimeIntent'] = intent
+        before = len(self.observed())
+        status, out = self.r.http('POST', '/v1/sessions/resolve', body)
+        return status, out, self.observed()[before:]
+
+    def run(self):
+        r = self.r
+        here = str(self.root / PROJECT)
+        hint = {'placement': {'agentRoot': here, 'projectRoot': here, 'cwd': here, 'runMode': 'task',
+                              'bundle': {'kind': 'compose', 'compose': []}, 'dryRun': False},
+                'harness': {'id': 'antigravity-cli', 'provider': 'google', 'interactive': True}}
+        for check, name, intent in (('CE.f1.hint-antigravity-cli-passes-gate', 'hint', hint),
+                                    ('CE.f2.observed-antigravity-passes-gate', 'observed', None)):
+            status, out, observed = self.resolve(name, intent)
+            text = json.dumps(out)
+            r.check(check, status == 200 and isinstance(out, dict) and out.get('hostSessionId') and observed == ['antigravity']
+                    and 'names no supported driver' not in text and 'credentials not observed' not in text,
+                    status=status, response=out, observedHarnesses=observed)
 
 
 # -- harness -----------------------------------------------------------------
@@ -853,7 +926,8 @@ def main():
     p.add_argument('--root', type=Path, default=Path(f'/tmp/h12049-{os.getpid()}'))
     p.add_argument('--artifacts', type=Path, default=Path.home() / 'praesidium/var/wrkq-artifacts/T-12049/e2e')
     p.add_argument('--keep', action='store_true', help='leave the root (processes are still stopped)')
-    p.add_argument('--only', choices=['child-exit'], help='run only this leg (T-13961 child-exit: no tailnet peer needed)')
+    p.add_argument('--only', choices=['child-exit', 'gate'],
+                   help='run only this leg (T-13961: child-exit, or gate with the gate enforcing; no tailnet peer needed)')
     p.add_argument('--federation-host', default='100.73.60.81',
                    help="this machine's tailnet address; the C8 peer listener must bind a tailnet host")
     args = p.parse_args()
@@ -899,7 +973,7 @@ def main():
         with socket.socket() as probe:
             probe.bind((args.federation_host, 0))
             return probe.getsockname()[1]
-    listen_port, dead_port = free_port(), free_port()
+    listen_port, dead_port, registry_port = free_port(), free_port(), free_port()
     loop_token = secrets.token_hex(24)
     config.write_text(json.dumps({
         'nodeId': NODE_ID,
@@ -908,10 +982,13 @@ def main():
         'peers': {'loop': {'endpoint': f'http://{args.federation_host}:{listen_port}', 'token': loop_token},
                   'ghost': {'endpoint': f'http://{args.federation_host}:{dead_port}', 'token': secrets.token_hex(24)}},
         'peerListener': {'bind': f'http://{args.federation_host}:{listen_port}'},
-        'gate': {'mode': 'off'}}))
+        # CE.f (T-13961): the gate enforcing, this node the registry host.
+        **({'registry': {'bind': f'http://{args.federation_host}:{registry_port}'},
+            'gate': {'mode': 'enforce', 'registryHost': NODE_ID}} if args.only == 'gate' else {'gate': {'mode': 'off'}})}))
     config.chmod(0o600)
     aspd_socket = root / 'aspd.sock'
     aspd = FakeAspd(aspd_socket, release, args.artifacts / 'fake-aspd.ndjson')
+    aspd.agent_root = str(root / PROJECT)
     env = {k: v for k, v in os.environ.items() if not k.startswith(LEAK)}
     env.update(HRC_RUNTIME_DIR=str(root / 'run'), HRC_STATE_DIR=str(root / 'state'), HRC_ASPD_SOCKET=str(aspd_socket),
                ASP_PROJECT_ROOT_OVERRIDE=str(root / PROJECT), HRC_PROJECT_SEARCH_ROOTS=str(root / PROJECT),
@@ -949,8 +1026,8 @@ def main():
             return ref, host, out
         codex = CodexLeg(r, root, binary, try_birth)
         child_exit = ChildExitLeg(r, try_birth, args.artifacts / 'fake-aspd.ndjson')
-        if args.only == 'child-exit':
-            child_exit.run()
+        if args.only:
+            {'child-exit': child_exit, 'gate': GateLeg(r, root, aspd)}[args.only].run()
             r.down(daemon)
             raise LegOnly
 
