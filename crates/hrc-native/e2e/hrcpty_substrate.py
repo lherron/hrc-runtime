@@ -213,13 +213,14 @@ class FakeAspd:
 
     def declaration(self, context):
         """CE.f: an agent with no [placement] stanza whose profile resolves the
-        antigravity harness (frontend antigravity-cli, effectiveHarness antigravity)."""
+        antigravity harness (frontend antigravity-cli, effectiveHarness antigravity-hrcpty,
+        the profile's provisioning.harness as raspd reports it)."""
         root = (context.get('project') or {}).get('projectRoot') or self.agent_root
         absent = {'state': 'absent'}
         return {'schemaVersion': 'aspc-resolve-runtime-declaration-response/v1', 'ok': True,
                 'placement': {'agentRoot': self.agent_root, 'projectRoot': root, 'cwd': root, 'runMode': 'task',
                               'bundle': {'kind': 'compose', 'compose': []}},
-                'provisioning': {'provider': 'google', 'frontend': 'antigravity-cli', 'effectiveHarness': 'antigravity',
+                'provisioning': {'provider': 'google', 'frontend': 'antigravity-cli', 'effectiveHarness': 'antigravity-hrcpty',
                                  'transport': 'pty', 'scalars': {}},
                 'policy': {'claimsTask': False, 'placement': {'pins': [], 'homes': []}},
                 'identity': {'operator': None}, 'agentSources': {}, 'searchedAgentRoots': [self.agent_root], 'bundle': {},
@@ -482,7 +483,7 @@ class GateLeg:
     observeRuntimeCapability with harness `antigravity`, which admits:
       f1 the intent names harness.id `antigravity-cli` (the placement hint)
       f2 no intent (mail and summon births): the declaration aspd resolves
-         reports effectiveHarness `antigravity` (the observed branch)
+         reports effectiveHarness `antigravity-hrcpty` (the observed branch)
     The pre-change binary refuses both: "names no supported driver"."""
     def __init__(self, r, root, aspd):
         self.r, self.root, self.aspd = r, root, aspd
@@ -514,7 +515,7 @@ class GateLeg:
                               'bundle': {'kind': 'compose', 'compose': []}, 'dryRun': False},
                 'harness': {'id': 'antigravity-cli', 'provider': 'google', 'interactive': True}}
         for check, name, intent in (('CE.f1.hint-antigravity-cli-passes-gate', 'hint', hint),
-                                    ('CE.f2.observed-antigravity-passes-gate', 'observed', None)):
+                                    ('CE.f2.observed-antigravity-hrcpty-passes-gate', 'observed', None)):
             status, out, observed = self.resolve(name, intent)
             text = json.dumps(out)
             r.check(check, status == 200 and isinstance(out, dict) and out.get('hostSessionId') and observed == ['antigravity']
