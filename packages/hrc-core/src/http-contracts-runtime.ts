@@ -205,6 +205,13 @@ export type RestartSessionRequest = {
   expectedGeneration: number
   /** Skip only the idle check. Freshness, eligibility and home authority still apply. */
   force?: boolean | undefined
+  /**
+   * Per-restart overrides, the summon directive shape. They land in the
+   * successor's summonDirectives and provision, so later plain restarts keep
+   * them. Any other key (harness, node, model_provider…) refuses 400 and
+   * mutates nothing.
+   */
+  provision?: { model?: string; reasoning_effort?: 'low' | 'medium' | 'high' | 'xhigh' } | undefined
 }
 
 export type RestartSessionLaunch =
@@ -217,6 +224,8 @@ export type RestartSessionResponse = {
   hostSessionId: string
   generation: number
   launch: RestartSessionLaunch
+  /** The successor intent's summonDirectives (overrides it relaunches with); absent when none. */
+  summonDirectives?: Record<string, string> | undefined
 }
 
 export type CaptureResponse = {

@@ -17,6 +17,66 @@ struct Request {
     host: String,
     expected_generation: i64,
     force: bool,
+    /// Per-restart overrides (the summon `provision` shape). They land in the
+    /// successor's summonDirectives and provision, so later plain restarts
+    /// keep them.
+    provision: Option<serde_json::Map<String, Value>>,
+}
+
+/// The directives a restart may change. A restart keeps the seat's harness
+/// and node, so harness, model_provider, node and the rest are refused.
+const RESTART_PROVISION: [&str; 2] = ["model", "reasoning_effort"];
+const EFFORTS: [&str; 4] = ["low", "medium", "high", "xhigh"];
+
+fn provision(value: Option<&Value>) -> Result<Option<serde_json::Map<String, Value>>, ApiError> {
+    let Some(value) = value else { return Ok(None) };
+    let Some(map) = value.as_object() else {
+        return Err(ApiError::bad(
+            "provision must be an object",
+            Some(json!({"field":"provision"})),
+        ));
+    };
+    for (key, v) in map {
+        let field = format!("provision.{key}");
+        if !RESTART_PROVISION.contains(&key.as_str()) {
+            return Err(ApiError::bad(
+                format!(
+                    "provision.{key} cannot change on a restart; allowed: model, reasoning_effort"
+                ),
+                Some(json!({"field":field})),
+            ));
+        }
+        let ok = v.as_str().is_some_and(|s| {
+            !s.trim().is_empty() && (key != "reasoning_effort" || EFFORTS.contains(&s))
+        });
+        if !ok {
+            return Err(ApiError::bad(
+                if key == "reasoning_effort" {
+                    format!("{field} must be one of {}", EFFORTS.join(", "))
+                } else {
+                    format!("{field} must be a non-empty string")
+                },
+                Some(json!({"field":field})),
+            ));
+        }
+    }
+    Ok((!map.is_empty()).then(|| map.clone()))
+}
+
+/// The inherited intent with the restart's overrides applied, as a summon
+/// directive block would apply them: summonDirectives drives the compile and
+/// provision records what was applied.
+fn overridden(intent: Value, overrides: &serde_json::Map<String, Value>) -> Value {
+    let mut intent = context::without_operator_choice(intent);
+    for slot in ["summonDirectives", "provision"] {
+        if !intent[slot].is_object() {
+            intent[slot] = json!({});
+        }
+        for (key, value) in overrides {
+            intent[slot][key] = value.clone();
+        }
+    }
+    intent
 }
 
 /// parseRestartSessionRequest
@@ -27,7 +87,7 @@ fn request(body: &Value) -> Result<Request, ApiError> {
     for key in map.keys() {
         if !matches!(
             key.as_str(),
-            "hostSessionId" | "expectedGeneration" | "force"
+            "hostSessionId" | "expectedGeneration" | "force" | "provision"
         ) {
             return Err(ApiError::domain(
                 StatusCode::UNPROCESSABLE_ENTITY,
@@ -72,6 +132,7 @@ fn request(body: &Value) -> Result<Request, ApiError> {
         host,
         expected_generation,
         force,
+        provision: provision(map.get("provision"))?,
     })
 }
 
@@ -214,7 +275,10 @@ pub async fn handle(server: &Shared, body: Value) -> Result<Response, ApiError> 
         context::Rotation {
             relaunch: false,
             drop_continuation: true,
-            runtime_intent: None,
+            runtime_intent: req
+                .provision
+                .as_ref()
+                .map(|o| overridden(intent.clone(), o)),
             reason: Some(
                 if req.force {
                     "operator-restart-forced"
@@ -250,7 +314,16 @@ pub async fn handle(server: &Shared, body: Value) -> Result<Response, ApiError> 
             json!({"status":"failed","code":error.code,"message":error.message})
         }
     };
-    Ok(Json(json!({"priorHostSessionId":req.host,"hostSessionId":successor["hostSessionId"],"generation":successor["generation"],"launch":launch})).into_response())
+    let mut answer = json!({"priorHostSessionId":req.host,"hostSessionId":successor["hostSessionId"],"generation":successor["generation"],"launch":launch});
+    // What the successor relaunches with, so a caller can confirm an override
+    // (or a kept one) without a second read.
+    if let Some(d) = successor["lastAppliedIntentJson"]["summonDirectives"]
+        .as_object()
+        .filter(|d| !d.is_empty())
+    {
+        answer["summonDirectives"] = Value::Object(d.clone());
+    }
+    Ok(Json(answer).into_response())
 }
 
 /// participantRotationUnsupported: rotating an externally owned participant

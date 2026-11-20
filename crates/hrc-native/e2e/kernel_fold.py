@@ -463,6 +463,46 @@ def main():
         r.wait(lambda: len(compiles_with_alias()) > compiles_before, 20, 'restart recompiles with the override')
         second = applied(prov_restart['result']['host_session_id'])
         r.check('4.restart-keeps-override', second.get('summonDirectives', {}).get('model') == alias, intent=second)
+        # HTTP session restart takes model and reasoning_effort overrides (EN-58708).
+        def compiles(model, effort=None):
+            out = []
+            for f in frames('aspc.compileHarnessInvocation'):
+                d = f.get('compileRequest', {}).get('selectionContext', {}).get('summonDirectives', {})
+                if d.get('model') == model and (effort is None or d.get('reasoning_effort') == effort):
+                    out.append(f)
+            return out
+        h2, g2 = prov_restart['result']['host_session_id'], prov_restart['result']['generation']
+        def session_state(h):
+            row = r.rows("SELECT status,generation FROM sessions WHERE host_session_id=?", (h,))
+            return dict(row[0]) if row else None
+        before = session_state(h2)
+        for name, bad, field in (('harness', {'harness': 'codex-hrcpty'}, 'provision.harness'),
+                                 ('node', {'node': 'svc'}, 'provision.node'),
+                                 ('effort-value', {'reasoning_effort': 'max'}, 'provision.reasoning_effort')):
+            code, refused = r.http('POST', '/v1/sessions/restart', {'hostSessionId': h2, 'expectedGeneration': g2, 'force': True,
+                                                                    'provision': bad})
+            r.check('4.restart-refuses-' + name, code == 400 and json.dumps(refused).find(field) >= 0
+                    and session_state(h2) == before, code=code, reply=refused, session=session_state(h2))
+        alias2 = alias + '-r'
+        n_before = len(compiles(alias2, 'high'))
+        code, over = r.http('POST', '/v1/sessions/restart', {'hostSessionId': h2, 'expectedGeneration': g2, 'force': True,
+                                                             'provision': {'model': alias2, 'reasoning_effort': 'high'}})
+        r.check('4.restart-override-accepted', code == 200 and over['launch']['status'] == 'started'
+                and over.get('summonDirectives') == {'model': alias2, 'reasoning_effort': 'high'}, code=code, reply=over)
+        assert code == 200, over
+        r.wait(lambda: len(compiles(alias2, 'high')) > n_before, 20, 'override restart compiles with the new model and effort')
+        over_intent = applied(over['hostSessionId'])
+        r.check('4.restart-override-recorded', over_intent.get('summonDirectives', {}) == {'model': alias2, 'reasoning_effort': 'high'}
+                and over_intent.get('provision', {}).get('model') == alias2
+                and over_intent.get('provision', {}).get('reasoning_effort') == 'high', intent=over_intent)
+        n_kept = len(compiles(alias2, 'high'))
+        code, plain = r.http('POST', '/v1/sessions/restart', {'hostSessionId': over['hostSessionId'],
+                                                              'expectedGeneration': over['generation'], 'force': True})
+        r.check('4.plain-restart-keeps-override', code == 200 and plain.get('summonDirectives', {}).get('model') == alias2,
+                code=code, reply=plain)
+        r.wait(lambda: len(compiles(alias2, 'high')) > n_kept, 20, 'plain restart recompiles with the kept override')
+        (args.artifacts / 'restart-provision.json').write_text(json.dumps(dict(refusalSession=before, override=over,
+                                                                               overrideIntent=over_intent, plain=plain), indent=2) + '\n')
         (args.artifacts / 'provision.json').write_text(json.dumps(dict(summon=provisioned, restart=prov_restart,
                                                                        firstIntent=first, restartIntent=second), indent=2) + '\n')
 

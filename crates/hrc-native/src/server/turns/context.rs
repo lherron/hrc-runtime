@@ -91,7 +91,7 @@ pub async fn clear_context(server: &Shared, body: Value) -> Result<Response, Api
 
 /// withoutPerBirthOperatorChoice: a dropped continuation re-consults node
 /// presentation policy unless the caller chose one.
-fn without_operator_choice(mut intent: Value) -> Value {
+pub(super) fn without_operator_choice(mut intent: Value) -> Value {
     if intent["presentation"].get("operator").is_none() {
         return intent;
     }
