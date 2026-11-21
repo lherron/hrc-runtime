@@ -11,6 +11,11 @@ use serde_json::json;
 
 const BROKER_GONE: &str = "broker-gone";
 
+/// Pinned for the same reason as `unavailable_sql`.
+const RUNTIME_INVOCATIONS: &str = "SELECT invocation_id, broker_pid
+    FROM broker_invocations INDEXED BY idx_broker_invocations_runtime_id
+    WHERE runtime_id=? AND execution_format='format1'";
+
 const REQUEST_SUBMISSION: &str = "CASE WHEN json_valid(request.broker_event_json)
     THEN json_extract(request.broker_event_json, '$.submissionId') END";
 
@@ -34,10 +39,7 @@ pub(super) fn settle_runtime(
     let current = state["invocation"]["invocationId"]
         .as_str()
         .or(rt.active_invocation_id.as_deref());
-    let mut stmt = tx.prepare(
-        "SELECT invocation_id, broker_pid FROM broker_invocations
-         WHERE runtime_id=? AND execution_format='format1'",
-    )?;
+    let mut stmt = tx.prepare(RUNTIME_INVOCATIONS)?;
     for row in stmt.query_map([&rt.runtime_id], |r| {
         Ok((r.get::<_, String>(0)?, r.get::<_, Option<i64>>(1)?))
     })? {
@@ -169,16 +171,19 @@ fn settle_open_submissions(
     Ok(())
 }
 
-/// Retry broker death after a runtime became unavailable. An indexed seek
-/// per historical invocation keeps runtimes with no mirrored admissions out
-/// of the PID probe set.
-pub(super) fn settle_unavailable(tx: &Transaction<'_>, now: &str, trigger: &str) -> Result<()> {
+/// Dead owned broker runtimes that still mirror an undisposed admission.
+/// Reconcile runs this under the store lock every sweep, so the invocation
+/// lookup is pinned to the runtime index. Without `sqlite_stat1` the planner
+/// prefers `idx_broker_invocations_execution_format`, which walks every
+/// format-1 invocation once per dead runtime (20 s on max3, 2026-11-20).
+fn unavailable_sql() -> String {
     let statuses = hrc_store::status::unavailable_sql();
-    let sql = format!(
+    format!(
         "SELECT runtime_id FROM runtimes
          WHERE controller_kind='harness-broker' AND status IN ({statuses},'failed','stopped','disposed','exited')
            AND EXISTS (
                SELECT 1 FROM broker_invocations AS invocation
+                    INDEXED BY idx_broker_invocations_runtime_id
                JOIN broker_invocation_events AS request
                     INDEXED BY idx_broker_invocation_events_invocation_type_seq
                     ON request.invocation_id=invocation.invocation_id
@@ -187,8 +192,14 @@ pub(super) fn settle_unavailable(tx: &Transaction<'_>, now: &str, trigger: &str)
                WHERE invocation.runtime_id=runtimes.runtime_id AND invocation.execution_format='format1'
                  AND request.type='admission.requested' AND admission.disposition IS NULL
            )"
-    );
-    let mut stmt = tx.prepare(&sql)?;
+    )
+}
+
+/// Retry broker death after a runtime became unavailable. An indexed seek
+/// per historical invocation keeps runtimes with no mirrored admissions out
+/// of the PID probe set.
+pub(super) fn settle_unavailable(tx: &Transaction<'_>, now: &str, trigger: &str) -> Result<()> {
+    let mut stmt = tx.prepare(&unavailable_sql())?;
     let ids = stmt
         .query_map([], |r| r.get::<_, String>(0))?
         .collect::<rusqlite::Result<Vec<_>>>()?;
@@ -198,4 +209,38 @@ pub(super) fn settle_unavailable(tx: &Transaction<'_>, now: &str, trigger: &str)
         }
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::server::turns::admission::tests::server;
+
+    fn plan(db: &rusqlite::Connection, sql: &str) -> String {
+        let mut stmt = db.prepare(&format!("EXPLAIN QUERY PLAN {sql}")).unwrap();
+        let unbound = vec![rusqlite::types::Value::Null; stmt.parameter_count()];
+        stmt.query_map(rusqlite::params_from_iter(unbound), |r| {
+            r.get::<_, String>(3)
+        })
+        .unwrap()
+        .collect::<rusqlite::Result<Vec<_>>>()
+        .unwrap()
+        .join("\n")
+    }
+
+    /// The reconcile sweep holds the store lock across these reads, so a
+    /// per-runtime invocation lookup must stay a runtime-index search.
+    #[test]
+    fn dead_runtime_scan_looks_up_invocations_by_runtime() {
+        let (_scratch, server) = server("off", false).unwrap();
+        let db = server.store.lock().unwrap();
+        for sql in [unavailable_sql(), RUNTIME_INVOCATIONS.to_owned()] {
+            let p = plan(&db.sqlite, &sql);
+            assert!(
+                p.contains("USING INDEX idx_broker_invocations_runtime_id (runtime_id=?)")
+                    && !p.contains("idx_broker_invocations_execution_format"),
+                "{sql}\n{p}"
+            );
+        }
+    }
 }
