@@ -107,11 +107,11 @@
 
     "agent-action-render": ["agent-action-render@workspace:packages/agent-action-render"],
 
-    "agent-scope": ["agent-scope@0.1.1-dev.20261121102254", "http://mini:4873/agent-scope/-/agent-scope-0.1.1-dev.20261121102254.tgz", {}, "sha512-5MPfEO9mF2eaOKffNcxB3bVrAFAT52t2fO/WRFI80OlbSQStIwP+6jAL3/A8tkn5EY1l8OEu1XyRWTkbnmoa1w=="],
+    "agent-scope": ["agent-scope@0.1.1-dev.20261121103844", "http://mini:4873/agent-scope/-/agent-scope-0.1.1-dev.20261121103844.tgz", {}, "sha512-N2aZeCaiIOZsL2i0CSSg10mgcNPE6lUeOffJlOeLWW/MmUL1Mlv1FDgi4a9iDUeu7rsvG++6/2POq2Mo6ppBGQ=="],
 
     "bun-types": ["bun-types@1.3.14", "http://mini:4873/bun-types/-/bun-types-1.3.14.tgz", { "dependencies": { "@types/node": "*" } }, "sha512-4N0ig0fEomHt5R0KCFWjovxow98rIoRwKolrYdCcknNwMekCXRnWEUvgu5soYV8QXtVsrUD8B95MBOZGPvr6KQ=="],
 
-    "cli-kit": ["cli-kit@0.1.1-dev.20261121102254", "http://mini:4873/cli-kit/-/cli-kit-0.1.1-dev.20261121102254.tgz", { "dependencies": { "commander": "^14.0.0" } }, "sha512-aJ53Bkxtr7iEKQEuPlxJwjrcBz9JGO+JXLFz8e2yxCqjrXph0CTw6d732fhJ8wp7vygWeK8fViiweDoJje0SkQ=="],
+    "cli-kit": ["cli-kit@0.1.1-dev.20261121103844", "http://mini:4873/cli-kit/-/cli-kit-0.1.1-dev.20261121103844.tgz", { "dependencies": { "commander": "^14.0.0" } }, "sha512-NzzoOHmKwjp+SD7VN85FZMVeV0apgCvkDWb33Um1bVFkNbs6YNcRKVEr7eTcZqcK8/TTOn3D/+Ri47S5sZiSYQ=="],
 
     "commander": ["commander@14.0.3", "http://mini:4873/commander/-/commander-14.0.3.tgz", {}, "sha512-H+y0Jo/T1RZ9qPP4Eh1pkcQcLRglraJaSLoyOtHxu6AapkjWVCy2Sit1QQ4x3Dng8qDlSsZEet7g5Pq06MvTgw=="],
 
@@ -149,11 +149,11 @@
 
     "smol-toml": ["smol-toml@1.6.1", "http://mini:4873/smol-toml/-/smol-toml-1.6.1.tgz", {}, "sha512-dWUG8F5sIIARXih1DTaQAX4SsiTXhInKf1buxdY9DIg4ZYPZK5nGM1VRIYmEbDbsHt7USo99xSLFu5Q1IqTmsg=="],
 
-    "spaces-harness-broker-client": ["spaces-harness-broker-client@0.1.1-dev.20261121102254", "http://mini:4873/spaces-harness-broker-client/-/spaces-harness-broker-client-0.1.1-dev.20261121102254.tgz", { "dependencies": { "spaces-harness-broker-protocol": "0.1.1-dev.20261121102254" } }, "sha512-pH/5kQzqEZZ2tGuzVeW4Gm2OdGnQf0xGEVlxfr3eYAX6G77cwC/Hib12eQdBM/7+QlQxDOuo65686QQEXwKdBw=="],
+    "spaces-harness-broker-client": ["spaces-harness-broker-client@0.1.1-dev.20261121103844", "http://mini:4873/spaces-harness-broker-client/-/spaces-harness-broker-client-0.1.1-dev.20261121103844.tgz", { "dependencies": { "spaces-harness-broker-protocol": "0.1.1-dev.20261121103844" } }, "sha512-bNfshd2bcc0WJgI6PO1XzcOHMhoL2n+6f7N8xg25LL+jaV14KoOVNBVueR4wovsv+XsuKddTBTjtrsncSve2ww=="],
 
-    "spaces-harness-broker-protocol": ["spaces-harness-broker-protocol@0.1.1-dev.20261121102254", "http://mini:4873/spaces-harness-broker-protocol/-/spaces-harness-broker-protocol-0.1.1-dev.20261121102254.tgz", {}, "sha512-uGKYMRGnXdCzV6Ijwf4yMmpxEiBLkSkv9dFcl7iX/Qufxdtl767hAd5Dh8vzDl640u7044H5nMHIFT72Tw0K2w=="],
+    "spaces-harness-broker-protocol": ["spaces-harness-broker-protocol@0.1.1-dev.20261121103844", "http://mini:4873/spaces-harness-broker-protocol/-/spaces-harness-broker-protocol-0.1.1-dev.20261121103844.tgz", {}, "sha512-c2JVswRtutdRvQHZ/+lueuw+0Czh4ay1t6s1VbJ/0jvE6t9RRJowbD69yCnJuHCG4NHXIMT76PwP1+HZJFeVlQ=="],
 
-    "spaces-runtime-contracts": ["spaces-runtime-contracts@0.1.1-dev.20261121102254", "http://mini:4873/spaces-runtime-contracts/-/spaces-runtime-contracts-0.1.1-dev.20261121102254.tgz", { "dependencies": { "spaces-harness-broker-protocol": "0.1.1-dev.20261121102254" } }, "sha512-NUNzD24ZPUOigOoaDlTdrvQrzfD8CjYg1xj/jnQnSyVpPS1BuJFU0quBvRXNHptgdNLbRNyWBrvpzFsucaeScw=="],
+    "spaces-runtime-contracts": ["spaces-runtime-contracts@0.1.1-dev.20261121103844", "http://mini:4873/spaces-runtime-contracts/-/spaces-runtime-contracts-0.1.1-dev.20261121103844.tgz", { "dependencies": { "spaces-harness-broker-protocol": "0.1.1-dev.20261121103844" } }, "sha512-2JwqHpKMecWvo78b37rK+iBbq3Y7yGyLhRy4XnKKHHb3wjy+XuFMA8y9k0+8idOpODi4nr3vVzbNzO8cdgOrnQ=="],
 
     "typescript": ["typescript@5.9.3", "http://mini:4873/typescript/-/typescript-5.9.3.tgz", { "bin": { "tsc": "bin/tsc", "tsserver": "bin/tsserver" } }, "sha512-jl1vZzPDinLr9eUt3J/t7V6FgNEw9QjvBPdysz9KfQDD41fQrC2Y4vKQdiaUpFT4bXlb1RHhLpp8wtm6M5TgSw=="],
 
