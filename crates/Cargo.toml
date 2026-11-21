@@ -8,11 +8,11 @@ edition = "2024"
 publish = false
 
 [workspace.dependencies]
-# All cardo crates share this approved main revision; never use path pins.
-cardo-core = { git = "https://github.com/lherron/cardo", rev = "c363992" }
-cardo-runtime = { git = "https://github.com/lherron/cardo", rev = "c363992" }
-cardo-store = { git = "https://github.com/lherron/cardo", rev = "c363992" }
-cardo-app = { git = "https://github.com/lherron/cardo", rev = "c363992" }
+# All cardo crates share one revision: lattice-v1.18 (P-01209 pins the newest tag by its commit); never use path pins.
+cardo-core = { git = "https://github.com/lherron/cardo", rev = "1f1db0d" }
+cardo-runtime = { git = "https://github.com/lherron/cardo", rev = "1f1db0d" }
+cardo-store = { git = "https://github.com/lherron/cardo", rev = "1f1db0d" }
+cardo-app = { git = "https://github.com/lherron/cardo", rev = "1f1db0d" }
 serde = { version = "1", features = ["derive"] }
 # Record JSON is fingerprinted in its own key order (collective_history.rs).
 serde_json = { version = "1", features = ["preserve_order", "raw_value", "float_roundtrip"] }
