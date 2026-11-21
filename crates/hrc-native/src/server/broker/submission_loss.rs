@@ -199,12 +199,30 @@ fn unavailable_sql() -> String {
 /// per historical invocation keeps runtimes with no mirrored admissions out
 /// of the PID probe set.
 pub(super) fn settle_unavailable(tx: &Transaction<'_>, now: &str, trigger: &str) -> Result<()> {
-    let mut stmt = tx.prepare(&unavailable_sql())?;
+    let ids = unavailable_runtimes(tx)?;
+    settle_runtimes(tx, &ids, now, trigger)
+}
+
+/// The scan half of `settle_unavailable`. It reads the admission history of
+/// every dead broker runtime, so reconcile runs it on its own WAL reader.
+pub(super) fn unavailable_runtimes(db: &rusqlite::Connection) -> Result<Vec<String>> {
+    let mut stmt = db.prepare(&unavailable_sql())?;
     let ids = stmt
         .query_map([], |r| r.get::<_, String>(0))?
         .collect::<rusqlite::Result<Vec<_>>>()?;
+    Ok(ids)
+}
+
+/// The write half. A stale candidate is harmless: each settle re-reads the
+/// runtime and writes only admissions still undisposed in this transaction.
+pub(super) fn settle_runtimes(
+    tx: &Transaction<'_>,
+    ids: &[String],
+    now: &str,
+    trigger: &str,
+) -> Result<()> {
     for id in ids {
-        if let Some(rt) = db::runtime(tx, &id)? {
+        if let Some(rt) = db::runtime(tx, id)? {
             settle_runtime(tx, &rt, now, trigger)?;
         }
     }

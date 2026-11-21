@@ -278,3 +278,48 @@ async fn launch_carried_terminal_requires_its_admission() -> Result<()> {
     assert_eq!(run(&server)?.status, "failed");
     Ok(())
 }
+
+/// Reconcile finds dead broker runtimes on its own WAL reader, then settles
+/// them under the store lock. The off-lock scan must still reach the write.
+#[tokio::test]
+async fn reconcile_settles_dead_broker_admission_found_off_lock() -> Result<()> {
+    let (_scratch, server) = server("off", false)?;
+    seed(&server, "headless", true)?;
+    project(
+        &server,
+        &envelope(
+            1,
+            "admission.requested",
+            json!({"submissionId":"sub","class":"steer"}),
+        ),
+    )
+    .await?;
+    let mut exited = std::process::Command::new("true").spawn()?;
+    let dead = exited.id();
+    exited.wait()?;
+    let disposition = |server: &Shared| -> Result<Option<String>> {
+        let store = server.store.lock().unwrap();
+        Ok(store.sqlite.query_row(
+            "SELECT disposition FROM submission_admissions WHERE submission_id='sub'",
+            [],
+            |r| r.get(0),
+        )?)
+    };
+    {
+        let store = server.store.lock().unwrap();
+        store.sqlite.execute(
+            "UPDATE broker_invocations SET execution_format='format1', broker_pid=? WHERE invocation_id='inv'",
+            [dead],
+        )?;
+        store.sqlite.execute(
+            "UPDATE runtimes SET status='crashed' WHERE runtime_id='rt'",
+            [],
+        )?;
+    }
+    assert_eq!(disposition(&server)?, None);
+    super::super::reconcile::once(&server, 0, false, 0)
+        .await
+        .map_err(|e| anyhow::anyhow!("{e:?}"))?;
+    assert_eq!(disposition(&server)?.as_deref(), Some("submission.lost"));
+    Ok(())
+}
