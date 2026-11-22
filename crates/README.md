@@ -18,7 +18,7 @@ dependencies are `cardo-runtime`, `serde` and `serde_json`. It must not depend
 on the store, CLI or native daemon.
 
 2026-11-02 amendment (praesidium-kernel r1.9, T-12360): rusthrc retains
-an ops-only `hrc` provider at `<runtimeRoot>/hrc-kernel.sock` for operator
+an ops-only `hrc` provider at `<runtimeRoot>/kernel.sock` for operator
 summon, restart, send and annotation put/act/delete. The provider has no
 document, observation node types, ingest, read projector or seat attacher.
 The separate Praesidium kernel owns the `praesidium:praesidium` document's

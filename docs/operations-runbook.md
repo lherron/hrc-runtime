@@ -73,7 +73,7 @@ runtimes and annotations from the `praesidium:praesidium` document through
 Praesidium kernel owns the rebuildable read projection and seat attachment.
 Use `prae describe <type>` and generated `--help` for supported reads.
 
-Rusthrc's `~/praesidium/var/run/hrc/hrc-kernel.sock` is an operator ops mount
+Rusthrc's `~/praesidium/var/run/hrc/kernel.sock` is an operator ops mount
 only: it exposes no document, ingest, observation types or attach capability.
 Its six operations are `seat.summon`, `seat.restart`, `seat.send`,
 `seat.annotation.put`, `seat.annotation.act` and `seat.annotation.delete`.

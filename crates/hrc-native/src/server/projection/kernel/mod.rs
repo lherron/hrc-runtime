@@ -9,11 +9,7 @@ use hrc_domain::{
     owner::{OwnerCall, OwnerReply},
 };
 use serde_json::{Value, json};
-use std::{
-    path::{Path, PathBuf},
-    sync::Arc,
-    time::Instant,
-};
+use std::{path::Path, sync::Arc, time::Instant};
 
 pub(super) const CLIENT: &str = concat!("hrc-kernel/", env!("CARGO_PKG_VERSION"));
 pub(super) const PRINCIPAL: &str = "system:hrc-kernel";
@@ -52,7 +48,6 @@ impl Kernel {
             let owner = self.owner.shutdown();
             wire?;
             owner?;
-            std::fs::remove_file(legacy_socket(&self.paths))?;
             std::fs::remove_file(&self.paths.record)?;
             stderr_json("info", "kernel", "kernel.stopped", json!({}));
             Ok(())
@@ -97,10 +92,6 @@ fn paths(runtime: &Path) -> anyhow::Result<Paths> {
     ))
 }
 
-fn legacy_socket(paths: &Paths) -> PathBuf {
-    paths.run.join("hrc-kernel.sock")
-}
-
 async fn try_start(server: &Shared) -> anyhow::Result<Kernel> {
     let started = Instant::now();
     let paths = paths(&server.runtime)?;
@@ -138,13 +129,6 @@ async fn try_start(server: &Shared) -> anyhow::Result<Kernel> {
                 }
             };
             let serving = (|| -> anyhow::Result<()> {
-                let legacy = legacy_socket(&paths);
-                match std::fs::remove_file(&legacy) {
-                    Ok(()) => (),
-                    Err(e) if e.kind() == std::io::ErrorKind::NotFound => (),
-                    Err(e) => return Err(e.into()),
-                }
-                std::os::unix::fs::symlink("kernel.sock", legacy)?;
                 let incarnation = kernel
                     .client()
                     .context("HRC kernel has no default owner")?
@@ -158,7 +142,6 @@ async fn try_start(server: &Shared) -> anyhow::Result<Kernel> {
                 wire.stop();
                 let _ = wire.join();
                 let _ = kernel.shutdown();
-                let _ = std::fs::remove_file(legacy_socket(&paths));
                 return Err(error);
             }
             Ok((kernel, wire))
@@ -212,6 +195,7 @@ mod tests {
     use std::{
         io::{BufRead, BufReader, Write},
         os::unix::net::UnixStream,
+        path::PathBuf,
         time::Duration,
     };
 

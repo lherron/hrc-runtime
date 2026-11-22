@@ -158,7 +158,7 @@ drives the moved wire probe. `kernel_fd_cost.py` (T-12168) holds plain,
 events.subscribe and query.subscribe connections and requires one daemon fd
 each, released on close without a further accept.
 `kq.py` and `live_probe.py` are the read-only inspection and wire smoke tools.
-The latter accepts `--socket <runtimeRoot>/hrc-kernel.sock --artifacts <dir>`.
+The latter accepts `--socket <runtimeRoot>/kernel.sock --artifacts <dir>`.
 
 The historical standalone kernel fixture suites (bootstrap, surrogate, summon,
 restart, send) retired with the binary. Their HTTP fake-owner seam and

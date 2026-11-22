@@ -90,6 +90,8 @@ def main():
                   'rotation.json', 'kernel-ops.json'):
         (a.artifacts / stale).unlink(missing_ok=True)
     r = Run(root, a.artifacts, binary)
+    # The kernel serves only under a runtime root named <root>/run/hrc.
+    r.socket = root / 'run/hrc/hrc.sock'
     transcript = (a.artifacts / 'cli.ndjson').open('w')
 
     # -- substrate (hrcpty_substrate.main's shape, without federation) --------
@@ -114,7 +116,7 @@ def main():
     aspd_socket = root / 'aspd.sock'
     aspd = FakeAspd(aspd_socket, release, a.artifacts / 'fake-aspd.ndjson')
     env = dict(clean)
-    env.update(HRC_RUNTIME_DIR=str(root / 'run'), HRC_STATE_DIR=str(root / 'state'), HRC_ASPD_SOCKET=str(aspd_socket),
+    env.update(HRC_RUNTIME_DIR=str(root / 'run/hrc'), HRC_STATE_DIR=str(root / 'state'), HRC_ASPD_SOCKET=str(aspd_socket),
                ASP_PROJECT_ROOT_OVERRIDE=str(root / PROJECT), HRC_PROJECT_SEARCH_ROOTS=str(root / PROJECT),
                HRC_WRKQ_DB=str(root / 'wrkq.db'), WRKQ_DB=str(root / 'wrkq.db'), HRC_WRKQD_TOKEN_FILE='',
                WRKQD_TOKEN_FILE='', WRKQD_TOKEN='', HRC_PEER_CONFIG_FILE=str(root / 'absent-federation.json'),
@@ -122,7 +124,7 @@ def main():
                HRC_BROKER_DURABLE_IPC_ENABLED='1', HRC_CLAUDE_CODE_TMUX_BROKER_ENABLED='1', ASP_HOME=str(root / 'asp-home'),
                NO_COLOR='1')
     r.env = env
-    kernel = root / 'run/hrc-kernel.sock'
+    kernel = root / 'run/hrc/kernel.sock'
 
     def cli(*argv, stdin=None):
         child = subprocess.run([str(binary), 'session', 'annotation', *argv], env=env, cwd=root / PROJECT,

@@ -529,7 +529,7 @@ does not change kind.
 2026-11-02 amendment (praesidium-kernel r1.9, T-12360): these fields now
 appear on `seat` nodes in `praesidium:praesidium`. Read seats, runtimes and
 annotations through `prae seat`, `prae runtime` and `prae ext list` (document
-types `seat`, `runtime`, `seat.ext`). Rusthrc's `hrc-kernel.sock` retains only
+types `seat`, `runtime`, `seat.ext`). Rusthrc's `kernel.sock` retains only
 six operator operations: `seat.summon`, `seat.restart`, `seat.send`,
 `seat.annotation.put`, `seat.annotation.act` and `seat.annotation.delete`.
 It exposes no document, observation types or attach capability; seat attachment

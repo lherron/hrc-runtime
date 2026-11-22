@@ -117,7 +117,7 @@
         "seat row = latest gen ⊕ runtime ⊕ attention",
         "hrc.runtime, hrc.project: flat roots"
       ],
-      "meta": "hrc-kernel.sock · hrc:hrc",
+      "meta": "kernel.sock · hrc:hrc",
       "boundary": "daemon"
     },
     {

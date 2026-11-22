@@ -120,8 +120,7 @@ cd ~/praesidium/hrc-runtime && bun scripts/install-dirty-guard.ts --source-root=
 - **The daemon holds no manifest, and no release file at all under the fixed exe.** lsof on pid 81530 showed only the
   owner release's `bin/rusthrc` and `rusthrc-owner.log` (2026-11-02, T-12291); pid 37077 showed only
   `var/hrc-owner/bin/rusthrc` and the log (2026-11-16), so lsof no longer names the running release: read
-  `.release.releasePath` and the exe's `--version`. It holds `var/run/hrc/kernel.sock` (with `hrc-kernel.sock` a
-  legacy symlink to it). "Every atomic daemon holds its own manifest for life" is Bun only.
+  `.release.releasePath` and the exe's `--version`. It holds `var/run/hrc/kernel.sock`. "Every atomic daemon holds its own manifest for life" is Bun only.
 - **A held owner release outlives its holders until the next stage.** 16 of 53 staged releases were held by
   live processes on 2026-11-02, mostly `hrc-pty` seat supervisors, some with a link-spelled argv (T-12291
   sources/06.md §0), so the owner-tree prune relies on the lsof/txt holder probe as well as argv (T-12695). In

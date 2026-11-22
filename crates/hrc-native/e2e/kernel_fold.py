@@ -23,7 +23,7 @@ import uuid
 from hrcpty_substrate import FakeAspd, Run, AGENT, PROJECT, LEAK, HERE, REPO
 from n4_federation import local_tailnet_address, free_port
 
-LIVE_KERNEL = Path.home() / 'praesidium/var/run/hrc/hrc-kernel.sock'
+LIVE_KERNEL = Path.home() / 'praesidium/var/run/hrc/kernel.sock'
 
 
 class DeclaringAspd(FakeAspd):

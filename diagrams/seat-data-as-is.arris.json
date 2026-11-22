@@ -2999,7 +2999,7 @@
         "emphasis": true,
         "icon": "",
         "kicker": "DOCUMENT · CARDO",
-        "meta": "hrc-kernel.sock · hrc:hrc",
+        "meta": "kernel.sock · hrc:hrc",
         "name": "hrc document",
         "presentation": {
           "caption": "kernel.caption",
@@ -3215,7 +3215,7 @@
           }
         ],
         "size": 11.5,
-        "text": " DOCUMENT · CARDO\nhrc document\n• Rebuildable observation doc, no hierarchies\n• seat row = latest gen ⊕ runtime ⊕ attention\n• hrc.runtime, hrc.project: flat roots\nhrc-kernel.sock · hrc:hrc",
+        "text": " DOCUMENT · CARDO\nhrc document\n• Rebuildable observation doc, no hierarchies\n• seat row = latest gen ⊕ runtime ⊕ attention\n• hrc.runtime, hrc.project: flat roots\nkernel.sock · hrc:hrc",
         "tracking": 0.0,
         "vertical_align": "center"
       }

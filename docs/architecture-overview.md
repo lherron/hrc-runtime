@@ -73,7 +73,7 @@ mail-delivery module under the praesidium kernel (not in this repo).
   migration (`src/migrate/`, T-12840): only the owner at boot and
   `rusthrc store migrate` migrate; every other open admits or refuses.
 - `hrc-domain` — the six operator operations behind rusthrc's ops-only kernel
-  provider (`hrc-kernel.sock`); seat and runtime reads belong to the
+  provider (`<runtimeRoot>/kernel.sock`); seat and runtime reads belong to the
   Praesidium kernel (`prae seat`, `prae runtime`).
 - `hrc-common` — shared leaf: federation config, scope-ref parsing,
   JavaScript compatibility helpers and release location.
