@@ -245,9 +245,15 @@ impl Store {
         self.optional_identity(scope, lane)?
             .context("Query returned no rows")
     }
-    /// System summary sessions may have no continuity or identity.
+    /// System summary sessions may have no continuity or identity. Continuities
+    /// hold both lane spellings (`x` and TS-era or double-prefixed `lane:x`), so
+    /// the exact spelling is read first and the normalized one second.
     pub fn optional_identity(&self, scope: &str, lane: &str) -> Result<Option<Value>> {
-        self.stored_identity(scope, storage_lane(lane))
+        match self.stored_identity(scope, lane)? {
+            Some(identity) => Ok(Some(identity)),
+            None if storage_lane(lane) != lane => self.stored_identity(scope, storage_lane(lane)),
+            None => Ok(None),
+        }
     }
     /// Exact stored lane spelling for ledger readers (no normalization).
     pub fn stored_identity(&self, scope: &str, lane: &str) -> Result<Option<Value>> {
