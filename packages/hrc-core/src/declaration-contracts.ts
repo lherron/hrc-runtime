@@ -266,7 +266,6 @@ export type ResolvePlacementResponse = {
     declaredHarness?: string | undefined
   }
   policy: {
-    claimsTask: boolean
     provisioningNode?: string | undefined
     placement: {
       launch?: 'participant-only' | undefined

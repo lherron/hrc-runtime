@@ -19,7 +19,7 @@ const observation = {
   cwd: '/src/agent-loop',
   harness: { provider: 'anthropic', frontend: 'claude-code', effectiveHarness: 'claude' },
   provision: { scalars: {} },
-  policy: { claimsTask: false, placement: { pins: {}, homes: {} } },
+  policy: { placement: { pins: {}, homes: {} } },
   identity: { operator: false },
   agentSources: { provenance: 'daemon-default' },
   searchedAgentRoots: [],

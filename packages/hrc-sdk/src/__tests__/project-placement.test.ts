@@ -28,7 +28,7 @@ const canned = {
   bundleIdentity: 'abc',
   harness: { provider: 'openai', frontend: 'codex-cli', effectiveHarness: 'codex' },
   provision: { scalars: { model: 'm' } },
-  policy: { claimsTask: false, placement: { pins: {}, homes: {} } },
+  policy: { placement: { pins: {}, homes: {} } },
   identity: { operator: false },
   agentSources: { provenance: 'daemon-default' },
   searchedAgentRoots: ['/agents/cody'],
