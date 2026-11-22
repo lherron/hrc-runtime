@@ -41,17 +41,6 @@ export function simPanes(): DiscoveredPane[] {
       },
     },
     {
-      // chief attention-thread seat (hcs context): task-scoped, NOT :primary,
-      // otherwise fully eligible — exempt by agent (T-07819).
-      id: 'CH1EF001',
-      title: 'hcs · T-07818 · chief',
-      metadata: {
-        hrc_role: HEADLESS_PANE_ROLE,
-        hrc_runtime_id: 'rt-chief-sim',
-        hrc_scope_ref: 'agent:chief:project:hcs:task:T-07818',
-      },
-    },
-    {
       // Already-terminated leftover viewer: no live runtime to reap, but parked
       // on the close prompt — exercises the leftover-viewer close path.
       id: 'C10D0144',
@@ -203,7 +192,6 @@ export function queryStatus(pane: DiscoveredPane, options: Options): PaneStatus 
         projectId: 'hrc-runtime',
         taskId: 'primary',
       },
-      CH1EF001: { kind: 'project-task', agentId: 'chief', projectId: 'hcs', taskId: 'T-07818' },
       C10D0144: {
         kind: 'project-task',
         agentId: 'clod',

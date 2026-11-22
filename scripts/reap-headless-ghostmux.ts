@@ -328,7 +328,7 @@ async function sweep(options: Options): Promise<number> {
     console.log()
     console.log(
       color.dim(
-        `Reap eligibility: ${eligibleStatuses.length} eligible, ${skipped} skipped (requires scope task!=primary, agent!=chief, controllerKind=harness-broker, a tmux TUI window (transport=tmux OR headless+leased-tmux+presentation=tmux-tui) OR an hrcpty T-… task seat, runtime=ready, no active run, latest turn=completed (a coalesced turn resolves to its owner run), idle>${MIN_IDLE_MINUTES}m with a pane or >${PANELESS_MIN_IDLE_HOURS}h without; hrcpty task seats idle>${HRCPTY_MIN_IDLE_HOURS}h either way).`
+        `Reap eligibility: ${eligibleStatuses.length} eligible, ${skipped} skipped (requires scope task!=primary, controllerKind=harness-broker, a tmux TUI window (transport=tmux OR headless+leased-tmux+presentation=tmux-tui) OR an hrcpty T-… task seat, runtime=ready, no active run, latest turn=completed (a coalesced turn resolves to its owner run), idle>${MIN_IDLE_MINUTES}m with a pane or >${PANELESS_MIN_IDLE_HOURS}h without; hrcpty task seats idle>${HRCPTY_MIN_IDLE_HOURS}h either way).`
       )
     )
   }

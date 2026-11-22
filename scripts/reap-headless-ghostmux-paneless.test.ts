@@ -123,11 +123,9 @@ describe('hrcpty task seats reap after 4 hours', () => {
     expect(skipReasons(status, PANELESS_MIN_IDLE_MS).some((r) => /task seat/.test(r))).toBe(true)
   })
 
-  it('keeps the primary, chief and active-run guards for hrcpty', () => {
+  it('keeps the primary and active-run guards for hrcpty', () => {
     const primary = { kind: 'project-task', agentId: 'cody', projectId: 'p', taskId: 'primary' }
-    const chief = { kind: 'project-task', agentId: 'chief', projectId: 'hcs', taskId: 'T-07818' }
     expect(isQuitEligible(hrcptyStatus({ identity: primary } as Partial<PaneStatus>))).toBe(false)
-    expect(isQuitEligible(hrcptyStatus({ identity: chief } as Partial<PaneStatus>))).toBe(false)
     expect(isQuitEligible(hrcptyStatus({ activeRunId: 'run-live' }))).toBe(false)
     expect(isQuitEligible(hrcptyStatus({ runtimeStatus: 'busy' }))).toBe(false)
   })

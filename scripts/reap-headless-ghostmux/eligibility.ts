@@ -105,17 +105,6 @@ export function skipReasons(status: PaneStatus, minIdleMs: number = MIN_IDLE_MS)
     )
   }
 
-  // chief@* holds one hcs attention-thread seat per context (T-07729). These
-  // are task-scoped by design (never :primary), and sitting idle between
-  // Lance's visits is their NORMAL state — an idle chief seat is not an
-  // abandoned one. Exempt by agent, not project, so chief seats stay safe
-  // wherever they live (T-07819).
-  if (status.identity?.agentId === 'chief') {
-    reasons.push(
-      'chief@* attention-thread seat — idle between visits is its normal state; never reaped by this sweep'
-    )
-  }
-
   if (status.controllerKind !== 'harness-broker') {
     reasons.push(
       status.controllerKind === ''
