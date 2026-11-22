@@ -975,10 +975,13 @@ async fn handle(
         let mut s = db
             .session(host)?
             .ok_or_else(|| ApiError::missing_host(host))?;
-        s["identity"] = db.identity(
+        // System summary sessions have no continuity (as in the session list).
+        if let Some(identity) = db.optional_identity(
             s["scopeRef"].as_str().unwrap(),
             s["laneRef"].as_str().unwrap(),
-        )?;
+        )? {
+            s["identity"] = identity;
+        }
         s["metadata"] = db.metadata(
             s["scopeRef"].as_str().unwrap(),
             hrc_store::storage_lane(s["laneRef"].as_str().unwrap()),
