@@ -4415,14 +4415,6 @@
     },
     {
       "package": "hrc-core",
-      "symbol": "selfRestartResumePrompt",
-      "kind": "value",
-      "file": "packages/hrc-core/src/self-restart.ts",
-      "hash": "hrc-core|selfRestartResumePrompt|value",
-      "count": 1
-    },
-    {
-      "package": "hrc-core",
       "symbol": "SemanticDmRequest",
       "kind": "type",
       "file": "packages/hrc-core/src/hrcchat-contracts.ts",

@@ -85,6 +85,9 @@ fn event_passes(spec: &FilterSpec, e: &Value) -> bool {
                 if tool.as_deref() == Some("Bash") {
                     let serialized = payload_of(e).to_string();
                     return [
+                        "prae room say",
+                        "prae task comment",
+                        "prae task update",
                         "wrkc say",
                         "wrkq touch",
                         "wrkq set",

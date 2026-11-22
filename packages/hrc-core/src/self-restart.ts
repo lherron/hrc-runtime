@@ -37,17 +37,3 @@ export type HrcRestartSelfCancelled = {
 }
 
 export type HrcRestartSelfResponse = HrcRestartSelfArmed | HrcRestartSelfCancelled
-
-/** Inline the pending HRC seat handoff; an id that is no longer pending is named for a read. */
-export function selfRestartResumePrompt(input: {
-  handoffId: string
-  priorGeneration: number
-  nextGeneration: number
-  handoff?: { id: string; etag: number; title: string; body: string } | undefined
-}): string {
-  if (input.handoff) {
-    const h = input.handoff
-    return `Fresh context after self-restart (generation ${input.priorGeneration} → ${input.nextGeneration}). Pending HRC seat handoff ${h.id} (etag ${h.etag}). Absorb the handoff below, then acknowledge it with \`hrc handoff acknowledge ${h.id} --if-match ${h.etag} --note 'Consumed; <retained context>'\` and continue the work it describes.\n\n${h.title}\n\n${h.body}`
-  }
-  return `Fresh context after self-restart (generation ${input.priorGeneration} → ${input.nextGeneration}). Seat handoff ${input.handoffId} was armed for this restart and is no longer pending. Read it with \`hrc handoff get ${input.handoffId}\`, then continue the work it describes.`
-}

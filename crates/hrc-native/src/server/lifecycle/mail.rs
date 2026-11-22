@@ -30,7 +30,7 @@ pub fn hint(server: &Server, body: &[u8]) -> Response {
         let Some((count, reason)) = db.mail_hint(id, &target(&scope, &lane))? else {
             return Ok(json!({}));
         };
-        let hint = hrc_store::mail_hint_text(count, db.mail_uses_prae(id));
+        let hint = hrc_store::mail_hint_text(count);
         Ok(json!({"hint":hint,"heldCount":count,"reason":reason}))
     })()
     .unwrap_or_else(|error| {
