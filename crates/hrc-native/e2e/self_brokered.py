@@ -46,7 +46,7 @@ class Aspd(FakeAspd):
                     'source':{'agentProfile':{'state':'present'}},
                     'placement':{'agentRoot':str(self.root/'agents'/agent),'projectRoot':str(self.root/'t12049'),
                                  'cwd':str(self.root/'t12049'),'runMode':c['runMode']},
-                    'policy':{'claimsTask':False,'placement':placement},
+                    'policy':{'placement':placement},
                     'identity':{'operator':False},'agentSources':{},'provisioning':{'scalars':{},'effectiveHarness':'agent-harness'},'diagnostics':[]}
         raise AssertionError('Self-brokered birth must never compile: '+method)
 

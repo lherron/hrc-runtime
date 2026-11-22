@@ -227,7 +227,7 @@ class FakeAspd:
                               'bundle': {'kind': 'compose', 'compose': []}},
                 'provisioning': {'provider': provider, 'frontend': frontend, 'effectiveHarness': harness,
                                  'transport': 'pty', 'scalars': {}},
-                'policy': {'claimsTask': False, 'placement': {'pins': [], 'homes': []}},
+                'policy': {'placement': {'pins': [], 'homes': []}},
                 'identity': {'operator': None}, 'agentSources': {}, 'searchedAgentRoots': [self.agent_root], 'bundle': {},
                 'source': {'agentProfile': {'state': 'present'}, 'projectTargets': absent, 'selectedTarget': absent,
                            'priming': absent},

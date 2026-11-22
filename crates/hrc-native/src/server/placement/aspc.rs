@@ -750,7 +750,7 @@ fn assemble_placement(
     }
     out.insert("provision".into(), provision);
     let policy = &observed["policy"];
-    let mut shaped = json!({"claimsTask":policy["claimsTask"]});
+    let mut shaped = json!({});
     if let Some(v) = policy.get("provisioningNode").filter(|v| !v.is_null()) {
         shaped["provisioningNode"] = v.clone();
     }

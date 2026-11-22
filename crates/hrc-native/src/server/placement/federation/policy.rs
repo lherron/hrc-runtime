@@ -5,7 +5,7 @@ use crate::server::{Server, aspc};
 use serde_json::{Value, json};
 
 pub enum Policy {
-    /// `policy` is SummonGatePolicy: {claimsTask, provisioningNode?, placement:{launch?, pins, homes}}.
+    /// `policy` is SummonGatePolicy: {provisioningNode?, placement:{launch?, pins, homes}}.
     Resolved {
         policy: Value,
         profile: String,
@@ -145,7 +145,7 @@ async fn resolve_policy(server: &Server, scope: &str, source: &mut Option<String
         ));
     }
     let observed_policy = &observed["policy"];
-    let mut policy = json!({"claimsTask":observed_policy["claimsTask"]});
+    let mut policy = json!({});
     if let Some(node) = observed_policy
         .get("provisioningNode")
         .filter(|v| !v.is_null())

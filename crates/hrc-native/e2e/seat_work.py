@@ -36,7 +36,7 @@ def main():
     def declaration(method, params):
         out = original(method, params)
         if method == 'aspc.resolveRuntimeDeclaration':
-            out['policy'] = {'claimsTask': False, 'placement': tomllib.loads(profile.read_text()).get('placement', {})}
+            out['policy'] = {'placement': tomllib.loads(profile.read_text()).get('placement', {})}
         return out
     aspd.handle = declaration
     scope = f'agent:{AGENT}:project:{PROJECT}:task:primary'
