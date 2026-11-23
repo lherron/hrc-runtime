@@ -222,8 +222,25 @@ fn advance(previous: Option<&str>) -> String {
 }
 
 impl Store {
+    /// The lane a seat's annotations live under. Continuities store the bare
+    /// spelling, but rows written before T-14440 store a literal `lane:x`, and
+    /// the session list still returns them as live seats. Annotations bind and
+    /// resume nothing, so a read or write that names `x` reaches that legacy row
+    /// when no bare `x` continuity exists; otherwise the kernel's per-seat
+    /// annotation fetch 404s on a seat HRC itself lists.
+    fn annotation_lane(&self, scope: &str, lane: &str) -> Result<String> {
+        let bare = storage_lane(lane);
+        if self.continuity_session(scope, bare)?.is_none() {
+            let legacy = format!("lane:{bare}");
+            if self.continuity_session(scope, &legacy)?.is_some() {
+                return Ok(legacy);
+            }
+        }
+        Ok(bare.to_owned())
+    }
+
     fn annotation_subject(&self, key: &AnnotationKey<'_>) -> Result<Admission<Subject>> {
-        let lane = storage_lane(key.lane);
+        let lane = key.lane;
         let Some(active) = self.continuity_session(key.scope, lane)? else {
             return Ok(Err(AnnotationRefusal::UnknownHostSession));
         };
@@ -256,7 +273,7 @@ impl Store {
             .sqlite
             .query_row(
                 &format!("SELECT {COLUMNS} FROM seat_annotations WHERE scope_ref=? AND lane_ref=? AND host_session_id=? AND ns=? AND kind=? AND id=?"),
-                params![key.scope, storage_lane(key.lane), host, key.ns, key.kind, key.id],
+                params![key.scope, key.lane, host, key.ns, key.kind, key.id],
                 row_value,
             )
             .optional()?)
@@ -320,7 +337,7 @@ impl Store {
         {
             return Ok(Err(invalid("subject must be seat or generation")));
         }
-        let lane = storage_lane(lane);
+        let lane = &self.annotation_lane(scope, lane)?;
         if self.continuity_session(scope, lane)?.is_none() {
             return Ok(Err(AnnotationRefusal::UnknownHostSession));
         }
@@ -352,6 +369,8 @@ impl Store {
             expect,
             updated_by,
         } = put;
+        let lane = self.annotation_lane(key.scope, key.lane)?;
+        let key = AnnotationKey { lane: &lane, ..key };
         let checked = validate_key(&key)
             .and_then(|()| validate_object("body", body))
             .and_then(|()| parse_expect(expect));
@@ -369,7 +388,7 @@ impl Store {
         if let Err(refusal) = self.check_fences(&fence, &subject, row.as_ref())? {
             return Ok(Err(refusal));
         }
-        let lane = storage_lane(key.lane);
+        let lane = key.lane;
         if row.is_none() {
             let held: i64 = tx.query_row(
                 "SELECT COUNT(*) FROM seat_annotations WHERE scope_ref=? AND lane_ref=? AND host_session_id=?",
@@ -404,6 +423,8 @@ impl Store {
         expect: Option<&Value>,
         updated_by: &str,
     ) -> Result<Admission<bool>> {
+        let lane = self.annotation_lane(key.scope, key.lane)?;
+        let key = AnnotationKey { lane: &lane, ..key };
         let fence = match validate_key(&key).and_then(|()| parse_expect(expect)) {
             Ok(fence) => fence,
             Err(refusal) => return Ok(Err(refusal)),
@@ -423,7 +444,7 @@ impl Store {
         }
         tx.execute(
             "DELETE FROM seat_annotations WHERE scope_ref=? AND lane_ref=? AND host_session_id=? AND ns=? AND kind=? AND id=?",
-            params![key.scope, storage_lane(key.lane), subject.host, key.ns, key.kind, key.id],
+            params![key.scope, key.lane, subject.host, key.ns, key.kind, key.id],
         )?;
         let mut extra = Map::new();
         extra.insert("op".into(), json!("delete"));
@@ -441,6 +462,8 @@ impl Store {
         action: &str,
         attributes: Option<&Value>,
     ) -> Result<Admission<i64>> {
+        let lane = self.annotation_lane(key.scope, key.lane)?;
+        let key = AnnotationKey { lane: &lane, ..key };
         let checked = validate_key(&key)
             .and_then(|()| text_reason("action", action))
             .and_then(|()| attributes.map_or(Ok(()), |a| validate_object("attributes", a)));
