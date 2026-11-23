@@ -52,6 +52,7 @@ function reapStatusFixture(input: {
       ts TEXT NOT NULL,
       event_kind TEXT NOT NULL
     );
+    CREATE INDEX idx_hrc_events_runtime_seq ON hrc_events(runtime_id, hrc_seq);
   `)
   const scopeRef = 'agent:cody:project:wrkq:task:T-reaper'
   const runtimeId = 'rt-reaper-order'
@@ -180,6 +181,7 @@ function coalescedStatusFixture(input: {
       ts TEXT NOT NULL,
       event_kind TEXT NOT NULL
     );
+    CREATE INDEX idx_hrc_events_runtime_seq ON hrc_events(runtime_id, hrc_seq);
   `)
   const scopeRef = 'agent:clod:project:hrc-ios:task:T-08351'
   const runtimeId = 'rt-coalesce'

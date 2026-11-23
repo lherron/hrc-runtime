@@ -309,6 +309,49 @@ export function statusSql(scopeRef: string, runtimeId: string, tag: string): str
         WHERE run_id = (SELECT run_id FROM latest_run)
         ORDER BY hrc_seq DESC
         LIMIT 1
+      ),
+      -- A turn the harness started on its own (the launch prompt, or input
+      -- typed at the pty: broker.turn.origin=local-interactive) has no HRC run,
+      -- so it never appears in runs. Read the runtime's newest run-less turn
+      -- event and let it stand for the turn when it is newer than the latest
+      -- dispatched run. Without this a seat whose only turn was its launch
+      -- prompt reads "no turn recorded yet" forever and is never reaped, and a
+      -- local turn after a dispatched run hides behind the older run.
+      local_turn AS (
+        SELECT ts, event_kind
+        FROM hrc_events INDEXED BY idx_hrc_events_runtime_seq
+        WHERE runtime_id = COALESCE(NULLIF((SELECT runtime_id FROM target), ''), (SELECT runtime_id FROM latest_runtime))
+          AND run_id IS NULL
+          AND event_kind IN ('turn.started', 'turn.completed', 'turn.failed', 'turn.interrupted')
+        ORDER BY hrc_seq DESC
+        LIMIT 1
+      ),
+      turn AS (
+        SELECT
+          CASE (SELECT event_kind FROM local_turn)
+            WHEN 'turn.completed' THEN 'completed'
+            WHEN 'turn.started' THEN 'started'
+            ELSE 'failed'
+          END AS status,
+          '' AS run_id,
+          (SELECT event_kind FROM local_turn) AS event_kind
+        WHERE (SELECT ts FROM local_turn) IS NOT NULL
+          AND (
+            (SELECT accepted_at FROM latest_run) IS NULL
+            OR (SELECT ts FROM local_turn) > (SELECT accepted_at FROM latest_run)
+          )
+        UNION ALL
+        SELECT
+          (SELECT status FROM latest_run),
+          (SELECT run_id FROM latest_run),
+          (SELECT event_kind FROM latest_event)
+        WHERE NOT (
+          (SELECT ts FROM local_turn) IS NOT NULL
+          AND (
+            (SELECT accepted_at FROM latest_run) IS NULL
+            OR (SELECT ts FROM local_turn) > (SELECT accepted_at FROM latest_run)
+          )
+        )
       )
       SELECT
         ${tagColumn}
@@ -317,11 +360,11 @@ export function statusSql(scopeRef: string, runtimeId: string, tag: string): str
         COALESCE((SELECT transport FROM latest_runtime), ''),
         COALESCE((SELECT controller_kind FROM latest_runtime), ''),
         COALESCE((SELECT active_run_id FROM latest_runtime), ''),
-        COALESCE((SELECT status FROM latest_run), 'none'),
-        COALESCE((SELECT run_id FROM latest_run), ''),
+        COALESCE((SELECT status FROM turn), 'none'),
+        COALESCE((SELECT run_id FROM turn), ''),
         COALESCE((SELECT last_activity_at FROM latest_runtime), ''),
         COALESCE(datetime((SELECT last_activity_at FROM latest_runtime), 'localtime'), ''),
-        COALESCE((SELECT event_kind FROM latest_event), ''),
+        COALESCE((SELECT event_kind FROM turn), ''),
         -- Presentation-aware reap (T-04923). Two serialisation shapes (G2 compat):
         -- normalized broker.presentation.kind, or flat-fallback from broker.tuiWindow.
         COALESCE(
