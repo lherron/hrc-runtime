@@ -326,7 +326,8 @@ pub fn parse_target_ref(raw: &str) -> Result<(&str, &str), ApiError> {
         ));
     }
     let scope = parts[0].trim();
-    let lane = &parts[1].trim()[5..];
+    // `/lane:lane:x` names the same continuity as `/lane:x` (T-14440).
+    let lane = parts[1].trim()[5..].trim_start_matches("lane:");
     if scope.is_empty() || lane.is_empty() {
         return Err(invalid(
             "sessionRef must include non-empty scopeRef and laneRef values",

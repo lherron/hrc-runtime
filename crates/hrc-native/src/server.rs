@@ -902,7 +902,12 @@ fn parse_session_ref(raw: &str) -> std::result::Result<(&str, &str), ApiError> {
             Some(json!({"sessionRef":raw})),
         ));
     }
-    let (scope, lane) = (parts[0].trim(), parts[1][5..].trim());
+    // A lane that repeats the prefix (`/lane:lane:x`) names the same continuity
+    // as `/lane:x`: continuities store the bare spelling (T-14440).
+    let (scope, lane) = (
+        parts[0].trim(),
+        parts[1][5..].trim().trim_start_matches("lane:"),
+    );
     if scope.is_empty() || lane.is_empty() {
         return Err(ApiError::bad(
             "sessionRef must include scopeRef and laneRef",
@@ -1056,3 +1061,42 @@ mod owner_reads_tests;
 
 #[path = "server/projection/doctor.rs"]
 mod doctor;
+
+/// T-14440: a sessionRef whose lane already carries the `lane:` prefix
+/// (`/lane:lane:x`, as `hrc session resolve --lane lane:x` and pre-fix SDKs
+/// send) must name the same continuity as `/lane:x`, or HRC writes rows its
+/// own reads cannot find.
+#[cfg(test)]
+mod lane_ref_tests {
+    const SCOPE: &str = "agent:cody:project:hrc-runtime:task:T-14440";
+
+    #[test]
+    fn session_ref_lane_is_stored_bare() {
+        for raw in ["/lane:probe", "/lane:lane:probe", "/lane:lane:lane:probe"] {
+            let r = format!("{SCOPE}{raw}");
+            let (_, lane) = super::parse_session_ref(&r).unwrap();
+            assert_eq!(lane, "probe", "{raw}");
+        }
+        let r = format!("{SCOPE}/lane:lane:main");
+        let (_, lane) = super::parse_session_ref(&r).unwrap();
+        assert_eq!(lane, "main");
+    }
+
+    #[test]
+    fn target_ref_lane_is_stored_bare() {
+        for raw in ["/lane:probe", "/lane:lane:probe"] {
+            let r = format!("{SCOPE}{raw}");
+            let (_, lane) = super::runtime_views::parse_target_ref(&r).unwrap();
+            assert_eq!(lane, "probe", "{raw}");
+        }
+        let r = format!("{SCOPE}/lane:lane:default");
+        let (_, lane) = super::runtime_views::parse_target_ref(&r).unwrap();
+        assert_eq!(lane, "main");
+    }
+
+    #[test]
+    fn prefix_only_lane_is_still_refused() {
+        assert!(super::parse_session_ref(&format!("{SCOPE}/lane:lane:")).is_err());
+        assert!(super::runtime_views::parse_target_ref(&format!("{SCOPE}/lane:lane:")).is_err());
+    }
+}
