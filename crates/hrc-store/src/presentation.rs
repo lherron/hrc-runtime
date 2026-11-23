@@ -189,6 +189,9 @@ fn project(db: &Store, r: &Value) -> Result<Value, anyhow::Error> {
     row["laneRef"] = canonical_lane(lane).into();
     row["generation"] = r["generation"].clone();
     row["status"] = r["status"].clone();
+    // T-14454: the seat-retirement module's idle clock and the retire door's
+    // fence, verbatim.
+    row["lastActivityAt"] = r["lastActivityAt"].clone();
     if let Some(p) = r.get("presentation") {
         row["presentation"] = p.clone();
     }

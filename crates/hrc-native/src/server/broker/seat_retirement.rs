@@ -9,7 +9,15 @@
 //! resumes the conversation. Busy seats, seats with a run or protected input
 //! in flight, seats a person is attached to read-write, seats whose lifecycle
 //! another owner holds, exempt seats and app scopes are never touched.
-use super::{Shared, control, hrcpty, lease, projection::db};
+//! T-14454 moves the policy to the kernel's seat-retirement module, which
+//! retires through [`door`] (`POST /v1/runtimes/retire`). The door and this
+//! sweep share [`guard`], [`close`] and the continuation-keeping retire; the
+//! sweep and its policy stay until rollout step 4 deletes them.
+use super::lifecycle::authorize_principal;
+use super::{ApiError, Shared, control, hrcpty, lease, projection::db};
+use axum::Json;
+use axum::http::{HeaderMap, StatusCode};
+use axum::response::{IntoResponse, Response};
 use rusqlite::params;
 use serde_json::{Map, Value, json};
 use std::collections::{BTreeMap, HashMap};
@@ -45,14 +53,15 @@ const NAMED_SEAT_RULES: &[(&str, &str, &str, Rule)] = &[
     ("*", "*", "*", Rule::After(Duration::from_secs(24 * HOUR))),
 ];
 
-/// The first rule matching this agent, seat kind and task.
-fn named_seat_rule(agent: &str, kind: &str, task: &str) -> Rule {
+/// The first rule matching this agent, seat kind and task, and its id
+/// (`agent:kind:task`, as the table row reads) for the retired line.
+fn named_seat_rule(agent: &str, kind: &str, task: &str) -> (Rule, String) {
     let hit = |pattern: &str, value: &str| pattern == "*" || pattern == value;
     NAMED_SEAT_RULES
         .iter()
         .find(|(a, k, t, _)| hit(a, agent) && hit(k, kind) && hit(t, task))
-        .map(|&(_, _, _, rule)| rule)
-        .unwrap_or(Rule::Never("no_rule"))
+        .map(|&(a, k, t, rule)| (rule, format!("{a}:{k}:{t}")))
+        .unwrap_or((Rule::Never("no_rule"), String::new()))
 }
 
 /// HRC_TASK_SEAT_IDLE_HOURS: a positive number of hours, default 4.
@@ -64,45 +73,59 @@ fn idle_hours() -> f64 {
         .unwrap_or(DEFAULT_IDLE_HOURS)
 }
 
-/// What a seat that may be retired is judged on.
-enum Due {
-    /// A task seat: its wrkq task's state, then the task idle window.
-    Task(String),
-    /// A named seat from [`NAMED_SEAT_RULES`]: its task id and window.
-    Idle(String, Duration),
+/// Who a seat is: its agent, seat kind and task, as the retired line logs them.
+struct Seat {
+    agent: String,
+    kind: String,
+    task: String,
 }
 
-/// The seat's [`Due`], or why it must be left alone before any trigger is
-/// considered.
-async fn judge(server: &Shared, rt: &db::Rt) -> anyhow::Result<Result<Due, String>> {
-    if rt.scope_ref.starts_with("app:") {
-        return Ok(Err("app_scope".into()));
+fn seat(server: &Shared, rt: &db::Rt) -> anyhow::Result<Seat> {
+    let db = server.store.lock().unwrap();
+    let identity = db.identity(&rt.scope_ref, &rt.lane_ref)?;
+    let kind = db.seat_state(&rt.scope_ref, &rt.lane_ref)?["kind"].clone();
+    let text = |v: &Value| v.as_str().unwrap_or_default().to_owned();
+    Ok(Seat {
+        agent: text(&identity["agentId"]),
+        kind: text(&kind),
+        task: text(&identity["taskId"]),
+    })
+}
+
+/// What the sweep judges a seat on.
+enum Due {
+    /// A task seat: its wrkq task's state, then the task idle window.
+    Task,
+    /// A named seat from [`NAMED_SEAT_RULES`]: its idle window.
+    Idle(Duration),
+}
+
+/// The sweep's policy for a seat: its [`Due`] and rule id, or the exemption.
+fn due(seat: &Seat) -> Result<(Due, String), &'static str> {
+    if seat.kind == "task" {
+        return Ok((Due::Task, "task".into()));
     }
-    let (identity, kind) = {
-        let db = server.store.lock().unwrap();
-        (
-            db.identity(&rt.scope_ref, &rt.lane_ref)?,
-            db.seat_state(&rt.scope_ref, &rt.lane_ref)?["kind"].clone(),
-        )
-    };
-    let task = identity["taskId"].as_str().unwrap_or_default().to_owned();
-    let due = if kind == "task" {
-        Due::Task(task)
-    } else {
-        let agent = identity["agentId"].as_str().unwrap_or_default();
-        match named_seat_rule(agent, kind.as_str().unwrap_or_default(), &task) {
-            Rule::After(window) => Due::Idle(task, window),
-            Rule::Never(reason) => return Ok(Err(reason.into())),
-        }
-    };
+    match named_seat_rule(&seat.agent, &seat.kind, &seat.task) {
+        (Rule::After(window), id) => Ok((Due::Idle(window), id)),
+        (Rule::Never(reason), _) => Err(reason),
+    }
+}
+
+/// The guards that keep a runtime from retirement, whatever any policy says,
+/// shared by the sweep and the retire door: the first that holds, as the
+/// door's refusal code.
+async fn guard(server: &Shared, rt: &db::Rt) -> anyhow::Result<Option<&'static str>> {
+    if rt.scope_ref.starts_with("app:") {
+        return Ok(Some("app_scope"));
+    }
     if super::controller::external_lifecycle(rt) {
-        return Ok(Err("external_lifecycle_owner".into()));
+        return Ok(Some("external_lifecycle_owner"));
     }
     if rt.status != "ready" {
-        return Ok(Err(rt.status.clone()));
+        return Ok(Some("not_ready"));
     }
     if rt.active_run_id.is_some() {
-        return Ok(Err("active_run".into()));
+        return Ok(Some("active_run"));
     }
     let (nonterminal, protected) = {
         let db = server.store.lock().unwrap();
@@ -113,10 +136,10 @@ async fn judge(server: &Shared, rt: &db::Rt) -> anyhow::Result<Result<Due, Strin
         )?
     };
     if nonterminal {
-        return Ok(Err("nonterminal_run".into()));
+        return Ok(Some("nonterminal_run"));
     }
     if protected {
-        return Ok(Err("protected_input".into()));
+        return Ok(Some("protected_input"));
     }
     // A person typing into the seat is using it, whatever the task says.
     if let Some((socket, pid)) = hrcpty::substrate(rt)
@@ -125,9 +148,9 @@ async fn judge(server: &Shared, rt: &db::Rt) -> anyhow::Result<Result<Due, Strin
             .as_u64()
             .is_some_and(|n| n > 0)
     {
-        return Ok(Err("attached_client".into()));
+        return Ok(Some("attached_client"));
     }
-    Ok(Ok(due))
+    Ok(None)
 }
 
 /// Close a still-idle seat to admission before the terminate awaits, as the
@@ -179,10 +202,21 @@ pub async fn retire_seats(server: &Shared) -> anyhow::Result<Value> {
         {
             break;
         }
-        let due = match judge(server, rt).await? {
+        if let Some(code) = guard(server, rt).await? {
+            // The sweep's summary keeps naming a not-ready seat by its status.
+            let reason = if code == "not_ready" {
+                rt.status.clone()
+            } else {
+                code.into()
+            };
+            *skipped.entry(reason).or_default() += 1;
+            continue;
+        }
+        let seat = seat(server, rt)?;
+        let (due, rule) = match due(&seat) {
             Ok(due) => due,
             Err(reason) => {
-                *skipped.entry(reason).or_default() += 1;
+                *skipped.entry(reason.into()).or_default() += 1;
                 continue;
             }
         };
@@ -192,15 +226,16 @@ pub async fn retire_seats(server: &Shared) -> anyhow::Result<Value> {
             .and_then(db::parse_ms)
             .map(|at| now_ms - at);
         let idle_for = |ms: i64| idle_ms.is_some_and(|idle| idle >= ms);
-        let (task, state, trigger) = match due {
-            Due::Idle(task, window) => {
+        let task = seat.task.clone();
+        let (state, trigger) = match due {
+            Due::Idle(window) => {
                 if !idle_for(window.as_millis() as i64) {
                     *skipped.entry("not_due".into()).or_default() += 1;
                     continue;
                 }
-                (task, None, "idle_ttl")
+                (None, "idle_ttl")
             }
-            Due::Task(task) => {
+            Due::Task => {
                 if !tasks.contains_key(&task) {
                     let state = server
                         .wrkq
@@ -233,7 +268,7 @@ pub async fn retire_seats(server: &Shared) -> anyhow::Result<Value> {
                         .or_default() += 1;
                     continue;
                 };
-                (task, state.ok(), trigger)
+                (state.ok(), trigger)
             }
         };
         let Some(_write) = server.owner_writes.enter() else {
@@ -246,10 +281,14 @@ pub async fn retire_seats(server: &Shared) -> anyhow::Result<Value> {
         let mut line = Map::new();
         line.insert("runtimeId".into(), rt.runtime_id.as_str().into());
         line.insert("scopeRef".into(), rt.scope_ref.as_str().into());
+        line.insert("agentId".into(), seat.agent.as_str().into());
+        line.insert("kind".into(), seat.kind.as_str().into());
         line.insert("taskId".into(), task.as_str().into());
         line.insert("trigger".into(), trigger.into());
+        line.insert("rule".into(), rule.into());
         line.insert("taskState".into(), state.into());
         line.insert("idleMs".into(), idle_ms.into());
+        line.insert("source".into(), SOURCE.into());
         match control::retire(server, rt, trigger, SOURCE).await {
             Ok(dropped) => {
                 line.insert("droppedContinuation".into(), dropped.into());
@@ -290,6 +329,121 @@ pub async fn retire_seats(server: &Shared) -> anyhow::Result<Value> {
         "idleThresholdHours": hours,
         "tasksQueried": tasks.len(),
     }))
+}
+
+/// The only principal the retire door serves (T-14454).
+const MODULE_PRINCIPAL: &str = "agent:seat-retirement";
+const MODULE_SCOPE: &str = "agent:seat-retirement:project:hrc-runtime";
+const MODULE_SOURCE: &str = "seat-retirement-module";
+
+/// `POST /v1/runtimes/retire` (T-14454): the seat-retirement module's door.
+/// It holds no policy: it re-runs [`guard`], fences on the caller's
+/// `expectLastActivityAt`, closes with [`close`] and retires as the sweep does,
+/// keeping the continuation. Every refusal's reason is its error code.
+pub async fn door(server: &Shared, headers: &HeaderMap, body: &[u8]) -> Result<Response, ApiError> {
+    authorize_principal(
+        server,
+        headers,
+        "retire a seat",
+        MODULE_PRINCIPAL,
+        MODULE_SCOPE,
+    )?;
+    let body: Value = serde_json::from_slice(body)
+        .map_err(|_| ApiError::bad("request body must be valid JSON", None))?;
+    let opaque = |field: &str| {
+        body[field]
+            .as_str()
+            .filter(|s| !s.is_empty() && s.chars().count() <= 128)
+            .ok_or_else(|| {
+                ApiError::bad(
+                    format!("{field} must be a string of 1 to 128 characters"),
+                    Some(json!({"field":field})),
+                )
+            })
+    };
+    let runtime_id = body["runtimeId"]
+        .as_str()
+        .filter(|s| !s.is_empty())
+        .ok_or_else(|| {
+            ApiError::bad("runtimeId is required", Some(json!({"field":"runtimeId"})))
+        })?;
+    let expect = body["expectLastActivityAt"]
+        .as_str()
+        .and_then(|s| chrono::DateTime::parse_from_rfc3339(s).ok())
+        .ok_or_else(|| {
+            ApiError::bad(
+                "expectLastActivityAt must be an RFC 3339 timestamp",
+                Some(json!({"field":"expectLastActivityAt"})),
+            )
+        })?;
+    let (trigger, rule, revision) = (
+        opaque("trigger")?,
+        opaque("rule")?,
+        opaque("policyRevision")?,
+    );
+    let rt = {
+        let db = server.store.lock().unwrap();
+        db::runtime(&db.sqlite, runtime_id)?
+    }
+    .ok_or_else(|| {
+        ApiError::domain(
+            StatusCode::NOT_FOUND,
+            "unknown_runtime",
+            format!("unknown runtime {runtime_id}"),
+            Some(json!({"runtimeId":runtime_id})),
+        )
+    })?;
+    let refuse = |code: &'static str, message: String| {
+        ApiError::domain(
+            StatusCode::CONFLICT,
+            code,
+            message,
+            Some(json!({"runtimeId":rt.runtime_id,"status":rt.status,
+                        "lastActivityAt":rt.last_activity_at,
+                        "expectLastActivityAt":body["expectLastActivityAt"]})),
+        )
+    };
+    if let Some(code) = guard(server, &rt).await? {
+        return Err(refuse(
+            code,
+            format!(
+                "runtime {} is not retirable: {code} (status {})",
+                rt.runtime_id, rt.status
+            ),
+        ));
+    }
+    // Instants, not strings: a format difference is not a change.
+    let at = rt
+        .last_activity_at
+        .as_deref()
+        .and_then(|s| chrono::DateTime::parse_from_rfc3339(s).ok());
+    let changed = || {
+        refuse(
+            "activity_changed",
+            format!("runtime {} moved since the caller read it", rt.runtime_id),
+        )
+    };
+    if at != Some(expect) {
+        return Err(changed());
+    }
+    let seat = seat(server, &rt)?;
+    if !close(server, &rt)? {
+        return Err(changed());
+    }
+    server.ledger_committed();
+    let idle_ms = at.map(|at| chrono::Utc::now().timestamp_millis() - at.timestamp_millis());
+    let dropped = control::retire(server, &rt, trigger, MODULE_SOURCE).await?;
+    let line = json!({"runtimeId":rt.runtime_id,"scopeRef":rt.scope_ref,"agentId":seat.agent,
+                      "kind":seat.kind,"taskId":seat.task,"trigger":trigger,"rule":rule,
+                      "policyRevision":revision,"idleMs":idle_ms,"source":MODULE_SOURCE,
+                      "droppedContinuation":dropped});
+    super::stderr_json("info", "seat_retirement", "runtime.seat_retired", line);
+    Ok(Json(
+        json!({"retired":true,"runtimeId":rt.runtime_id,"scopeRef":rt.scope_ref,
+                   "trigger":trigger,"rule":rule,"policyRevision":revision,"idleMs":idle_ms,
+                   "droppedContinuation":dropped}),
+    )
+    .into_response())
 }
 
 /// Every 300 s, the first pass one interval after boot so brokers have

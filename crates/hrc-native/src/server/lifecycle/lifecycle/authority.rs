@@ -143,6 +143,60 @@ pub fn authorize_operator(
     ))
 }
 
+/// A door served to exactly one principal (T-14454: the seat-retirement
+/// module's retire door). A kernel module's write reaches HRC with its
+/// admitted identity as `x-hrc-principal-ref` and `x-hrc-session-ref` and no
+/// lifecycle credential; a caller presenting one is a runtime, verified as
+/// the operator routes verify it, and never that principal. Every other
+/// caller is refused 403 `not_authorized`.
+pub fn authorize_principal(
+    server: &Server,
+    headers: &HeaderMap,
+    action: &str,
+    principal: &str,
+    scope: &str,
+) -> Result<(), ApiError> {
+    let header = |name: &str| {
+        headers
+            .get(name)
+            .and_then(|v| v.to_str().ok())
+            .map(str::trim)
+    };
+    let lifecycle = headers
+        .keys()
+        .any(|key| key.as_str().starts_with("x-hrc-lifecycle-"));
+    let caller = if lifecycle {
+        match credentials::verify_caller(server, headers) {
+            Ok(binding) => binding.scope_ref,
+            Err(refusal) => format!("unverified runtime ({})", refusal.code),
+        }
+    } else if header("x-hrc-principal-ref") == Some(principal)
+        && header("x-hrc-session-ref") == Some(scope)
+    {
+        return Ok(());
+    } else {
+        header("x-hrc-session-ref")
+            .or(header("x-hrc-principal-ref"))
+            .unwrap_or("anonymous")
+            .to_owned()
+    };
+    let message =
+        format!("only {principal} ({scope}) may {action}; caller {caller} is not authorized");
+    stderr_json(
+        "warn",
+        "server",
+        "server.lifecycle.refused",
+        json!({"refusal":"not_authorized","message":message,"action":action,
+               "targetNode":server.federation.node_id(),"caller":caller}),
+    );
+    Err(ApiError::domain(
+        StatusCode::FORBIDDEN,
+        "not_authorized",
+        message,
+        Some(json!({"caller":caller,"principalRef":principal})),
+    ))
+}
+
 pub fn authorize(
     server: &Server,
     headers: &HeaderMap,

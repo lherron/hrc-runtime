@@ -2,7 +2,7 @@
 pub mod actuation;
 pub mod admission;
 mod authority;
-pub use authority::authorize_operator;
+pub use authority::{authorize_operator, authorize_principal};
 pub mod credentials;
 mod gates;
 mod parse;

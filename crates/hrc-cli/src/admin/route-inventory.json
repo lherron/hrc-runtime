@@ -224,6 +224,11 @@
     {
       "listener": "main",
       "method": "POST",
+      "route": "/v1/runtimes/retire"
+    },
+    {
+      "listener": "main",
+      "method": "POST",
       "route": "/v1/runtimes/sweep"
     },
     {

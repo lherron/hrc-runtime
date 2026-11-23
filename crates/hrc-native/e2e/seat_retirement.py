@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
-"""Seat retirement and hrcpty aging, end to end on one isolated rusthrc (T-12236, T-13432).
+"""Seat retirement, the retire door and hrcpty aging, end to end on one isolated rusthrc
+(T-12236, T-13432, T-14454 gate 2).
 
 Reuses the hrcpty_substrate.py substrate: a fresh short root with a
 Rust-created schema, a FAKE aspd and the stub broker release. Claude seats
@@ -55,12 +56,32 @@ Checks (no daemon restart: startup reconciliation would judge F first):
   3 continuation kept, for A and G: the session stays active with the same
     continuation key and reuse enabled; the next turn to it births a new
     runtime whose aspc compile request carries that continuation
+  4 the retire door, POST /v1/runtimes/retire (T-14454 gate 2), after the
+    first pass so the door's seats never enter its summary. New seat R
+    (codex, agent foundry, task:door-r, a CONT turn stored a continuation).
+    Callers other than the module principal are refused 403 not_authorized:
+    no identity, a Mable primary's principal headers, and R's own lifecycle
+    credential presented beside the module's principal headers (a runtime
+    cannot claim the module). Then, with the module's headers:
+    unknown_runtime (404); a 129-character trigger (400); busy C refused
+    not_ready with status busy; D with an active run (active_run_id written
+    into the isolated store, then cleared) refused active_run; D with a real
+    read-write hrc-pty client attached refused attached_client; R with an
+    expectLastActivityAt one second off refused activity_changed; R retired
+    with the same instant written as +00:00 (instants, not strings) and a
+    trigger no rule names, accepted and logged unchanged with
+    source seat-retirement-module and the seat's agent, kind and task;
+    the repeat refused not_ready with status terminated; R's continuation
+    kept and its next turn resumes it, as in 3. The sweep's own
+    runtime.seat_retired lines carry agentId, kind, taskId, rule and source.
 
 Never touches the live daemon, the live aspd, the live wrkq ledger or any
 shared service. Every process and root it creates is removed on exit.
 """
 import argparse
 import calendar
+import socket
+import threading
 from datetime import datetime, timedelta, timezone
 import json
 import os
@@ -74,10 +95,14 @@ import time
 import uuid
 
 from hrcpty_substrate import (FakeAspd, Run, ops, alive, descendants_of, LEAK, PROJECT, AGENT, HERE, REPO)
+from n2_scratch import UnixHTTP
 
 IDLE_HOURS = '0.02'
 TICK_TIMEOUT = 420
 FOUNDRY_WINDOW_MS = 60 * 60 * 1000
+# How the kernel presents the seat-retirement module's admitted identity to HRC.
+MODULE = {'x-hrc-principal-ref': 'agent:seat-retirement',
+          'x-hrc-session-ref': 'agent:seat-retirement:project:hrc-runtime'}
 
 
 class Aspd(FakeAspd):
@@ -94,8 +119,8 @@ class Aspd(FakeAspd):
 def main():
     p = argparse.ArgumentParser()
     p.add_argument('--binary', type=Path, default=REPO / 'crates/target/debug/rusthrc')
-    p.add_argument('--root', type=Path, default=Path(f'/tmp/h13432-{os.getpid()}'))
-    p.add_argument('--artifacts', type=Path, default=Path.home() / 'praesidium/var/wrkq-artifacts/T-13432/e2e')
+    p.add_argument('--root', type=Path, default=Path(f'/tmp/h14455-{os.getpid()}'))
+    p.add_argument('--artifacts', type=Path, default=Path(os.environ.get('SCRATCH') or '/tmp') / 'seat-retirement-e2e')
     p.add_argument('--keep', action='store_true')
     args = p.parse_args()
     binary = args.binary.resolve()
@@ -185,6 +210,9 @@ def main():
             seat['token'] = seat['sock'].parent / 'attach.token'
             seats[name] = seat
             return seat
+
+        def seat_kind(seat):
+            return r.rows('SELECT seat_kind FROM continuities WHERE scope_ref=?', (seat['ref'].split('/lane:')[0],))[0]['seat_kind']
 
         def settle_claude(seat):
             """Answer the stub's AskUserQuestion so the first turn completes."""
@@ -289,6 +317,12 @@ def main():
         r.check('2.G.line', g_line.get('taskId') == 'primary' and 'taskState' in g_line and g_line['taskState'] is None
                 and g_line.get('trigger') == 'idle_ttl' and g_line.get('droppedContinuation') is False
                 and (g_line.get('idleMs') or 0) >= FOUNDRY_WINDOW_MS, line=g_line)
+        for s, agent, rule in ((a, AGENT, 'task'), (b, AGENT, 'task'), (g, 'foundry', 'foundry:*:primary')):
+            line = retired.get(s['rt'], {})
+            kind = seat_kind(s)
+            r.check(f'2.{s["name"]}.line-carries-seat', line.get('agentId') == agent and line.get('kind') == kind
+                    and line.get('taskId') == s['task'] and line.get('rule') == rule
+                    and line.get('source') == 'hrc-seat-retirement', line=line, seatKind=kind)
         c_row, d_row, h_row = r.runtime(c['rt']), r.runtime(d['rt']), r.runtime(h['rt'])
         r.check('2.C.busy-untouched', c_row['status'] in ('ready', 'busy') and c_row['active_run_id'] == held['runId']
                 and c['rt'] not in retired, status=c_row['status'], activeRun=c_row['active_run_id'])
@@ -306,13 +340,13 @@ def main():
                 and tick.get('errors') == 0 and tick.get('idleThresholdHours') == float(IDLE_HOURS), summary=tick)
 
         # == 3. continuation kept; the next turn resumes it ===================
-        for s in (a, g):
-            name, key = s['name'], keys[s['name']]
+        def resumes(s, key, before, step):
+            name = s['name']
             after = r.rows('SELECT status, continuation_json, continuation_reuse_disabled FROM sessions WHERE host_session_id=?',
                            (s['host'],))[0]
-            r.check(f'3.{name}.session-active-same-key', after['status'] == 'active'
+            r.check(f'{step}.{name}.session-active-same-key', after['status'] == 'active'
                     and json.loads(after['continuation_json'] or '{}').get('key') == key
-                    and not after['continuation_reuse_disabled'], before=sessions_before[name], after=after)
+                    and not after['continuation_reuse_disabled'], before=before, after=after)
             status, resumed = r.http('POST', '/v1/turns', {'hostSessionId': s['host'], 'prompt': 'after retirement',
                                                            'runtimeIntent': s['intent']})
             ok = status in (200, 202) and resumed.get('runtimeId') not in (None, s['rt'])
@@ -324,9 +358,138 @@ def main():
                                            if f.get('request', {}).get('method') == 'aspc.compileHarnessInvocation'
                                            and f['request']['params']['compileRequest'].get('identity', {}).get('runtimeId')
                                            == resumed['runtimeId']], 30, name + ' resumed compile')
-            r.check(f'3.{name}.next-turn-new-runtime', ok, status=status, response=resumed)
-            r.check(f'3.{name}.resume-compiles-with-continuation', bool(compiled) and (compiled[-1] or {}).get('hrc', {}).get('key') == key,
+            r.check(f'{step}.{name}.next-turn-new-runtime', ok, status=status, response=resumed)
+            r.check(f'{step}.{name}.resume-compiles-with-continuation', bool(compiled) and (compiled[-1] or {}).get('hrc', {}).get('key') == key,
                     key=key, continuation=compiled[-1] if compiled else None)
+            return resumed
+
+        for s in (a, g):
+            resumes(s, keys[s['name']], sessions_before[s['name']], '3')
+
+        # == 4. the retire door (T-14454 gate 2) ==============================
+        def door(body, headers=MODULE):
+            conn = UnixHTTP(r.socket, 120)
+            conn.request('POST', '/v1/runtimes/retire', json.dumps(body), {'Content-Type': 'application/json', **headers})
+            res = conn.getresponse()
+            raw = res.read().decode()
+            conn.close()
+            try:
+                return res.status, json.loads(raw)
+            except ValueError:
+                return res.status, raw
+
+        def ask(s, expect=None, **extra):
+            return {'runtimeId': s['rt'], 'expectLastActivityAt': expect or r.runtime(s['rt'])['last_activity_at'],
+                    'trigger': 'idle_ttl', 'rule': 'e2e:door', 'policyRevision': 'e2e-r1', **extra}
+
+        def refused(name, s, out, got, want, code, **detail):
+            err = out.get('error', {}) if isinstance(out, dict) else {}
+            ok = got == want and err.get('code') == code and all(err.get('detail', {}).get(k) == v for k, v in detail.items())
+            return r.check(name, ok and r.runtime(s['rt'])['status'] != 'terminated', httpStatus=got, response=out,
+                           runtimeStatus=r.runtime(s['rt'])['status'])
+
+        rr = birth('R', 'door-r', 'first turn CONT', agent='foundry')
+        settled(rr)
+        r_before = r.rows('SELECT status, continuation_json, continuation_reuse_disabled FROM sessions WHERE host_session_id=?',
+                          (rr['host'],))[0]
+        r_key = json.loads(r_before['continuation_json'] or '{}').get('key')
+        r.check('4.R.continuation-stored', bool(r_key), session=r_before)
+
+        # Callers other than the module principal.
+        status, out = door(ask(rr), {})
+        refused('4.not-authorized.anonymous', rr, out, status, 403, 'not_authorized')
+        status, out = door(ask(rr), {'x-hrc-principal-ref': 'agent:mable',
+                                     'x-hrc-session-ref': 'agent:mable:project:hrc-runtime:task:primary'})
+        refused('4.not-authorized.mable-primary', rr, out, status, 403, 'not_authorized',
+                caller='agent:mable:project:hrc-runtime:task:primary')
+        # The daemon mints R's lifecycle credential on its coalesced reconcile, after the birth commits.
+        cred_file = root / 'run/lifecycle' / f"{rr['rt']}.credential"
+        r.wait(lambda: cred_file.is_file() and cred_file.read_text().strip(), 30, 'R lifecycle credential')
+        credential = cred_file.read_text().strip()
+        r_scope = r.runtime(rr['rt'])['scope_ref']
+        status, out = door(ask(rr), {**MODULE, 'x-hrc-lifecycle-session-ref': r_scope + '/lane:main',
+                                     'x-hrc-lifecycle-runtime-id': rr['rt'], 'x-hrc-lifecycle-credential': credential})
+        refused('4.not-authorized.runtime-credential', rr, out, status, 403, 'not_authorized', caller=r_scope)
+        refusals = [l['data'] for l in r.daemon_log('1') if l.get('event') == 'server.lifecycle.refused'
+                    and l['data'].get('action') == 'retire a seat']
+        r.check('4.not-authorized.logged', len(refusals) == 3 and all(x['refusal'] == 'not_authorized' for x in refusals),
+                lines=refusals)
+
+        # Malformed and unknown, with the module's identity.
+        status, out = door({**ask(rr), 'runtimeId': 'rt-does-not-exist'})
+        r.check('4.unknown-runtime', status == 404 and out.get('error', {}).get('code') == 'unknown_runtime', status=status, response=out)
+        status, out = door(ask(rr, trigger='t' * 129))
+        refused('4.trigger-over-128-chars', rr, out, status, 400, 'malformed_request', field='trigger')
+
+        # The guards.
+        c_now = r.runtime(c['rt'])
+        status, out = door(ask(c))
+        refused('4.C.busy-not-ready', c, out, status, 409, 'not_ready', status='busy')
+        r.check('4.C.was-busy-with-held-run', c_now['status'] == 'busy' and c_now['active_run_id'] == held['runId'], row=c_now['status'])
+        with sqlite3.connect(r.db_path, timeout=30) as db:
+            db.execute("UPDATE runtimes SET active_run_id='run-e2e-staged' WHERE runtime_id=?", (d['rt'],))
+        status, out = door(ask(d))
+        with sqlite3.connect(r.db_path, timeout=30) as db:
+            db.execute("UPDATE runtimes SET active_run_id=NULL WHERE runtime_id=? AND active_run_id='run-e2e-staged'", (d['rt'],))
+        refused('4.D.active-run', d, out, status, 409, 'active_run')
+        # A real read-write client on D's hrc-pty supervisor, held open across the call.
+        opsock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+        opsock.settimeout(10)
+        opsock.connect(str(d['sock']))
+        opf = opsock.makefile('r')
+        for i, (m, prm) in enumerate((('hello', {'token': d['token'].read_text().strip()}), ('attach', {'readOnly': False})), 1):
+            opsock.sendall((json.dumps({'jsonrpc': '2.0', 'id': i, 'method': m, 'params': prm}) + '\n').encode())
+            reply = json.loads(opf.readline())
+        attach_id = reply['result']['attachId']
+        data = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+        data.connect(str(d['sock']))
+        data.sendall((json.dumps({'attach': attach_id}) + '\n').encode())
+        threading.Thread(target=lambda: [None for _ in iter(lambda: data.recv(65536), b'')], daemon=True).start()
+        rw = r.wait(lambda: ops(d['sock'], d['token'], 'status')['status']['clients'].get('readWrite'), 10, 'read-write client')
+        status, out = door(ask(d))
+        refused('4.D.attached-client', d, out, status, 409, 'attached_client')
+        r.check('4.D.client-was-read-write', rw == 1, readWrite=rw)
+        data.close()
+        opsock.close()
+        r.wait(lambda: ops(d['sock'], d['token'], 'status')['status']['clients'].get('readWrite') == 0, 10, 'client gone')
+
+        # The fence: an instant one second off is refused; the same instant in another format is not.
+        at = r.runtime(rr['rt'])['last_activity_at']
+        assert at.endswith('Z'), at
+        when = datetime.strptime(at[:-1], '%Y-%m-%dT%H:%M:%S.%f').replace(tzinfo=timezone.utc)
+        off = (when - timedelta(seconds=1)).strftime('%Y-%m-%dT%H:%M:%S.%f')[:-3] + 'Z'
+        status, out = door(ask(rr, off))
+        refused('4.R.stale-expect-activity-changed', rr, out, status, 409, 'activity_changed', lastActivityAt=at)
+        novel = 'e2e.novel-trigger/policy-edit-v9'
+        same_instant = at[:-1] + '+00:00'
+        request = ask(rr, same_instant, trigger=novel, rule='e2e:door-rule-7', policyRevision='rev-2026-11-23T10:00')
+        status, out = door(request)
+        row = r.runtime(rr['rt'])
+        r.check('4.R.retired', status == 200 and out.get('retired') is True and out.get('runtimeId') == rr['rt']
+                and out.get('scopeRef') == r_scope and out.get('trigger') == novel and out.get('rule') == 'e2e:door-rule-7'
+                and out.get('policyRevision') == 'rev-2026-11-23T10:00' and isinstance(out.get('idleMs'), int)
+                and out.get('droppedContinuation') is False and row['status'] == 'terminated',
+                status=status, response=out, runtimeStatus=row['status'], expect=same_instant, stored=at)
+        ev = [x['payload'] for x in r.events(rr['rt'], 'runtime.terminated')]
+        r.check('4.R.terminated-event', ev and ev[-1].get('reason') == novel and ev[-1].get('source') == 'seat-retirement-module'
+                and ev[-1].get('droppedContinuation') is False, events=ev)
+        time.sleep(0.5)
+        lines = [l['data'] for l in r.daemon_log('1') if l.get('event') == 'runtime.seat_retired' and l['data'].get('runtimeId') == rr['rt']]
+        line = lines[-1] if lines else {}
+        r.check('4.R.retired-line', len(lines) == 1 and line.get('trigger') == novel and line.get('rule') == 'e2e:door-rule-7'
+                and line.get('policyRevision') == 'rev-2026-11-23T10:00' and line.get('source') == 'seat-retirement-module'
+                and line.get('agentId') == 'foundry' and line.get('kind') == seat_kind(rr) and line.get('taskId') == 'door-r'
+                and line.get('scopeRef') == r_scope and isinstance(line.get('idleMs'), int)
+                and line.get('droppedContinuation') is False, lines=lines, seatKind=seat_kind(rr))
+        r.wait(lambda: not alive(rr['pid']), 15, 'R supervisor gone')
+        r.check('4.R.processes-gone', not alive(rr['pid']) and not descendants_of([str(rr['sock'].parent)]),
+                leftovers=descendants_of([str(rr['sock'].parent)]))
+        status, out = door(request)
+        r.check('4.R.repeat-not-ready', status == 409 and out.get('error', {}).get('code') == 'not_ready'
+                and out['error'].get('detail', {}).get('status') == 'terminated', status=status, response=out)
+        resumes(rr, r_key, r_before, '4')
+        r.check('4.C.D.untouched', r.runtime(c['rt'])['status'] == 'busy' and r.runtime(d['rt'])['status'] == 'ready'
+                and r.runtime(d['rt'])['active_run_id'] is None, C=r.runtime(c['rt'])['status'], D=r.runtime(d['rt'])['status'])
         r.down(daemon)
     except Exception as error:  # noqa: BLE001 - recorded as a failed check
         import traceback

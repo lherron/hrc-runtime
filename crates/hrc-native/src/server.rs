@@ -716,6 +716,8 @@ async fn dispatch_inner(server: &Shared, request: Request, local_only: bool) -> 
             Ok(value) => io::capture_status(server, value).await,
             Err(e) => Err(e),
         }
+    } else if method == Method::POST && uri.path() == "/v1/runtimes/retire" {
+        seat_retirement::door(server, &headers, &body).await
     } else if method == Method::POST && ["/v1/interrupt", "/v1/terminate"].contains(&uri.path()) {
         match parse_body(&body) {
             Ok(value) if uri.path() == "/v1/interrupt" => control::interrupt(server, value).await,
@@ -848,6 +850,7 @@ fn implemented(method: &Method, path: &str) -> bool {
                 "/v1/submissions/invoke",
                 "/v1/interrupt",
                 "/v1/terminate",
+                "/v1/runtimes/retire",
                 "/v1/runtimes/capture/status",
                 "/v1/federation/retire",
                 "/v1/runtimes/broker/inspect",

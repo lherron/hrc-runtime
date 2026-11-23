@@ -54,6 +54,7 @@ const EXACT: &[(&str, &str)] = &[
     ("POST", "/v1/surfaces/bind"),
     ("POST", "/v1/interrupt"),
     ("POST", "/v1/terminate"),
+    ("POST", "/v1/runtimes/retire"),
     ("POST", "/v1/clear-context"),
     ("POST", "/v1/sessions/restart"),
     ("POST", "/v1/sessions/drop-continuation"),
