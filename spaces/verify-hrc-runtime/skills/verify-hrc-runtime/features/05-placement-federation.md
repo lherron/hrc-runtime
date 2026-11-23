@@ -26,7 +26,7 @@ Docs:
   latencyMs}`, also in `server status --json`, `[]` on a scratch) and logs one `federation.peer.probe` per peer
   per call. Live on 2026-11-09: node-identity `max3 (declared, federated, 2 peer(s))`, `+ federation-peer:svc`,
   `+ federation-peer:hrcdev`, 5450 bindings, `+ placement-policy (466 dormant …)` (T-12756); 6048 bindings and
-  476 dormant on 2026-11-16. With a target
+  476 dormant on 2026-11-16; 6419 and 482 on 2026-11-23. With a target
   doctor adds `target-lookup`, `target-health`, `dm-capability`, `runtime`; an unparsable one is
   `x target-resolve`, rc 1. Peer runtimes and a second health view live in `~/.bun/bin/hrc runtime list --all-nodes
   --json` `.nodes[] | {nodeId, state, latencyMs, detail}`: max3, svc and hrcdev `answered` twice on 2026-11-09.
@@ -40,9 +40,10 @@ Docs:
   configExists, peerCount, peers.
 - `~/.bun/bin/hrc target bindings [--json]`: the raw sweep behind doctor's skew/policy rows, keys `federationConfigured`,
   `gateMode`, `localNodeId`, `scan` (2026-11-02, T-12291); each `scan.unreadable[]` entry now has `live`
-  (466 unreadable, 0 live on 2026-11-09; 476, 0 live on 2026-11-16), so the human `policy-unreadable:` count exceeds doctor's live warns. Single-flight, 20 s budget, a cut scan answers
+  (466 unreadable, 0 live on 2026-11-09; 476, 0 live on 2026-11-16; 482 on 2026-11-23), so the human `policy-unreadable:` count exceeds doctor's live warns. Single-flight, 20 s budget, a cut scan answers
   `scan.truncated {budgetMs, notAssessed, inFlightScopeRef}`, a slow one logs `federation.bindings.scan_slow`
-  to `rusthrc-owner.log` (source-only, 2026-11-02: locate.rs:338-465; 13388 and 14323 ms at 08:35Z; 8092 and 5790 ms on 2026-11-09; no `scan_` line in the 2026-11-16 log).
+  to `rusthrc-owner.log` (source-only, 2026-11-02: locate.rs:338-465; 13388 and 14323 ms at 08:35Z; 8092 and 5790 ms on 2026-11-09; no `scan_` line in the 2026-11-16 log, nor in the current and six rotated logs on 2026-11-23: both lines fire
+  only for a truncated or slow scan (`locate.rs:526-528`), so none is the healthy reading).
 - Scope-homed reads are forwarded (T-10418): `/v1/events/tail` for `mable@hrc-runtime:minisvc` answered
   `x-hrc-home-node: svc`, this task's scope no header (2026-11-02, T-12291, `04-http-api`). The native session
   index is local only; the 30 s failed-peer skip (571c6c56) is Bun only (source-only, 2026-11-02:
@@ -90,6 +91,13 @@ hv run <name> -- ~/.bun/bin/hrc server status --json | jq -c .node
 - Your own task scope binds on first birth while the profile declares no home: `clod@hrc-runtime:T-12291`
   read declared none, authority max3 `source: ledger`, designation `max3 (default_home_node(sender), epoch 1)`,
   1 runtime observed (2026-11-02, T-12291). That's not skew.
+- **A birth from an unbound sender is designated to the sender's node (c5a809e9, T-13508).** `target locate` names
+  the follow: this pass's task seat read `designation: max3 (default_home_node(sender), epoch 1)`, `follows
+  agent:foundry:project:hrc-runtime:task:primary via EN-60183` (2026-11-23). Peers report runtimes over the
+  peer-only `POST /v1/federation/observed-runtimes` (`admin metrics routes --since 7d --listener peer`: count 2,
+  errors 0 on 2026-11-23). svc, which hosts the registry, logs `designate_birth.observed|unobserved`, and the
+  enforcing gate maps `claude-hrcpty`, `codex-hrcpty` and `antigravity-hrcpty` to adapters (T-13961); 0
+  `federation.summon_gate.refusal` lines on max3 that day (source-only beyond those reads).
 - **The 466 unreadable placement policies are registry data, not a native regression**, and since a46bdc4f they
   are all dormant, so doctor shows one `+` row, no warns (2026-11-09). Causes on 2026-11-02: 461 "project root
   unknown" (`~/.local/bin/wrkq projects` lists `strategy` with `root: null`), 2 safoundry root not canonical, 2
@@ -108,11 +116,11 @@ hv run <name> -- ~/.bun/bin/hrc server status --json | jq -c .node
 `target locate` shows your task scope bound in the ledger to max3 with a live runtime observed, a remote scope
 bound to its home node with nothing observed here (its reads answering `x-hrc-home-node`), and
 `--fail-on-skew` exits 0 where doctor's `placement-skew` reports no disagreement; `target bindings`
-`scan.scanned` agrees with doctor's binding count (6048 = 6048 on 2026-11-16); doctor shows one `federation-peer:` row per peer; `runtime list
+`scan.scanned` agrees with doctor's binding count (6419 = 6419 on 2026-11-23); doctor shows one `federation-peer:` row per peer; `runtime list
 --all-nodes` shows every peer `answered` on a rerun; the scratch shows derived, single-node, no bindings, no TCP listener.
 
-Driven 2026-11-16 (T-13633 upkeep, live read-only + native scratch, rusthrc release-20261116031606289-34371,
-439a7d34): `~/praesidium/var/wrkq-artifacts/T-13633/{05-placement-federation,04-http-api,01-server-health,00-guard}`
-(`--fail-on-skew` rc 0 on minisvc; bindings 6048 = doctor's 6048; peers `answered` twice; scratch `peerHealth []`,
+Driven 2026-11-23 (T-14430 upkeep, live read-only + native scratch, rusthrc, release-20261122204127910-10417, 4b31f208):
+`~/praesidium/var/wrkq-artifacts/T-14430/{05-placement-federation,04-http-api,01-server-health}`
+(`--fail-on-skew` rc 0 on minisvc; bindings 6419 = doctor's 6419; peers `answered` twice; scratch single-node,
 no TCP listener). Not driven: `federation retire` and `rebuild-registry` writes (operator), the peer listener's
 `localOnly` 403 and `/v1/federation/stream` (need a peer bearer token).

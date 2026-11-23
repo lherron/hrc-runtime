@@ -14,8 +14,12 @@ retention: `broker/ledger_prune.rs`, `broker/ledger_prune/retention.rs` and
 - `~/.bun/bin/hrc admin runs sweep-zombies|reconcile-active [--older-than D] [--dry-run|--yes] [--json]`: NDJSON, one line
   per matched row and the summary last (`sweep-zombies`: `matched`, `zombied`, `skipped`, `errors`;
   `reconcile-active`: `matched`, `reaped`, `repaired`, `suspect`, `skipped`, `errors`), so read it with
-  `| tail -1`; `--older-than` defaults to 30m. Native `reconcile-active` scans only runs with transport
-  `sdk|tmux|headless`, so it never sees an hrcpty run (source-only, 2026-11-02: `broker/reconcile.rs:74,325`).
+  `| tail -1`; `--older-than` defaults to 30m. Native `reconcile-active` reaps only active runs with transport
+  `sdk|tmux|headless` (`broker/reconcile.rs:71`); its abandoned pass takes every transport (`:323-325`) and labels
+  any non-sdk/headless row, hrcpty included, `transport: "tmux"` (`:58-63`). A non-dry `sweep-zombies` or
+  `reconcile-active` first withdraws unwritten broker submissions (`broker.zombie_withdraw`, 98e11490, b386d2e2), and a
+  non-dry `reconcile-active` settles dead-broker submissions on its own read connection (`broker.submission.settled`,
+  e8adf1dd); a dry-run shows neither (source-only, 2026-11-23; this skill never `--yes`es live).
   Bun only: the accepted-never-started settlement (`unstarted_submission_settled` rows, ed974915) is "not yet
   native" (`broker/reconcile.rs:5-6`).
 - `~/.bun/bin/hrc admin metrics report [--since D] [--json]`: `commands`, `counters`, `routes`, `slowest`, `largest`,
@@ -78,7 +82,8 @@ retention: `broker/ledger_prune.rs`, `broker/ledger_prune/retention.rs` and
   each per night at 10:00–10:01Z: 2026-11-12..15 all `stopReason: complete`, retention `pagesReturned 20000`,
   `maxWriteHoldMs` 61–77, prune `eligible` = `deleted` 35–158, `window 14d`. The live log rotates, so read the
   `rusthrc-owner.log.*.gz` siblings: the current file starts after the last run and holds neither line
-  (2026-11-16, `T-13633/07-maintenance/drive-extra.txt`). The daemon's session sweep logs
+  (2026-11-16, `T-13633/07-maintenance/drive-extra.txt`). 2026-11-18..22 were all `complete` too, prune `deleted`
+  9–145 with `maxWriteHoldMs` 81–740 and retention `maxWriteHoldMs` 53–612 (T-14430). The daemon's session sweep logs
   `session.retention_sweep_complete` (off with `HRC_SESSION_RETENTION_SWEEP_ENABLED=0`).
 - Not the cellar but they terminate HRC runtimes: launchd `com.praesidium.reap-headless-ghostmux` (every 30 min,
   `-y`) reaps paneless ready runtimes idle more than 12 h (54535197); and native seat retirement (T-12236)
@@ -137,12 +142,13 @@ for f in $(ls -tr ~/praesidium/var/logs/hrc-runtime/rusthrc-owner.log.*.gz); do 
   under /tmp and relocated absolute paths. The old LaunchAgent is retired only after
   deploy readback proves the new running sourceCommit; `just install` alone does not
   activate this change or retire a job. This skill never alters installed jobs.
-- **The native CLI panics when a pipe reader closes early.** `hrc runtime list --all-nodes --json | head -c 20`
-  printed `panicked at hrc-cli/src/metrics.rs:106:10: write stdout: … Broken pipe` and exited 1 (2026-11-09;
-  product gap T-12760; still on 2026-11-16, and plain `runtime list --json | head -c 5` panics the same way). Write to a file and read that, or ignore the panic text after `| head`.
+- **The native CLI no longer panics when a pipe reader closes early** (36e30532; T-12760 completed). Live
+  `runtime list --json` (1.8 MB) piped to `head -c 5` exits 0 with no panic text (2026-11-23); through 2026-11-16 it
+  printed `panicked at hrc-cli/src/metrics.rs:106:10: write stdout: … Broken pipe` and exited 1. A check needs
+  output bigger than the 64 KB pipe buffer: a 39 KB `monitor events` piped to `head -c 200` passes either way.
 - The dry-run `admin runs` verbs on live answer `matched: 0` in steady state; a non-zero `matched` is the signal
   to look, not to `--yes` (2026-10-05 `reconcile-active` matched a `run_abandoned_by_runtime` run on
-  `clod@wrkq:T-10327`, T-10350). With hrcpty seats invisible to `reconcile-active`, zero says nothing about them.
+  `clod@wrkq:T-10327`, T-10350). With hrcpty active runs outside `reconcile-active`'s reap, zero says little about them.
   This skill never `--yes`es live.
 
 ## Proven when
@@ -151,10 +157,11 @@ Each verb answers its documented shape on the scratch (zero matches on a clean s
 names the scratch runtime with `state: open`, `broker-verify candidates` lists each scratch invocation,
 `runtime prune-window` stops at `no_window`/`no_mark` on the scratch, the rotated live log holds a `complete`
 `retention.report` and `prune.report` per night, and the open product gaps (status vacuous T-12306, `runtime
-prune|sweep` skip hrcpty T-12303, broken-pipe panic T-12760) still reproduce or are gone with a commit to cite.
+prune|sweep` skip hrcpty T-12303) still reproduce or are gone with a commit to cite (the broken-pipe panic
+T-12760 is gone since 36e30532).
 
-Driven 2026-11-16 (T-13633 upkeep) on a native scratch (rusthrc, release-20261116031606289-34371, 439a7d34)
+Driven 2026-11-23 (T-14430 upkeep) on a native scratch (rusthrc, release-20261122204127910-10417, 4b31f208)
 and live read-only (scratch `admin runs` and `runtime sweep|prune` dry-runs all 0 with 2 terminated hrcpty rows as
-the control; live `sweep-zombies` 0, live `runtime sweep` matched 28 skipped 28; diagnostics 20 trips live; four
-nights of `complete` nightly reports; T-12304 and T-12759 confirmed fixed): evidence
-`~/praesidium/var/wrkq-artifacts/T-13633/{07-maintenance,09-new-verbs,evidence/t-13633}`.
+the control; live `sweep-zombies` 0, live `runtime sweep` matched 4 skipped 4; diagnostics 11 trips live; five
+nights of `complete` nightly reports; T-12306 and T-12303 still open, T-12760 fixed): evidence
+`~/praesidium/var/wrkq-artifacts/T-14430/{07-maintenance,03-turns-monitor,evidence/t-14430}`.

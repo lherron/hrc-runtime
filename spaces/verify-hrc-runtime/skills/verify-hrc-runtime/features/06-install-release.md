@@ -44,7 +44,7 @@ release into `~/praesidium/var/hrc-owner/hrc-runtime-releases/` and repoints
   `hrcBuild.sourceCommit`, aspContracts, installedAt, processStartedAt, `runningEqualsInstalled`);
   `binaryPath`/`packagePath` are `current_exe`, so they follow the plist: `…/var/hrc-owner/bin/rusthrc` and
   `…/var/hrc-owner/bin` on 2026-11-16 (the owner link spelling through 2026-11-09); schema
-  `0134_participant_hrc_launched_owner`, `pending: []` (2026-11-16). `runningEqualsInstalled` compares releasePath with `releasePath/../../hrc-runtime-current`, the
+  `0136_runs_minted_submission_id`, `pending: []` (2026-11-23). `runningEqualsInstalled` compares releasePath with `releasePath/../../hrc-runtime-current`, the
   OWNER link, so after `just install` without `hrc-owner.sh stage` it still reads `true` (source-only,
   2026-11-16: front/release.rs:111-133). Install moves `~/.bun` current, stage moves the owner's, only `hrc
   server restart` moves "running": compare `basename "$(readlink ~/.bun/install/hrc-runtime-current)"` with
@@ -112,7 +112,7 @@ cd ~/praesidium/hrc-runtime && bun scripts/install-dirty-guard.ts --source-root=
 
 - **Installed lagging HEAD is the usual state.** On 2026-10-26 installed and running were 02661aeb, six commits
   behind HEAD = origin/main. On 2026-11-02 `~/.bun` current, owner current and `.release` all named 9861ae0e
-  (T-12291); on 2026-11-09 all three named 846648d8, one docs commit behind HEAD 694e6931 (T-12756); on 2026-11-16 all three named 439a7d34 = HEAD (T-13633). Compare the claim's commit with `.release.hrcBuild.sourceCommit` and both `current` links, not
+  (T-12291); on 2026-11-09 all three named 846648d8, one docs commit behind HEAD 694e6931 (T-12756); on 2026-11-16 all three named 439a7d34 = HEAD (T-13633); on 2026-11-23 all three named 4b31f208, one reaper-script commit behind HEAD 375b8156 (T-14430). Compare the claim's commit with `.release.hrcBuild.sourceCommit` and both `current` links, not
   with HEAD.
 - **`runningEqualsInstalled: true` is not "the latest install is running" on an owner node.** It compares
   against the owner link only; an install that was never staged still reads `true` (source-only, 2026-11-02:
@@ -120,7 +120,8 @@ cd ~/praesidium/hrc-runtime && bun scripts/install-dirty-guard.ts --source-root=
 - **The daemon holds no manifest, and no release file at all under the fixed exe.** lsof on pid 81530 showed only the
   owner release's `bin/rusthrc` and `rusthrc-owner.log` (2026-11-02, T-12291); pid 37077 showed only
   `var/hrc-owner/bin/rusthrc` and the log (2026-11-16), so lsof no longer names the running release: read
-  `.release.releasePath` and the exe's `--version`. It holds `var/run/hrc/kernel.sock`. "Every atomic daemon holds its own manifest for life" is Bun only.
+  `.release.releasePath` and the exe's `--version`. It holds `var/run/hrc/kernel.sock`; the `hrc-kernel.sock` compatibility symlink is gone since c3a8535a (2026-11-23:
+  `kernel.sock`, `kernel.sock.lock` and stale `hrc-kernel.lock`, `hrc-kernel.sock.lock`). "Every atomic daemon holds its own manifest for life" is Bun only.
 - **A held owner release outlives its holders until the next stage.** 16 of 53 staged releases were held by
   live processes on 2026-11-02, mostly `hrc-pty` seat supervisors, some with a link-spelled argv (T-12291
   sources/06.md §0), so the owner-tree prune relies on the lsof/txt holder probe as well as argv (T-12695). In
@@ -139,6 +140,11 @@ cd ~/praesidium/hrc-runtime && bun scripts/install-dirty-guard.ts --source-root=
   2026-10-26 it refused on this skill's own uncommitted `hv` (an extensionless script counts as source). A
   pass that finds others' edits proves the refusal, not the clean pass.
 
+- **A sole-mode aspd node is never reinstalled by an HRC deploy** (fce51d29, 426130a6). Where the node's aspd
+  `config.json` has `.frontDoor.sole == true`, the deploy refuses to move aspd ("aspd moves go through
+  agent-spaces' activation") and proves the aspd pid under `.frontDoor.label` (default `com.praesidium.raspd`)
+  (source-only, 2026-11-23: `justfile`; deploys are operator-only here).
+
 ## Proven when
 
 `~/.bun` current, owner current, both manifests, the fixed exe's `--version` and `server status` name the same
@@ -150,8 +156,8 @@ the rest); a native scratch
 reports `unmanaged` and leaves both trees unchanged; the dirty guard passes on a clean tree and names the files
 on a dirty one. Install → stage → restart is operator-only and is proven on the operator's run.
 
-Driven 2026-11-16 (T-13633 upkeep, live read-only + native scratch, rusthrc release-20261116031606289-34371,
-439a7d34 = HEAD): `~/praesidium/var/wrkq-artifacts/T-13633/{06-install-release,live,00-guard}` (trees identical
-before and after the scratch; dirty guard rc 0 on a clean tree; `schema-state` `current`; 11 of 11 older owner
-releases argv-held). Not driven: install, stage, restart (needs operator); the dirty guard's refusal (no dirty
+Driven 2026-11-23 (T-14430 upkeep, live read-only + native scratch, rusthrc, release-20261122204127910-10417, 4b31f208, one
+commit behind HEAD): `~/praesidium/var/wrkq-artifacts/T-14430/{06-install-release,live}` (trees identical before and after the scratch, 2 and 15
+releases, 2.1G; dirty guard rc 0 on a clean tree; `schema-state` `current`; 10 of 10 owner releases outside the newest
+5 argv-held; aspContracts the same five at `0.1.1-dev.20261121104846`). Not driven: install, stage, restart (needs operator); the dirty guard's refusal (no dirty
 tree today).

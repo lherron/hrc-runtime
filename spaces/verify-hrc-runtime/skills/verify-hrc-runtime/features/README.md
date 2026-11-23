@@ -22,7 +22,7 @@ Not mapped here: the viewer (it ships from ACP now) and mail delivery (the praes
 mail-delivery module). `~/.bun/bin/hrc federation retire`, `~/.bun/bin/hrc server restart|stop` and `just install|publish|deploy-*`
 are named in their features but are operator steps, never driven by this skill.
 Also not mapped, from the live surface on 2026-10-05 (T-10350), rechecked 2026-10-26 (T-11864), 2026-11-02
-(T-12291, native CLI), 2026-11-09 (T-12756) and 2026-11-16 (T-13633; `index/` in those tasks' artifacts; gone
+(T-12291, native CLI), 2026-11-09 (T-12756), 2026-11-16 (T-13633) and 2026-11-23 (T-14430, no change; `index/` in those tasks' artifacts; gone
 since T-12756: `hrc index status|rebuild`, `hrc admin runtime`, `hrc capture release|recover`, `hrc runtime send`, all
 `unknown command`; new: `seat screen`, `runtime prune-window`, now mapped in features 2 and 7):
 

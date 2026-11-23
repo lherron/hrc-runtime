@@ -51,6 +51,8 @@ is native (`crates/hrc-cli/src/monitor/search.rs`, with the FTS index in
   `GET /v1/broker-forensics`, stats reads `GET /v1/broker-stats` since 2c947087, counted by the daemon): the
   invocation ledger (`user.message`, `assistant.message.started|completed`, `usage.updated`, `turn.completed`,
   `admission.*`, `submission.executed`, …), a rendered `<seq> USER|SAYS | text` transcript
+  (since fc533b42 also `TURN FAILED <code> | …`, `FAILED <tool> <code> | …` and `ERROR | …`: live `rt-c61ab0aa`,
+  cody@arris:T-13710, seq 3875–3877 on 2026-11-23)
   (long turns `… [clipped N chars]`), and `{targetKind, targetId, runtimeIds, invocationIds, eventTypes}` stats
   (2026-11-02, T-12291); stats also emits `turnCount`, `toolCallCount`, `perTurn[]` (2026-11-09, T-12756).
 - A cold-scope turn (no session; births through `/v1/messages/turn-handoff`) writes one `message.response`
@@ -122,8 +124,17 @@ hv run <task> -- ~/.bun/bin/hrc monitor session-report --runtime $R --json
   exited 12. On 2026-11-02 `$T $T --until-all idle` exited 10 on the live gen-4 runtime 5 of 5, but the live
   hsid (`c83f…`) sorted last of four, so that is no discriminator: T-11869 is neither reproduced nor cleared.
   Same on 2026-11-09: exit 10 on live gen 3, whose hsid `cf55…` sorted last of three (`aa36…`, `39aa…`), and on
-  2026-11-16: live gen 3 `f550…` sorted last of `383c…`, `6ade…`.
+  2026-11-16: live gen 3 `f550…` sorted last of `383c…`, `6ade…`. **Reproduced 2026-11-23 (T-14430):** dead gen 2
+  `dbbd…` sorted last of `3b36…` and live gen 3 `8757…`, and `$T $T --until-all idle` armed only that terminated
+  runtime: `runtime_death_obstruction`, exit 12, while the exact `--until idle` armed live gen 3 and exited 10.
   Read the `monitor.armed` members before you trust a set wait's exit code.
+- **HRC mints the submissionId (91cd6b3d, T-13704).** A send's or turn's run carries `hrc-<uuid>` in
+  `runs.minted_submission_id` and in `turn --wait final --json`'s `submissionId` (4 of 6 scratch runs on 2026-11-23;
+  the launch-prompt runs of `start -p` and `resume -p` keep the broker's `human_submission_…` id and a null column).
+  The `submission.admission` event's payload doesn't carry it. A broker that refuses the id is sent the submission
+  again without one and serve.log logs `broker.submission_id_unsupported` (0 lines on 2026-11-23; source-only, 8f801493).
+  Also source-only (they need a broker fault rig): a terminal wait returns when HRC fails the run itself (307a737b),
+  and a lost submission fails its run as `submission_lost`, not `runtime_unavailable` (bb728784).
 - **A bare word is an agent, not a task.** `~/.bun/bin/hrc monitor wait bareword …` resolves `agent:bareword/lane:main`:
   `error: unknown session "agent:bareword/lane:main"`, rc 2 (2026-11-02, T-12291). For a set-shaped selector
   in a drive, pass two selectors. Still so after the selector grammar moved onto `hrc_common::scope` (6c630307;
@@ -149,10 +160,11 @@ hv run <task> -- ~/.bun/bin/hrc monitor session-report --runtime $R --json
 `monitor watch` shows that run's `turn.user_prompt`, `turn.message`, `turn.completed`; `events`/`stats` count
 the turns; `search` finds the prompt; `wait --until idle` exits 10;
 `turn --attach` with nothing in flight exits 6; an invalid condition exits 2; `--until-all turn-finished` on a set
-exits 2 and `--until-all idle` exits 10 when its armed members are the live runtimes (on a resumed scope only
-once T-11869 is fixed or the live hsid is shown not to sort last).
+exits 2 and `--until-all idle` exits 10 when its armed members are the live runtimes (on a resumed scope, while T-11869 is
+open, it exits 12 `runtime_death_obstruction` whenever a dead generation's hsid sorts last: read `monitor.armed`).
 
-Driven 2026-11-16 (T-13633 upkeep) on a native scratch (rusthrc, release-20261116031606289-34371, 439a7d34),
-scratch `t-13633` (turn on restarted generation 3, hrcpty; seven `turn.completed` over the scratch; the set wait
-was again no T-11869 discriminator; plus the armed `turn-finished` wait and a cold-scope turn):
-`~/praesidium/var/wrkq-artifacts/T-13633/{03-turns-monitor,04-http-api,evidence/t-13633}`.
+Driven 2026-11-23 (T-14430 upkeep) on a native scratch (rusthrc, release-20261122204127910-10417, 4b31f208),
+scratch `t-14430` (turn on restarted generation 3, hrcpty; six `turn.completed` over the scratch; the set wait
+reproduced T-11869, exit 12 on dead gen 2) and live read-only for the failed-turn transcript:
+`~/praesidium/var/wrkq-artifacts/T-14430/{03-turns-monitor,04-http-api,evidence/t-14430}`. Not driven this pass: the armed `turn-finished` wait
+and a cold-scope turn (unchanged code since T-13633).

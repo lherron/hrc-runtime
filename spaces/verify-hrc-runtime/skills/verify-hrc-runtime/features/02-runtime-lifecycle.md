@@ -31,9 +31,11 @@ restart, capture, send) and `server/broker/{broker,start,hrcpty}.rs` (births, hr
 - `~/.bun/bin/hrc runtime status <target> [--json]`: lifecycle plus the broker's capture snapshot (`capture.state`,
   `deferredCount`, `blockedUnknown[]`): `open`, 0, 0 on 2026-11-02; `open`, 0, 1 on 2026-11-09 and 2026-11-16, the one entry
   `{nativeType: "session-owner", family: "diagnostic", loadBearing: false, count: 3, message: "Unknown Claude
-  transcript row type: session-owner"}` (Gotchas).
+  transcript row type: session-owner"}` (Gotchas). On 2026-11-23, two: `session-owner` (3) and `data-flow-records` (4).
 - `~/.bun/bin/hrc session resolve --scope <scopeRef> [--json]`: `found`, `created: false`, `generation`, `hostSessionId`;
-  `--create` makes one (not driven). `~/.bun/bin/hrc session get <hostSessionId> --live --json`: `{session, runtimes}`.
+  `--create` makes one: `--lane lane:probe --create` answered `created: true`, rc 0 on 2026-11-23 (a 500 before
+  a7194de1) and stores the continuity under `lane:probe`, which `session get <hostSessionId>` then refuses
+  `unknown continuity`, rc 2 (product gap T-14440; `/v1/sessions/by-host/<hsid>` reads it, 200 with identity). `~/.bun/bin/hrc session get <hostSessionId> --live --json`: `{session, runtimes}`.
   `~/.bun/bin/hrc session meta get <target> --json`: `{metadata, metadataSources}`, empty on a fresh scope.
 - `~/.bun/bin/hrc runtime capture <runtimeId>`: the screen text, rc 0, on an hrcpty seat (substrate capture). A runtime with
   no pane refuses "cannot capture a non-interactive runtime; use the runtime event stream instead" (source-only,
@@ -56,9 +58,14 @@ restart, capture, send) and `server/broker/{broker,start,hrcpty}.rs` (births, hr
   generation+1 with no continuation (`{ok, priorHostSessionId, hostSessionId, generation, launch: {status,
   runtimeId}}`) and terminates the old runtime. A seat that is not idle is refused `ok: false`, `code:
   runtime_busy` ("seat is turn-active; not restarted" on 2026-11-02), rc 1, nothing changed; a seat it cannot probe is refused
-  `seat_unobservable` (source-only, 2026-11-02: `crates/hrc-native/src/server/turns/restart.rs:98-119`);
+  `seat_unobservable` (source-only, 2026-11-02: `crates/hrc-native/src/server/turns/restart.rs:144-200` at 4b31f208);
   `--force` skips the check. Native replays no `initialPrompt` and answers at launch (source-only, 2026-11-02:
-  `server/broker/broker.rs:199-211`, `restart.rs:231-240`); the historical Bun replay is outside the native scratch surface. Not `restartme` and not `server restart`.
+  `server/broker/broker.rs:199-211`, `restart.rs:300-326`); the historical Bun replay is outside the native scratch surface. Not `restartme` and not `server restart`.
+  Since 5f13a397 (T-13969) `POST /v1/sessions/restart` also takes `provision: {model?, reasoning_effort?}`, HTTP only
+  (`hrc restart` sends none): another key, an effort outside low|medium|high|xhigh or a non-object answers 400
+  `malformed_request` and nothing changes; an accepted override answers `summonDirectives` beside `launch`, the
+  successor runs that model (`◇ Sonnet` in its TUI) and a later plain `hrc restart` keeps it (2026-11-23,
+  `02-runtime-lifecycle/drive-extra.txt`).
 - `POST /v1/terminate` with an `x-hrc-lifecycle-*` header checks operator authority: from a caller that is not
   the runtime's seat it answers 403 `server_lifecycle_refused` "only mable@<project>:primary or the runtime's own
   seat may terminate a runtime …" (`refusal: credential_missing`), nothing terminated (2026-11-09, T-12756). The
@@ -81,7 +88,7 @@ restart, capture, send) and `server/broker/{broker,start,hrcpty}.rs` (births, hr
   rc 0 (2026-11-16); the writes are not driven.
 - New birth refusals (source-only, 2026-11-16): `cwd_missing` (`broker/compile.rs:336-340`), aspd errors as 422
   `aspd_refused` / `aspd_compile_rejected` (7c58dede). Live task births get `SCRATCH=var/scratch/<project>/<task>`;
-  an hv scratch birth gets none (its root is not named `hrc`, `broker.rs:928-935`).
+  an hv scratch birth gets none (its root is not named `hrc`, `broker.rs:940-947`).
 - Not driven here: `start --force-restart|--new-session|--no-viewer|--app-server-viewer|--on-conflict`,
   `~/.bun/bin/hrc run` (feature 8 covers attach), `~/.bun/bin/hrc restartme`, `session rotate`, `session drop-continuation`, `runtime
   interrupt`, and the native metadata writes `session meta set|clear`, `session retitle`.
@@ -165,7 +172,8 @@ hv run <task> -- ~/.bun/bin/hrc restart $T --json; echo "rc=$?"                 
 - **`monitor wait --until idle` right after `send` races the send.** Armed 0 s after `send` returned, it answered
   `already_true` from the previous idle (2026-10-05). Confirm a send by its `SAYS` line or `turn.completed`.
 - **`blockedUnknown` can hold a Claude row type HRC doesn't know yet.** On 2026-11-09 and 2026-11-16 every claude-hrcpty seat
-  reported `session-owner` (`family: diagnostic`, `loadBearing: false`, count 4, then 3): drift in the claude CLI's
+  reported `session-owner` (`family: diagnostic`, `loadBearing: false`, count 4, then 3; on 2026-11-23 also
+  `data-flow-records`, count 4): drift in the claude CLI's
   transcript, not HRC. `capture.state` stayed `open`; it is not a capture failure unless `loadBearing` is true.
 - `~/.bun/bin/hrc runtime terminate` always prints its result as JSON; `--json` changes nothing.
 - On a single-node scratch, `target locate` shows `authority: unbound` even with a live runtime (feature 5).
@@ -177,7 +185,8 @@ authority views, `terminate` answers `ok: true` and `runtime list` empties, and 
 whose transcript recalls `OK, SENT`; `restart` births generation+1 that answers `NONE`, and a seat gated on
 `busy` is refused `runtime_busy`, rc 1.
 
-Driven 2026-11-16 (T-13633 upkeep) on a native scratch (rusthrc, release-20261116031606289-34371, 439a7d34):
+Driven 2026-11-23 (T-14430 upkeep) on a native scratch (rusthrc, release-20261122204127910-10417, 4b31f208):
 generations 1–3 (`OK`, `SENT`, resume `OK, SENT`, restart `NONE`), `runtime_busy` rc 1 at t+2, the idempotent
-terminate, the 403 lifecycle refusal, plus the handoff and seat-work verbs; evidence
-`~/praesidium/var/wrkq-artifacts/T-13633/{02-runtime-lifecycle,09-new-verbs,evidence/t-13633}`.
+terminate, the restart `provision` override (generations 4–5 on sonnet), the prefixed-lane resolve (T-14440),
+the sweep-summary by-host read, plus the handoff and seat-work verbs; evidence
+`~/praesidium/var/wrkq-artifacts/T-14430/{02-runtime-lifecycle,evidence/t-14430}`. Not driven: the 403 lifecycle refusal (unchanged code).

@@ -11,8 +11,8 @@ daemon `crates/hrc-native/src/main.rs` (`server serve` dispatch), `server.rs` (`
 
 - `~/.bun/bin/hrc server status` (human) and `--json`: pid, socket responsiveness, lock, tmux, `daemon {pid, pidAlive,
   pidFileExists}`, `.schema {readable, storeVersion, releaseVersion, pending, schemaAhead}`
-  (`0134_participant_hrc_launched_owner` on 2026-11-16; `0131_runtime_live_indexes` is now the baseline, and a
-  scratch's `store.created` names `baseline 0131` plus `forward [0132, 0133, 0134]`), `release` (`mode`, `releaseId`, `hrcBuild.sourceCommit`, `aspContracts`,
+  (`0136_runs_minted_submission_id` on 2026-11-23, after 0135 from cc89c53a and 0136 from 91cd6b3d; `0131_runtime_live_indexes`
+  is the baseline, and a scratch's `store.created` names `baseline 0131` plus `forward [0132 … 0136]`), `release` (`mode`, `releaseId`, `hrcBuild.sourceCommit`, `aspContracts`,
   `runningEqualsInstalled`), `binaryPath`, `node` (`nodeId`, `nodeIdProvenance` declared|derived, `mode`,
   `configPath`, `configExists`, `peerCount`, `peers`) and `api.aspd`. Live: `atomic`, and `binaryPath` (=
   `current_exe`) is the signed fixed exe `~/praesidium/var/hrc-owner/bin/rusthrc` that the plist now runs
@@ -90,8 +90,8 @@ hv run <task> -- ~/.bun/bin/hrc server tmux status --json
 ~/.bun/bin/hrc server subscribers --json | jq -c '{active: (.active|length), recentlyClosed: (.recentlyClosed|length)}'
 grep -m1 '"store.created"' /tmp/hv/<task>/serve.log     # native boot created its private store before listening
 env -i HOME=$HOME PATH=/usr/bin:/bin HRC_METRICS=0 HRC_RUNTIME_DIR=/tmp/hv/<task>/run HRC_STATE_DIR=/tmp/hv/<task>/state /tmp/hv/<task>/release/bin/rusthrc server serve --listen-socket rel; echo rc=$?   # server.exit, rc 1, no store touched
-HRC_RUNTIME_DIR=/tmp/hv-none HRC_STATE_DIR=/tmp/hv-none-s ~/.bun/bin/hrc doctor; echo rc=$?   # no rows, "socket not found", rc 1
-HRC_RUNTIME_DIR=/tmp/hv-none HRC_STATE_DIR=/tmp/hv-none-s ~/.bun/bin/hrc server status --json | jq -c '{status, running, hasApi: has("api")}'
+HRC_METRICS=0 HRC_RUNTIME_DIR=/tmp/hv-none HRC_STATE_DIR=/tmp/hv-none-s ~/.bun/bin/hrc doctor; echo rc=$?   # no rows, "socket not found", rc 1
+HRC_METRICS=0 HRC_RUNTIME_DIR=/tmp/hv-none HRC_STATE_DIR=/tmp/hv-none-s ~/.bun/bin/hrc server status --json | jq -c '{status, running, hasApi: has("api")}'
 ~/.bun/bin/hrc info | head -40
 curl -s --unix-socket ~/praesidium/var/run/hrc/hrc.sock http://hrc/v1/status | jq -c .capabilities
 ```
@@ -102,7 +102,7 @@ curl -s --unix-socket ~/praesidium/var/run/hrc/hrc.sock http://hrc/v1/status | j
   top-level read answers `null` exactly like a dead field (2026-10-05, `T-10297`; no top-level key on native
   2026-11-02). Assert `.release.mode` first (`atomic` live, `unmanaged` scratch).
 - **`listenSocketPath == socketPath` cannot be wrong on native.** Both come from `<runtime>/hrc.sock`
-  (`crates/hrc-native/src/server.rs:1028`), equal on live and scratch alike (2026-11-02; same at 439a7d34). Prove which daemon
+  (`crates/hrc-native/src/server.rs:1033`), equal on live and scratch alike (2026-11-02; same at 4b31f208). Prove which daemon
   answered by the log's `server.listening` / `servedBy:"native"` lines, not by that comparison.
 - **Nothing guards `rusthrc server serve` in an agent shell.** It creates a missing store and boots, and its births
   inherit your `CLAUDECODE` and friends (source-only, 2026-11-16: `crates/hrc-native/src/main.rs:37-60`). An empty store is no isolation guard. Start real daemons only through `hv scratch up`
@@ -110,10 +110,13 @@ curl -s --unix-socket ~/praesidium/var/run/hrc/hrc.sock http://hrc/v1/status | j
   production job `com.praesidium.hrc-server` (source-only, 2026-11-16: `crates/hrc-cli/src/server_start.rs:204-207`).
   Native prunes no release dirs, unlike Bun (source-only, 2026-11-16: `hrc-runtime-releases` appears only in `crates/hrc-common/src/release.rs`; the daemon's runtime and worktree prunes touch store rows and worktrees, not releases), but from a
   production tree it pins itself to that release (SKILL.md).
+- **The no-daemon controls write CLI metrics unless told not to.** `HRC_STATE_DIR=/tmp/hv-none-s ~/.bun/bin/hrc doctor`
+  created `/tmp/hv-none-s/metrics/` on 2026-11-16 and wrote to it again on 2026-11-23, so the controls above set
+  `HRC_METRICS=0` (T-14430).
 - **Unreadable placement policies are registry data, and dormant ones no longer warn.** Since a46bdc4f
   (T-11372) doctor warns once per cause, only for bindings with a live runtime, and folds the rest into one
-  `+ placement-policy (476 dormant binding(s) (no live runtime) have an unreadable declared policy (project root
-  unknown for 179 project(s), 5 other); …)` row: 0 `~` rows and `--strict` rc 0 on 2026-11-16 (466 dormant on
+  `+ placement-policy (482 dormant binding(s) (no live runtime) have an unreadable declared policy (project root
+  unknown for 185 project(s), 5 other); …)` row: 0 `~` rows and `--strict` rc 0 on 2026-11-23 (476 dormant on 2026-11-16, 466 on
   2026-11-09; 466 warns and strict rc 1 on 2026-11-02). The causes are still "project root unknown for <project>" (root null in
   `~/.local/bin/wrkq projects`) and a few `ENOENT … .Trash/…` retired worktrees.
 - **`federation-peer:` rows are back on native** (a46bdc4f): live doctor printed `+ federation-peer:svc` and
@@ -137,6 +140,6 @@ single-node identity and four `+` doctor rows, its serve log says `store.created
 {owner:"rusthrc", role:"native"}` (no guard: native boot creates the store and binds), and `--listen-socket rel` and
 `--front` refuse rc 1 before any store access.
 
-Driven 2026-11-16 (T-13633 upkeep) live read-only and on a native scratch (rusthrc,
-release-20261116031606289-34371, 439a7d34), evidence
-`~/praesidium/var/wrkq-artifacts/T-13633/{01-server-health,live,evidence/t-13633}`.
+Driven 2026-11-23 (T-14430 upkeep) live read-only and on a native scratch (rusthrc, release-20261122204127910-10417, 4b31f208), evidence
+`~/praesidium/var/wrkq-artifacts/T-14430/{01-server-health,live,evidence/t-14430}` (schema 0136, `forward` 0132–0136; 6419 bindings, 482 dormant;
+subscribers 32 active, 32 recently closed).

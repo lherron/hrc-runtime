@@ -96,9 +96,9 @@ hv run t-xxxxx -- ~/.bun/bin/hrc doctor       # scratch: single-node, no binding
 ```
 
 On max3 `~/.bun/bin/hrc doctor` prints one `+ placement-policy` row counting dormant bindings whose declared policy
-is unreadable (476 on 2026-11-16) and one `+ federation-peer:<node>` row per peer. It warns (`~ placement-policy`,
+is unreadable (482 on 2026-11-23) and one `+ federation-peer:<node>` row per peer. It warns (`~ placement-policy`,
 one row per cause) only for bindings with a live runtime; those are registry data, not a reason to stop, and
-`--strict` turns them into exit 1 (rc 0 on 2026-11-16, feature 1). Every `~/.bun/bin/hrc server status
+`--strict` turns them into exit 1 (rc 0 on 2026-11-23, feature 1). Every `~/.bun/bin/hrc server status
 --json` path is nested (`.release.runningEqualsInstalled`, `.node.nodeId`); a top-level read answers `null`
 for a path that doesn't exist. `~/.bun/bin/hrc info` lists the paths.
 

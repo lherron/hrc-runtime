@@ -73,7 +73,7 @@ hv run <task> -- ~/.bun/bin/hrc attach <rt> </dev/null | jq -c '{transport,argv,
 (hv run <task> -- ~/.bun/bin/hrc attach <rt> </dev/null | jq -c '.bindingFence|keys' & hv run <task> -- ~/.bun/bin/hrc attach <rt> </dev/null | jq -c '.bindingFence|keys' & wait)   # both whole
 hv run <task> -- ~/.bun/bin/hrc attach $T --dry-run --json; hv run <task> -- ~/.bun/bin/hrc attach <rt> --dry-run; echo rc=$?   # plan; rc 2
 ghostmux new --tab --title hv-attach --cwd /tmp/hv/<task> --command "HRC_RUNTIME_DIR=$R HRC_STATE_DIR=/tmp/hv/<task>/state ~/.bun/bin/hrc attach $T; echo hrc-exit=\$?" --keep-open --json
-ghostmux capture-pane -t <id> | grep -v '^\s*$' | tail -8                 # the claude TUI, scope in the rule
+ghostmux capture-pane -t <id> | grep -v '^\s*$' | tail -8                 # the claude TUI, this seat's last turn
 pgrep -fl "hrc-pty attach --socket $R/bipc"                               # the one client pid
 kill -TERM <pid>; sleep 2; ghostmux capture-pane -t <id> | grep -v '^\s*$' | tail -3   # status 0, no banner
 grep -hE 'client\.(attached|detached)' $R/logs/hrcpty/<rt>.log | tail -2  # attached, then detached
@@ -110,14 +110,14 @@ ghostmux kill-surface -t <id> --force
 
 ## Proven when
 
-The ghostmux tab shows the claude TUI with the scope's name in its rule, the supervisor log has one
+The ghostmux tab shows the claude TUI with this seat's own last turn (the word the scratch drove), the supervisor log has one
 `client.attached` (`readOnly: false`) and `pgrep` one client, a SIGTERM to it adds `client.detached`, `hrc`
 exits 0 with no banner and the runtime is still `ready`; `attach <runtimeId>` without a TTY prints an hrcpty
 descriptor whose `argv` is `hrc-pty attach --socket <run>/bipc/…/hrcpty.sock` and whose fence has the four
 keys, twice concurrently; `--dry-run` on a runtimeId is rc 2; a no-TTY scope attach times out (124) and leaves
 no client.
 
-Driven 2026-11-16 (T-13633 upkeep) on a native scratch (rusthrc, release-20261116031606289-34371, 439a7d34),
-tabularasa `claude-hrcpty` runtime `rt-ae9f0b5b`: evidence
-`~/praesidium/var/wrkq-artifacts/T-13633/{08-attach,evidence/t-13633}` (supervisor log
-`evidence/t-13633/hrcpty/rt-ae9f0b5b-5bc2-42b6-9b4b-cec19e913cf5.log`).
+Driven 2026-11-23 (T-14430 upkeep) on a native scratch (rusthrc, release-20261122204127910-10417, 4b31f208),
+tabularasa `claude-hrcpty` runtime `rt-54877a1b`: evidence
+`~/praesidium/var/wrkq-artifacts/T-14430/{08-attach,evidence/t-14430}` (supervisor log
+`evidence/t-14430/hrcpty/rt-54877a1b-40d8-449c-ae03-9675ca87b1ef.log`).

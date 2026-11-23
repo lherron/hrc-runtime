@@ -109,6 +109,13 @@ curl -s -D- -o /dev/null --unix-socket $L 'http://hrc/v1/events/tail?limit=1&sco
 
 ## Gotchas
 
+- **`/v1/sessions/by-host/hrc-sweep-summary` answers without `identity`** (since 4b31f208; it was a 500). Live: 200,
+  `scopeRef system:hrc/sweep`; a fresh scratch answers 404 `unknown_host_session` until a `runtime sweep --yes`
+  creates the row, then 200 with no `identity` key (2026-11-23: live in `04-http-api/drive-extra.txt`, scratch in
+  `02-runtime-lifecycle/drive-extra.txt`).
+- **`GET /v1/broker-events/query` takes only `op=unique-submission-after|disposition`** since e7094822 (T-13692):
+  `op=input-accepted` answers 400 "op must be one of unique-submission-after, disposition"; POST is 404
+  (2026-11-23, `04-http-api/drive-extra.txt`).
 - The host part of the URL is ignored; `http://hrc/…` is a convention, not a name that must resolve.
 - **A retired route and an un-ported Bun route look the same on the wire.** Both are the bare plain-text 404;
   only serve.log's `route.not_served` line (native, no Bun socket) says a route was unserved rather than handled
@@ -140,8 +147,8 @@ kind, one `turn.completed` per run the scratch drove when `truncated` is false; 
 each; serve.log shows `owner rusthrc`; on live a remote-homed scope's tail carries `x-hrc-home-node` and the local
 control does not.
 
-Driven 2026-11-16 (T-13633 upkeep) on a native scratch (rusthrc, release-20261116031606289-34371, 439a7d34),
-scratch `t-13633` (125 events; pages 123-125, 120-122 down to [1,2,3] `truncated: false`; seven `turn.completed`,
-one per run; `latestGeneration` kept gen 3 and the cold scope's gen 1) and live read-only for the routed tail
-(`x-hrc-home-node: svc`) and the new tail selectors:
-`~/praesidium/var/wrkq-artifacts/T-13633/{03-turns-monitor,04-http-api,evidence/t-13633}`.
+Driven 2026-11-23 (T-14430 upkeep) on a native scratch (rusthrc, release-20261122204127910-10417, 4b31f208),
+scratch `t-14430` (104 events; pages 102-104, 99-101 down to [1,2,3] `truncated: false`; six `turn.completed`,
+one per run; `latestGeneration` kept gen 3) and live read-only for the routed tail (`x-hrc-home-node: svc`; the
+local control has none) and the by-host sweep-summary:
+`~/praesidium/var/wrkq-artifacts/T-14430/{04-http-api,evidence/t-14430}`.
