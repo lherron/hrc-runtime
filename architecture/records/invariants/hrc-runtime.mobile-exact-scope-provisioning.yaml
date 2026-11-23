@@ -55,6 +55,18 @@ predicate: >
   overlapping suffix members cannot claim one continuity concurrently. A new
   exact key either atomically rotates or mints a fresh successor and records its
   canonical request hash, or returns session_scope_occupied without mutation.
+  T-14472 adds opt-in launch-carried initial text to local claim-and-start. A
+  nonempty initialPrompt carries on birth only with coldBirth promptMode
+  append-to-priming. Without that opt-in the text binds the claim hash and the
+  separate pinned-turn contract remains. The opted-in path takes the turn
+  admission lease before replay or claim effects and holds it through routing.
+  The continuity gate governs birth versus reuse. Only the call that births
+  with the text and obtains the launch run's broker submission identity can
+  report delivered true, including a same-key retry that births. A live reuse
+  reports runtime_reused for that call and establishes no prior delivery
+  outcome. The mobile consumer does not steer on runtime_reused. The
+  self-brokered branch does not carry the prompt. A different door can win the
+  birth of the claimed host, leaving the mobile text undelivered.
   Callers omitting materialization retain claim-and-start. The closed first_turn
   materialization token is part of the request hash; its localized intent,
   successor, continuity, and claim row commit as one fact for both mint and
@@ -82,8 +94,9 @@ predicate: >
   stale_context reason peer_upgrade_required (retryable false) without sending
   the start. wrkq:T-11933 (native peer listener: home-side roster-start,
   exact-start and establish) restores the receiver.
-authority: Lance / wrkq:T-07398 / wrkq:T-07655 / wrkq:T-08407; T-13508 r1 sender-runtime designation amendment approved by Daedalus in reply to EN-56871, 2026-11-17
+authority: Lance / wrkq:T-07398 / wrkq:T-07655 / wrkq:T-08407; T-13508 r1 sender-runtime designation amendment approved by Daedalus in reply to EN-56871, 2026-11-17; T-14472 r4 launch-carried initial text approved by Daedalus in reply to EN-60529, 2026-11-23
 source:
+  - wrkq:T-14472
   - wrkq:T-13508
   - crates/hrc-native/src/server/placement/federation/registry_listener.rs
   - crates/hrc-native/src/server/placement/federation/locate.rs
@@ -106,6 +119,7 @@ required_tests:
   - T-13508 old-CHECK registry migration retains live and superseded rows and accepts observed_runtime_node(sender)
   - T-13508 five installed fleet participant dispatches with fresh targets prove max3 designation and binding plus svc non-birth evidence
   - python3 crates/hrc-native/e2e/runtimes_start.py --deferred-message-only (T-12316 deferred claim binding and pinned-turn replay)
+  - wrkq:T-14472 r4 isolated real-harness gates for launch-carried initial text, replay, non-opt-in compatibility, and subsequent steer
   - just verify
   - wrkq:T-07302 exact/suffix overlap tests in both winner orders and after restart
   - wrkq:T-07398 reserved-family placement parity across exact, dm, and suffix doors
@@ -119,7 +133,8 @@ required_tests:
 last_verified: 2026-08-21 existing claim-and-start law; wrkq:T-08407 revision 4 amendment approved 2026-09-12 with implementation evidence pending
 reopen_when: >
   Exact-start occupancy, awaiting-first-turn or FREE semantics, materialization
-  mode, atomic intent ownership, idempotency lineage or claim-index ownership,
+  mode, launch-carried initial text or its delivery receipt, atomic intent
+  ownership, idempotency lineage or claim-index ownership,
   peer exactStart authority or response compatibility, placement precedence, the
   reserved roster suffix set, explicit provision directive admission, mail
   birth-envelope selection, birth-designation authority or lifecycle,

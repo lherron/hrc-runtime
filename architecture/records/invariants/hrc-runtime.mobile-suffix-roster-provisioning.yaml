@@ -35,6 +35,9 @@ predicate: >
   responses. Operator starts without an explicit node directive remain
   explicit-local. Retryable peer failure is synchronous runtime_unavailable and
   does not use the message outbox.
+  T-14472 applies the opt-in launch-carried initial text contract in
+  hrc-runtime.mobile-exact-scope-provisioning to local suffix and confirm
+  claims, including lease-before-claim ordering and call-local delivery receipts.
   T-13458 adds the distinct conflictPolicy confirm on the same roster placement,
   preflight, FREE predicate and namespace claim gate. Legacy suffix is unchanged.
   An unconfirmed free base claims normally; an occupied base returns 409
@@ -68,8 +71,10 @@ predicate: >
   stale_context reason peer_upgrade_required (retryable false) without sending
   the start. wrkq:T-11933 (native peer listener: home-side roster-start,
   exact-start and establish) restores the receiver.
-authority: Lance / wrkq:T-13458 / wrkq:T-07398 / wrkq:T-08407 / wrkq:T-08564 revision 4 architecture approval, 2026-09-17
+authority: Lance / wrkq:T-13458 / wrkq:T-07398 / wrkq:T-08407 / wrkq:T-08564 revision 4 architecture approval, 2026-09-17; T-14472 r4 launch-carried initial text approved by Daedalus in reply to EN-60529, 2026-11-23
 source:
+  - wrkq:T-14472
+  - architecture/records/invariants/hrc-runtime.mobile-exact-scope-provisioning.yaml
   - wrkq:T-13458
   - wrkq:T-12316
   - crates/hrc-native/src/server/broker/start.rs
@@ -86,6 +91,7 @@ source:
   - docs/federation-peer-protocol.md
 required_tests:
   - python3 crates/hrc-native/e2e/runtimes_start.py --deferred-message-only (T-12316 deferred claim binding and pinned-turn replay)
+  - wrkq:T-14472 r4 isolated real-harness gates for launch-carried initial text, replay, non-opt-in compatibility, and subsequent steer
   - just verify
   - wrkq:T-07398 parser refusal for reserved-member pins and homes
   - wrkq:T-07398 exact-first and suffix-first family placement parity across restart
@@ -99,7 +105,8 @@ reopen_when: >
   The mobile base set, fixed roster suffix list, reserved-family placement
   derivation, receiver declaration-observation authority, explicit provision
   directive admission, peer rosterStart contract,
-  materialization mode, awaiting-first-turn or FREE semantics, atomic intent
+  materialization mode, launch-carried initial text or its delivery receipt,
+  awaiting-first-turn or FREE semantics, atomic intent
   ownership, full-chain replay ownership, federation response compatibility, or
   home-local idempotency ownership changes.
 supersedes: []
