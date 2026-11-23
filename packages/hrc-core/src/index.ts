@@ -331,6 +331,8 @@ export type {
   StartRuntimeResponse,
   ExactStartRuntimeRequest,
   StartRuntimeRosterClaim,
+  StartRuntimeInitialPrompt,
+  ClaimStartColdBirth,
   SuffixStartRuntimeRequest,
   ConfirmStartRuntimeRequest,
   HealthResponse,

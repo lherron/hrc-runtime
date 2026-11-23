@@ -102,7 +102,64 @@ pub async fn handle(server: &Shared, body: Value) -> Result<Response, ApiError> 
         }
     };
     let claim = Claim::parse(&body, policy)?;
+    // hrc-runtime.submission-admission-pipeline: caller text bound for a
+    // harness holds the admission lease from door entry, before replay, claim
+    // or any claim effect, through the birth's routing. A promptless claim
+    // (no coldBirth) takes none, as before.
+    let _admission = match claim.cold_birth {
+        true => Some(crate::server::lifecycle::admission_lease(server)?),
+        false => None,
+    };
     claim.start_routed(server).await
+}
+
+/// claim-and-start `coldBirth` (T-14472): the invoke door's object and
+/// vocabulary, append-to-priming only. Opting in requires a prompt to deliver.
+fn cold_birth(body: &Value, intent: &Value) -> Result<bool, ApiError> {
+    let Some(c) = body.get("coldBirth") else {
+        return Ok(false);
+    };
+    let field = |f: &str| Some(json!({"field":f}));
+    let Some(map) = c.as_object() else {
+        return Err(ApiError::bad(
+            "coldBirth must be an object",
+            field("coldBirth"),
+        ));
+    };
+    if let Some(key) = map.keys().find(|k| *k != "promptMode") {
+        return Err(ApiError::bad(
+            format!("coldBirth.{key} is not a recognized field"),
+            field(&format!("coldBirth.{key}")),
+        ));
+    }
+    match map.get("promptMode").and_then(Value::as_str) {
+        Some("append-to-priming") => {}
+        Some("replace-priming") => {
+            return Err(ApiError::bad(
+                "claim-and-start appends initialPrompt to priming; coldBirth.promptMode \"replace-priming\" is not served",
+                field("coldBirth.promptMode"),
+            ));
+        }
+        Some(_) => {
+            return Err(ApiError::bad(
+                "coldBirth.promptMode must be \"append-to-priming\"",
+                field("coldBirth.promptMode"),
+            ));
+        }
+        None => {
+            return Err(ApiError::bad(
+                "coldBirth.promptMode is required",
+                field("coldBirth.promptMode"),
+            ));
+        }
+    }
+    if !has_prompt(intent) {
+        return Err(ApiError::bad(
+            "coldBirth requires a non-empty runtimeIntent.initialPrompt",
+            field("runtimeIntent.initialPrompt"),
+        ));
+    }
+    Ok(true)
 }
 
 /// The ensure shape (parseEnsureRuntimeRequest): auto-rotate a stale session,
@@ -288,6 +345,8 @@ struct Claim {
     restart: Option<&'static str>,
     summon_intent: Option<&'static str>,
     hash: String,
+    /// coldBirth append-to-priming: deliver initialPrompt on the call that births.
+    cold_birth: bool,
     /// The parsed request as a peer home receives it.
     canonical: Value,
 }
@@ -352,6 +411,7 @@ impl Claim {
         };
         parse::require_harness(&body["runtimeIntent"])?;
         let intent = parse::runtime_intent(&body["runtimeIntent"]);
+        let cold_birth = cold_birth(body, &intent)?;
         let scope = Scope::parse(&session_ref, field)?;
         let confirmed_task_id = if policy == "confirm" {
             if summon_intent != Some("implicit") {
@@ -411,6 +471,7 @@ impl Claim {
             restart,
             summon_intent,
             hash,
+            cold_birth,
             canonical: forwarded,
         })
     }
@@ -549,23 +610,39 @@ impl Claim {
         };
         let host = session["hostSessionId"].as_str().unwrap_or("").to_owned();
         let mut intent = localize(&self.intent, &session);
-        // T-12316: on this claim-and-start door initialPrompt binds the claim
-        // request/hash only; the door never delivers it. Its caller follows
-        // with a pinned /v1/turns call. That two-step shape is this door's
-        // contract, not how a cold seat must be started on a message: see
-        // README "Turn doors" for submissions/invoke with coldBirth.
+        // T-12316: without coldBirth, initialPrompt binds the claim
+        // request/hash only and the door never delivers it; its caller follows
+        // with a pinned /v1/turns call. With coldBirth (T-14472) the prompt
+        // rides a minted run into the birth, and only when this call's start
+        // births inside the continuity gate.
         // Keep self.intent intact so a changed-message retry still conflicts.
         intent.as_object_mut().unwrap().remove("initialPrompt");
-        let started = attached::start(
+        let run_id = format!("run-{}", uuid::Uuid::new_v4());
+        let carry = self.cold_birth.then(|| attached::Carry {
+            prompt: self.intent["initialPrompt"].as_str().unwrap_or(""),
+            run_id: &run_id,
+        });
+        let started = attached::start_carrying(
             server,
             session.clone(),
             intent,
             self.restart == Some("fresh_pty"),
             None,
+            carry,
         )
         .await;
         STARTING.lock().unwrap().remove(&host);
-        let mut started = with_identity(server, started?)?;
+        let (started, delivered) = started?;
+        let mut started = with_identity(server, started)?;
+        if self.cold_birth {
+            started["initialPrompt"] = match delivered {
+                Some(mut evidence) => {
+                    evidence["delivered"] = true.into();
+                    evidence
+                }
+                None => json!({"delivered":false,"reason":"runtime_reused"}),
+            };
+        }
         let scope = session["scopeRef"].as_str().unwrap_or("");
         let (lane, identity) = {
             let db = server.store.lock().unwrap();
@@ -681,6 +758,9 @@ impl Claim {
         started["claim"] = json!({"identity":started["identity"],"slot":self.scope.task,"scopeRef":self.scope.scope_ref,
             "sessionRef":format!("{}/lane:{}", self.scope.scope_ref,self.scope.lane_ref),
             "hostSessionId":started["hostSessionId"],"idempotencyKey":self.key,"replayed":replayed,"conflictPolicy":self.policy});
+        if self.cold_birth {
+            started["initialPrompt"] = json!({"delivered":false,"reason":"self_brokered"});
+        }
         Ok(started)
     }
 

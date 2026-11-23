@@ -124,12 +124,29 @@ Shared notable flags (`run`/`start`): `--force-restart` (replace the runtime wit
 
 2026-11-02 amendment (T-12316, Daedalus EN-42466): the native exact/suffix
 claim-and-start API retains `runtimeIntent.initialPrompt` in its canonical
-request binding, but omits it from the runtime launch. A caller delivers the
-message separately through `/v1/turns` using the claimed host session and the
-same action key. Every explicit repeat must call claim-and-start first:
+request binding. Without `coldBirth`, it omits the prompt from the runtime
+launch, and the caller delivers the message separately through `/v1/turns`
+using the claimed host session and the same action key. Every explicit repeat must call claim-and-start first:
 changing the message under that key refuses before delivery. The host-session
 ensure API still refuses `initialPrompt`. Claim and turn admission are separate
 operations; claim success alone proves no message delivery.
+
+2026-11-23 amendment (T-14472): a claim-and-start request that carries
+`coldBirth: {"promptMode": "append-to-priming"}` and a non-empty
+`runtimeIntent.initialPrompt` delivers the prompt appended to the launch
+priming, on the call whose start births the runtime, as a run-carrying birth
+inside the continuity gate. `promptMode: "replace-priming"` is refused
+(`malformed_request`), and so is `coldBirth` without a prompt. The request
+takes the turn-admission lease at door entry, before replay or claim, so a
+draining daemon refuses `server_draining` with no claim effect; retry with the
+same key. The response then carries an `initialPrompt` block:
+`{"delivered": true, "runId", "submissionId"}` (the launch run's broker
+submission id, positive delivery evidence); `{"delivered": false, "reason":
+"runtime_reused"}` when this call's start found the runtime already live (an
+identical replay, or a concurrent birth that won the gate) and delivered
+nothing; or `{"delivered": false, "reason": "self_brokered"}` on the
+self-brokered participant branch, which never delivers. `claim.replayed` still
+tells a replay from a first call. Without `coldBirth` there is no block.
 
 That two-step shape is the claim-and-start contract only. It is not how a cold
 seat must be started on a message. To start a cold seat on a message in one

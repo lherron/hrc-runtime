@@ -607,6 +607,14 @@
     },
     {
       "package": "hrc-core",
+      "symbol": "ClaimStartColdBirth",
+      "kind": "type",
+      "file": "packages/hrc-core/src/http-contracts-dispatch.ts",
+      "hash": "hrc-core|ClaimStartColdBirth|type",
+      "count": 1
+    },
+    {
+      "package": "hrc-core",
       "symbol": "ClearContextRequest",
       "kind": "type",
       "file": "packages/hrc-core/src/http-contracts-runtime.ts",
@@ -4683,6 +4691,14 @@
       "kind": "value",
       "file": "packages/hrc-core/src/selectors.ts",
       "hash": "hrc-core|splitSessionRef|value",
+      "count": 1
+    },
+    {
+      "package": "hrc-core",
+      "symbol": "StartRuntimeInitialPrompt",
+      "kind": "type",
+      "file": "packages/hrc-core/src/http-contracts-dispatch.ts",
+      "hash": "hrc-core|StartRuntimeInitialPrompt|type",
       "count": 1
     },
     {

@@ -142,6 +142,20 @@ export type EnsureRuntimeResponse = {
  * against it so a lost-response retry converges on the SAME slot instead of
  * walking the roster and minting a second brain.
  */
+/** Claim-and-start `coldBirth`: append-to-priming only; `replace-priming` is refused. */
+export type ClaimStartColdBirth = { promptMode: 'append-to-priming' }
+
+/**
+ * Claim-and-start delivery outcome, present only when the request carried
+ * `coldBirth`. `delivered: true` names the launch run and its broker
+ * submission id. `runtime_reused`: this call's start found the runtime live (a
+ * replay, or a concurrent birth won the continuity gate) and delivered
+ * nothing. `self_brokered`: the participant branch, which never delivers.
+ */
+export type StartRuntimeInitialPrompt =
+  | { delivered: true; runId: string; submissionId: string }
+  | { delivered: false; reason: 'runtime_reused' | 'self_brokered' }
+
 export type SuffixStartRuntimeRequest = {
   /** Base session ref (`<scopeRef>/lane:<lane>`); the roster is derived from it. */
   baseSessionRef: string
@@ -156,6 +170,12 @@ export type SuffixStartRuntimeRequest = {
   /** REQUIRED. One key per logical invocation; transport retries reuse it. */
   idempotencyKey: string
   restartStyle?: RestartStyle | undefined
+  /**
+   * Opt in to delivering `runtimeIntent.initialPrompt` (T-14472): appended to
+   * the launch priming on the call whose start births the runtime. Without it
+   * the prompt binds the claim only and is never delivered (T-12316).
+   */
+  coldBirth?: ClaimStartColdBirth | undefined
 }
 
 /**
@@ -183,6 +203,12 @@ export type ExactStartRuntimeRequest = {
   /** REQUIRED. One key per logical invocation; transport retries reuse it. */
   idempotencyKey: string
   restartStyle?: RestartStyle | undefined
+  /**
+   * Opt in to delivering `runtimeIntent.initialPrompt` (T-14472): appended to
+   * the launch priming on the call whose start births the runtime. Without it
+   * the prompt binds the claim only and is never delivered (T-12316).
+   */
+  coldBirth?: ClaimStartColdBirth | undefined
 }
 
 /** Consent-aware roster creation. Old owners reject this policy before mutation.
@@ -251,6 +277,8 @@ export type StartRuntimeResponse = (
   identity?: SessionIdentity | undefined
   /** Present only for claim-and-start requests: `suffix` (T-07118) or `reject` (T-07302). */
   claim?: StartRuntimeRosterClaim | undefined
+  /** Present only when a claim-and-start request carried `coldBirth` (T-14472). */
+  initialPrompt?: StartRuntimeInitialPrompt | undefined
 }
 
 export type LaunchCommandScopedRunBinding = {

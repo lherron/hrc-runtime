@@ -140,6 +140,30 @@ pub async fn start(
     fresh_pty: bool,
     gate: Option<&Mutex<Option<broker::AttachGate>>>,
 ) -> Result<Value, ApiError> {
+    start_carrying(server, session, intent, fresh_pty, gate, None)
+        .await
+        .map(|(started, _)| started)
+}
+
+/// A caller prompt and its minted run (T-14472, claim-and-start coldBirth).
+/// It rides a birth only when this start births inside the continuity gate.
+pub struct Carry<'a> {
+    pub prompt: &'a str,
+    pub run_id: &'a str,
+}
+
+/// `start` that may carry a prompt into the birth it makes. The second value
+/// is the birth's delivery evidence (runId, the launch run's broker
+/// submissionId) when this call's birth carried the prompt, and None when the
+/// start selected a live runtime and delivered nothing.
+pub async fn start_carrying(
+    server: &Shared,
+    session: Value,
+    intent: Value,
+    fresh_pty: bool,
+    gate: Option<&Mutex<Option<broker::AttachGate>>>,
+    carry: Option<Carry<'_>>,
+) -> Result<(Value, Option<Value>), ApiError> {
     // The attached door marks the selected seat operator-attach-pending.
     let attach_door = gate.is_some();
     let host = session["hostSessionId"].as_str().unwrap_or("").to_owned();
@@ -178,16 +202,20 @@ pub async fn start(
     if let Some(rt) = live.filter(|_| !fresh_pty) {
         drop(seat);
         turns::publish_presentation(server, &rt.runtime_id, attach_door)?;
-        return start_response(server, &rt.runtime_id);
+        return Ok((start_response(server, &rt.runtime_id)?, None));
     }
-    let run_id = format!("run-{}", Uuid::new_v4());
+    // Only a birth inside the gate carries the prompt (T-12418 single birth).
+    let (prompt, run_id) = match &carry {
+        Some(c) => (c.prompt, c.run_id.to_owned()),
+        None => ("", format!("run-{}", Uuid::new_v4())),
+    };
     let attach = gate.and_then(|g| g.lock().unwrap().take());
     let body = broker::birth(
         server,
         broker::Birth {
             session,
             intent,
-            prompt: "",
+            prompt,
             run_id: &run_id,
             idempotency: None,
             origin: None,
@@ -205,7 +233,10 @@ pub async fn start(
     if attach_door {
         turns::publish_presentation(server, &runtime_id, true)?;
     }
-    start_response(server, &runtime_id)
+    // A run-carrying birth returns only with the launch run's submission id.
+    let delivered = (!prompt.is_empty())
+        .then(|| json!({"runId":body["runId"],"submissionId":body["submissionId"]}));
+    Ok((start_response(server, &runtime_id)?, delivered))
 }
 
 fn elapsed(since: Instant) -> f64 {
