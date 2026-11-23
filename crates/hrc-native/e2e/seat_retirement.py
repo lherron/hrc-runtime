@@ -27,7 +27,8 @@ E and F are standing seats so retirement never races aging for them.
 
 Ways the Foundry rule (T-13432) could fail, and the check that catches each:
   - another agent's primary matches the rule (agent ignored): 2.D
-  - the rule seat stays a standing_seat (rule never consulted): 2.G.retired
+  - the rule seat is judged on the general named-seat window (rule never
+    consulted): 2.G.retired
   - the rule seat is judged on the task window, not 60 min: 2.H (H is idle
     past 72 s, so a task-window bug retires it)
   - the rule seat asks wrkq for task `primary` and is skipped as
@@ -47,9 +48,10 @@ Checks (no daemon restart: startup reconciliation would judge F first):
     are judged live, never stale
   2 retirement (the first pass, 300 s after boot): A terminated with
     trigger task_completed, B and G with idle_ttl, all droppedContinuation=false,
-    supervisor and children gone; C (busy), D (standing seat) and H (not due)
-    untouched; the tick summary names busy/active_run, standing_seat and
-    not_due skips, and wrkq was asked about A's and B's tasks only
+    supervisor and children gone; C (busy), D and H (not due) untouched; the
+    tick summary names busy/active_run and not_due skips (D, H and the
+    standing seats E and F under the 24 h named-seat window), and wrkq was
+    asked about A's and B's tasks only
   3 continuation kept, for A and G: the session stays active with the same
     continuation key and reuse enabled; the next turn to it births a new
     runtime whose aspc compile request carries that continuation
@@ -102,6 +104,8 @@ def main():
     if root.exists():
         raise SystemExit('root must be fresh: ' + str(root))
     root.mkdir(parents=True)
+    # One directory per run: a later run must not delete an earlier run's evidence.
+    args.artifacts = args.artifacts / root.name
     args.artifacts.mkdir(parents=True, exist_ok=True)
     for stale in [*args.artifacts.glob('daemon-*.log'), args.artifacts / 'summary.json', args.artifacts / 'rows.json']:
         stale.unlink(missing_ok=True)
@@ -297,8 +301,8 @@ def main():
                 status=h_row['status'], idleMsAtPass=h_idle_ms, lastActivityAt=h_activity)
         reasons = tick.get('skippedByReason', {})
         r.check('2.tick-summary', tick.get('retired') == 3 and tick.get('retiredByTrigger') == {'idle_ttl': 2, 'task_completed': 1}
-                and reasons.get('standing_seat') in (1, 3) and (reasons.get('busy', 0) + reasons.get('active_run', 0)) == 1
-                and reasons.get('not_due') == 1 and 'task_state_unavailable' not in reasons and tick.get('tasksQueried') == 2
+                and 'standing_seat' not in reasons and (reasons.get('busy', 0) + reasons.get('active_run', 0)) == 1
+                and reasons.get('not_due') in (2, 4) and 'task_state_unavailable' not in reasons and tick.get('tasksQueried') == 2
                 and tick.get('errors') == 0 and tick.get('idleThresholdHours') == float(IDLE_HOURS), summary=tick)
 
         # == 3. continuation kept; the next turn resumes it ===================
@@ -340,7 +344,7 @@ def main():
         for s in seats.values():
             if s.get('pid') and alive(s['pid']):
                 os.kill(s['pid'], signal.SIGKILL)
-        for pid, _ in descendants_of([str(root), root.name]):
+        for pid, _ in descendants_of([f'{root}/']):
             if pid != os.getpid():
                 try:
                     os.kill(pid, signal.SIGKILL)
@@ -354,7 +358,7 @@ def main():
             dump['hrc_events'] = r.rows("SELECT hrc_seq,ts,event_kind,runtime_id,run_id,payload_json FROM hrc_events "
                                         "WHERE event_kind IN ('runtime.terminated','runtime.stale') ORDER BY hrc_seq")
             (args.artifacts / 'rows.json').write_text(json.dumps(dump, indent=1, default=str) + '\n')
-        remaining = [l for _, l in descendants_of([str(root), root.name])]
+        remaining = [l for _, l in descendants_of([f'{root}/'])]
         r.check('cleanup.no-leftover-processes', not remaining, remaining=remaining)
         if not args.keep:
             shutil.rmtree(root, ignore_errors=True)

@@ -1,13 +1,14 @@
 //! Seat retirement (T-12236, T-13432). A live `task:T-…` seat is retired when
 //! its wrkq task is `completed`, or once it has been idle for
-//! HRC_TASK_SEAT_IDLE_HOURS (default 4). A standing seat named in
-//! [`IDLE_STANDING_SEATS`] is retired once it has been idle for that rule's
-//! window; no wrkq task stands behind it, so idle is its only trigger.
+//! HRC_TASK_SEAT_IDLE_HOURS (default 4). Every other seat, standing or adhoc,
+//! is judged on [`NAMED_SEAT_RULES`]: the first matching rule either names its
+//! idle window or exempts the seat. No wrkq task stands behind a named seat, so
+//! idle is its only trigger.
 //! Retirement is the terminate `hrc runtime terminate --no-drop-continuation`
 //! performs: the session row and its continuation stay, so the next message
 //! resumes the conversation. Busy seats, seats with a run or protected input
-//! in flight, seats a person is attached to read-write, every other standing
-//! seat (other agents' primaries among them) and app scopes are never touched.
+//! in flight, seats a person is attached to read-write, seats whose lifecycle
+//! another owner holds, exempt seats and app scopes are never touched.
 use super::{Shared, control, hrcpty, lease, projection::db};
 use rusqlite::params;
 use serde_json::{Map, Value, json};
@@ -18,10 +19,41 @@ const INTERVAL: Duration = Duration::from_secs(300);
 const DEFAULT_IDLE_HOURS: f64 = 4.0;
 const SOURCE: &str = "hrc-seat-retirement";
 
-/// Standing seats that retire on idle: (agent, task, idle window). Lance
-/// ruling 2026-11-12 (T-13430): an idle Foundry project primary after 60 min.
-const IDLE_STANDING_SEATS: &[(&str, &str, Duration)] =
-    &[("foundry", "primary", Duration::from_secs(60 * 60))];
+const HOUR: u64 = 60 * 60;
+
+/// What a named-seat rule does with a seat it matches.
+#[derive(Clone, Copy)]
+enum Rule {
+    /// Retire once idle for this long.
+    After(Duration),
+    /// Never retire; the str is the skip reason.
+    Never(&'static str),
+}
+
+/// Rules for every seat that is not a task seat: (agent, seat kind, task,
+/// rule), `*` matching anything, first match wins. Lance rulings 2026-11-12
+/// (T-13430: an idle Foundry project primary after 60 min) and 2026-11-23
+/// (named seats after 24 h; Mable's adhoc seats after 48 h; Mable primaries,
+/// Mable's other standing seats and every Vesta seat never).
+#[rustfmt::skip]
+const NAMED_SEAT_RULES: &[(&str, &str, &str, Rule)] = &[
+    ("foundry", "*", "primary", Rule::After(Duration::from_secs(HOUR))),
+    ("mable", "*", "primary", Rule::Never("exempt_mable_primary")),
+    ("mable", "standing", "*", Rule::Never("exempt_mable_standing")),
+    ("mable", "*", "*", Rule::After(Duration::from_secs(48 * HOUR))),
+    ("vesta", "*", "*", Rule::Never("exempt_vesta")),
+    ("*", "*", "*", Rule::After(Duration::from_secs(24 * HOUR))),
+];
+
+/// The first rule matching this agent, seat kind and task.
+fn named_seat_rule(agent: &str, kind: &str, task: &str) -> Rule {
+    let hit = |pattern: &str, value: &str| pattern == "*" || pattern == value;
+    NAMED_SEAT_RULES
+        .iter()
+        .find(|(a, k, t, _)| hit(a, agent) && hit(k, kind) && hit(t, task))
+        .map(|&(_, _, _, rule)| rule)
+        .unwrap_or(Rule::Never("no_rule"))
+}
 
 /// HRC_TASK_SEAT_IDLE_HOURS: a positive number of hours, default 4.
 fn idle_hours() -> f64 {
@@ -36,7 +68,7 @@ fn idle_hours() -> f64 {
 enum Due {
     /// A task seat: its wrkq task's state, then the task idle window.
     Task(String),
-    /// A standing seat from [`IDLE_STANDING_SEATS`]: its task id and window.
+    /// A named seat from [`NAMED_SEAT_RULES`]: its task id and window.
     Idle(String, Duration),
 }
 
@@ -54,15 +86,14 @@ async fn judge(server: &Shared, rt: &db::Rt) -> anyhow::Result<Result<Due, Strin
         )
     };
     let task = identity["taskId"].as_str().unwrap_or_default().to_owned();
-    let due = if let Some(&(_, _, window)) = IDLE_STANDING_SEATS
-        .iter()
-        .find(|(agent, t, _)| identity["agentId"] == *agent && task == *t)
-    {
-        Due::Idle(task, window)
-    } else if kind == "task" {
+    let due = if kind == "task" {
         Due::Task(task)
     } else {
-        return Ok(Err("standing_seat".into()));
+        let agent = identity["agentId"].as_str().unwrap_or_default();
+        match named_seat_rule(agent, kind.as_str().unwrap_or_default(), &task) {
+            Rule::After(window) => Due::Idle(task, window),
+            Rule::Never(reason) => return Ok(Err(reason.into())),
+        }
     };
     if super::controller::external_lifecycle(rt) {
         return Ok(Err("external_lifecycle_owner".into()));
