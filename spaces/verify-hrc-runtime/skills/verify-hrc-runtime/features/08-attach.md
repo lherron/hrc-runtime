@@ -92,8 +92,9 @@ ghostmux kill-surface -t <id> --force
   SIGTERM gives 0).
 - **A no-TTY scope attach hangs, it does not fail.** Always `</dev/null` and `timeout`; the old "rc 2" check is
   tmux-only. While it hangs it is a read-write client.
-- **A read-write client changes the seat** (source-only, 2026-11-16: `broker/seat_retirement.rs:91-98`,
-  `crates/hrc-pty/src/serve.rs:824-840`): seat retirement skips it while attached, typed keystrokes hold
+- **A read-write client changes the seat** (`broker/seat_retirement.rs`, `guard`,
+  and `crates/hrc-pty/src/serve.rs:824-840`): the retire door refuses while a read-write client is attached.
+  Typed keystrokes hold
   back queued broker input until the human is idle, and since 8a94a921 the PTY is sized to the smallest writable
   client (an equal-size tab left `seat screen`'s 98×35 unchanged on 2026-11-16, so that drive did not discriminate).
   Attach to a live seat only read-only (`hrc-pty attach --read-only --socket …` or `--seat <scope> --read-only`), never through `~/.bun/bin/hrc attach`; take descriptors (`~/.bun/bin/hrc attach <rt>`,

@@ -5,7 +5,8 @@ owner_project: hrc-runtime
 scope: policy and runtime authority for automatic seat retirement after the T-14454 cutover
 predicate: >
   The node-local Praesidium seat-retirement module owns seat eligibility,
-  triggers and idle windows. HRC owns runtime admission, protection checks,
+  triggers and idle windows. HRC performs automatic seat retirement only
+  through the retire door. HRC owns runtime admission, protection checks,
   the stopping transition and process teardown. The kernel's unkeyed
   runtime.retire operation reaches only the runtime's home HRC. HRC admits
   only the seat-retirement module principal and scope on POST
@@ -35,6 +36,7 @@ source:
 required_tests:
   - T-14454 r4 projection exit check and overlap rule replay from both retirement sources
   - T-14454 r4 isolated retire-door guards and module authority acceptance
+  - T-14454 r4 deletion of the legacy sweep with continued module retirements after rollout
   - T-14454 r4 live module retirement with continuation kept and policy edit without restart
 last_verified: Pending implementation and rollout evidence.
 reopen_when: Module or HRC authority, locality, runtime activity source, completion authority, guards, continuation disposition or retirement request semantics change.

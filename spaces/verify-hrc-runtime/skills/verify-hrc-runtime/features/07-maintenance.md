@@ -85,13 +85,15 @@ retention: `broker/ledger_prune.rs`, `broker/ledger_prune/retention.rs` and
   (2026-11-16, `T-13633/07-maintenance/drive-extra.txt`). 2026-11-18..22 were all `complete` too, prune `deleted`
   9–145 with `maxWriteHoldMs` 81–740 and retention `maxWriteHoldMs` 53–612 (T-14430). The daemon's session sweep logs
   `session.retention_sweep_complete` (off with `HRC_SESSION_RETENTION_SWEEP_ENABLED=0`).
-- Not the cellar but they terminate HRC runtimes: launchd `com.praesidium.reap-headless-ghostmux` (every 30 min,
-  `-y`) reaps paneless ready runtimes idle more than 12 h (54535197); and native seat retirement (T-12236)
-  logs `runtime.seat_retirement_complete` (the scratch's: `skippedByReason: {standing_seat: 2}`; live: `{attached_client
-  12, busy 3, not_due 7, standing_seat 63}`, 2026-11-16). It terminates `task:` seats wrkq calls completed or idle ≥
-  `HRC_TASK_SEAT_IDLE_HOURS` (4 h) every 300 s, sparing busy, read-write-attached, primary and standing seats,
-  except `foundry`'s `primary`, which retires after 60 min idle since 95bc9188 (T-13432) (source-only, 2026-11-16:
-  `broker/seat_retirement.rs:1-24,91-98`). A live seat that vanished may be either job.
+- The node-local Praesidium `seat-retirement` module decides eligibility,
+  including task completion and idle windows. HRC exposes `POST /v1/runtimes/retire`
+  to the module, checks runtime guards and the last activity fence, and logs
+  `runtime.seat_retired` with `source: seat-retirement-module`.
+  `e2e/seat_retirement.py` drives the door and the separate hrcpty aging pass
+  against a private native daemon.
+- Launchd `com.praesidium.reap-headless-ghostmux` runs every 30 min and reaps
+  eligible tmux-backed Ghostty panes idle more than 30 minutes, with
+  `source: close-headless-ghostmux`. The viewer owns pane teardown.
 
 ## How to get to it
 

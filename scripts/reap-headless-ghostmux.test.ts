@@ -806,8 +806,3 @@ describe('simulated reap outcome presentation', () => {
     )
   })
 })
-
-// Paneless inventory reap (follow-up to the 2026-10-09 idle-runtime report):
-// a live broker whose Ghostty pane is gone is invisible to pane discovery, so
-// the sweep also asks the HRC DB for ready runtimes idle beyond a much longer
-// threshold. The same guards apply; only the idle clock is less aggressive.

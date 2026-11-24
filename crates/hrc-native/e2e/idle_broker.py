@@ -34,8 +34,6 @@ def main():
     p.add_argument('--root', type=Path, default=Path(f'/tmp/h12503-{os.getpid()}'))
     p.add_argument('--artifacts', type=Path, required=True)
     p.add_argument('--keep', action='store_true')
-    p.add_argument('--empty-pass-seconds', type=float, default=305,
-                   help='observe the actual 300s retirement pass before birthing a seat')
     args = p.parse_args()
     binary = args.binary.resolve()
     assert (binary.parent / 'hrc-pty').is_file(), 'build hrc-pty beside rusthrc'
@@ -82,7 +80,7 @@ def main():
                HRC_WRKQ_DB=str(root / 'wrkq.db'), WRKQ_DB=str(root / 'wrkq.db'), HRC_WRKQD_TOKEN_FILE='',
                WRKQD_TOKEN_FILE='', WRKQD_TOKEN='', HRC_PEER_CONFIG_FILE=str(config),
                HRC_EVENT_INGEST_SOCKET=str(root / 'run/ingest.sock'), HRC_ACP_WEBHOOK_URL='',
-               HRC_BROKER_DURABLE_IPC_ENABLED='1', HRC_SQLITE_SLOW_STATEMENT_MS='0', HRC_FIRST_TURN_EVAL_INTERVAL_SECONDS='1', ASP_HOME=str(root / 'asp-home'))
+               HRC_BROKER_DURABLE_IPC_ENABLED='1', HRC_METRICS='0', HRC_SQLITE_SLOW_STATEMENT_MS='0', HRC_FIRST_TURN_EVAL_INTERVAL_SECONDS='1', ASP_HOME=str(root / 'asp-home'))
     r.env = env
     print(f'root {root}\nbinary {binary}\nartifacts {args.artifacts}', flush=True)
     intent = {'placement': {'agentRoot': str(root / PROJECT), 'projectRoot': str(root / PROJECT), 'cwd': str(root / PROJECT),
@@ -91,7 +89,6 @@ def main():
     failure = None
     timings = {}
     try:
-        empty_started = time.monotonic()
         daemon = r.up('1')
         def statements():
             lines = (args.artifacts / 'daemon-1.log').read_text().splitlines()
@@ -112,30 +109,6 @@ def main():
         timings['emptyWatchSeconds'] = 4.2
         timings['emptyWatchQueries'] = len(idle_queries)
         r.check('watchdog.no-empty-scans', not idle_queries, queries=idle_queries)
-
-        # Stay completely empty across the real 300s maintenance boundary.
-        # Do not shorten production's timer or create a test-only feature flag.
-        time.sleep(max(0, args.empty_pass_seconds - (time.monotonic() - empty_started)))
-        traced = []
-        for line in (args.artifacts / 'daemon-1.log').read_text().splitlines():
-            try:
-                traced.append(json.loads(line))
-            except ValueError:
-                pass
-        passes = [row for row in traced if row.get('event') == 'runtime.seat_retirement_complete']
-        r.check('retirement.empty-pass-observed', bool(passes) and all(
-            row['data']['scanned'] == 0 and row['data']['retired'] == 0 for row in passes), passes=passes)
-        if passes:
-            stamp = datetime.datetime.fromisoformat(passes[0]['ts'].replace('Z', '+00:00')).timestamp()
-            window = [row for row in traced if abs(datetime.datetime.fromisoformat(
-                row['ts'].replace('Z', '+00:00')).timestamp() - stamp) < 2]
-            watch_reads = [row for row in window if row.get('event') == 'sqlite.slow_statement'
-                           and 'FROM runtime_first_turn_watch' in row['data']['sql']]
-            timings['emptyRetirementWatchQueries'] = len(watch_reads)
-            (args.artifacts / 'empty-retirement-window.json').write_text(json.dumps(window, indent=1) + '\n')
-            # A nonzero result needs producer attribution, even when the
-            # producer belongs to another task and is left unchanged here.
-            r.check('retirement.no-idle-wake', not watch_reads, reads=watch_reads)
 
         ref = f'agent:{AGENT}:project:{PROJECT}:task:codex-idle-{uuid.uuid4().hex[:8]}/lane:main'
         status, out = r.http('POST', '/v1/sessions/resolve', {'sessionRef': ref, 'create': True, 'summonIntent': 'explicit_local'})

@@ -13,7 +13,10 @@ This record does two things:
 
 **RULED (Lance, 2026-11-01):** the separation into three systems was made for ownership boundaries; those pay on the write side and never bought a reader anything — unify the document. Handoffs belong to the seat and move to HRC, durable. Agents stay in `var/agents` and are represented, not moved. hcs is renamed **workstream**; a seat decides when its thread becomes one. c2 is Lance's own workflow; a seat's open questions are a generic capability (`seat.asks`, T-12239). For r2: the document is **hosted inside rusthrc**; **remote seats are in revision one**; **M5 (the wrkq extension register) is approved** as a wrkq contract change. Whether to build at all remains open (§7).
 
-## 1. Today, verified 2026-11-01
+## 1. Historical baseline, verified 2026-11-01
+
+T-14454 moved seat retirement policy to the Praesidium seat-retirement module.
+HRC serves the module through its retire door.
 
 ### 1.1 Documents and kernels
 

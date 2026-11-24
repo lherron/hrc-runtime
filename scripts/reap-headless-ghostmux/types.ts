@@ -32,21 +32,6 @@ export type DiscoveredPane = Pane & {
 export const HEADLESS_PANE_ROLE = 'headless-agent-pane'
 export const MIN_IDLE_MINUTES = 30
 export const MIN_IDLE_MS = MIN_IDLE_MINUTES * 60 * 1000
-// Runtimes with no Ghostty pane are found from the HRC inventory instead, and
-// get a far longer idle clock: nobody can see them idling, so the 30-minute
-// viewer cadence would reap seats an operator may still return to.
-export const PANELESS_MIN_IDLE_HOURS = 12
-export const PANELESS_MIN_IDLE_MS = PANELESS_MIN_IDLE_HOURS * 60 * 60 * 1000
-// hrcpty task seats (`:task:T-…`) are reaped after 4 hours idle, whether or not a
-// viewer pane shows them (Lance, 2026-11-05, T-12500). Only `T-…` task seats
-// qualify: primaries and placement homes (minisvc, hrcdev) never do.
-export const HRCPTY_MIN_IDLE_HOURS = 4
-export const HRCPTY_MIN_IDLE_MS = HRCPTY_MIN_IDLE_HOURS * 60 * 60 * 1000
-// The inventory pre-filter must list everything any rule could reap; skipReasons
-// then applies each runtime's own threshold.
-export const PANELESS_CANDIDATE_MIN_IDLE_MS = Math.min(PANELESS_MIN_IDLE_MS, HRCPTY_MIN_IDLE_MS)
-export const PANELESS_PANE_ID = 'no-pane'
-
 export type PaneStatus = Pane & {
   identity?: SessionIdentity | undefined
   agent: string

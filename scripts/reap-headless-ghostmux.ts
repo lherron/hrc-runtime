@@ -17,12 +17,9 @@ import {
   statusColor,
 } from './reap-headless-ghostmux/eligibility'
 import {
-  listPanelessTargets,
   listPanes,
-  panelessCandidatesSql,
   queryStatuses,
   selectHeadlessPanes,
-  selectPanelessTargets,
   statusSql,
 } from './reap-headless-ghostmux/panes'
 import {
@@ -37,14 +34,9 @@ import { classifyReapExec, isAlreadyTerminatedError, sendReap } from './reap-hea
 import {
   type DiscoveredPane,
   HEADLESS_PANE_ROLE,
-  HRCPTY_MIN_IDLE_HOURS,
-  HRCPTY_MIN_IDLE_MS,
   MIN_IDLE_MINUTES,
   MIN_IDLE_MS,
   type Options,
-  PANELESS_CANDIDATE_MIN_IDLE_MS,
-  PANELESS_MIN_IDLE_HOURS,
-  PANELESS_MIN_IDLE_MS,
   type PaneStatus,
   color,
 } from './reap-headless-ghostmux/types'
@@ -113,9 +105,7 @@ function printStatus(
   })
 }
 
-type Candidate = { status: PaneStatus; source: string }
-
-async function confirm(eligibleStatuses: Candidate[], options: Options): Promise<void> {
+async function confirm(eligibleStatuses: PaneStatus[], options: Options): Promise<void> {
   if (eligibleStatuses.length === 0) return
   if (options.dryRun) {
     console.log()
@@ -289,46 +279,22 @@ async function sweep(options: Options): Promise<number> {
 
   const panes = timePhase('discover', () => listPanes(options))
   const statuses = timePhase('query-status', () => queryStatuses(panes, options))
-  // Runtimes whose Ghostty pane is gone never reach pane discovery; find them
-  // in the HRC inventory and hold them to the longer paneless idle clock
-  // (hrcpty task seats keep their own 4 h clock, so list from the shorter one).
-  const paneRuntimeIds = new Set(statuses.map((status) => status.runtimeId).filter(Boolean))
-  const panelessTargets = timePhase('discover-paneless', () =>
-    listPanelessTargets(options, PANELESS_CANDIDATE_MIN_IDLE_MS, paneRuntimeIds)
-  )
-  const panelessStatuses = timePhase('query-status-paneless', () =>
-    queryStatuses(panelessTargets, options)
-  )
-  const eligibleStatuses: Candidate[] = [
-    ...statuses
-      .filter((status) => isQuitEligible(status, MIN_IDLE_MS))
-      .map((status) => ({ status, source: 'close-headless-ghostmux' })),
-    ...panelessStatuses
-      .filter((status) => isQuitEligible(status, PANELESS_MIN_IDLE_MS))
-      .map((status) => ({ status, source: 'reap-paneless-inventory' })),
-  ]
+  const eligibleStatuses = statuses.filter((status) => isQuitEligible(status, MIN_IDLE_MS))
   timePhase('print-status', () => {
     printHeader(options)
     printStatus(statuses, 'Matched panes', 'No matching panes.', MIN_IDLE_MS)
-    console.log()
-    printStatus(
-      panelessStatuses,
-      `Paneless runtimes idle >${HRCPTY_MIN_IDLE_HOURS}h (hrcpty task seats) or >${PANELESS_MIN_IDLE_HOURS}h`,
-      `No paneless runtimes idle >${HRCPTY_MIN_IDLE_HOURS}h.`,
-      PANELESS_MIN_IDLE_MS
-    )
   })
   // The user-perceived "how long until I see the list" figure: everything up to
   // and including the status table hitting stdout. Everything after this point
   // is post-list work the operator is not waiting on to read the listing.
   timeToListMs = phaseStats.reduce((sum, phase) => sum + phase.ms, 0)
-  const examined = statuses.length + panelessStatuses.length
+  const examined = statuses.length
   if (examined > 0) {
     const skipped = examined - eligibleStatuses.length
     console.log()
     console.log(
       color.dim(
-        `Reap eligibility: ${eligibleStatuses.length} eligible, ${skipped} skipped (requires scope task!=primary, controllerKind=harness-broker, a tmux TUI window (transport=tmux OR headless+leased-tmux+presentation=tmux-tui) OR an hrcpty T-… task seat, runtime=ready, no active run, latest turn=completed (a coalesced turn resolves to its owner run), idle>${MIN_IDLE_MINUTES}m with a pane or >${PANELESS_MIN_IDLE_HOURS}h without; hrcpty task seats idle>${HRCPTY_MIN_IDLE_HOURS}h either way).`
+        `Reap eligibility: ${eligibleStatuses.length} eligible, ${skipped} skipped (requires scope task!=primary, controllerKind=harness-broker, a tmux TUI window (transport=tmux OR headless+leased-tmux+presentation=tmux-tui), runtime=ready, no active run, latest turn=completed (a coalesced turn resolves to its owner run), idle>${MIN_IDLE_MINUTES}m).`
       )
     )
   }
@@ -351,8 +317,8 @@ async function sweep(options: Options): Promise<number> {
   let reapSent = 0
   let reapWarned = 0
   const reapStarted = performance.now()
-  for (const { status, source } of eligibleStatuses) {
-    const result = sendReap(status, options, source)
+  for (const status of eligibleStatuses) {
+    const result = sendReap(status, options, 'close-headless-ghostmux')
     const suffix = `${color.dim(handleFromIdentity(status.scopeRef, status.identity))} ${color.dim(shortRuntime(status.runtimeId))}`
     if (result.kind === 'already-terminated') {
       reapWarned += 1
@@ -421,16 +387,11 @@ if (import.meta.main) {
 
 export {
   HEADLESS_PANE_ROLE,
-  HRCPTY_MIN_IDLE_MS,
   MIN_IDLE_MS,
-  PANELESS_CANDIDATE_MIN_IDLE_MS,
   classifyReapExec,
   isAlreadyTerminatedError,
   isQuitEligible,
-  PANELESS_MIN_IDLE_MS,
-  panelessCandidatesSql,
   selectHeadlessPanes,
-  selectPanelessTargets,
   skipReasons,
   statusSql,
 }

@@ -1,77 +1,11 @@
-//! Seat retirement (T-12236, T-13432). A live `task:T-…` seat is retired when
-//! its wrkq task is `completed`, or once it has been idle for
-//! HRC_TASK_SEAT_IDLE_HOURS (default 4). Every other seat, standing or adhoc,
-//! is judged on [`NAMED_SEAT_RULES`]: the first matching rule either names its
-//! idle window or exempts the seat. No wrkq task stands behind a named seat, so
-//! idle is its only trigger.
-//! Retirement is the terminate `hrc runtime terminate --no-drop-continuation`
-//! performs: the session row and its continuation stay, so the next message
-//! resumes the conversation. Busy seats, seats with a run or protected input
-//! in flight, seats a person is attached to read-write, seats whose lifecycle
-//! another owner holds, exempt seats and app scopes are never touched.
-//! T-14454 moves the policy to the kernel's seat-retirement module, which
-//! retires through [`door`] (`POST /v1/runtimes/retire`). The door and this
-//! sweep share [`guard`], [`close`] and the continuation-keeping retire; the
-//! sweep and its policy stay until rollout step 4 deletes them.
+//! HRC retire door for decisions made by the Praesidium seat-retirement module.
 use super::lifecycle::authorize_principal;
 use super::{ApiError, Shared, control, hrcpty, lease, projection::db};
 use axum::Json;
 use axum::http::{HeaderMap, StatusCode};
 use axum::response::{IntoResponse, Response};
 use rusqlite::params;
-use serde_json::{Map, Value, json};
-use std::collections::{BTreeMap, HashMap};
-use std::time::Duration;
-
-const INTERVAL: Duration = Duration::from_secs(300);
-const DEFAULT_IDLE_HOURS: f64 = 4.0;
-const SOURCE: &str = "hrc-seat-retirement";
-
-const HOUR: u64 = 60 * 60;
-
-/// What a named-seat rule does with a seat it matches.
-#[derive(Clone, Copy)]
-enum Rule {
-    /// Retire once idle for this long.
-    After(Duration),
-    /// Never retire; the str is the skip reason.
-    Never(&'static str),
-}
-
-/// Rules for every seat that is not a task seat: (agent, seat kind, task,
-/// rule), `*` matching anything, first match wins. Lance rulings 2026-11-12
-/// (T-13430: an idle Foundry project primary after 60 min) and 2026-11-23
-/// (named seats after 24 h; Mable's adhoc seats after 48 h; Mable primaries,
-/// Mable's other standing seats and every Vesta seat never).
-#[rustfmt::skip]
-const NAMED_SEAT_RULES: &[(&str, &str, &str, Rule)] = &[
-    ("foundry", "*", "primary", Rule::After(Duration::from_secs(HOUR))),
-    ("mable", "*", "primary", Rule::Never("exempt_mable_primary")),
-    ("mable", "standing", "*", Rule::Never("exempt_mable_standing")),
-    ("mable", "*", "*", Rule::After(Duration::from_secs(48 * HOUR))),
-    ("vesta", "*", "*", Rule::Never("exempt_vesta")),
-    ("*", "*", "*", Rule::After(Duration::from_secs(24 * HOUR))),
-];
-
-/// The first rule matching this agent, seat kind and task, and its id
-/// (`agent:kind:task`, as the table row reads) for the retired line.
-fn named_seat_rule(agent: &str, kind: &str, task: &str) -> (Rule, String) {
-    let hit = |pattern: &str, value: &str| pattern == "*" || pattern == value;
-    NAMED_SEAT_RULES
-        .iter()
-        .find(|(a, k, t, _)| hit(a, agent) && hit(k, kind) && hit(t, task))
-        .map(|&(a, k, t, rule)| (rule, format!("{a}:{k}:{t}")))
-        .unwrap_or((Rule::Never("no_rule"), String::new()))
-}
-
-/// HRC_TASK_SEAT_IDLE_HOURS: a positive number of hours, default 4.
-fn idle_hours() -> f64 {
-    std::env::var("HRC_TASK_SEAT_IDLE_HOURS")
-        .ok()
-        .and_then(|v| v.trim().parse::<f64>().ok())
-        .filter(|h| h.is_finite() && *h > 0.0)
-        .unwrap_or(DEFAULT_IDLE_HOURS)
-}
+use serde_json::{Value, json};
 
 /// Who a seat is: its agent, seat kind and task, as the retired line logs them.
 struct Seat {
@@ -92,28 +26,7 @@ fn seat(server: &Shared, rt: &db::Rt) -> anyhow::Result<Seat> {
     })
 }
 
-/// What the sweep judges a seat on.
-enum Due {
-    /// A task seat: its wrkq task's state, then the task idle window.
-    Task,
-    /// A named seat from [`NAMED_SEAT_RULES`]: its idle window.
-    Idle(Duration),
-}
-
-/// The sweep's policy for a seat: its [`Due`] and rule id, or the exemption.
-fn due(seat: &Seat) -> Result<(Due, String), &'static str> {
-    if seat.kind == "task" {
-        return Ok((Due::Task, "task".into()));
-    }
-    match named_seat_rule(&seat.agent, &seat.kind, &seat.task) {
-        (Rule::After(window), id) => Ok((Due::Idle(window), id)),
-        (Rule::Never(reason), _) => Err(reason),
-    }
-}
-
-/// The guards that keep a runtime from retirement, whatever any policy says,
-/// shared by the sweep and the retire door: the first that holds, as the
-/// door's refusal code.
+/// Return the first retirement guard that holds, as a refusal code.
 async fn guard(server: &Shared, rt: &db::Rt) -> anyhow::Result<Option<&'static str>> {
     if rt.scope_ref.starts_with("app:") {
         return Ok(Some("app_scope"));
@@ -180,157 +93,6 @@ fn close(server: &Shared, rt: &db::Rt) -> anyhow::Result<bool> {
     Ok(true)
 }
 
-/// One pass: judge every live runtime, retire the seats that are due.
-pub async fn retire_seats(server: &Shared) -> anyhow::Result<Value> {
-    let _pass = super::maintenance::SEAT_PASSES.lock().await;
-    let hours = idle_hours();
-    let ttl_ms = (hours * 3_600_000.0) as i64;
-    let rows = {
-        let db = server.store.lock().unwrap();
-        db::runtimes_where(&db.sqlite, "status IN ('ready','busy')")?
-    };
-    let now_ms = chrono::Utc::now().timestamp_millis();
-    let mut tasks: HashMap<String, Result<String, String>> = HashMap::new();
-    let mut skipped: BTreeMap<String, u64> = BTreeMap::new();
-    let mut triggers: BTreeMap<&str, u64> = BTreeMap::new();
-    let (mut errors, mut retired) = (0u64, Vec::new());
-    for rt in &rows {
-        if server
-            .controller
-            .shutting_down
-            .load(std::sync::atomic::Ordering::SeqCst)
-        {
-            break;
-        }
-        if let Some(code) = guard(server, rt).await? {
-            // The sweep's summary keeps naming a not-ready seat by its status.
-            let reason = if code == "not_ready" {
-                rt.status.clone()
-            } else {
-                code.into()
-            };
-            *skipped.entry(reason).or_default() += 1;
-            continue;
-        }
-        let seat = seat(server, rt)?;
-        let (due, rule) = match due(&seat) {
-            Ok(due) => due,
-            Err(reason) => {
-                *skipped.entry(reason.into()).or_default() += 1;
-                continue;
-            }
-        };
-        let idle_ms = rt
-            .last_activity_at
-            .as_deref()
-            .and_then(db::parse_ms)
-            .map(|at| now_ms - at);
-        let idle_for = |ms: i64| idle_ms.is_some_and(|idle| idle >= ms);
-        let task = seat.task.clone();
-        let (state, trigger) = match due {
-            Due::Idle(window) => {
-                if !idle_for(window.as_millis() as i64) {
-                    *skipped.entry("not_due".into()).or_default() += 1;
-                    continue;
-                }
-                (None, "idle_ttl")
-            }
-            Due::Task => {
-                if !tasks.contains_key(&task) {
-                    let state = server
-                        .wrkq
-                        .request("wrkq.task.show", json!({"task":task}))
-                        .await
-                        .map_err(|e| format!("{e:#}"))
-                        .and_then(|v| {
-                            v["state"]
-                                .as_str()
-                                .map(str::to_owned)
-                                .ok_or_else(|| "wrkq.task.show answered no state".to_owned())
-                        });
-                    tasks.insert(task.clone(), state);
-                }
-                let state = tasks[&task].clone();
-                let trigger = if state.as_deref() == Ok("completed") {
-                    "task_completed"
-                } else if idle_for(ttl_ms) {
-                    "idle_ttl"
-                } else {
-                    *skipped
-                        .entry(
-                            if state.is_err() {
-                                "task_state_unavailable"
-                            } else {
-                                "not_due"
-                            }
-                            .into(),
-                        )
-                        .or_default() += 1;
-                    continue;
-                };
-                (state.ok(), trigger)
-            }
-        };
-        let Some(_write) = server.owner_writes.enter() else {
-            break;
-        };
-        if !close(server, rt)? {
-            *skipped.entry("runtime_changed".into()).or_default() += 1;
-            continue;
-        }
-        let mut line = Map::new();
-        line.insert("runtimeId".into(), rt.runtime_id.as_str().into());
-        line.insert("scopeRef".into(), rt.scope_ref.as_str().into());
-        line.insert("agentId".into(), seat.agent.as_str().into());
-        line.insert("kind".into(), seat.kind.as_str().into());
-        line.insert("taskId".into(), task.as_str().into());
-        line.insert("trigger".into(), trigger.into());
-        line.insert("rule".into(), rule.into());
-        line.insert("taskState".into(), state.into());
-        line.insert("idleMs".into(), idle_ms.into());
-        line.insert("source".into(), SOURCE.into());
-        match control::retire(server, rt, trigger, SOURCE).await {
-            Ok(dropped) => {
-                line.insert("droppedContinuation".into(), dropped.into());
-                *triggers.entry(trigger).or_default() += 1;
-                super::stderr_json(
-                    "info",
-                    "sweep",
-                    "runtime.seat_retired",
-                    Value::Object(line.clone()),
-                );
-                retired.push(Value::Object(line));
-            }
-            Err(e) => {
-                errors += 1;
-                line.insert("error".into(), e.message.clone().into());
-                super::stderr_json(
-                    "warn",
-                    "sweep",
-                    "runtime.seat_retire_failed",
-                    Value::Object(line),
-                );
-            }
-        }
-        drop(_write);
-        // This iteration passed close(): its stopping-state transaction
-        // committed even if retire subsequently failed. Empty/skipped passes
-        // never reach this notification.
-        server.ledger_committed();
-    }
-    let skipped_total: u64 = skipped.values().sum();
-    Ok(json!({
-        "scanned": rows.len(),
-        "retired": retired.len(),
-        "retiredByTrigger": triggers,
-        "skipped": skipped_total,
-        "skippedByReason": skipped,
-        "errors": errors,
-        "idleThresholdHours": hours,
-        "tasksQueried": tasks.len(),
-    }))
-}
-
 /// The only principal the retire door serves (T-14454).
 const MODULE_PRINCIPAL: &str = "agent:seat-retirement";
 const MODULE_SCOPE: &str = "agent:seat-retirement:project:hrc-runtime";
@@ -338,8 +100,8 @@ const MODULE_SOURCE: &str = "seat-retirement-module";
 
 /// `POST /v1/runtimes/retire` (T-14454): the seat-retirement module's door.
 /// It holds no policy: it re-runs [`guard`], fences on the caller's
-/// `expectLastActivityAt`, closes with [`close`] and retires as the sweep does,
-/// keeping the continuation. Every refusal's reason is its error code.
+/// `expectLastActivityAt`, closes with [`close`] and retires with the
+/// continuation kept. Every refusal's reason is its error code.
 pub async fn door(server: &Shared, headers: &HeaderMap, body: &[u8]) -> Result<Response, ApiError> {
     authorize_principal(
         server,
@@ -444,33 +206,4 @@ pub async fn door(server: &Shared, headers: &HeaderMap, body: &[u8]) -> Result<R
                    "droppedContinuation":dropped}),
     )
     .into_response())
-}
-
-/// Every 300 s, the first pass one interval after boot so brokers have
-/// reattached before any seat is disposed.
-pub fn start(server: &Shared) {
-    let server = server.clone();
-    tokio::spawn(async move {
-        loop {
-            tokio::time::sleep(INTERVAL).await;
-            if server
-                .controller
-                .shutting_down
-                .load(std::sync::atomic::Ordering::SeqCst)
-            {
-                return;
-            }
-            match retire_seats(&server).await {
-                Ok(summary) => {
-                    super::stderr_json("info", "sweep", "runtime.seat_retirement_complete", summary)
-                }
-                Err(e) => super::stderr_json(
-                    "warn",
-                    "sweep",
-                    "runtime.seat_retirement_failed",
-                    json!({"error":e.to_string()}),
-                ),
-            }
-        }
-    });
 }

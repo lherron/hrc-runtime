@@ -40,7 +40,6 @@ async fn start_owner_services(server: &Shared) -> Result<()> {
         sweeps::start_retention(server);
         ledger_prune::start(server);
         federation::start_seat_kind_refresh(server);
-        seat_retirement::start(server);
         transcript::start(server);
         let prior = server.lifecycle.admission.snapshot();
         if prior["state"] == "closed" {

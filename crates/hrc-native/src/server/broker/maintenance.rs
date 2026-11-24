@@ -752,18 +752,12 @@ pub async fn tmux_aging(server: &Server) -> std::result::Result<Value, ApiError>
     Ok(response)
 }
 
-/// The hrcpty aging pass and the task-seat retirement pass run one at a time:
-/// otherwise aging probes a seat retirement is tearing down and reports (or
-/// writes) that teardown as its own (T-12236).
-pub(crate) static SEAT_PASSES: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
-
 /// T-12236: the aging pass over hrcpty seats. A seat whose supervisor is gone,
 /// whose broker exited, or whose Claude child exited is reconciled to `stale`
 /// through the lease liveness path (which also ends what is left of the
 /// lease). The supervisor's own answer is the probe, so no age cutoff applies;
 /// a supervisor that runs but does not answer is left alone.
 pub async fn hrcpty_aging(server: &super::Shared) -> std::result::Result<Value, ApiError> {
-    let _pass = SEAT_PASSES.lock().await;
     let all = server.store.lock().unwrap().runtimes_where(
         "status IN ('ready','busy') AND transport='hrcpty'",
         rusqlite::params![],

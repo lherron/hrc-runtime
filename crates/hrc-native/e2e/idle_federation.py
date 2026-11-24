@@ -90,17 +90,6 @@ def main():
             if sql.startswith('SELECT runtime_id,scope_ref,generation,status FROM runtimes WHERE status IN'):
                 out['credentialReconcile'] += 1
         return out
-    def maintenance_wakes():
-        # The existing seat-retirement producer notifies the shared ledger
-        # even when its pass retires zero rows. Its 300 s cadence is outside
-        # this task; followers must still honor that push notification.
-        total = 0
-        for line in (a.artifacts / 'idle-native-idle.log').read_text().splitlines():
-            try:
-                total += json.loads(line).get('event') == 'runtime.seat_retirement_complete'
-            except ValueError:
-                pass
-        return total
     result = {}
     def wait_for(key, previous):
         end = time.monotonic() + 60
@@ -117,7 +106,6 @@ def main():
         time.sleep(.3)
         before = counts.copy()
         sql_before = sql_counts() if a.sql_telemetry else Counter()
-        wakes_before = maintenance_wakes()
         time.sleep(a.quiet_seconds)
         result['quietSeconds'] = a.quiet_seconds
         result['quietRequests'] = dict(counts - before)
@@ -129,13 +117,10 @@ def main():
             assert all(n > 0 for n in sql_before.values()), ('missing startup discriminator', sql_before)
             if not a.baseline:
                 renewals = int(a.quiet_seconds // 300)
-                wakes = maintenance_wakes() - wakes_before
-                result['backgroundMaintenanceWakes'] = wakes
                 measured = result['quietSql']
-                assert measured['policyDiscovery'] == wakes, result
+                assert measured['policyDiscovery'] == 0, result
                 assert measured['credentialReconcile'] == renewals, result
-                # Timer and push may coalesce into one drain if simultaneous.
-                assert max(renewals, wakes) <= measured['historyTail'] <= renewals + wakes, result
+                assert measured['historyTail'] == renewals, result
         if not a.baseline:
             quiet_checkpoints = counts[checkpoint] - before[checkpoint]
             assert quiet_checkpoints == int(a.quiet_seconds // 300), result

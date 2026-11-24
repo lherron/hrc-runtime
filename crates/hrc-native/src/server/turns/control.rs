@@ -496,9 +496,8 @@ pub async fn terminate(server: &Shared, body: Value) -> Result<Response, ApiErro
     terminate_runtime(server, &rt, options).await
 }
 
-/// T-12236 seat retirement: the terminate `hrc runtime terminate
-/// --no-drop-continuation` performs, for a runtime the sweep already closed to
-/// admission. Answers whether the continuation was dropped (never, here).
+/// Terminate with continuation kept after the retire door closes admission.
+/// Returns the continuation disposition for the retire response and log.
 pub(crate) async fn retire(
     server: &Shared,
     rt: &db::Rt,

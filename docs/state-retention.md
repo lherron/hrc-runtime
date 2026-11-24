@@ -458,33 +458,23 @@ filter and never a resume gate forbids. Keyless idle sessions stay `active` and
 stay listed; the projection window already keeps them out of unscoped reads on
 age, which is the actual defect.
 
-### Seat retirement (T-12236, T-13432)
+### Seat retirement (T-14454)
 
-Every 300 s (the first pass 300 s after boot, once brokers have reattached)
-rusthrc retires live task seats and idle Foundry project primaries. A `ready` runtime whose scope names a wrkq
-task (`task:T-<digits>`) is terminated when that task is `completed`
-(`wrkq.task.show`), or when its `last_activity_at` is older than
-`HRC_TASK_SEAT_IDLE_HOURS` (default 4) whatever the task's state. There is no
-other switch.
+The node-local Praesidium `seat-retirement` module owns seat eligibility,
+idle windows and completed-task lookups. It calls the kernel's
+`runtime.retire` operation, which routes to the runtime's home HRC.
 
-A Foundry project primary (agent `foundry`, task `primary`) is terminated when
-its `last_activity_at` is 60 minutes old; it has no wrkq task, so wrkq is never
-asked about it and `task_completed` never applies. The rule is a constant table
-in `seat_retirement.rs` (Lance ruling 2026-11-12, T-13430), with no switch.
+`POST /v1/runtimes/retire` accepts only the module identity. HRC checks the
+runtime is ready and refuses app scopes, externally owned runtimes, active or
+nonterminal runs, protected input and hrcpty seats with a read-write client.
+It fences on the expected activity timestamp and atomically closes admission
+by moving the runtime from `ready` to `stopping`.
 
-It never touches any other `task:primary`, named standing seats (`rca`,
-`minisvc`, `primary-*`, …), app scopes, external lifecycle owners, a seat that is busy or
-has an active run, a nonterminal run or a protected input, or an hrcpty seat
-with a read-write client attached. The seat is first moved `ready` →
-`stopping` by a compare-and-set, so a turn admitted after the scan wins.
-
-Retirement is `hrc runtime terminate --no-drop-continuation`: the
-`runtime.terminated` event carries `reason` (`task_completed` | `idle_ttl`),
-`source: hrc-seat-retirement` and `droppedContinuation: false`; the session
-stays `active` with its continuation, so the next message resumes the same
-conversation in a new runtime. Each retirement logs `runtime.seat_retired`;
-each pass logs `runtime.seat_retirement_complete` with `scanned`, `retired`,
-`retiredByTrigger` and `skippedByReason`.
+HRC keeps the session active and preserves the continuation, so the next
+message resumes the conversation in a new runtime. The `runtime.terminated`
+event records the module's trigger as its reason and `droppedContinuation:
+false`. The `runtime.seat_retired` log also carries the seat identity, rule
+and policy revision. Both records carry `source: seat-retirement-module`.
 
 ### hrcpty aging (T-12236)
 
