@@ -12,13 +12,14 @@
 //! - `reconcile`: reads the key's stored outcome, or answers `unknown` with
 //!   the live head. It never acts.
 //!
-//! Outcomes share door A's [`Replay`] and answer budget. A requested
+//! Outcomes share door A's [`Replay`] and its answer: the door waits for the
+//! outcome, and a repeat or `reconcile` of a running key waits for it too. A requested
 //! `provision.model` the successor does not carry is refused
 //! `model_not_preserved` (T-13968).
 use super::lifecycle::authorize_principal;
 use super::{
     ApiError, Shared, aspc, attached, parse_session_ref, restart,
-    seat_restart::{self, ANSWER_BUDGET, Begin, MODULE_PRINCIPAL, MODULE_SCOPE, SOURCE},
+    seat_restart::{self, Begin, MODULE_PRINCIPAL, MODULE_SCOPE, SOURCE},
     self_restart, start,
 };
 use axum::{
@@ -144,7 +145,6 @@ fn parse(body: &Value) -> Result<Call, ApiError> {
 }
 
 pub async fn door(server: &Shared, headers: &HeaderMap, body: &[u8]) -> Result<Response, ApiError> {
-    let deadline = tokio::time::Instant::now() + ANSWER_BUDGET;
     authorize_principal(
         server,
         headers,
@@ -158,7 +158,7 @@ pub async fn door(server: &Shared, headers: &HeaderMap, body: &[u8]) -> Result<R
     let key = call.key.clone();
     if let Mode::Reconcile = call.mode {
         return match replay.read(&key) {
-            Some(outcome) => seat_restart::settle(outcome, deadline, Some(&key), true).await,
+            Some(outcome) => seat_restart::settle(outcome, true).await,
             None => {
                 let active = head(server, &call.scope, &call.lane)?.map(|s| active(&s));
                 Ok(Json(json!({"outcome":"unknown","idempotencyKey":key,"scopeRef":call.scope,"laneRef":call.lane,"active":active})).into_response())
@@ -169,7 +169,7 @@ pub async fn door(server: &Shared, headers: &HeaderMap, body: &[u8]) -> Result<R
     request.as_object_mut().unwrap().remove("idempotencyKey");
     request["door"] = "force-new-session".into();
     if let Begin::Existing(outcome) = replay.begin(&key, &request)? {
-        return seat_restart::settle(outcome, deadline, Some(&key), true).await;
+        return seat_restart::settle(outcome, true).await;
     }
     let (tx, rx) = watch::channel(None);
     let task = server.clone();
@@ -179,7 +179,7 @@ pub async fn door(server: &Shared, headers: &HeaderMap, body: &[u8]) -> Result<R
         task.seat_restart.store(&key, outcome.clone());
         tx.send_replace(Some(outcome));
     });
-    seat_restart::settle(rx, deadline, Some(&key), false).await
+    seat_restart::settle(rx, false).await
 }
 
 fn head(server: &Shared, scope: &str, lane: &str) -> Result<Option<Value>, ApiError> {

@@ -16,18 +16,20 @@ predicate: >
   Only that turn's committed, non-retained terminal claims it, once, including
   a terminal that landed before insertion. HRC owns armed and executing state
   and the kernel projects it. Armed intents are volatile on daemon loss.
-  The module doors answer within 20 seconds of entry, with the result or
-  pending while the work completes. A first turn joins priming when the
+  The module doors answer with the outcome and never answer pending. The work
+  runs to completion even if the caller's connection drops, and a repeat or
+  reconcile of a running key waits for its outcome. A first turn joins priming when the
   restart births the successor, and is otherwise submitted as an ordinary
   turn; it is never dropped.
   Force-new-session and keyed cold restart replay a stored outcome by key, and
   read-only reconcile never starts or rotates a seat. Launching a committed
-  successor does not rotate it. ACP never exposes pending to the installed
-  phone as a success or a definite refusal.
+  successor does not rotate it. ACP never exposes a call whose outcome it did
+  not read to the installed phone as a success or a definite refusal.
   An HRC crash inside a request gets no special handling.
 authority: >
   Lance's 2026-11-24 restart policy, ACP gateway boundary, exclusion of armed
-  intent persistence, and his ruling that stopped review and removed
+  intent persistence, his 2026-11-24 ruling that the doors answer with the
+  outcome and never pending (wrkq:T-14496), and his ruling that stopped review and removed
   crash-recovery handling ("'An hrc crash' is not something we should be
   building thousands of workarounds for") in wrkq:T-14486. The build spec is
   r9. Daedalus's approval of r8 (EN-60829) is superseded where r8 exceeded r9.
@@ -36,6 +38,7 @@ source:
   - wrkq:T-14488
   - wrkq:T-14489
   - wrkq:T-14491
+  - wrkq:T-14496
   - architecture/records/invariants/hrc-runtime.self-restart-turn-boundary.yaml
   - architecture/records/invariants/hrc-runtime.mobile-exact-scope-provisioning.yaml
   - crates/hrc-native/src/server/lifecycle/self_restart.rs
@@ -53,8 +56,8 @@ required_tests:
   - T-14486 r9 live Loggia and mobile cutover and bare-door refusal acceptance
 last_verified: Pending implementation and rollout evidence.
 reopen_when: >
-  Module or owner authority, turn-terminal identity, pending and executing
-  semantics, replay, or the accepted restart scope changes.
+  Module or owner authority, turn-terminal identity, armed and executing
+  semantics, answer timing, replay, or the accepted restart scope changes.
 supersedes: []
 superseded_by: []
 design_review: >

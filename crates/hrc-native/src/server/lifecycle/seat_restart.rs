@@ -9,9 +9,10 @@
 //! - `turn_end` on a busy seat arms a module intent in self-restart's map
 //!   (one intent per host, same observer); its terminal runs `now` with
 //!   `force`, fenced at the armed generation. An idle seat runs `now`.
-//! - The door answers within [`ANSWER_BUDGET`] of entry, with the outcome or
-//!   `pending` while its task finishes. A keyed outcome is kept in
-//!   [`Replay`] and returned to a repeat or a `reconcile` read.
+//! - The door answers with the outcome. The work runs in its own task, so a
+//!   dropped connection never stops a restart part-way through. A keyed
+//!   outcome is kept in [`Replay`]; a repeat or a `reconcile` read waits for
+//!   it while the key's work is still running, then answers it `replayed`.
 //!
 //! Armed intents and stored outcomes live in memory: a daemon restart drops
 //! them (Lance, T-14486).
@@ -39,8 +40,6 @@ use tokio::sync::watch;
 pub const MODULE_PRINCIPAL: &str = "agent:seat-restart";
 pub const MODULE_SCOPE: &str = "agent:seat-restart:project:hrc-runtime";
 pub const SOURCE: &str = "seat-restart-module";
-/// The kernel's served-operation cap is 30 s; the door answers inside it.
-pub const ANSWER_BUDGET: Duration = Duration::from_secs(20);
 /// A finished outcome stays readable at least this long after it is stored.
 const RETENTION: Duration = Duration::from_secs(30 * 60);
 
@@ -109,32 +108,24 @@ impl Replay {
     }
 }
 
-/// Await an outcome until `deadline`, else answer 202 `pending`.
+/// Wait for an outcome and answer it.
 pub async fn settle(
     mut outcome: watch::Receiver<Option<Outcome>>,
-    deadline: tokio::time::Instant,
-    key: Option<&str>,
     replayed: bool,
 ) -> Result<Response, ApiError> {
-    let settled = tokio::time::timeout_at(deadline, outcome.wait_for(Option::is_some)).await;
-    match settled {
-        Ok(Ok(value)) => match value.clone().unwrap() {
-            Ok(mut body) => {
-                if replayed {
-                    body["replayed"] = true.into();
-                }
-                Ok(Json(body).into_response())
-            }
-            Err(error) => Err(error),
-        },
-        _ => {
-            let mut body = json!({"outcome":"pending"});
-            if let Some(key) = key {
-                body["idempotencyKey"] = key.into();
-            }
-            Ok((StatusCode::ACCEPTED, Json(body)).into_response())
-        }
+    let value = outcome.wait_for(Option::is_some).await.map_err(|_| {
+        ApiError::domain(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "internal_error",
+            "the restart task ended without an outcome",
+            None,
+        )
+    })?;
+    let mut body = value.clone().unwrap()?;
+    if replayed {
+        body["replayed"] = true.into();
     }
+    Ok(Json(body).into_response())
 }
 
 enum When {
@@ -275,7 +266,6 @@ fn parse(body: &Value) -> Result<(Option<Call>, Option<String>), ApiError> {
 }
 
 pub async fn door(server: &Shared, headers: &HeaderMap, body: &[u8]) -> Result<Response, ApiError> {
-    let deadline = tokio::time::Instant::now() + ANSWER_BUDGET;
     authorize_principal(
         server,
         headers,
@@ -289,7 +279,7 @@ pub async fn door(server: &Shared, headers: &HeaderMap, body: &[u8]) -> Result<R
     let Some(call) = call else {
         let key = key.unwrap();
         return match replay.read(&key) {
-            Some(outcome) => settle(outcome, deadline, Some(&key), true).await,
+            Some(outcome) => settle(outcome, true).await,
             None => Ok(Json(json!({"outcome":"unknown","idempotencyKey":key})).into_response()),
         };
     };
@@ -298,7 +288,7 @@ pub async fn door(server: &Shared, headers: &HeaderMap, body: &[u8]) -> Result<R
         let mut request = value.clone();
         request.as_object_mut().unwrap().remove("idempotencyKey");
         if let Begin::Existing(outcome) = replay.begin(key, &request)? {
-            return settle(outcome, deadline, Some(key), true).await;
+            return settle(outcome, true).await;
         }
     }
     let task = server.clone();
@@ -310,7 +300,7 @@ pub async fn door(server: &Shared, headers: &HeaderMap, body: &[u8]) -> Result<R
         }
         tx.send_replace(Some(outcome));
     });
-    settle(rx, deadline, key.as_deref(), false).await
+    settle(rx, false).await
 }
 
 async fn run(server: &Shared, call: Call) -> Outcome {
