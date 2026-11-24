@@ -18,7 +18,7 @@ python3 crates/hrc-native/e2e/n2_restart_self.py \
 
 The driver holds a real model turn in a Bash tool behind a file gate. The
 ordinary `hrc restartme --handoff` command uses that owned runtime's credential.
-Missing and consumed handoffs are refused; arm/cancel preserves the generation;
+A missing handoff is refused; arm/cancel preserves the generation;
 arming a second turn cannot fire until its gate opens and its terminal commits.
 The zero-delay self-restart callback must then rotate the generation and deliver
 exactly one semantic handoff to a fresh runtime. The successor must complete;
