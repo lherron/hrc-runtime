@@ -75,8 +75,10 @@ Use `prae describe <type>` and generated `--help` for supported reads.
 
 Rusthrc's `~/praesidium/var/run/hrc/kernel.sock` is an operator ops mount
 only: it exposes no document, ingest, observation types or attach capability.
-Its six operations are `seat.summon`, `seat.restart`, `seat.send`,
+Its five operations are `seat.summon`, `seat.send`,
 `seat.annotation.put`, `seat.annotation.act` and `seat.annotation.delete`.
+Restarting a seat is the `seat-restart` module's (`prae op call restart.cold`
+and friends, T-14486); `hrc restart` from an operator shell still works.
 The legacy `kq.py` observation commands do not read this socket anymore.
 Operator annotation writes retain `updatedBy: system:hrc-kernel`; agent writes
 through `prae` retain their runtime principal. Restarting rusthrc does not

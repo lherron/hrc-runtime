@@ -63,7 +63,7 @@ predicate: >
   seat, runtime and seat.ext types, including annotation bodies, and owns
   seat attachment. Rusthrc retires its document, ingest, read projector,
   hrc observation types and hrc.seat attacher. The hrc provider remains
-  operations-only for seat.summon, seat.restart, seat.send,
+  operations-only for seat.summon, seat.send,
   seat.annotation.put, seat.annotation.act and seat.annotation.delete,
   dispatched by HrcAdapter. Its stateless executor of record refuses every
   operation reaching it; no fallback document or ingest is introduced.

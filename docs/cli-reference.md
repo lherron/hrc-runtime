@@ -547,8 +547,12 @@ does not change kind.
 appear on `seat` nodes in `praesidium:praesidium`. Read seats, runtimes and
 annotations through `prae seat`, `prae runtime` and `prae ext list` (document
 types `seat`, `runtime`, `seat.ext`). Rusthrc's `kernel.sock` retains only
-six operator operations: `seat.summon`, `seat.restart`, `seat.send`,
+five operator operations: `seat.summon`, `seat.send`,
 `seat.annotation.put`, `seat.annotation.act` and `seat.annotation.delete`.
+Seat restarts go through the Praesidium kernel's `seat-restart` module
+(`restart.cold|recap|handoff|force|cancel`, T-14486); its `seat.restart` was
+removed in T-14514. `POST /v1/sessions/restart` admits only that module and
+the operator (`hrc restart` outside an HRC runtime names `agent:lance`).
 It exposes no document, observation types or attach capability; seat attachment
 belongs to the Praesidium kernel.
 

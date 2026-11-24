@@ -571,9 +571,10 @@ class Run:
         proc.wait(timeout=60)
         return proc.returncode
 
-    def http(self, method, path, body=None, timeout=120):
+    def http(self, method, path, body=None, timeout=120, headers=None):
         c = UnixHTTP(self.socket, timeout)
-        c.request(method, path, json.dumps(body) if body is not None else None, {'Content-Type': 'application/json'})
+        c.request(method, path, json.dumps(body) if body is not None else None,
+                  {'Content-Type': 'application/json', **(headers or {})})
         res = c.getresponse()
         raw = res.read().decode()
         c.close()

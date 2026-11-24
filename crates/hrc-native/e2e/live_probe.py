@@ -24,7 +24,7 @@ def main():
     target.mkdir(parents=True, exist_ok=True)
     wire = Wire(options.socket)
     discovery = wire.call('registry.discover')
-    expected = {'seat.summon', 'seat.restart', 'seat.send', 'seat.annotation.put',
+    expected = {'seat.summon', 'seat.send', 'seat.annotation.put',
                 'seat.annotation.act', 'seat.annotation.delete'}
     assert {o['name'] for o in discovery['operations'] if o['provider'] == 'hrc'} == expected
     assert not [t for t in discovery['node_types'] if t['provider'] == 'hrc']

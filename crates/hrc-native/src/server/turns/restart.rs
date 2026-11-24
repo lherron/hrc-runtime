@@ -3,12 +3,15 @@
 //! without mutating; once the rotation commits the answer is 200 with the
 //! launch disposition, so a failed launch is recoverable by any start.
 use super::{
-    ApiError, Shared, attached, context, controller, lease, projection::db,
-    turns::admission::unavailable,
+    ApiError, Shared, attached, context, controller, lease,
+    lifecycle::authorize_principal,
+    projection::db,
+    seat_restart::{MODULE_PRINCIPAL, MODULE_SCOPE},
+    turns::admission::{is_operator, unavailable},
 };
 use axum::{
     Json,
-    http::StatusCode,
+    http::{HeaderMap, StatusCode},
     response::{IntoResponse, Response},
 };
 use serde_json::{Value, json};
@@ -148,6 +151,31 @@ fn conflict(code: &'static str, message: String, detail: Value) -> ApiError {
 }
 
 /// assertIdle: every live runtime on the host reports an idle broker seat.
+/// The bare door admits only the seat-restart module and the operator CLI
+/// (`hrc restart`, which names `agent:lance` in `x-hrc-principal-ref`) (T-14514).
+/// Clients restart through the module's operations; a runtime credential is
+/// never an operator, so a seat's own call is refused here.
+pub fn authorize_caller(server: &Shared, headers: &HeaderMap) -> Result<(), ApiError> {
+    let lifecycle = headers
+        .keys()
+        .any(|key| key.as_str().starts_with("x-hrc-lifecycle-"));
+    let operator = headers
+        .get("x-hrc-principal-ref")
+        .and_then(|v| v.to_str().ok())
+        .map(str::trim)
+        .is_some_and(is_operator);
+    if operator && !lifecycle {
+        return Ok(());
+    }
+    authorize_principal(
+        server,
+        headers,
+        "restart a session",
+        MODULE_PRINCIPAL,
+        MODULE_SCOPE,
+    )
+}
+
 async fn assert_idle(server: &Shared, host: &str) -> Result<(), ApiError> {
     let runtimes: Vec<db::Rt> = {
         let db = server.store.lock().unwrap();

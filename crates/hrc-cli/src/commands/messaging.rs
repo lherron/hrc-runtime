@@ -99,7 +99,15 @@ pub(super) fn restart(args: &Parsed<'_>) -> Result<()> {
     if args.flag("force") {
         body["force"] = true.into();
     }
-    let result = match client.post("/v1/sessions/restart", body) {
+    // The bare restart door admits the operator and the seat-restart module (T-14514).
+    // Inside an HRC runtime this CLI is not the operator; seats restart through the module.
+    let operator = std::env::var_os("HRC_RUNTIME_ID").is_none();
+    let headers: Vec<(String, String)> = if operator {
+        vec![("x-hrc-principal-ref".into(), "agent:lance".into())]
+    } else {
+        Vec::new()
+    };
+    let result = match client.post_headers("/v1/sessions/restart", body, &headers, None) {
         Ok(result) => result,
         Err(mut error) => {
             let Some(domain) = error.domain.as_mut() else {

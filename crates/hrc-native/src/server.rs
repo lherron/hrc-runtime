@@ -662,7 +662,7 @@ async fn dispatch_inner(server: &Shared, request: Request, local_only: bool) -> 
             Err(e) => Err(e),
         }
     } else if method == Method::POST && uri.path() == "/v1/sessions/restart" {
-        match parse_body(&body) {
+        match restart::authorize_caller(server, &headers).and_then(|()| parse_body(&body)) {
             Ok(value) => restart::handle(server, value).await,
             Err(e) => Err(e),
         }

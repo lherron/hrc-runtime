@@ -2,7 +2,6 @@
 pub mod annotation;
 pub mod declarations;
 pub mod owner;
-pub mod restart;
 pub mod send;
 pub mod summon;
 

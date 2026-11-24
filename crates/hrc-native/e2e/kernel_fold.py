@@ -6,6 +6,8 @@ lock failure isolation and retired front-mode refusal. Projection/attach coverag
 moved to praesidium-kernel and campaign T-12361; no live service is modified.
 """
 from foundation import daemon_env
+
+OPERATOR = {'x-hrc-principal-ref': 'agent:lance'}
 import argparse
 import fcntl
 import json
@@ -315,9 +317,9 @@ def main():
             time.sleep(.01)
         r.check('2.caller-logged', bool(caller_logs()), records=caller_logs())
         d = discovery['result']
-        expected = {'seat.summon', 'seat.send', 'seat.restart', 'seat.annotation.put',
+        expected = {'seat.summon', 'seat.send', 'seat.annotation.put',
                     'seat.annotation.act', 'seat.annotation.delete'}
-        r.check('2.exact-six-ops', {o['name'] for o in d['operations'] if o['provider'] == 'seat'} == expected)
+        r.check('2.exact-five-ops', {o['name'] for o in d['operations'] if o['provider'] == 'seat'} == expected)
         r.check('2.no-hrc-types', not [t for t in d['node_types'] if t['provider'] == 'hrc'])
         r.check('2.no-cardo-idempotency', all(not o.get('idempotency') for o in d['operations'] if o['name'] in expected))
         resync = wire(kernel, 'resync')
@@ -391,9 +393,16 @@ def main():
         r.check('3.answer', code == 200 and answer.get('status') == 'accepted', reply=answer)
         r.wait(lambda: r.rows("SELECT 1 FROM hrc_events WHERE run_id=? AND event_kind='turn.completed'", (run_id,)),
                30, 'turn completed')
-        restarted = wire(kernel, 'seat.restart', dict(host_session_id=host, expected_generation=1))
-        r.check('3.restart', restarted.get('ok') and restarted['result']['generation'] == 2
-                and restarted['result']['launch']['status'] == 'started', reply=restarted)
+        # T-14514: the bare restart door admits only the seat-restart module and the operator.
+        for name, hdrs in (('no-principal', None), ('other-agent', {'x-hrc-principal-ref': 'agent:clod'})):
+            code, refused = r.http('POST', '/v1/sessions/restart', {'hostSessionId': host, 'expectedGeneration': 1},
+                                   headers=hdrs)
+            r.check('3.restart-refuses-' + name, code == 403 and refused['error']['code'] == 'not_authorized',
+                    code=code, reply=refused)
+        code, restarted = r.http('POST', '/v1/sessions/restart', {'hostSessionId': host, 'expectedGeneration': 1},
+                                 headers=OPERATOR)
+        r.check('3.restart', code == 200 and restarted['generation'] == 2
+                and restarted['launch']['status'] == 'started', code=code, reply=restarted)
         stale = wire(kernel, 'seat.send', dict(session_ref=ref, host_session_id=host, expected_generation=1, text='stale'))
         r.check('3.stale-context', stale.get('ok') is False and stale['error']['code'] == 'stale_context', reply=stale)
         records = r.rows("SELECT event_kind,payload_json FROM hrc_events WHERE scope_ref=? AND event_kind LIKE 'session.annotation.%'",
@@ -456,12 +465,13 @@ def main():
         r.check('4.recorded-model', first.get('provision', {}).get('model') == alias
                 and first.get('summonDirectives', {}).get('model') == alias, intent=first)
         compiles_before = len(compiles_with_alias())
-        prov_restart = wire(kernel, 'seat.restart', dict(host_session_id=provisioned['result']['host_session_id'],
-                                                         expected_generation=1))
-        r.check('4.restart', prov_restart.get('ok') and prov_restart['result']['launch']['status'] == 'started', reply=prov_restart)
-        assert prov_restart['ok'], prov_restart
+        code, prov_restart = r.http('POST', '/v1/sessions/restart',
+                                    {'hostSessionId': provisioned['result']['host_session_id'], 'expectedGeneration': 1},
+                                    headers=OPERATOR)
+        r.check('4.restart', code == 200 and prov_restart['launch']['status'] == 'started', code=code, reply=prov_restart)
+        assert code == 200, prov_restart
         r.wait(lambda: len(compiles_with_alias()) > compiles_before, 20, 'restart recompiles with the override')
-        second = applied(prov_restart['result']['host_session_id'])
+        second = applied(prov_restart['hostSessionId'])
         r.check('4.restart-keeps-override', second.get('summonDirectives', {}).get('model') == alias, intent=second)
         # HTTP session restart takes model and reasoning_effort overrides (EN-58708).
         def compiles(model, effort=None):
@@ -471,7 +481,7 @@ def main():
                 if d.get('model') == model and (effort is None or d.get('reasoning_effort') == effort):
                     out.append(f)
             return out
-        h2, g2 = prov_restart['result']['host_session_id'], prov_restart['result']['generation']
+        h2, g2 = prov_restart['hostSessionId'], prov_restart['generation']
         def session_state(h):
             row = r.rows("SELECT status,generation FROM sessions WHERE host_session_id=?", (h,))
             return dict(row[0]) if row else None
@@ -480,13 +490,14 @@ def main():
                                  ('node', {'node': 'svc'}, 'provision.node'),
                                  ('effort-value', {'reasoning_effort': 'max'}, 'provision.reasoning_effort')):
             code, refused = r.http('POST', '/v1/sessions/restart', {'hostSessionId': h2, 'expectedGeneration': g2, 'force': True,
-                                                                    'provision': bad})
+                                                                    'provision': bad}, headers=OPERATOR)
             r.check('4.restart-refuses-' + name, code == 400 and json.dumps(refused).find(field) >= 0
                     and session_state(h2) == before, code=code, reply=refused, session=session_state(h2))
         alias2 = alias + '-r'
         n_before = len(compiles(alias2, 'high'))
         code, over = r.http('POST', '/v1/sessions/restart', {'hostSessionId': h2, 'expectedGeneration': g2, 'force': True,
-                                                             'provision': {'model': alias2, 'reasoning_effort': 'high'}})
+                                                             'provision': {'model': alias2, 'reasoning_effort': 'high'}},
+                               headers=OPERATOR)
         r.check('4.restart-override-accepted', code == 200 and over['launch']['status'] == 'started'
                 and over.get('summonDirectives') == {'model': alias2, 'reasoning_effort': 'high'}, code=code, reply=over)
         assert code == 200, over
@@ -497,7 +508,8 @@ def main():
                 and over_intent.get('provision', {}).get('reasoning_effort') == 'high', intent=over_intent)
         n_kept = len(compiles(alias2, 'high'))
         code, plain = r.http('POST', '/v1/sessions/restart', {'hostSessionId': over['hostSessionId'],
-                                                              'expectedGeneration': over['generation'], 'force': True})
+                                                              'expectedGeneration': over['generation'], 'force': True},
+                                headers=OPERATOR)
         r.check('4.plain-restart-keeps-override', code == 200 and plain.get('summonDirectives', {}).get('model') == alias2,
                 code=code, reply=plain)
         r.wait(lambda: len(compiles(alias2, 'high')) > n_kept, 20, 'plain restart recompiles with the kept override')
@@ -507,9 +519,9 @@ def main():
                                                                        firstIntent=first, restartIntent=second), indent=2) + '\n')
 
         # == 9. clear-context owner lifecycle (T-12360 F3) ==================
-        assert restarted['ok'], restarted
-        clear_host = restarted['result']['host_session_id']
-        clear_runtime = restarted['result']['launch']['runtimeId']
+        assert restarted['launch']['status'] == 'started', restarted
+        clear_host = restarted['hostSessionId']
+        clear_runtime = restarted['launch']['runtimeId']
         head = r.rows('SELECT coalesce(max(hrc_seq),0) AS s FROM hrc_events')[0]['s']
         code, rotated = r.http('POST', '/v1/clear-context', {'hostSessionId': clear_host})
         r.check('9.clear-context-ok', code == 200 and rotated['hostSessionId'] != clear_host,

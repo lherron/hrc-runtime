@@ -235,7 +235,6 @@ mod tests {
             ops,
             [
                 "seat.summon",
-                "seat.restart",
                 "seat.send",
                 "seat.annotation.put",
                 "seat.annotation.act",

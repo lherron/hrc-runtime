@@ -35,7 +35,6 @@ pub(crate) fn described(mut declaration: Value) -> Value {
     let seat = "agent:example:project:hrc-runtime:task:example/lane:main";
     let args = match declaration["name"].as_str().expect("operation name") {
         "seat.summon" => json!({"session_ref":seat,"request_id":"example-request"}),
-        "seat.restart" => json!({"host_session_id":"example-host-session","expected_generation":1}),
         "seat.send" => {
             json!({"session_ref":seat,"host_session_id":"example-host-session","expected_generation":1,"text":"Continue the task."})
         }
@@ -56,5 +55,5 @@ pub(crate) fn described(mut declaration: Value) -> Value {
 
 /// The ops-only HRC provider.
 pub fn declarations() -> Value {
-    json!({"provider":"hrc","version":"1","node_families":[],"node_types":[],"operations":[crate::summon::declaration(),crate::restart::declaration(),crate::send::declaration(),crate::annotation::put_declaration(),crate::annotation::act_declaration(),crate::annotation::delete_declaration()]})
+    json!({"provider":"hrc","version":"1","node_families":[],"node_types":[],"operations":[crate::summon::declaration(),crate::send::declaration(),crate::annotation::put_declaration(),crate::annotation::act_declaration(),crate::annotation::delete_declaration()]})
 }

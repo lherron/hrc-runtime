@@ -2,7 +2,6 @@ use hrc_domain::{
     HrcError,
     annotation::{self, AnnotationAct, AnnotationDelete, AnnotationPut},
     owner::{OwnerCall, OwnerReply},
-    restart::Restart,
     send::SeatSend,
     summon::Summon,
 };
@@ -102,22 +101,6 @@ fn refusals_and_transport_failures_keep_their_hrc_code() {
     );
     assert_eq!(refused.details["hrc_code"], "stale_context");
     assert_eq!(owner.calls()[0].1, "/v1/literal-input/by-selector");
-
-    let owner = Scripted::new(vec![Err(HrcError::new(
-        "hrc_unavailable",
-        "connect refused",
-    ))]);
-    let restart = Restart::parse(json!({"host_session_id":"hs","expected_generation":2})).unwrap();
-    assert_eq!(restart.run(&owner).unwrap_err().code, "hrc_unavailable");
-    let calls = owner.calls();
-    assert_eq!(
-        (calls[0].0.as_str(), calls[0].1.as_str()),
-        ("POST", "/v1/sessions/restart")
-    );
-    assert_eq!(
-        calls[0].2,
-        Some(json!({"hostSessionId":"hs","expectedGeneration":2}))
-    );
 }
 
 #[test]

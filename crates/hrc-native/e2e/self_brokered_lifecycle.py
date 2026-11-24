@@ -123,8 +123,8 @@ await runBrokerCli({additionalDrivers:[() => {
         ASP_PROJECT_ROOT_OVERRIDE=str(project),HRC_PROJECT_SEARCH_ROOTS=str(project),
         HRC_WRKQ_DB=str(root/'wrkq.db'),WRKQ_DB=str(root/'wrkq.db'),HRC_ACP_WEBHOOK_URL=''))
     report={'binary':str(r.binary),'binarySha256':hashlib.sha256(r.binary.read_bytes()).hexdigest()}
-    def call(path,body):
-        result=r.http('POST',path,body,timeout=100)
+    def call(path,body,headers=None):
+        result=r.http('POST',path,body,timeout=100,headers=headers)
         if not a.reproduce_claims:
             report.setdefault('sessionInvariants',[]).append({'door':path,'rows':session_invariants(r)})
         return result
@@ -539,7 +539,7 @@ await runBrokerCli({additionalDrivers:[() => {
         assert dropped['generation']==successor['generation']+1
         report['drop']['registration']=registration
         restart=call('/v1/sessions/restart',{'hostSessionId':dropped['host'],
-            'expectedGeneration':dropped['generation'],'force':True})
+            'expectedGeneration':dropped['generation'],'force':True},{'x-hrc-principal-ref':'agent:lance'})
         assert restart[0]==503 and restart[1]['error']['detail']['reason']=='participant_rotation_unsupported',restart
         report['selfRestartRefusal']=restart
         # Backdate Foundry's activity, then let the unmodified 300s pass retire it.
