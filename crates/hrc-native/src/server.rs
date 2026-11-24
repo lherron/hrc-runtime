@@ -28,8 +28,6 @@ mod status_runtime;
 #[path = "server/front/store_lock.rs"]
 mod store_lock;
 
-#[path = "server/broker/acp_bridge.rs"]
-mod acp_bridge;
 #[path = "server/broker/attached.rs"]
 mod attached;
 #[path = "server/broker/broker.rs"]

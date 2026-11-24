@@ -31,8 +31,6 @@ async fn start_owner_services(server: &Shared) -> Result<()> {
         recovery::start(server);
         participants::resume(server)?;
         sweeps::start(server);
-        // The bridge's cursor precedes the watchdog's boot pass.
-        acp_bridge::start(server);
         first_turn::start(server);
         federation::history::start(server);
         reconcile::start(server);

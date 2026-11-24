@@ -36,8 +36,7 @@ predicate: >
   ride the same envelope under the non-seat sentinels hostSessionId hrc-server, scopeRef
   server:hrc, lane main, generation 0, so they appear only to unfiltered or
   explicit scopeRef=server:hrc reads; their meaning is owned by
-  hrc-runtime.daemon-lifecycle-provenance. This observation contract is distinct
-  from and does not amend hrc-runtime.acp-event-bridge.
+  hrc-runtime.daemon-lifecycle-provenance.
 authority: daedalus@agent-control-plane:T-07718 P-00454 rev 4 architecture ruling, 2026-08-29; wrkq:T-08137 server-category amendment (Daedalus approval EN-19426, 2026-09-28); Daedalus approval of wrkq:T-10418 Spec rev 3, task etag 5, 2026-10-06
 source:
   - hrcchat#20461

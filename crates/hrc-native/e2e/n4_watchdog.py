@@ -5,7 +5,7 @@ One fixture store holds armed runtime_first_turn_watch rows already past their
 deadline (rows in the shapes the native broker writes); the owner boots with a
 1s evaluation interval and must trip, stamp, fail the armed run and publish the
 diagnostic bundle. Every expectation below is read off broker/first_turn.rs
-(record_trip, assemble, publish) and acp_bridge.rs. Cases:
+(record_trip, assemble, publish). Cases:
   open-run      run still open, invocation spec with prompt-bearing argv and
                 env (redacted), a fake harness answering --version, and a live
                 private tmux pane (captured)
@@ -16,27 +16,19 @@ diagnostic bundle. Every expectation below is read off broker/first_turn.rs
   disarmed      disarmed row: untouched
   started       first turn already observed: untouched
 
-The ACP event bridge is enabled (loopback webhook, declared
-co-resident node): every trip is posted, the webhook refuses each event's
-first attempt with 503, so delivery must retry once; the open run carries a
-dispatch origin that the envelope must name.
-
 Failure modes: a row tripped early or twice, a trip without its stamp, a run
 re-terminated, a bundle field missing instead of named in failures, a prompt
 written in clear, a pointer published before its directory, and event or
-manifest key-order drift, a bridged event missing or posted without its
-retry, and an emissions ledger that disagrees.
+manifest key-order drift. (The ACP event bridge was removed in T-14516.)
 """
 import argparse
 import datetime
-from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import json
 from pathlib import Path
 import re
 import shutil
 import sqlite3
 import subprocess
-import threading
 import time
 
 from n3_scratch import Scratch
@@ -44,22 +36,6 @@ from n3_scratch import Scratch
 PROJECT = 'n4-t11872w'
 CASES = ['open-run', 'completed-run', 'no-runtime', 'rotated', 'future', 'disarmed', 'started']
 TRIPPED = 4
-POSTS = []
-
-
-class Hook(BaseHTTPRequestHandler):
-    """Refuse each event's first delivery with 503, accept the retry."""
-    def do_POST(self):
-        body = json.loads(self.rfile.read(int(self.headers['content-length'])))
-        seen = sum(1 for p in POSTS if p['body']['event_id'] == body['event_id'])
-        POSTS.append({'path': self.path, 'contentType': self.headers['content-type'], 'attempt': seen + 1,
-                      'body': body})
-        self.send_response(503 if seen == 0 else 200)
-        self.send_header('content-length', '0')
-        self.end_headers()
-
-    def log_message(self, *args):
-        pass
 PROMPT = 'n4 watchdog priming prompt'
 
 
@@ -169,9 +145,6 @@ def observe(s, root):
             'pane': (d / 'pane.txt').read_text() if (d / 'pane.txt').exists() else None,
         }
     out['bundles'] = bundles
-    out['webhook'] = norm(sorted(POSTS, key=lambda p: (p['body']['event_seq'], p['attempt'])))
-    out['emissions'] = norm(s.rows('SELECT event_id, scope_ref, event, emitted_at FROM acp_bridge_emissions '
-                                   'ORDER BY scope_ref'))
     return out
 
 EXPECT_FAILURES = {
@@ -237,13 +210,6 @@ def judge(o, artifacts):
     arts = o['artifacts']
     check('artifacts', len(arts) == len(tripped) and all(a['artifact_kind'] == 'first-turn-missing-bundle' and a['storage_kind'] == 'file-path' for a in arts),
           'one bundle artifact row per trip', arts)
-    posts = o['webhook']
-    ids = sorted({p['body']['event_id'] for p in posts})
-    check('webhook:retry-each', len(posts) == 2 * len(ids) and all(sorted(p['attempt'] for p in posts if p['body']['event_id'] == i) == [1, 2] for i in ids),
-          'every bridged event is refused once (503) and delivered on its retry', [(p['body']['event_id'], p['attempt']) for p in posts])
-    check('webhook:count', len(ids) == len(tripped), 'one bridged event per trip', ids)
-    check('webhook:origin', any('EN-n4' in json.dumps(p['body']) for p in posts), 'the open run\'s dispatch origin is named in its envelope')
-    check('emissions', sorted(e['event_id'] for e in o['emissions']) == ids, 'the emissions ledger records exactly the delivered events', o['emissions'])
     (artifacts / 'checks.json').write_text(json.dumps(checks, indent=1, default=str) + '\n')
     return [c for c in checks if not c['pass']]
 
@@ -258,10 +224,7 @@ def main():
     args = p.parse_args()
     s = Scratch(args.scratch_root, args.installed_release, args.aspd_socket, args.binary, args.artifacts,
                 project_id=PROJECT)
-    hook = ThreadingHTTPServer(('127.0.0.1', 0), Hook)
-    threading.Thread(target=hook.serve_forever, daemon=True).start()
-    s.env.update(HRC_FIRST_TURN_EVAL_INTERVAL_SECONDS='1', HRC_ACP_NODE_ID=PROJECT,
-                 HRC_ACP_WEBHOOK_URL=f'http://127.0.0.1:{hook.server_address[1]}/hrc-events')
+    s.env.update(HRC_FIRST_TURN_EVAL_INTERVAL_SECONDS='1')
     sock = s.root / 'run/n4w-tmux.sock'
     out = {}
     try:
@@ -283,12 +246,10 @@ def main():
             shutil.rmtree(s.root / 'run/artifacts', ignore_errors=True)
             with sqlite3.connect(frozen) as src, sqlite3.connect(s.db_path) as dst:
                 src.backup(dst)
-            POSTS.clear()
             proc = s.up(owner, 'watchdog')
             s.wait(lambda: len(s.rows("SELECT 1 FROM hrc_events WHERE event_kind='first_turn_missing.diagnostics'"))
                    >= TRIPPED, timeout=60, what=f'{owner} diagnostics')
-            s.wait(lambda: len(POSTS) >= 2 * TRIPPED, timeout=30, what=f'{owner} webhook retries')
-            # Two more evaluation intervals: nothing else may trip or post.
+            # Two more evaluation intervals: nothing else may trip.
             time.sleep(2.5)
             s.down(proc)
             out[owner] = observe(s, s.root)
@@ -299,7 +260,6 @@ def main():
         if failed:
             raise SystemExit(1)
     finally:
-        hook.shutdown()
         subprocess.run(['tmux', '-S', str(sock), 'kill-server'], capture_output=True, timeout=5)
         (args.artifacts / 'steps.json').write_text(json.dumps(s.steps, indent=1) + '\n')
         s.cleanup('agent:')
