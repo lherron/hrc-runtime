@@ -234,6 +234,11 @@
     {
       "listener": "main",
       "method": "POST",
+      "route": "/v1/seats/force-new-session"
+    },
+    {
+      "listener": "main",
+      "method": "POST",
       "route": "/v1/runtimes/sweep"
     },
     {

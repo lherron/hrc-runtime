@@ -36,11 +36,11 @@ use std::{
 use tokio::sync::watch;
 
 /// The only principal the door serves (T-14486).
-const MODULE_PRINCIPAL: &str = "agent:seat-restart";
-const MODULE_SCOPE: &str = "agent:seat-restart:project:hrc-runtime";
-const SOURCE: &str = "seat-restart-module";
+pub const MODULE_PRINCIPAL: &str = "agent:seat-restart";
+pub const MODULE_SCOPE: &str = "agent:seat-restart:project:hrc-runtime";
+pub const SOURCE: &str = "seat-restart-module";
 /// The kernel's served-operation cap is 30 s; the door answers inside it.
-const ANSWER_BUDGET: Duration = Duration::from_secs(20);
+pub const ANSWER_BUDGET: Duration = Duration::from_secs(20);
 /// A finished outcome stays readable at least this long after it is stored.
 const RETENTION: Duration = Duration::from_secs(30 * 60);
 
@@ -157,7 +157,7 @@ struct Call {
     on_behalf_of: Value,
 }
 
-fn unknown_fields(map: &Map<String, Value>, allowed: &[&str]) -> Result<(), ApiError> {
+pub fn unknown_fields(map: &Map<String, Value>, allowed: &[&str]) -> Result<(), ApiError> {
     match map.keys().find(|k| !allowed.contains(&k.as_str())) {
         None => Ok(()),
         Some(key) => Err(ApiError::domain(
@@ -168,7 +168,7 @@ fn unknown_fields(map: &Map<String, Value>, allowed: &[&str]) -> Result<(), ApiE
         )),
     }
 }
-fn text(map: &Map<String, Value>, field: &str) -> Result<Option<String>, ApiError> {
+pub fn text(map: &Map<String, Value>, field: &str) -> Result<Option<String>, ApiError> {
     match map.get(field) {
         None => Ok(None),
         Some(v) => v
@@ -344,7 +344,7 @@ fn session(server: &Shared, host: &str) -> Result<Value, ApiError> {
 }
 
 /// Restart now, and record it with the module's caller.
-async fn now(
+pub async fn now(
     server: &Shared,
     req: restart::Request,
     first_turn: Option<&str>,

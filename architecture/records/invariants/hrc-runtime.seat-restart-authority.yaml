@@ -35,10 +35,12 @@ source:
   - wrkq:T-14486
   - wrkq:T-14488
   - wrkq:T-14489
+  - wrkq:T-14491
   - architecture/records/invariants/hrc-runtime.self-restart-turn-boundary.yaml
   - architecture/records/invariants/hrc-runtime.mobile-exact-scope-provisioning.yaml
   - crates/hrc-native/src/server/lifecycle/self_restart.rs
   - crates/hrc-native/src/server/lifecycle/seat_restart.rs
+  - crates/hrc-native/src/server/lifecycle/force_session.rs
   - crates/hrc-native/src/server/turns/context.rs
   - crates/hrc-native/src/server/turns/restart.rs
   - crates/hrc-native/src/server/broker/attached.rs

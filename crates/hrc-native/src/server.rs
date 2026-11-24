@@ -147,6 +147,8 @@ mod runtimes;
 #[path = "server/placement/targets.rs"]
 mod targets;
 
+#[path = "server/lifecycle/force_session.rs"]
+mod force_session;
 #[path = "server/lifecycle/handoff/mod.rs"]
 mod handoff;
 #[path = "server/lifecycle/lifecycle/mod.rs"]
@@ -724,6 +726,8 @@ async fn dispatch_inner(server: &Shared, request: Request, local_only: bool) -> 
         seat_retirement::door(server, &headers, &body).await
     } else if method == Method::POST && uri.path() == "/v1/seats/restart" {
         seat_restart::door(server, &headers, &body).await
+    } else if method == Method::POST && uri.path() == "/v1/seats/force-new-session" {
+        force_session::door(server, &headers, &body).await
     } else if method == Method::POST && ["/v1/interrupt", "/v1/terminate"].contains(&uri.path()) {
         match parse_body(&body) {
             Ok(value) if uri.path() == "/v1/interrupt" => control::interrupt(server, value).await,
@@ -858,6 +862,7 @@ fn implemented(method: &Method, path: &str) -> bool {
                 "/v1/terminate",
                 "/v1/runtimes/retire",
                 "/v1/seats/restart",
+                "/v1/seats/force-new-session",
                 "/v1/runtimes/capture/status",
                 "/v1/federation/retire",
                 "/v1/runtimes/broker/inspect",

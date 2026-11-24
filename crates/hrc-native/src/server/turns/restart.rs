@@ -68,7 +68,7 @@ pub fn provision(
 /// The inherited intent with the restart's overrides applied, as a summon
 /// directive block would apply them: summonDirectives drives the compile and
 /// provision records what was applied.
-fn overridden(intent: Value, overrides: &serde_json::Map<String, Value>) -> Value {
+pub fn overridden(intent: Value, overrides: &serde_json::Map<String, Value>) -> Value {
     let mut intent = context::without_operator_choice(intent);
     for slot in ["summonDirectives", "provision"] {
         if !intent[slot].is_object() {
@@ -396,7 +396,7 @@ async fn rotate_and_launch(
 
 /// The first turn as an enqueued submission to the running successor: it
 /// starts on an idle seat and waits behind a running turn.
-async fn ordinary_turn(server: &Shared, successor: &Value, prompt: &str) -> Value {
+pub async fn ordinary_turn(server: &Shared, successor: &Value, prompt: &str) -> Value {
     let body = json!({"target":successor["hostSessionId"],"body":prompt,"origin":{"principalRef":"agent:seat-restart"}});
     let response = match super::turns::submission(server, "enqueue", body).await {
         Ok(response) => response,
