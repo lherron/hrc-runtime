@@ -278,6 +278,7 @@ async fn route_request(server: &Shared, peer: &str, request: Request) -> Result<
                 )
                 .and_then(|(mut runtimes, _)| {
                     super::projection::attach_members(server, &mut runtimes)?;
+                    crate::server::self_restart::armed_restart(server, &mut runtimes);
                     Ok(runtimes)
                 }) {
                     Ok(runtimes) => health["runtimes"] = runtimes.into(),

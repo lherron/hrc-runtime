@@ -228,6 +228,7 @@ pub async fn serve(role: Role) -> Result<()> {
         publication: publication::State::default(),
         handoff: handoff::State::default(),
         self_restart: self_restart::State::default(),
+        seat_restart: Default::default(),
         controller: controller::State::default(),
         owner_writes: writes::OwnerWrites::default(),
         transcript: transcript::State::default(),

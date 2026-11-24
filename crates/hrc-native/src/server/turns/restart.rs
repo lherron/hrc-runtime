@@ -13,14 +13,14 @@ use axum::{
 };
 use serde_json::{Value, json};
 
-struct Request {
-    host: String,
-    expected_generation: i64,
-    force: bool,
+pub struct Request {
+    pub host: String,
+    pub expected_generation: i64,
+    pub force: bool,
     /// Per-restart overrides (the summon `provision` shape). They land in the
     /// successor's summonDirectives and provision, so later plain restarts
     /// keep them.
-    provision: Option<serde_json::Map<String, Value>>,
+    pub provision: Option<serde_json::Map<String, Value>>,
 }
 
 /// The directives a restart may change. A restart keeps the seat's harness
@@ -28,7 +28,9 @@ struct Request {
 const RESTART_PROVISION: [&str; 2] = ["model", "reasoning_effort"];
 const EFFORTS: [&str; 4] = ["low", "medium", "high", "xhigh"];
 
-fn provision(value: Option<&Value>) -> Result<Option<serde_json::Map<String, Value>>, ApiError> {
+pub fn provision(
+    value: Option<&Value>,
+) -> Result<Option<serde_json::Map<String, Value>>, ApiError> {
     let Some(value) = value else { return Ok(None) };
     let Some(map) = value.as_object() else {
         return Err(ApiError::bad(
@@ -97,6 +99,11 @@ fn request(body: &Value) -> Result<Request, ApiError> {
             ));
         }
     }
+    fields(map)
+}
+
+/// The restart fields shared by this door and the seat-restart module door.
+pub fn fields(map: &serde_json::Map<String, Value>) -> Result<Request, ApiError> {
     let host = map
         .get("hostSessionId")
         .and_then(Value::as_str)
@@ -201,6 +208,32 @@ async fn assert_idle(server: &Shared, host: &str) -> Result<(), ApiError> {
 
 pub async fn handle(server: &Shared, body: Value) -> Result<Response, ApiError> {
     let req = request(&body)?;
+    restart(server, req, None)
+        .await
+        .map(|answer| Json(answer).into_response())
+}
+
+/// The restart both doors run. `first_turn` rides the successor's birth
+/// (T-14472) or, when the successor is already running, an ordinary turn.
+pub async fn restart(
+    server: &Shared,
+    req: Request,
+    first_turn: Option<&str>,
+) -> Result<Value, ApiError> {
+    let (session, intent) = admit(server, &req).await?;
+    if !req.force {
+        assert_idle(server, &req.host).await?;
+    }
+    rotate_and_launch(server, req, session, intent, first_turn).await
+}
+
+/// Phase A without the idle check: every refusal mutates nothing. Returns
+/// the session and its last applied runtime intent.
+pub async fn check(server: &Shared, req: &Request) -> Result<Value, ApiError> {
+    admit(server, req).await.map(|(session, _)| session)
+}
+
+async fn admit(server: &Shared, req: &Request) -> Result<(Value, Value), ApiError> {
     let session = {
         let db = server.store.lock().unwrap();
         db.session(&req.host)?
@@ -266,9 +299,16 @@ pub async fn handle(server: &Shared, body: Value) -> Result<Response, ApiError> 
         ));
     };
     refuse_participant(server, &session, "session restart")?;
-    if !req.force {
-        assert_idle(server, &req.host).await?;
-    }
+    Ok((session, intent))
+}
+
+async fn rotate_and_launch(
+    server: &Shared,
+    req: Request,
+    session: Value,
+    intent: Value,
+    first_turn: Option<&str>,
+) -> Result<Value, ApiError> {
     let rotation = context::rotate(
         server,
         &session,
@@ -300,10 +340,26 @@ pub async fn handle(server: &Shared, body: Value) -> Result<Response, ApiError> 
         .unwrap_or(intent);
     // Reuse, not fresh_pty: a runtime on the new successor host can only be a
     // concurrent successor birth (T-12418).
-    let launch = match attached::start(server, successor.clone(), successor_intent, false, None)
-        .await
+    let run_id = format!("run-{}", uuid::Uuid::new_v4());
+    let carry = first_turn.map(|prompt| attached::Carry {
+        prompt,
+        run_id: &run_id,
+    });
+    let mut carried = None;
+    let launch = match attached::start_carrying(
+        server,
+        successor.clone(),
+        successor_intent,
+        false,
+        None,
+        carry,
+    )
+    .await
     {
-        Ok(started) => json!({"status":"started","runtimeId":started["runtimeId"]}),
+        Ok((started, delivered)) => {
+            carried = Some(delivered);
+            json!({"status":"started","runtimeId":started["runtimeId"]})
+        }
         Err(error) => {
             super::stderr_json(
                 "warn",
@@ -315,6 +371,18 @@ pub async fn handle(server: &Shared, body: Value) -> Result<Response, ApiError> 
         }
     };
     let mut answer = json!({"priorHostSessionId":req.host,"hostSessionId":successor["hostSessionId"],"generation":successor["generation"],"launch":launch});
+    if let Some(prompt) = first_turn {
+        answer["firstTurn"] = match carried {
+            Some(Some(mut evidence)) => {
+                evidence["delivered"] = true.into();
+                evidence["via"] = "birth".into();
+                evidence
+            }
+            // A competing start won the birth: the text is an ordinary turn.
+            Some(None) => ordinary_turn(server, &successor, prompt).await,
+            None => json!({"delivered":false,"reason":"launch_failed"}),
+        };
+    }
     // What the successor relaunches with, so a caller can confirm an override
     // (or a kept one) without a second read.
     if let Some(d) = successor["lastAppliedIntentJson"]["summonDirectives"]
@@ -323,7 +391,33 @@ pub async fn handle(server: &Shared, body: Value) -> Result<Response, ApiError> 
     {
         answer["summonDirectives"] = Value::Object(d.clone());
     }
-    Ok(Json(answer).into_response())
+    Ok(answer)
+}
+
+/// The first turn as an enqueued submission to the running successor: it
+/// starts on an idle seat and waits behind a running turn.
+async fn ordinary_turn(server: &Shared, successor: &Value, prompt: &str) -> Value {
+    let body = json!({"target":successor["hostSessionId"],"body":prompt,"origin":{"principalRef":"agent:seat-restart"}});
+    let response = match super::turns::submission(server, "enqueue", body).await {
+        Ok(response) => response,
+        Err(error) => {
+            return json!({"delivered":false,"via":"turn","code":error.code,"message":error.message});
+        }
+    };
+    let bytes = axum::body::to_bytes(response.into_body(), usize::MAX)
+        .await
+        .unwrap_or_default();
+    let receipt: Value = serde_json::from_slice(&bytes).unwrap_or(Value::Null);
+    let mut out = json!({"delivered":receipt["runId"].is_string(),"via":"turn"});
+    for key in ["runId", "submissionId", "runtimeId"] {
+        if let Some(v) = receipt.get(key).filter(|v| !v.is_null()) {
+            out[key] = v.clone();
+        }
+    }
+    if out["delivered"] != true {
+        out["receipt"] = receipt;
+    }
+    out
 }
 
 /// participantRotationUnsupported: rotating an externally owned participant

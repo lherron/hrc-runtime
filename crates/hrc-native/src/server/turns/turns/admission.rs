@@ -882,6 +882,7 @@ pub(crate) mod tests {
             publication: Default::default(),
             handoff: Default::default(),
             self_restart: Default::default(),
+            seat_restart: Default::default(),
             controller: Default::default(),
             reaped: Default::default(),
             ledger: tokio::sync::watch::Sender::new(0),

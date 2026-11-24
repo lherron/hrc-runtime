@@ -59,6 +59,7 @@ pub async fn seats(server: &Server, body: &[u8]) -> Result<Response, ApiError> {
 
 fn annotate_attach(server: &Server, output: &mut Value) {
     if let Some(rows) = output["runtimes"].as_array_mut() {
+        super::self_restart::armed_restart(server, rows);
         for row in rows {
             if let Some(attach) = super::surfaces::stream_attach(row, server.federation.node_id()) {
                 row["attach"] = attach;

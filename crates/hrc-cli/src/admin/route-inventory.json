@@ -229,6 +229,11 @@
     {
       "listener": "main",
       "method": "POST",
+      "route": "/v1/seats/restart"
+    },
+    {
+      "listener": "main",
+      "method": "POST",
       "route": "/v1/runtimes/sweep"
     },
     {

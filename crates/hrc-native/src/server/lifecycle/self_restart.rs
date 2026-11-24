@@ -21,19 +21,47 @@ use rusqlite::params;
 use serde_json::{Value, json};
 use std::{collections::HashMap, sync::Mutex, time::Duration};
 
+/// A turn-bound restart intent, armed by the seat itself (handoff) or by the
+/// seat-restart module (T-14486 door A). One map holds both sources.
 #[derive(Clone)]
-struct Intent {
-    host: String,
-    runtime_id: String,
-    generation: i64,
-    invocation_id: String,
-    turn_id: String,
-    handoff_id: String,
+pub struct Intent {
+    /// Identifies this arming, so an executor removes only its own entry.
+    pub id: String,
+    pub host: String,
+    pub runtime_id: String,
+    pub generation: i64,
+    pub invocation_id: String,
+    pub turn_id: String,
+    pub source: Source,
+}
+#[derive(Clone)]
+pub enum Source {
+    /// The credential-bound self-restart and its seat handoff id.
+    Handoff(String),
+    Module(Module),
+}
+#[derive(Clone)]
+pub struct Module {
+    pub first_turn: Option<String>,
+    pub provision: Option<serde_json::Map<String, Value>>,
+    pub on_behalf_of: Value,
+    pub key: Option<String>,
+    pub armed_at: String,
+    /// Claimed by its terminal; the entry stays until the outcome is known.
+    pub executing: bool,
+}
+impl Intent {
+    fn handoff_id(&self) -> &str {
+        match &self.source {
+            Source::Handoff(id) => id,
+            Source::Module(_) => "",
+        }
+    }
 }
 #[derive(Default)]
 pub struct State {
-    /// One armed intent per host session.
-    intents: Mutex<HashMap<String, Intent>>,
+    /// One intent per host session, across both sources.
+    pub intents: Mutex<HashMap<String, Intent>>,
     /// The last hrc_seq the executor has judged.
     cursor: Mutex<i64>,
     observer: Mutex<Option<tokio::task::JoinHandle<()>>>,
@@ -83,7 +111,7 @@ fn refused(code: &str, message: String) -> ApiError {
         Some(json!({"refusal":code})),
     )
 }
-fn base(session: &Value, now: &str, runtime_id: &str) -> events::Ev {
+pub fn base(session: &Value, now: &str, runtime_id: &str) -> events::Ev {
     events::Ev {
         ts: now.to_owned(),
         host_session_id: session["hostSessionId"].as_str().unwrap_or("").to_owned(),
@@ -94,7 +122,12 @@ fn base(session: &Value, now: &str, runtime_id: &str) -> events::Ev {
         ..Default::default()
     }
 }
-fn append(server: &Shared, kind: &str, ev: &events::Ev, payload: &Value) -> Result<(), ApiError> {
+pub fn append(
+    server: &Shared,
+    kind: &str,
+    ev: &events::Ev,
+    payload: &Value,
+) -> Result<(), ApiError> {
     {
         let db = server.store.lock().unwrap();
         events::append(&db.sqlite, kind, ev, payload)?;
@@ -142,19 +175,25 @@ pub async fn handle(
 
     let handoff_id = match body {
         Body::Cancel => {
-            let removed = server.self_restart.intents.lock().unwrap().remove(&host);
+            let removed = {
+                let mut intents = server.self_restart.intents.lock().unwrap();
+                match intents.get(&host).map(|i| &i.source) {
+                    Some(Source::Handoff(_)) => intents.remove(&host),
+                    _ => None,
+                }
+            };
             if let Some(r) = &removed {
                 append(
                     server,
                     "session.restart_cancelled",
                     &base(&session, &now, runtime_id),
-                    &json!({"handoffId":r.handoff_id,"runtimeId":r.runtime_id,"generation":r.generation,"invocationId":r.invocation_id,"turnId":r.turn_id}),
+                    &json!({"handoffId":r.handoff_id(),"runtimeId":r.runtime_id,"generation":r.generation,"invocationId":r.invocation_id,"turnId":r.turn_id}),
                 )?;
             }
             let mut out =
                 json!({"outcome":"cancelled","hostSessionId":host,"cancelled":removed.is_some()});
             if let Some(r) = removed {
-                out["handoffId"] = r.handoff_id.into();
+                out["handoffId"] = r.handoff_id().into();
             }
             return Ok(Json(out).into_response());
         }
@@ -225,13 +264,37 @@ pub async fn handle(
     };
     let generation = session["generation"].as_i64().unwrap_or(0);
     let intent = Intent {
+        id: uuid::Uuid::new_v4().to_string(),
         host: host.clone(),
         runtime_id: runtime_id.to_owned(),
         generation,
         invocation_id: invocation_id.clone(),
         turn_id: turn_id.clone(),
-        handoff_id: handoff_id.clone(),
+        source: Source::Handoff(handoff_id.clone()),
     };
+    let replaced = arm(
+        server,
+        intent,
+        floor,
+        &session,
+        &now,
+        |replaced| json!({"handoffId":handoff_id,"runtimeId":runtime_id,"generation":generation,"invocationId":invocation_id,"turnId":turn_id,"armedBy":binding.scope_ref,"replaced":replaced}),
+    )?;
+    Ok(Json(json!({"outcome":"armed","handoffId":handoff_id,"hostSessionId":host,"runtimeId":runtime_id,"generation":generation,"invocationId":invocation_id,"turnId":turn_id,"armedAt":now,"replaced":replaced})).into_response())
+}
+/// Insert a turn-bound intent (one per host, either source), record
+/// session.restart_armed, then look the bound terminal up once directly: a
+/// terminal the observer judged before the insert still claims it (T-14486).
+/// Returns whether the replaced intent bound the same turn.
+pub fn arm(
+    server: &Shared,
+    intent: Intent,
+    floor: i64,
+    session: &Value,
+    now: &str,
+    payload: impl FnOnce(bool) -> Value,
+) -> Result<bool, ApiError> {
+    let (host, id) = (intent.host.clone(), intent.id.clone());
     let replaced = {
         let mut intents = server.self_restart.intents.lock().unwrap();
         if intents.is_empty() {
@@ -239,17 +302,124 @@ pub async fn handle(
             // the bound turn's terminal cannot precede the pre-probe floor.
             *server.self_restart.cursor.lock().unwrap() = floor;
         }
-        intents.insert(host.clone(), intent).is_some_and(|p| {
-            p.runtime_id == runtime_id && p.invocation_id == invocation_id && p.turn_id == turn_id
-        })
+        intents
+            .insert(host.clone(), intent.clone())
+            .is_some_and(|p| {
+                p.runtime_id == intent.runtime_id
+                    && p.invocation_id == intent.invocation_id
+                    && p.turn_id == intent.turn_id
+            })
     };
     append(
         server,
         "session.restart_armed",
-        &base(&session, &now, runtime_id),
-        &json!({"handoffId":handoff_id,"runtimeId":runtime_id,"generation":generation,"invocationId":invocation_id,"turnId":turn_id,"armedBy":binding.scope_ref,"replaced":replaced}),
+        &base(session, now, &intent.runtime_id),
+        &payload(replaced),
     )?;
-    Ok(Json(json!({"outcome":"armed","handoffId":handoff_id,"hostSessionId":host,"runtimeId":runtime_id,"generation":generation,"invocationId":invocation_id,"turnId":turn_id,"armedAt":now,"replaced":replaced})).into_response())
+    if let Some(seq) = landed(server, &intent, floor)?
+        && let Some(claimed) = take(server, &host, |i| i.id == id)
+    {
+        dispatch(server, claimed, seq);
+    }
+    Ok(replaced)
+}
+
+/// The bound turn's committed, non-retained terminal after `floor`, if any.
+fn landed(server: &Shared, intent: &Intent, floor: i64) -> Result<Option<i64>, ApiError> {
+    let db = server.store.lock().unwrap();
+    let mut stmt = db
+        .sqlite
+        .prepare(
+            "SELECT hrc_seq, payload_json FROM hrc_events WHERE hrc_seq > ? AND host_session_id = ? AND runtime_id = ? AND event_kind IN ('turn.completed','turn.failed','turn.interrupted') AND (evidence_origin IS NULL OR evidence_origin != 'retained') ORDER BY hrc_seq ASC",
+        )
+        .map_err(anyhow::Error::from)?;
+    let rows: Vec<(i64, Option<String>)> = stmt
+        .query_map(params![floor, intent.host, intent.runtime_id], |r| {
+            Ok((r.get(0)?, r.get(1)?))
+        })
+        .map_err(anyhow::Error::from)?
+        .collect::<Result<_, _>>()
+        .map_err(anyhow::Error::from)?;
+    Ok(rows.into_iter().find_map(|(seq, payload)| {
+        let payload: Value = payload
+            .and_then(|p| serde_json::from_str(&p).ok())
+            .unwrap_or(Value::Null);
+        (payload["invocationId"].as_str() == Some(intent.invocation_id.as_str())
+            && payload["turnId"].as_str() == Some(intent.turn_id.as_str()))
+        .then_some(seq)
+    }))
+}
+
+/// Claim the host's armed intent when `matches` holds, under the map lock: a
+/// handoff intent leaves the map, a module intent turns executing and stays
+/// until its executor records the outcome.
+fn take(server: &Shared, host: &str, matches: impl FnOnce(&Intent) -> bool) -> Option<Intent> {
+    let mut intents = server.self_restart.intents.lock().unwrap();
+    claim_locked(&mut intents, host, matches)
+}
+fn claim_locked(
+    intents: &mut HashMap<String, Intent>,
+    host: &str,
+    matches: impl FnOnce(&Intent) -> bool,
+) -> Option<Intent> {
+    let intent = intents.get_mut(host)?;
+    if !matches(intent) {
+        return None;
+    }
+    if let Source::Module(m) = &mut intent.source {
+        if m.executing {
+            return None;
+        }
+        m.executing = true;
+        return Some(intent.clone());
+    }
+    intents.remove(host)
+}
+
+/// Remove an executed module intent, if the entry is still that arming.
+pub fn finished(server: &Shared, host: &str, id: &str) {
+    let mut intents = server.self_restart.intents.lock().unwrap();
+    if intents.get(host).is_some_and(|i| i.id == id) {
+        intents.remove(host);
+    }
+}
+
+/// Run a claimed intent's execute path, detached so the projection that
+/// produced the terminal is never held up by (or re-entered from) its own
+/// teardown.
+fn dispatch(server: &Shared, intent: Intent, seq: i64) {
+    let server = server.clone();
+    tokio::spawn(async move {
+        if let Source::Module(_) = intent.source {
+            super::seat_restart::execute_armed(&server, intent, seq).await;
+            return;
+        }
+        let (host, handoff_id) = (intent.host.clone(), intent.handoff_id().to_owned());
+        if let Err(error) = execute(&server, intent, seq).await {
+            stderr_json(
+                "warn",
+                "session",
+                "session.restart_failed",
+                json!({"hostSessionId":host,"handoffId":handoff_id,"error":error.message}),
+            );
+        }
+    });
+}
+
+/// The seat row's view of a module intent (T-14486 `armedRestart`).
+pub fn armed_restart(server: &super::Server, rows: &mut [Value]) {
+    let intents = server.self_restart.intents.lock().unwrap();
+    if intents.is_empty() {
+        return;
+    }
+    for row in rows {
+        let Some(host) = row["hostSessionId"].as_str() else {
+            continue;
+        };
+        if let Some(Source::Module(m)) = intents.get(host).map(|i| &i.source) {
+            row["armedRestart"] = json!({"state":if m.executing {"executing"} else {"armed"},"armedAt":m.armed_at,"onBehalfOf":m.on_behalf_of});
+        }
+    }
 }
 fn string(v: &Value) -> String {
     match v {
@@ -257,7 +427,7 @@ fn string(v: &Value) -> String {
         other => other.to_string(),
     }
 }
-fn high_water(server: &Shared) -> Result<i64, ApiError> {
+pub fn high_water(server: &Shared) -> Result<i64, ApiError> {
     let db = server.store.lock().unwrap();
     Ok(db
         .sqlite
@@ -296,12 +466,12 @@ fn claim(server: &Shared) -> anyhow::Result<Vec<(Intent, i64)>> {
             let payload: Value = payload
                 .and_then(|p| serde_json::from_str(&p).ok())
                 .unwrap_or(Value::Null);
-            let matches = intents.get(&host).is_some_and(|i| {
+            let matches = |i: &Intent| {
                 runtime.as_deref() == Some(i.runtime_id.as_str())
                     && payload["invocationId"].as_str() == Some(i.invocation_id.as_str())
                     && payload["turnId"].as_str() == Some(i.turn_id.as_str())
-            });
-            if matches && let Some(intent) = intents.remove(&host) {
+            };
+            if let Some(intent) = claim_locked(&mut intents, &host, matches) {
                 claimed.push((intent, seq));
             }
         }
@@ -356,7 +526,8 @@ async fn execute(server: &Shared, intent: Intent, terminal_seq: i64) -> Result<(
     } else {
         format!(
             "Fresh context after self-restart (generation {prior_generation} → {next_generation}). Seat handoff {} was armed for this restart and is no longer pending. Read it with `prae seat handoff get {} --json`, then continue the work it describes.",
-            intent.handoff_id, intent.handoff_id
+            intent.handoff_id(),
+            intent.handoff_id()
         )
     };
     let session_ref = format!(
@@ -379,7 +550,7 @@ async fn execute(server: &Shared, intent: Intent, terminal_seq: i64) -> Result<(
         server,
         "session.restart_executed",
         &base(&session, &hrc_store::timestamp(), &intent.runtime_id),
-        &json!({"handoffId":intent.handoff_id,"priorHostSessionId":intent.host,"nextHostSessionId":next["hostSessionId"],"priorGeneration":prior_generation,"nextGeneration":next_generation,"invocationId":intent.invocation_id,"turnId":intent.turn_id,"terminalHrcSeq":terminal_seq,"delivery":delivery}),
+        &json!({"handoffId":intent.handoff_id(),"priorHostSessionId":intent.host,"nextHostSessionId":next["hostSessionId"],"priorGeneration":prior_generation,"nextGeneration":next_generation,"invocationId":intent.invocation_id,"turnId":intent.turn_id,"terminalHrcSeq":terminal_seq,"delivery":delivery}),
     )
 }
 
@@ -418,22 +589,9 @@ pub fn start(server: &Shared) {
                     continue;
                 }
             };
-            // Detached so the projection that produced the terminal is never
-            // held up by (or re-entered from) its own teardown.
             let had_claims = !claimed.is_empty();
             for (intent, seq) in claimed {
-                let server = owned.clone();
-                tokio::spawn(async move {
-                    let (host, handoff_id) = (intent.host.clone(), intent.handoff_id.clone());
-                    if let Err(error) = execute(&server, intent, seq).await {
-                        stderr_json(
-                            "warn",
-                            "session",
-                            "session.restart_failed",
-                            json!({"hostSessionId":host,"handoffId":handoff_id,"error":error.message}),
-                        );
-                    }
-                });
+                dispatch(&owned, intent, seq);
             }
             // A full terminal page may have more intents behind the claims.
             if had_claims {

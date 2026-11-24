@@ -19,6 +19,7 @@ pub fn category(kind: &str) -> Option<&'static str> {
         | "session.restart_armed"
         | "session.restart_cancelled"
         | "session.restart_executed"
+        | "session.restart_failed"
         | "session.retitled"
         | "session.metadata.changed"
         | "session.metadata.rejected" => "session",
