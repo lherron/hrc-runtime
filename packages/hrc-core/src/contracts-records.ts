@@ -202,13 +202,11 @@ export type HrcRuntimeSnapshot = {
 }
 
 /**
- * Recorded initiating principal of a dispatch (T-07236, durable law
- * `hrc-runtime.acp-event-bridge`).
+ * Recorded initiating principal of a dispatch (T-07236).
  *
  * Provenance is PROPAGATED, never invented: a dispatch source that knows who
  * caused the turn states it here, and consumers that make policy decisions on
- * causation (the ACP event bridge's origin block) read it back rather than
- * guessing. A dispatch that genuinely has no attributable initiator omits it,
+ * causation read it back rather than guessing. A dispatch that genuinely has no attributable initiator omits it,
  * and the honest `system:hrc` residue is applied at the consuming edge — not
  * stamped here, where it would be indistinguishable from a real system cause.
  */
