@@ -1,0 +1,73 @@
+id: hrc-runtime.seat-restart-authority
+kind: invariant
+status: active
+owner_project: hrc-runtime
+scope: module policy, HRC restart outcomes, and client cutover for T-14486
+predicate: >
+  The node-local seat-restart module owns caller policy and the handoff and
+  recap prompts. HRC owns restart admission, the continuity fence, rotation,
+  launch and delivery evidence. Only the module principal and scope are
+  admitted to the two module doors. HRC records onBehalfOf as attribution
+  supplied by the module. The local kernel operator caller shape is attribution
+  under the host-user trust boundary. The credential-bound self-restart door
+  retains its own authority and HRC handoff semantics.
+  A turn-end arm binds the active host and generation to the observed runtime,
+  invocation and turn. At most one intent is armed per host across both
+  sources. Only the exact committed, non-retained terminal after the pre-probe
+  floor can claim it once. A terminal observed before insertion can still
+  claim it through the post-insert lookup. The claiming paths remove the same
+  intent under the shared lock. HRC owns armed and executing state and the
+  kernel projects it. Claiming does not clear the projection before the
+  outcome is known. Armed intents are volatile on daemon loss.
+  The module doors have one 20-second owner response budget from entry. A
+  pending response establishes no committed successor or generation. Owner
+  work continues behind the fence and publishes its outcome. A carried prompt
+  joins priming when the restart wins the birth. If a competing delivery wins
+  the birth, the restart submits the prompt as an ordinary turn.
+  Force-new-session and keyed cold restart keep the request identity and
+  outcome at the seat's home HRC. Read-only reconciliation never starts or
+  rotates a seat. Before mutation the keyed request records the branch and
+  observed head. Recovery keeps that branch, fences restart at its recorded
+  predecessor, and attributes an already-committed rotation to the request.
+  An independently advanced head is left untouched. Exact claim recovery uses
+  the original key and preserves the exact-claim supersession refusal.
+  Launching a committed successor is fenced to that successor and does not
+  rotate it. A recovered first-turn delivery is confirmed only by broker
+  submission identity for the request's own recorded run. Unknown delivery
+  after process loss is not automatically resent.
+  At cutover ACP resolves pending results under the same key without exposing
+  pending as a mobile success or a definite refusal. For unknown first-turn
+  delivery on the original force call, ACP uses the existing unanswered-force
+  response. The original phone request ID is preserved. The phone's Check
+  result can then present uncertainty without offering a duplicate draft.
+authority: >
+  Lance's 2026-11-24 restart policy, ACP gateway boundary and exclusion of armed
+  intent persistence in wrkq:T-14486. Daedalus approved specification r8,
+  task etag 12, in reply to EN-60820.
+source:
+  - wrkq:T-14486
+  - wrkq:T-14488
+  - architecture/records/invariants/hrc-runtime.self-restart-turn-boundary.yaml
+  - architecture/records/invariants/hrc-runtime.mobile-exact-scope-provisioning.yaml
+  - crates/hrc-native/src/server/lifecycle/self_restart.rs
+  - crates/hrc-native/src/server/turns/context.rs
+  - crates/hrc-native/src/server/turns/restart.rs
+  - crates/hrc-native/src/server/broker/attached.rs
+  - crates/hrc-native/src/server/broker/broker.rs
+  - crates/hrc-native/src/server/broker/start.rs
+required_tests:
+  - just architecture-records
+  - T-14486 r8 live mid-turn recap, seat projection, and module caller and attribution acceptance
+  - T-14486 r8 isolated force replay, conflict, exact creation, launch recovery, read-only reconcile, and model preservation gates
+  - T-14486 r8 live Loggia and mobile cutover and bare-door refusal acceptance
+last_verified: Pending implementation and rollout evidence.
+reopen_when: >
+  Module or owner authority, turn-terminal identity, pending and executing
+  semantics, rotation and replay ownership, first-turn delivery proof,
+  mobile uncertainty handling, or the accepted restart scope changes.
+supersedes: []
+superseded_by: []
+design_review: >
+  2026-11-24 source review of T-14486 r8 verified the mobile distinction
+  between the original force request and Check result, including the client's
+  request-ID marker for interpreting an unconfirmed prompt delivery.
