@@ -49,6 +49,7 @@ source:
   - crates/hrc-native/src/server/turns/resume.rs
   - crates/hrc-native/src/server/placement/runtime_views.rs
   - crates/hrc-native/src/server/placement/federation/gate.rs
+  - crates/hrc-native/src/server/placement/federation/gate/capability.rs
   - crates/hrc-cli/src/selectors.rs
 required_tests:
   - just architecture-records
