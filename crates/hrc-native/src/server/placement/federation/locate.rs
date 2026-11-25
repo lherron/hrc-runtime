@@ -1,7 +1,7 @@
 //! `GET /v1/federation/locate` (server-status-methods.ts handleFederationLocate,
 //! federation/locate.ts, locate-server.ts, peer-observer.ts locatePeerScope)
 //! and `GET /v1/federation/designations` (placement-federation-handlers.ts).
-use super::policy::{Policy, policy_for, scope_parts};
+use super::policy::{Policy, home_declaration, policy_for, scope_parts};
 use super::{
     Authority, Binding, Designation, Node, ledger_row, log, request_headers, resolve_home,
     transport_text,
@@ -17,10 +17,6 @@ use serde_json::{Value, json};
 use std::{collections::HashMap, time::Instant};
 
 const PEER_OBSERVE_TIMEOUT: std::time::Duration = std::time::Duration::from_millis(1_500);
-/// hrc-core placement-conventions.ts `ROSTER_SLOT_TOKENS`.
-const ROSTER_SLOT_TOKENS: [&str; 10] = [
-    "nova", "comet", "pulsar", "quasar", "meteor", "aurora", "zenith", "eclipse", "orbit", "cosmos",
-];
 
 fn reserved(node: &str) -> bool {
     node.eq_ignore_ascii_case("local")
@@ -48,24 +44,12 @@ async fn declared(server: &Server, scope: &str) -> Value {
             };
         }
     }
-    if let Some(task) = task {
-        let homes = &policy["placement"]["homes"];
-        let home = homes[task]
-            .as_str()
-            .map(|node| (task.to_owned(), node))
-            .or_else(|| {
-                ROSTER_SLOT_TOKENS.iter().find_map(|slot| {
-                    let base = task.strip_suffix(&format!("-{slot}"))?;
-                    homes[base].as_str().map(|node| (base.to_owned(), node))
-                })
-            });
-        if let Some((key, node)) = home {
-            return if reserved(node) {
-                json!({"source":"task-default-invalid","taskKey":key,"rawValue":node,"profilePath":profile,"detail":format!("Placement home \"{key}\" must name a real node.")})
-            } else {
-                json!({"source":"task-default","taskKey":key,"nodeId":node,"profilePath":profile})
-            };
-        }
+    if let Some((key, node)) = home_declaration(task, &policy["placement"]["homes"]) {
+        return if reserved(node) {
+            json!({"source":"task-default-invalid","taskKey":key,"rawValue":node,"profilePath":profile,"detail":format!("Placement home \"{key}\" must name a real node.")})
+        } else {
+            json!({"source":"task-default","taskKey":key,"nodeId":node,"profilePath":profile})
+        };
     }
     match policy["provisioning"]["node"].as_str() {
         None => {

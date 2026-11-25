@@ -86,28 +86,11 @@ fn permits_remote(home: &Designated) -> bool {
     )
 }
 
-/// summon-gate-placement.ts `placementPinKey` / `placementHomeDeclaration`.
+/// summon-gate-placement.ts `placementPinKey`.
 fn pin_key(scope: &str) -> Option<String> {
     let (_, project, task) = super::policy::scope_parts(scope);
     Some(format!("{}:{}", project?, task?))
 }
-pub(crate) const ROSTER_SLOT_TOKENS: [&str; 10] = [
-    "nova", "comet", "pulsar", "quasar", "meteor", "aurora", "zenith", "eclipse", "orbit", "cosmos",
-];
-fn home_declaration(scope: &str, homes: &Value) -> Option<(String, String)> {
-    let (_, _, task) = super::policy::scope_parts(scope);
-    let task = task?;
-    if let Some(node) = homes[task].as_str() {
-        return Some((task.to_owned(), node.to_owned()));
-    }
-    ROSTER_SLOT_TOKENS.iter().find_map(|slot| {
-        let base = task.strip_suffix(&format!("-{slot}"))?;
-        homes[base]
-            .as_str()
-            .map(|node| (base.to_owned(), node.to_owned()))
-    })
-}
-
 fn undeclared(scope: &str, local: &str) -> String {
     [
         format!("No placement declared for {scope}, so this node cannot establish it."),
@@ -219,9 +202,12 @@ fn designated_home(
         });
     }
     if let Some(placement) = placement
-        && let Some((key, node)) = home_declaration(scope, &placement["homes"])
+        && let Some((key, node)) = super::policy::home_declaration(
+            super::policy::scope_parts(scope).2,
+            &placement["homes"],
+        )
     {
-        if reserved(&node) {
+        if reserved(node) {
             return Err(refuse(
                 "invalid-pin",
                 format!(
@@ -230,11 +216,11 @@ fn designated_home(
             ));
         }
         if let Some(d) = directed.as_deref().filter(|d| *d != node) {
-            return Err(conflict(scope, "placement home", &key, &node, d));
+            return Err(conflict(scope, "placement home", key, node, d));
         }
         return Ok(Designated {
-            constraint: Some(("task-default", key)),
-            ..plain(node, "task-default")
+            constraint: Some(("task-default", key.into())),
+            ..plain(node.into(), "task-default")
         });
     }
     if let Some(node) = directed {

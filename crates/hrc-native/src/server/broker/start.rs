@@ -11,7 +11,7 @@
 //! under the same idempotency key replays that claim.
 use super::{
     ApiError, Shared, attached, context,
-    federation::{claim_start, gate, summon},
+    federation::{claim_start, gate, policy::ROSTER_SLOT_TOKENS, summon},
     turns::{admission::unavailable, parse},
 };
 use axum::{
@@ -306,7 +306,7 @@ impl Scope {
     fn roster(&self) -> Vec<String> {
         std::iter::once(self.task.clone())
             .chain(
-                gate::ROSTER_SLOT_TOKENS
+                ROSTER_SLOT_TOKENS
                     .iter()
                     .map(|s| format!("{}-{s}", self.task)),
             )

@@ -4,6 +4,26 @@
 use crate::server::{Server, aspc};
 use serde_json::{Value, json};
 
+/// hrc-core placement-conventions.ts `ROSTER_SLOT_TOKENS`.
+pub(crate) const ROSTER_SLOT_TOKENS: [&str; 10] = [
+    "nova", "comet", "pulsar", "quasar", "meteor", "aurora", "zenith", "eclipse", "orbit", "cosmos",
+];
+
+/// Return the declared home key and node, preferring an exact task key.
+pub(super) fn home_declaration<'a>(
+    task: Option<&'a str>,
+    homes: &'a Value,
+) -> Option<(&'a str, &'a str)> {
+    let task = task?;
+    if let Some(node) = homes[task].as_str() {
+        return Some((task, node));
+    }
+    ROSTER_SLOT_TOKENS.iter().find_map(|slot| {
+        let base = task.strip_suffix(&format!("-{slot}"))?;
+        homes[base].as_str().map(|node| (base, node))
+    })
+}
+
 pub enum Policy {
     /// `policy` is SummonGatePolicy: {provisioningNode?, placement:{launch?, pins, homes}}.
     Resolved {
