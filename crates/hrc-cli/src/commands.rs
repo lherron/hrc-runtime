@@ -611,6 +611,9 @@ fn runtime_control_inner(args: &Parsed<'_>) -> Result<()> {
                         body[flag] = value.into();
                     }
                 }
+                if args.flag("force") {
+                    body["force"] = true.into();
+                }
             }
             print_json(&client.post(
                 if path == "runtime terminate" {

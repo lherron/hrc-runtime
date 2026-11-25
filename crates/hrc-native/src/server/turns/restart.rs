@@ -176,6 +176,54 @@ pub fn authorize_caller(server: &Shared, headers: &HeaderMap) -> Result<(), ApiE
     )
 }
 
+/// What one runtime's broker seat probe says, classified once for the
+/// restart door (idle required) and the terminate door (busy refused, T-14633).
+pub(super) enum Seat {
+    Idle,
+    /// Positively observed non-idle: `runtime_busy` detail and the state.
+    Busy(String, Value),
+    /// No broker seat, a failed probe or an unknown state.
+    Unobservable(String),
+}
+
+pub(super) async fn observe(server: &Shared, rt: &db::Rt) -> Seat {
+    if rt.controller_kind.as_deref() != Some("harness-broker") {
+        return Seat::Unobservable(format!(
+            "controller {} has no broker seat",
+            rt.controller_kind.as_deref().unwrap_or("unknown")
+        ));
+    }
+    let probe = match controller::seat::probe(server, &rt.runtime_id, "explicit-probe").await {
+        Ok(p) => p,
+        Err(e) => {
+            return Seat::Unobservable(format!(
+                "seat probe failed: {}",
+                e["message"].as_str().unwrap_or("")
+            ));
+        }
+    };
+    let seat = &probe["seat"];
+    match seat["state"].as_str() {
+        Some("idle") => Seat::Idle,
+        None => Seat::Unobservable("seat state is unknown".into()),
+        Some(state) => {
+            let mut detail = json!({"runtimeId":rt.runtime_id,"seatState":state});
+            if let Some(t) = seat.get("turnId").filter(|t| !t.is_null()) {
+                detail["turnId"] = t.clone();
+            }
+            Seat::Busy(state.to_owned(), detail)
+        }
+    }
+}
+
+pub(super) fn busy(state: &str, verb: &str, detail: Value) -> ApiError {
+    conflict(
+        "runtime_busy",
+        format!("seat is {state}; not {verb}"),
+        detail,
+    )
+}
+
 async fn assert_idle(server: &Shared, host: &str) -> Result<(), ApiError> {
     let runtimes: Vec<db::Rt> = {
         let db = server.store.lock().unwrap();
@@ -192,41 +240,14 @@ async fn assert_idle(server: &Shared, host: &str) -> Result<(), ApiError> {
             .collect()
     };
     for rt in runtimes.iter().filter(|r| !lease::unavailable(&r.status)) {
-        let unobservable = |observed: String| {
-            conflict(
-                "seat_unobservable",
-                format!("cannot confirm the seat is idle ({observed}); not restarted"),
-                json!({"runtimeId":rt.runtime_id,"observed":observed}),
-            )
-        };
-        if rt.controller_kind.as_deref() != Some("harness-broker") {
-            return Err(unobservable(format!(
-                "controller {} has no broker seat",
-                rt.controller_kind.as_deref().unwrap_or("unknown")
-            )));
-        }
-        let probe = match controller::seat::probe(server, &rt.runtime_id, "explicit-probe").await {
-            Ok(p) => p,
-            Err(e) => {
-                return Err(unobservable(format!(
-                    "seat probe failed: {}",
-                    e["message"].as_str().unwrap_or("")
-                )));
-            }
-        };
-        let seat = &probe["seat"];
-        match seat["state"].as_str() {
-            Some("idle") => continue,
-            None => return Err(unobservable("seat state is unknown".into())),
-            Some(state) => {
-                let mut detail = json!({"runtimeId":rt.runtime_id,"seatState":state});
-                if let Some(t) = seat.get("turnId").filter(|t| !t.is_null()) {
-                    detail["turnId"] = t.clone();
-                }
+        match observe(server, rt).await {
+            Seat::Idle => continue,
+            Seat::Busy(state, detail) => return Err(busy(&state, "restarted", detail)),
+            Seat::Unobservable(observed) => {
                 return Err(conflict(
-                    "runtime_busy",
-                    format!("seat is {state}; not restarted"),
-                    detail,
+                    "seat_unobservable",
+                    format!("cannot confirm the seat is idle ({observed}); not restarted"),
+                    json!({"runtimeId":rt.runtime_id,"observed":observed}),
                 ));
             }
         }

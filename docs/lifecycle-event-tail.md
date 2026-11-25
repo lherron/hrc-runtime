@@ -117,6 +117,17 @@ reservation, binding, continuation, refusal or retry policy. Migration
 `0133_participant_parked_disposition` adds these nullable columns to the
 exported reservation table.
 
+`POST /v1/terminate` probes an available runtime's broker seat first, with the
+restart door's probe (T-14633). A positively busy seat (`starting`,
+`turn-active` or any other non-idle state) returns 409 `runtime_busy` with
+`runtimeId`, `seatState` and, when known, `turnId`, and nothing is terminated.
+An idle seat, an unobservable one (no broker seat, failed probe, unknown state)
+and an unavailable runtime terminate as before. Optional boolean `force: true`
+(`hrc runtime terminate --force`) skips the probe; a non-boolean is 400. The
+guard is the HTTP door's alone: internal terminations (retirement, rotation,
+participant parking) never probe. A turn that starts between probe and
+terminate is not covered.
+
 ### Session disposition observation (T-13153)
 
 Local `GET /v1/sessions/get` records and every `GET /v1/sessions/page` item

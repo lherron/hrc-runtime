@@ -2328,7 +2328,7 @@
         "--help"
       ],
       "exit": 0,
-      "stdout": "Usage: hrc runtime terminate [options] <runtimeId>\n\nterminate a runtime\n\nArguments:\n  runtimeId               runtime ID\n\nOptions:\n  --drop-continuation     drop continuation on terminate\n  --no-drop-continuation  explicitly preserve continuation\n  --reason <reason>       operator intent stamped on the runtime.terminated\n                          audit event\n  --source <source>       tool/source that initiated the terminate\n  --json                  output as JSON (the default; terminate always prints\n                          its result as JSON)\n  -h, --help              display help for command\n",
+      "stdout": "Usage: hrc runtime terminate [options] <runtimeId>\n\nterminate a runtime\n\nArguments:\n  runtimeId               runtime ID\n\nOptions:\n  --drop-continuation     drop continuation on terminate\n  --no-drop-continuation  explicitly preserve continuation\n  --reason <reason>       operator intent stamped on the runtime.terminated\n                          audit event\n  --source <source>       tool/source that initiated the terminate\n  --force                 terminate even when the seat is busy (runtime_busy)\n  --json                  output as JSON (the default; terminate always prints\n                          its result as JSON)\n  -h, --help              display help for command\n",
       "stderr": ""
     },
     {
@@ -2340,7 +2340,7 @@
         "--help"
       ],
       "exit": 0,
-      "stdout": "Usage: hrc runtime terminate [options] <runtimeId>\n\nterminate a runtime\n\nArguments:\n  runtimeId               runtime ID\n\nOptions:\n  --drop-continuation     drop continuation on terminate\n  --no-drop-continuation  explicitly preserve continuation\n  --reason <reason>       operator intent stamped on the runtime.terminated\n                          audit event\n  --source <source>       tool/source that initiated the terminate\n  --json                  output as JSON (the default; terminate always prints\n                          its result as JSON)\n  -h, --help              display help for command\n",
+      "stdout": "Usage: hrc runtime terminate [options] <runtimeId>\n\nterminate a runtime\n\nArguments:\n  runtimeId               runtime ID\n\nOptions:\n  --drop-continuation     drop continuation on terminate\n  --no-drop-continuation  explicitly preserve continuation\n  --reason <reason>       operator intent stamped on the runtime.terminated\n                          audit event\n  --source <source>       tool/source that initiated the terminate\n  --force                 terminate even when the seat is busy (runtime_busy)\n  --json                  output as JSON (the default; terminate always prints\n                          its result as JSON)\n  -h, --help              display help for command\n",
       "stderr": ""
     },
     {

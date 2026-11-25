@@ -4,6 +4,7 @@
 use super::{
     ApiError, Shared, controller, federation, hrcpty, lease,
     projection::{db, events},
+    restart::{self, Seat},
     turns::admission::{active_turn_submissions, unavailable},
 };
 use axum::{
@@ -35,6 +36,8 @@ struct Terminate {
     reason: Option<String>,
     source: Option<String>,
     actor: Option<String>,
+    /// T-14633: skip the door's busy-seat guard.
+    force: bool,
 }
 
 fn bad(message: String, field: &str) -> ApiError {
@@ -97,6 +100,11 @@ fn terminate_options(body: &Value) -> Result<Terminate, ApiError> {
             ));
         }
     };
+    let force = match input.get("force") {
+        None => false,
+        Some(Value::Bool(b)) => *b,
+        Some(_) => return Err(bad("force must be a boolean".into(), "force")),
+    };
     let disposition = raw("disposition")?;
     if disposition.as_deref().is_some_and(|v| v != "parked") {
         return Err(bad("disposition must be parked".into(), "disposition"));
@@ -107,6 +115,7 @@ fn terminate_options(body: &Value) -> Result<Terminate, ApiError> {
         reason: raw("reason")?,
         source: raw("source")?,
         actor: raw("actor")?,
+        force,
     })
 }
 
@@ -449,6 +458,14 @@ pub async fn terminate(server: &Shared, body: Value) -> Result<Response, ApiErro
         ));
     }
     let rt = known;
+    // T-14633: the HTTP door alone refuses a positively busy seat; an idle,
+    // unobservable or already-unavailable runtime terminates as before.
+    if !options.force
+        && !lease::unavailable(&rt.status)
+        && let Seat::Busy(state, detail) = restart::observe(server, &rt).await
+    {
+        return Err(restart::busy(&state, "terminated", detail));
+    }
     if let Some(owner) = action.owner_run_id.as_deref().filter(|_| !external) {
         let protected = {
             let db = server.store.lock().unwrap();
@@ -510,6 +527,7 @@ pub(crate) async fn retire(
         reason: Some(reason.into()),
         source: Some(source.into()),
         actor: None,
+        force: false,
     };
     terminate_runtime(server, rt, options).await?;
     Ok(false)

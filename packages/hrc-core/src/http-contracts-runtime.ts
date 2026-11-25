@@ -284,6 +284,8 @@ export type TerminateRuntimeRequest = {
   source?: string | undefined
   /** Optional actor scope/handle that requested the terminate. */
   actor?: string | undefined
+  /** Terminate even when the broker seat is busy; otherwise 409 runtime_busy (T-14633). */
+  force?: boolean | undefined
 }
 
 export type TerminateRuntimeResponse = RuntimeActionResponse & {
