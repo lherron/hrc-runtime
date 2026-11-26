@@ -10,6 +10,7 @@
 import { spawnSync } from 'node:child_process'
 
 import {
+  WRKP_INSTALL_PATH,
   hookSettledPostArgs,
   readTimingRecords,
   resolveHookTimingsPath,
@@ -32,7 +33,7 @@ let created = 0
 let existing = 0
 let failed = 0
 for (const record of records) {
-  const result = spawnSync('wrkp', hookSettledPostArgs(record), {
+  const result = spawnSync(WRKP_INSTALL_PATH, hookSettledPostArgs(record), {
     encoding: 'utf8',
     timeout: 15_000,
   })

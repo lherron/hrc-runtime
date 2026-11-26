@@ -63,4 +63,4 @@ pre-push:
 post-commit:
   commands:
     wrkp-git-commit:
-      run: command -v wrkp >/dev/null 2>&1 && wrkp git commit || true
+      run: 'wrkp="$HOME/.local/bin/wrkp"; [ -x "$wrkp" ] && "$wrkp" git commit || true'

@@ -17,12 +17,13 @@ import { environmentWithoutGitOverrides } from 'hrc-core'
  *   - change_kind disagrees with what the gate decided;
  *   - a missing or broken wrkp blocks a commit.
  *
- * A fake `wrkp` first on PATH records its argv, so nothing reaches the real
- * ledger.
+ * A fake `wrkp` under the fixture home records its argv. It is outside PATH.
  */
 
 interface Fixture {
   binDir: string
+  homeDir: string
+  wrkpPath: string
   postLog: string
   probeLog: string
   work: string
@@ -74,11 +75,14 @@ async function makeFixture(wrkpBody: string): Promise<Fixture> {
   const work = join(root, 'work')
   const remote = join(root, 'remote.git')
   const binDir = join(root, 'bin')
+  const homeDir = join(root, 'home')
+  const wrkpPath = join(homeDir, '.local', 'bin', 'wrkp')
   const postLog = join(root, 'posts.log')
   const probeLog = join(root, 'probe.log')
 
   await mkdir(binDir, { recursive: true })
-  await writeFile(join(binDir, 'wrkp'), `#!/bin/sh\n${wrkpBody}\n`)
+  await mkdir(dirname(wrkpPath), { recursive: true })
+  await writeFile(wrkpPath, `#!/bin/sh\n${wrkpBody}\n`)
   // `probe <name>` logs its name and exits with $GATE_RC.
   await writeFile(
     join(binDir, 'probe'),
@@ -87,7 +91,7 @@ printf '%s\\n' "$1" >> "$PROBE_LOG"
 exit "\${GATE_RC:-0}"
 `
   )
-  await chmod(join(binDir, 'wrkp'), 0o755)
+  await chmod(wrkpPath, 0o755)
   await chmod(join(binDir, 'probe'), 0o755)
 
   ok(['init', '--bare', remote], root)
@@ -130,11 +134,12 @@ pre-push:
 `
   )
   ok(['config', 'core.hooksPath', '.githooks'], work)
-  return { binDir, postLog, probeLog, work }
+  return { binDir, homeDir, postLog, probeLog, work, wrkpPath }
 }
 
 function env(fixture: Fixture, extra: Record<string, string> = {}): Record<string, string> {
   return {
+    HOME: fixture.homeDir,
     PATH: `${fixture.binDir}:${process.env['PATH'] ?? ''}`,
     POST_LOG: fixture.postLog,
     PROBE_LOG: fixture.probeLog,
@@ -225,19 +230,9 @@ describe('.githooks timing shim', () => {
     // Exercise both optional-recorder failures on the same real repository.
     // A second init/baseline/push/copy cycle consumed the shared test deadline
     // under load before the missing-wrkp commit could finish (T-11600).
-    await rm(join(fixture.binDir, 'wrkp'))
+    await rm(fixture.wrkpPath)
     await stageCode(fixture, "'missing'")
-    // The real wrkp must not be reachable either, and it shares a directory
-    // with node on some hosts, so bun and node (lefthook's launcher) are
-    // linked into a private directory instead of putting theirs on PATH.
-    const tools = join(dirname(fixture.binDir), 'tools')
-    await mkdir(tools)
-    for (const name of ['bun', 'node']) {
-      await symlink(Bun.which(name) ?? name, join(tools, name))
-    }
-    const path = [fixture.binDir, tools, '/usr/bin', '/bin'].join(':')
-    expect(Bun.which('wrkp', { PATH: path })).toBeNull()
-    ok(['commit', '-m', 'missing wrkp'], fixture.work, { ...env(fixture), PATH: path })
+    ok(['commit', '-m', 'missing wrkp'], fixture.work, env(fixture))
     expect(ok(['rev-list', '--count', 'HEAD'], fixture.work).trim()).toBe('3')
     expect(await lines(fixture.probeLog)).toEqual(['code', 'code'])
   })

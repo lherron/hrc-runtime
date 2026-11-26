@@ -15,11 +15,12 @@
 
 import { spawn } from 'node:child_process'
 import { appendFileSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
-import { hostname } from 'node:os'
+import { homedir, hostname } from 'node:os'
 import { dirname, isAbsolute, join, resolve } from 'node:path'
 
 import type { ChangeKind, HookName } from './hook-change-scope.ts'
 
+export const WRKP_INSTALL_PATH = join(homedir(), '.local', 'bin', 'wrkp')
 export const HOOK_TIMING_SCHEMA_VERSION = 1
 export const HOOK_RUN_ID_ENV = 'HRC_HOOK_RUN_ID'
 export const HOOK_TIMINGS_PATH_ENV = 'HRC_HOOK_TIMINGS_PATH'
@@ -99,7 +100,10 @@ export function hookSettledPostArgs(record: HookTimingRecord): string[] {
 /** Detached and unawaited: a slow or missing wrkp never delays the hook. */
 export function postHookSettled(record: HookTimingRecord): void {
   try {
-    const child = spawn('wrkp', hookSettledPostArgs(record), { detached: true, stdio: 'ignore' })
+    const child = spawn(WRKP_INSTALL_PATH, hookSettledPostArgs(record), {
+      detached: true,
+      stdio: 'ignore',
+    })
     child.on('error', () => {})
     child.unref()
   } catch {

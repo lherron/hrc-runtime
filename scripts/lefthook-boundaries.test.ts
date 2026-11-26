@@ -18,6 +18,7 @@ interface HookConfig {
   'pre-commit': {
     commands: Record<string, HookCommandConfig>
   }
+  'post-commit': { commands: Record<string, HookCommandConfig> }
   'pre-push': {
     files: string
     commands: Record<string, HookCommandConfig>
@@ -276,7 +277,7 @@ describe('lefthook v2 configuration', () => {
       run: 'bun scripts/pre-push-validation.ts {0}',
     })
     expect(config['post-commit'].commands['wrkp-git-commit'].run).toBe(
-      'command -v wrkp >/dev/null 2>&1 && wrkp git commit || true'
+      'wrkp="$HOME/.local/bin/wrkp"; [ -x "$wrkp" ] && "$wrkp" git commit || true'
     )
   })
 })

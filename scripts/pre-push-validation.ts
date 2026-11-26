@@ -14,7 +14,7 @@ Bun.spawnSync(
   [
     'sh',
     '-c',
-    'command -v wrkp >/dev/null 2>&1 && wrkp git push "$@" || true',
+    'wrkp="$HOME/.local/bin/wrkp"; [ -x "$wrkp" ] && "$wrkp" git push "$@" || true',
     'sh',
     ...process.argv.slice(2),
   ],
