@@ -79,8 +79,9 @@ mail-delivery module under the praesidium kernel (not in this repo).
   JavaScript compatibility helpers and release location.
 - `hrc-pty` — per-seat pty supervisor and attach client for tmux-free seats.
 
-`crates/README.md` holds the allowed dependency edges, enforced by
-`scripts/check-rust-crate-edges.py` in `just verify`.
+The [crate dependency invariant](../architecture/records/invariants/hrc-runtime.rust-crate-edges.yaml)
+records the allowed edges. `just verify` enforces them through
+`scripts/check-rust-crate-edges.py`.
 
 ## Package topology (6 Bun packages, built in dependency order)
 

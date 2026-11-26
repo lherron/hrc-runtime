@@ -31,7 +31,7 @@ approved_source:
 adopted_m1_amendment:
   task: T-11527
   campaign: P-00866
-  proposal: docs/proposals/hrc-rust-parity.md
+  decision: wrkq:T-11527
   status: adopted by Lance; design approved EN-33646 and concrete P0/amendment intent EN-33680
   affected_sections: migration proposal sections 1, 2, 5, 6, 7, 8, 13 and surviving old-premise statements
   boundary: independently isolated native development; whole coupled execution-owner transfer per node after parity and real rollback; standalone Bun preserved
@@ -39,7 +39,7 @@ parity_r2_amendment:
   task: T-11816
   task_slug: parity-plan-r2
   revision: 7aa89563
-  proposal: docs/proposals/hrc-rust-parity.md
+  decision: wrkq:T-11816
   status: design approved by Daedalus 2026-10-25 on EN-35271; Lance's go to arm N0 remains separate
   replaces: r1 P0-P8 work map and frozen inventory qualification, not the M1 ownership boundary
   boundary: current-main coverage and N0-N6 product workflows; no implementation or activation grade implied
@@ -47,7 +47,7 @@ front_door_amendment:
   task: T-11822
   task_slug: f-front-door
   revision: 13bdbdc6
-  proposal: docs/proposals/hrc-rust-parity.md
+  decision: wrkq:T-11822
   status: design approved by Daedalus 2026-10-25 on EN-35519; closes F1 and F2 from EN-35517
   authority: Lance's 2026-10-25 both-processes and Rust access-logging direction, submitted by Mable in EN-35516
   boundary: both processes on each node with one execution owner; front-safe native reads before flip and front-safe Bun reads after flip
@@ -457,7 +457,6 @@ source:
   - wrkc:EN-38696
   - wrkc:EN-38698
   - architecture/records/invariants/hrc-runtime.rust-crate-edges.yaml
-  - docs/proposals/hrc-rust-parity.md
   - commit:13bdbdc6
   - wrkq:T-11822
   - wrkc:EN-35516

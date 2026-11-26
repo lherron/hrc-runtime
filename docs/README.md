@@ -11,7 +11,6 @@ Current reference for the HRC runtime. Design records live in
 
 ## CLI
 
-- [cli-surface.md](cli-surface.md) — the `hrc` command surface by task: run/start/attach and the other verbs, with examples.
 - [cli-reference.md](cli-reference.md) — flag-level reference for `hrc`; 2026-11-02 amendment (praesidium-kernel r1.9, T-12360) routes reads to `praesidium:praesidium` (`seat`, `runtime`, `seat.ext`) and retains only six operator operations on rusthrc’s socket.
 
 ## Runtime and protocols
@@ -38,12 +37,10 @@ Current reference for the HRC runtime. Design records live in
 
 ## Approved designs
 
-- [proposals/seat-annotations.md](proposals/seat-annotations.md) — draft r1 for Daedalus review, not shipped: namespaced annotations on a seat or generation (`seat_annotations`, `hrc.annotation`, `hrc.generation`), replacing Loggia-side card storage (T-12183).
 - [proposals/praesidium-document.md](proposals/praesidium-document.md) — r2.2, Daedalus-approved as a design, not for implementation: the Praesidium data taxonomy (nine subjects × five registers) and one unified read-model document over HRC, wrkq and agent-spaces (T-12244).
 - [proposals/praesidium-kernel.md](proposals/praesidium-kernel.md) — approved design, r1.9 step 6 amendment dated 2026-11-02: Praesidium owns the read document and seat attachment; rusthrc retains an ops-only operator provider (T-12245, T-12360).
 - [proposals/seat-asks.md](proposals/seat-asks.md) — r1.6; r1.2 approved by Daedalus and adopted as `architecture/contracts/seat-asks.yaml`: a seat's open questions as one HRC seat record (`ns: hrc`, `kind: asks`, one row per question), the first HRC-owned annotation kind (T-12239).
 - Install / publish split — historical implemented revision 4 on completed T-08559, attachment ATT-00430 (`prae task attachment get ATT-00430 --output-file <path>`); current authority is [atomic-install.md](atomic-install.md), [fleet-deployment.md](fleet-deployment.md), and the [canonical publication](../architecture/records/invariants/hrc-runtime.canonical-package-publication.yaml) / [observable release](../architecture/records/invariants/hrc-runtime.observable-release.yaml) invariants.
-- [proposals/hrc-rust-parity.md](proposals/hrc-rust-parity.md) — native Rust parity r2: whole-node owner transfer, packages N0–N6 against current main, product-claim gates and explicitly unsupported cases (P-00866).
 - [proposals/hrc-rust-migration.md](proposals/hrc-rust-migration.md) — historical Rust-port proposal and adoption record (P-00862), with a dated guide to subsequent kernel, schema and Bun-retirement changes and current operational references.
 - aspd preparation integration — historical spec and rollout acceptance (T-08542 through T-08562, T-08690 v2 amendment) on completed T-08542, attachment ATT-00428 (`prae task attachment get ATT-00428 --output-file <path>`); shipped authority is the `hrc-runtime.aspd-prepared-execution-release` and `hrc-runtime.asp-toolchain-selection` invariants.
 - Harness broker substrate spec — historical T-01862 leased-tmux `harness-broker/0.2` implementation spec with the T-08690 v2 cutover amendment, on completed T-01862, attachment ATT-00429 (`prae task attachment get ATT-00429 --output-file <path>`); hosting has since moved on (interactive seats on `leased-hrcpty`, headless on aspd-owned `external`), and shipped authority is the `hrc-runtime.aspd-prepared-execution-release` and `hrc-runtime.asp-toolchain-selection` invariants.

@@ -112,7 +112,7 @@ for a path that doesn't exist. `~/.bun/bin/hrc info` lists the paths.
 5. If the drive disagreed with the file, fix the file (Gotchas, with date and evidence) in the same change.
 
 `~/.bun/bin/hrc --help` (agent view), `~/.bun/bin/hrc --human --help`, `~/.bun/bin/hrc admin --help` (the full cellar), `~/.bun/bin/hrc info` and
-`~/.bun/bin/hrc <cmd> --help` give the live surface. `docs/cli-surface.md` and `docs/cli-reference.md` describe it.
+`~/.bun/bin/hrc <cmd> --help` give the live surface. `docs/cli-reference.md` describes the main workflows.
 
 ## Evidence
 

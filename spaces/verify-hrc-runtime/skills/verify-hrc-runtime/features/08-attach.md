@@ -8,7 +8,7 @@ spawn the argv and wait); daemon `crates/hrc-native/src/server/projection/surfac
 `/v1/runtimes/attach`; hrcpty descriptor, tmux `:tui` path), `server/turns/io.rs` (GET `/v1/attach`),
 `server/broker/hrcpty.rs` (attach argv, supervisor log path); client and supervisor `crates/hrc-pty/src/attach.rs`,
 `attach_seat.rs` (`attach --seat`), `serve.rs`; seat streams `server/projection/seat_streams.rs` (GET
-`/v1/streams/open`) and the CLI's `commands/seat_screen.rs`. Docs: `docs/cli-surface.md` (run/start/attach), `docs/isolated-daemon-smoke-recipe.md`.
+`/v1/streams/open`) and the CLI's `commands/seat_screen.rs`. Docs: `docs/cli-reference.md` (run/start/attach), `docs/isolated-daemon-smoke-recipe.md`.
 
 ## Sub-features
 

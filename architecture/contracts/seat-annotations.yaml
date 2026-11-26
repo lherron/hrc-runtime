@@ -80,7 +80,9 @@ authority: >
   Daedalus approval of T-12183 seat-annotations-lineage r1.1 at e2f87751,
   submitted on the EN-39516 review thread, 2026-10-31. HRC storage ownership,
   annotation naming and the 64 KB body limit follow Lance's rulings recorded
-  in the submitted specification.
+  in the submitted specification. The annotation body is writer-owned so
+  additional annotation kinds can use the same HRC API without an HRC change.
+  The write-time limit bounds the cost of publishing and resyncing seat state.
   T-12362 local-only annotations-read design APPROVE on EN-41761, 2026-11-02,
   amends only the explicit local observation exception and peer refusal.
   The 2026-11-02 praesidium-kernel r1.9 step 6 ruling authorizes retirement
@@ -91,7 +93,6 @@ source:
   - wrkq:T-13588
   - wrkq:T-12362
   - wrkq:T-12183
-  - docs/proposals/seat-annotations.md
   - architecture/contracts/turn-attention.yaml
   - architecture/contracts/hrc-rust-migration.yaml
   - architecture/records/invariants/hrc-runtime.federated-session-read.yaml

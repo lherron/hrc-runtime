@@ -7,7 +7,7 @@ Births, reads and ends a managed runtime for a scope, and carries its conversati
 `crates/hrc-native/src/server.rs` (routes), `server/turns/{control,resume,restart,io,input}.rs` (terminate, resume,
 restart, capture, send) and `server/broker/{broker,start,hrcpty}.rs` (births, hrc-pty seats).
 `session meta set|clear` and `session retitle` are native (`crates/hrc-cli/src/commands/sessions.rs`). Docs:
-`docs/cli-surface.md` (run/start/attach), `docs/target-handles.md`. Seat handoffs and seat work: CLI
+`docs/cli-reference.md` (run/start/attach), `docs/target-handles.md`. Seat handoffs and seat work: CLI
 `hrc handoff …`, `hrc seat work …` (native; grammar in `crates/hrc-cli/surface.json`), routes `/v1/seat-handoffs…`, `/v1/sessions/work`.
 
 ## Sub-features

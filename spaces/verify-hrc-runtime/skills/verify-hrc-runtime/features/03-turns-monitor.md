@@ -8,7 +8,7 @@ invocation ledger (invocation-local `seq`). Native code (installed `hrc` = rusth
 is native (`crates/hrc-cli/src/monitor/search.rs`, with the FTS index in
 `crates/hrc-store/src/transcript_index.rs`) and always asks the daemon (`POST /v1/transcript-search`,
 `server/projection/transcript.rs`, search.rs:279); the `hrc index status|rebuild` group and its
-`/v1/transcript-index/*` routes are gone (f682cba8; `unknown command: index`, 404, 2026-11-16). Docs: `docs/cli-surface.md` (turn, monitor), `docs/monitor-spec.md`.
+`/v1/transcript-index/*` routes are gone (f682cba8; `unknown command: index`, 404, 2026-11-16). Docs: `docs/cli-reference.md` (turn, monitor), `docs/monitor-spec.md`.
 
 ## Sub-features
 

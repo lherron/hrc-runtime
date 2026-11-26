@@ -3,8 +3,8 @@ use anyhow::{Result, bail};
 use axum::http::Method;
 use std::path::{Path, PathBuf};
 
-/// The front-safe read set. Per docs/proposals/hrc-rust-parity.md "Both on
-/// every node" and architecture/contracts/hrc-rust-migration.yaml (the
+/// The former dual-owner front-safe read set. See
+/// architecture/contracts/hrc-rust-migration.yaml (the
 /// front_door_amendment and the pinned kernel read set in section 4): the
 /// kernel's side-effect-free reads (sessions, latest-by-session, events
 /// tail/page, presentation runtimes, presentation seats read) intersected
