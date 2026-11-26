@@ -1,3 +1,13 @@
+---
+id: hrc-runtime/cli-reference
+title: HRC CLI workflows
+kind: guide
+authority: descriptive
+status: active
+visibility: internal
+provenance: authored
+---
+
 # HRC CLI workflows
 
 Agents use `prae` for seat coordination, observations and task or room work.
@@ -38,8 +48,8 @@ An already live runtime or a self-brokered birth reports
 `initialPrompt.delivered: false`. See
 `crates/hrc-native/src/server/broker/start.rs#Claim.start`.
 
-The [target handle contract](target-handles.md) describes scope and lane
-identity. The [operations runbook](operations-runbook.md#viewer-and-mail-delivery-ownership)
+The [target handle contract](/docs/hrc-runtime/target-handles) describes scope and lane
+identity. The [operations runbook](/docs/hrc-runtime/operations-runbook#viewer-and-mail-delivery-ownership)
 describes the viewer and mail owners.
 
 ### Place a viewer tab
@@ -78,8 +88,8 @@ the observer subscribes.
 Use `hrc monitor events <invocationId> --seq 20..80 --ndjson` for
 post-mortem evidence, including retired runtimes. These sequences belong to
 the broker invocation. Monitor conditions use the HRC lifecycle ledger's
-`hrcSeq`. See the [monitor contract](monitor-spec.md) for condition and exit
-semantics.
+`hrcSeq`. The monitor contract in `docs/monitor-spec.md` defines condition
+and exit semantics.
 
 ## Session continuity
 
