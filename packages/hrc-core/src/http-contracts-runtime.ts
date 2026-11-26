@@ -208,10 +208,16 @@ export type RestartSessionRequest = {
   /**
    * Per-restart overrides, the summon directive shape. They land in the
    * successor's summonDirectives and provision, so later plain restarts keep
-   * them. Any other key (harness, node, model_provider…) refuses 400 and
-   * mutates nothing.
+   * them. `null` clears that directive, so the successor compiles from the
+   * declaration again (T-14666). Any other key (harness, node,
+   * model_provider…) refuses 400 and mutates nothing.
    */
-  provision?: { model?: string; reasoning_effort?: 'low' | 'medium' | 'high' | 'xhigh' } | undefined
+  provision?:
+    | {
+        model?: string | null
+        reasoning_effort?: 'low' | 'medium' | 'high' | 'xhigh' | null
+      }
+    | undefined
 }
 
 export type RestartSessionLaunch =

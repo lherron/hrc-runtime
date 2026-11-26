@@ -51,15 +51,18 @@ pub fn provision(
                 Some(json!({"field":field})),
             ));
         }
-        let ok = v.as_str().is_some_and(|s| {
-            !s.trim().is_empty() && (key != "reasoning_effort" || EFFORTS.contains(&s))
-        });
+        // null clears that summon directive so the successor compiles from the
+        // declaration again (T-14666); a string sets it.
+        let ok = v.is_null()
+            || v.as_str().is_some_and(|s| {
+                !s.trim().is_empty() && (key != "reasoning_effort" || EFFORTS.contains(&s))
+            });
         if !ok {
             return Err(ApiError::bad(
                 if key == "reasoning_effort" {
-                    format!("{field} must be one of {}", EFFORTS.join(", "))
+                    format!("{field} must be null or one of {}", EFFORTS.join(", "))
                 } else {
-                    format!("{field} must be a non-empty string")
+                    format!("{field} must be null or a non-empty string")
                 },
                 Some(json!({"field":field})),
             ));
@@ -78,7 +81,11 @@ pub fn overridden(intent: Value, overrides: &serde_json::Map<String, Value>) -> 
             intent[slot] = json!({});
         }
         for (key, value) in overrides {
-            intent[slot][key] = value.clone();
+            if value.is_null() {
+                intent[slot].as_object_mut().unwrap().remove(key);
+            } else {
+                intent[slot][key] = value.clone();
+            }
         }
     }
     intent

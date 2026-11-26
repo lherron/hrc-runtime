@@ -190,7 +190,11 @@ fn active(session: &Value) -> Value {
     json!({"hostSessionId":session["hostSessionId"],"generation":session["generation"],"sessionRef":format!("{}/lane:{}",session["scopeRef"].as_str().unwrap_or(""),hrc_store::storage_lane(session["laneRef"].as_str().unwrap_or("")))})
 }
 fn requested_model(call: &Call) -> Option<&Value> {
-    call.provision.as_ref().and_then(|p| p.get("model"))
+    // A null model clears the pin (T-14666); there is no model to preserve.
+    call.provision
+        .as_ref()
+        .and_then(|p| p.get("model"))
+        .filter(|m| !m.is_null())
 }
 fn model_not_preserved(requested: &Value, detail: Value) -> ApiError {
     let mut detail = detail;

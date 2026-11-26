@@ -513,8 +513,63 @@ def main():
         r.check('4.plain-restart-keeps-override', code == 200 and plain.get('summonDirectives', {}).get('model') == alias2,
                 code=code, reply=plain)
         r.wait(lambda: len(compiles(alias2, 'high')) > n_kept, 20, 'plain restart recompiles with the kept override')
+        # T-14666: null clears one summon directive and leaves the other inherited one intact.
+        def directive_compiles(want):
+            return [f for f in frames('aspc.compileHarnessInvocation')
+                    if f.get('compileRequest', {}).get('selectionContext', {}).get('summonDirectives', {}) == want]
+        # Effort-only clear while the model pin is present: the model survives.
+        n_model_only = len(directive_compiles({'model': alias2}))
+        code, cleared_effort = r.http('POST', '/v1/sessions/restart', {'hostSessionId': plain['hostSessionId'],
+                                      'expectedGeneration': plain['generation'], 'force': True,
+                                      'provision': {'reasoning_effort': None}}, headers=OPERATOR)
+        r.check('4.null-clears-effort-keeps-model', code == 200
+                and cleared_effort.get('summonDirectives', {}) == {'model': alias2}, code=code, reply=cleared_effort)
+        assert code == 200, cleared_effort
+        r.wait(lambda: len(directive_compiles({'model': alias2})) > n_model_only, 20,
+               'restart after an effort clear compiles with the model only')
+        effort_intent = applied(cleared_effort['hostSessionId'])
+        r.check('4.null-effort-clear-recorded', effort_intent.get('summonDirectives', {}) == {'model': alias2}
+                and effort_intent.get('provision', {}).get('model') == alias2
+                and 'reasoning_effort' not in effort_intent.get('provision', {}), intent=effort_intent)
+        # Restore the effort, then clear the model only: the effort survives.
+        code, restored = r.http('POST', '/v1/sessions/restart', {'hostSessionId': cleared_effort['hostSessionId'],
+                                'expectedGeneration': cleared_effort['generation'], 'force': True,
+                                'provision': {'reasoning_effort': 'high'}}, headers=OPERATOR)
+        r.check('4.effort-restored', code == 200
+                and restored.get('summonDirectives', {}) == {'model': alias2, 'reasoning_effort': 'high'}, code=code, reply=restored)
+        assert code == 200, restored
+        n_effort_only = len(directive_compiles({'reasoning_effort': 'high'}))
+        code, cleared_model = r.http('POST', '/v1/sessions/restart', {'hostSessionId': restored['hostSessionId'],
+                                     'expectedGeneration': restored['generation'], 'force': True,
+                                     'provision': {'model': None}}, headers=OPERATOR)
+        r.check('4.null-clears-model-keeps-effort', code == 200
+                and cleared_model.get('summonDirectives', {}) == {'reasoning_effort': 'high'}, code=code, reply=cleared_model)
+        assert code == 200, cleared_model
+        r.wait(lambda: len(directive_compiles({'reasoning_effort': 'high'})) > n_effort_only, 20,
+               'restart after a model clear compiles with the effort only')
+        cleared_intent = applied(cleared_model['hostSessionId'])
+        r.check('4.null-clear-recorded', 'model' not in cleared_intent.get('summonDirectives', {})
+                and 'model' not in cleared_intent.get('provision', {})
+                and cleared_intent.get('provision', {}).get('reasoning_effort') == 'high', intent=cleared_intent)
+        n_none = len(frames('aspc.compileHarnessInvocation'))
+        code, cleared_all = r.http('POST', '/v1/sessions/restart', {'hostSessionId': cleared_model['hostSessionId'],
+                                   'expectedGeneration': cleared_model['generation'], 'force': True,
+                                   'provision': {'reasoning_effort': None}}, headers=OPERATOR)
+        r.check('4.null-clears-effort', code == 200 and not cleared_all.get('summonDirectives'), code=code, reply=cleared_all)
+        assert code == 200, cleared_all
+        r.wait(lambda: len(frames('aspc.compileHarnessInvocation')) > n_none, 20, 'restart after the effort clear compiles')
+        last = frames('aspc.compileHarnessInvocation')[-1].get('compileRequest', {}).get('selectionContext', {})
+        r.check('4.cleared-compile-has-no-directives', not last.get('summonDirectives'), selection=last)
+        code, refused_empty = r.http('POST', '/v1/sessions/restart', {'hostSessionId': cleared_all['hostSessionId'],
+                                     'expectedGeneration': cleared_all['generation'], 'force': True,
+                                     'provision': {'model': ''}}, headers=OPERATOR)
+        r.check('4.empty-model-still-refused', code == 400, code=code, reply=refused_empty)
         (args.artifacts / 'restart-provision.json').write_text(json.dumps(dict(refusalSession=before, override=over,
-                                                                               overrideIntent=over_intent, plain=plain), indent=2) + '\n')
+                                                                               overrideIntent=over_intent, plain=plain,
+                                                                               clearedEffort=cleared_effort, effortIntent=effort_intent,
+                                                                               restored=restored,
+                                                                               clearedModel=cleared_model, clearedIntent=cleared_intent,
+                                                                               clearedAll=cleared_all), indent=2) + '\n')
         (args.artifacts / 'provision.json').write_text(json.dumps(dict(summon=provisioned, restart=prov_restart,
                                                                        firstIntent=first, restartIntent=second), indent=2) + '\n')
 
