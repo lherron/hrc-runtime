@@ -1,3 +1,4 @@
+import { changeScope } from './lib/hook-change-scope'
 import { languageScope } from './lib/language-scope'
 
 // Manual verify with no delta runs both. Otherwise inspect committed work and
@@ -6,12 +7,22 @@ import { languageScope } from './lib/language-scope'
 // that run's scope; comparing origin/main to HEAD there would check no delta.
 const paths = new Set<string>()
 const ci = process.env['GITHUB_ACTIONS'] === 'true'
-const base = ci ? process.env['BEFORE'] : 'origin/main'
-const head = ci ? process.env['SHA'] : 'HEAD'
 const oid = /^[0-9a-f]{40}$/
-let valid = !ci || (!!base && !!head && oid.test(base) && oid.test(head) && !/^0+$/.test(base))
+let valid = true
+if (ci) {
+  const before = process.env['BEFORE'] ?? ''
+  const sha = process.env['SHA'] ?? ''
+  if (oid.test(before) && oid.test(sha) && !/^0+$/.test(before)) {
+    // A net diff misses paths changed and then reverted in the same push.
+    const scope = changeScope('pre-push', `refs/heads/main ${sha} refs/heads/main ${before}\n`)
+    valid = !scope.ambiguous
+    for (const path of scope.paths) paths.add(path)
+  } else {
+    valid = false
+  }
+}
 for (const args of [
-  ['diff', '--name-only', `${base}...${head}`],
+  ...(ci ? [] : [['diff', '--name-only', 'origin/main...HEAD']]),
   ['diff', '--name-only', 'HEAD'],
   ['ls-files', '--others', '--exclude-standard'],
 ]) {
