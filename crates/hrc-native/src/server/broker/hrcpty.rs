@@ -25,9 +25,7 @@ const SHUTDOWN_GRACE: Duration = Duration::from_secs(7);
 /// tmux's detached default size, so a seat starts the size it did under tmux.
 pub const INITIAL_SIZE: (u16, u16) = (80, 24);
 
-/// `hrc-pty` from the running daemon's own release (fixed at its start, so a
-/// later stage never hands a running daemon another release's hrc-pty), else
-/// beside the executable for an unmanaged build.
+/// The release's attach client, or the sibling of an unmanaged executable.
 pub fn binary() -> PathBuf {
     if let Some(root) = hrc_common::release::current() {
         return root.join("bin/hrc-pty");
@@ -36,6 +34,21 @@ pub fn binary() -> PathBuf {
         .ok()
         .and_then(|exe| exe.parent().map(|dir| dir.join("hrc-pty")))
         .unwrap_or_else(|| PathBuf::from("hrc-pty"))
+}
+
+/// The fixed owner copy preserves the supervisor's macOS Local Network
+/// identity across releases. A node without that copy uses the running
+/// daemon's release, which was pinned at startup.
+fn supervisor_binary() -> PathBuf {
+    if let Some(fixed) = hrc_common::release::current()
+        .and_then(Path::parent)
+        .and_then(Path::parent)
+        .map(|base| base.join("bin/hrc-pty"))
+        && fixed.is_file()
+    {
+        return fixed;
+    }
+    binary()
 }
 
 /// hrc-pty gates its ops socket with the token in `<ipcDir>/attach.token`,
@@ -141,7 +154,7 @@ pub async fn serve(
         .create(&log_dir)?;
     std::fs::set_permissions(&log_dir, std::fs::Permissions::from_mode(0o700))?;
     let log_path = log_dir.join(format!("{runtime_id}.log"));
-    let bin = binary();
+    let bin = supervisor_binary();
     let (cols, rows) = INITIAL_SIZE;
     let mut command = Command::new(&bin);
     command

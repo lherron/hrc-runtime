@@ -10,8 +10,8 @@
 #   hrc-owner.sh stage --expect-commit <sha> [--dry-run]
 #                                                  back the store up when the release has migrations
 #                                                  pending, copy the installed release to the owner
-#                                                  root and its rusthrc (signed when configured) to
-#                                                  the fixed exe, then prune old staged releases
+#                                                  root, stage fixed executables, then prune
+#                                                  old staged releases
 #   hrc-owner.sh log-mark                          the owner log's byte length, taken before a restart
 #   hrc-owner.sh boot-check <mark>                 after a restart: fail on store.migration_failed
 #                                                  since <mark>, else require the store current for
@@ -43,8 +43,10 @@ INSTALLED_LINK="${INSTALLED_LINK:-$HOME/.bun/install/hrc-runtime-current}"
 # + certificate and stays the same across builds; rusthrc finds its release
 # through hrc-runtime-current beside bin/.
 OWNER_EXE="$OWNER_ROOT/bin/rusthrc"
+OWNER_PTY="$OWNER_ROOT/bin/hrc-pty"
 LEGACY_OWNER_EXE="$OWNER_ROOT/hrc-runtime-current/bin/rusthrc"
 CODESIGN_ID=com.praesidium.rusthrc
+PTY_CODESIGN_ID=com.praesidium.hrc-pty
 # The node's signing keychain and its password file, shared with
 # scripts/macos-codesign-identity.sh (which creates them). This file reaches
 # nodes through `ssh bash -s`, so it cannot source that script; the few lines
@@ -176,10 +178,12 @@ stage() {
     *) fail "store schema is $state for $id: $reading; nothing staged" ;;
   esac
 
-  local dest="$OWNER_ROOT/hrc-runtime-releases/$id"
+  local dest="$OWNER_ROOT/hrc-runtime-releases/$id" identity
+  [[ -x "$src/bin/hrc-pty" ]] || fail "$src/bin/hrc-pty is missing or not executable"
   if [[ -d "$dest" ]]; then
     cmp -s "$src/praesidium-release.json" "$dest/praesidium-release.json" || fail "$dest exists with a different manifest"
     cmp -s "$src/bin/rusthrc" "$dest/bin/rusthrc" || fail "$dest exists with a different rusthrc"
+    cmp -s "$src/bin/hrc-pty" "$dest/bin/hrc-pty" || fail "$dest exists with a different hrc-pty"
     echo "[stage] $dest already staged"
   else
     run mkdir -p "$OWNER_ROOT/hrc-runtime-releases"
@@ -187,15 +191,22 @@ stage() {
     run cp -Rp "$src" "$dest.partial"
     if ((!dry)); then
       cmp -s "$src/bin/rusthrc" "$dest.partial/bin/rusthrc" || fail "copy of rusthrc differs"
+      cmp -s "$src/bin/hrc-pty" "$dest.partial/bin/hrc-pty" || fail "copy of hrc-pty differs"
       [[ -z "$(find "$dest.partial" -type l -lname '/*' -print -quit)" ]] ||
         fail "staged copy has absolute symlinks into a prunable tree"
     fi
     run mv "$dest.partial" "$dest"
     echo "[stage] copied to $dest"
   fi
-  # The fixed exe is copied, signed and probed before the link moves, so a
-  # refusal leaves the link and the exe as a matched pair.
-  prepare_owner_exe "$dest" "$id" "$dry"
+  # Prepare both copies before moving the link so any signing failure leaves
+  # the current release and fixed executables in place.
+  identity="$(codesign_identity)"
+  if ((!dry)); then trap 'rm -f "$OWNER_EXE_TMP" "$OWNER_PTY_TMP"' EXIT; fi
+  prepare_owner_exe "$dest" "$id" "$dry" "$identity"
+  if [[ -n "$identity" ]]; then
+    OWNER_PTY_TMP="$OWNER_ROOT/bin/.hrc-pty.$$.tmp"
+    copy_owner_exe "$dest/bin/hrc-pty" "$OWNER_PTY" "$OWNER_PTY_TMP" "$identity" "$PTY_CODESIGN_ID" "$dry"
+  fi
   local link="$OWNER_ROOT/hrc-runtime-current" prev
   prev="$(readlink "$link" 2>/dev/null || true)"
   run ln -s "$dest" "$link.next"
@@ -204,7 +215,12 @@ stage() {
   if ((!dry)); then
     [[ "$(cd "$link" && pwd -P)" == "$dest" ]] || fail "link does not resolve to $dest"
   fi
-  commit_owner_exe "$dest/bin/rusthrc" "$dry"
+  if [[ -n "$identity" ]]; then
+    run commit_owner_exe "$OWNER_PTY_TMP" "$OWNER_PTY" "$dest/bin/hrc-pty"
+  else
+    run rm -f "$OWNER_PTY"
+  fi
+  run commit_owner_exe "$OWNER_EXE_TMP" "$OWNER_EXE" "$dest/bin/rusthrc"
   echo "[stage] ok release=$id sourceCommit=$commit exe=$OWNER_EXE"
   prune_owner_releases "$dest" "$dry"
 }
@@ -217,7 +233,7 @@ stage() {
 # option: a new one would be ignored by an older release, and stage can roll back.
 #
 # The daemon needs its own line: under the fixed exe it holds no file of its
-# release open, and it spawns hrc-pty from that release's path. A status that
+# release open, and it can still launch that release's hrc-pty. A status that
 # gives no answer prunes nothing. The stage already succeeded, so no failure
 # here fails it; the next stage tries again.
 OWNER_RELEASES_KEEP_NEWEST=5
@@ -280,56 +296,54 @@ codesign_identity() {
 # then sign by the certificate's SHA-1 restricted to that keychain, so a
 # same-named certificate in another keychain is never picked.
 sign_owner_exe() {
-  local file="$1" identity="$2" hash
+  local file="$1" identity="$2" identifier="$3" hash
   [[ -f "$CODESIGN_KEYCHAIN" ]] || { echo "[stage] no signing keychain $CODESIGN_KEYCHAIN (run scripts/macos-codesign-identity.sh create)" >&2; return 1; }
   [[ -f "$CODESIGN_KEYCHAIN_PASSWORD_FILE" ]] || { echo "[stage] no keychain password file $CODESIGN_KEYCHAIN_PASSWORD_FILE" >&2; return 1; }
   security unlock-keychain -p "$(<"$CODESIGN_KEYCHAIN_PASSWORD_FILE")" "$CODESIGN_KEYCHAIN" || return 1
   hash="$(security find-identity -p codesigning "$CODESIGN_KEYCHAIN" 2>/dev/null |
     awk -v q="\"$identity\"" 'index($0, q) && $1 ~ /^[0-9]+\)$/ { print $2; exit }')"
   [[ -n "$hash" ]] || { echo "[stage] no code-signing identity \"$identity\" in $CODESIGN_KEYCHAIN" >&2; return 1; }
-  echo "[stage] signing as \"$identity\" ($hash in $CODESIGN_KEYCHAIN) with identifier $CODESIGN_ID"
-  codesign -f -s "$hash" --keychain "$CODESIGN_KEYCHAIN" -i "$CODESIGN_ID" --timestamp=none "$file"
+  echo "[stage] signing as \"$identity\" ($hash in $CODESIGN_KEYCHAIN) with identifier $identifier"
+  codesign -f -s "$hash" --keychain "$CODESIGN_KEYCHAIN" -i "$identifier" --timestamp=none "$file"
 }
 
-# Copy a release's rusthrc to the fixed $OWNER_EXE: a temp file in the same
-# directory, signed there when an identity is configured, then renamed over the
-# old one by commit_owner_exe. The rename gives a new inode, so a running owner
-# keeps executing the file it started from; the kernel kills a process whose
-# signed pages change under it, which is why the copy is never signed or
-# written in place.
-#
+# Prepare a temp file in the destination directory. Renaming it into place
+# leaves any running owner or supervisor executing its original inode.
+copy_owner_exe() {
+  local src="$1" fixed="$2" tmp="$3" identity="$4" identifier="$5" dry="$6"
+  if ((dry)); then
+    echo "[stage] would copy $src to $fixed (temp file + rename)"
+    if [[ -n "$identity" ]]; then
+      echo "[stage] would unlock $CODESIGN_KEYCHAIN and sign with \"$identity\" and identifier $identifier"
+    fi
+    return
+  fi
+  rm -f "$tmp"
+  cp -p "$src" "$tmp"
+  if [[ -n "$identity" ]]; then
+    sign_owner_exe "$tmp" "$identity" "$identifier" ||
+      fail "codesign $fixed as \"$identity\" failed; nothing was replaced. Check: scripts/macos-codesign-identity.sh status --sign-probe"
+    codesign --verify --strict "$tmp" || fail "signed copy of $fixed does not verify"
+    echo "[stage] designated requirement: $(codesign -dr - "$tmp" 2>/dev/null | sed -n 's/^#* *designated => //p')"
+  fi
+}
+
 # A build that predates the fixed exe (T-12224) cannot find its release from
 # $OWNER_EXE: it would report itself unmanaged and miss its hrc-pty. The probe
 # runs the signed copy from a scratch twin of the owner layout and requires its
 # --version to name the release. A plist that already execs $OWNER_EXE refuses
 # such a build; under a plist that still execs the release link it is a warning.
 OWNER_EXE_TMP=""
+OWNER_PTY_TMP=""
 prepare_owner_exe() {
-  local dest="$1" id="$2" dry="$3" identity probe version
-  identity="$(codesign_identity)"
-  if ((dry)); then
-    echo "[stage] would copy $dest/bin/rusthrc to $OWNER_EXE (temp file + rename)"
-    if [[ -n "$identity" ]]; then
-      echo "[stage] would unlock $CODESIGN_KEYCHAIN and run: codesign -f -s <SHA-1 of \"$identity\"> --keychain $CODESIGN_KEYCHAIN -i $CODESIGN_ID --timestamp=none <temp>"
-    else
-      echo "[stage] no codesign identity configured; would keep the linker's ad-hoc signature"
-    fi
-    return
+  local dest="$1" id="$2" dry="$3" identity="$4" probe version
+  if [[ -z "$identity" ]]; then
+    echo "[stage] no codesign identity ($OWNER_ROOT/codesign.identity or HRC_CODESIGN_IDENTITY); $OWNER_EXE keeps the linker's ad-hoc signature and hrc-pty uses the release copy"
   fi
-  mkdir -p "$OWNER_ROOT/bin"
+  if ((!dry)); then mkdir -p "$OWNER_ROOT/bin"; fi
   OWNER_EXE_TMP="$OWNER_ROOT/bin/.rusthrc.$$.tmp"
-  rm -f "$OWNER_EXE_TMP"
-  cp -p "$dest/bin/rusthrc" "$OWNER_EXE_TMP"
-  if [[ -n "$identity" ]]; then
-    sign_owner_exe "$OWNER_EXE_TMP" "$identity" || {
-      rm -f "$OWNER_EXE_TMP"
-      fail "codesign as \"$identity\" failed; nothing was replaced. Check: scripts/macos-codesign-identity.sh status --sign-probe (a locked keychain, or a key that denies codesign, fails here)"
-    }
-    codesign --verify --strict "$OWNER_EXE_TMP" || { rm -f "$OWNER_EXE_TMP"; fail "signed copy does not verify"; }
-    echo "[stage] designated requirement: $(codesign -dr - "$OWNER_EXE_TMP" 2>/dev/null | sed -n 's/^#* *designated => //p')"
-  else
-    echo "[stage] no codesign identity ($OWNER_ROOT/codesign.identity or HRC_CODESIGN_IDENTITY); $OWNER_EXE keeps the linker's ad-hoc signature, a new macOS TCC identity every release"
-  fi
+  copy_owner_exe "$dest/bin/rusthrc" "$OWNER_EXE" "$OWNER_EXE_TMP" "$identity" "$CODESIGN_ID" "$dry"
+  if ((dry)); then return; fi
   probe="$OWNER_ROOT/.exe-probe.$$"
   rm -rf "$probe"
   mkdir -p "$probe/bin"
@@ -347,12 +361,10 @@ prepare_owner_exe() {
 }
 
 commit_owner_exe() {
-  local src="$1" dry="$2"
-  ((dry)) && return
-  [[ -n "$OWNER_EXE_TMP" ]] || return 0
-  mv -f "$OWNER_EXE_TMP" "$OWNER_EXE"
-  [[ -f "$OWNER_EXE" && ! -L "$OWNER_EXE" ]] || fail "$OWNER_EXE is not a regular file"
-  echo "[stage] $OWNER_EXE <- $src"
+  local tmp="$1" fixed="$2" src="$3"
+  mv -fh "$tmp" "$fixed"
+  [[ -f "$fixed" && ! -L "$fixed" ]] || fail "$fixed is not a regular file"
+  echo "[stage] $fixed <- $src"
 }
 
 # Online backup before a migrating restart, taken while the old daemon still

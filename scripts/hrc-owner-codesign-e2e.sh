@@ -1,11 +1,11 @@
 #!/usr/bin/env bash
-# Headless proof of the HRC owner's stable code identity (T-12224), on a
+# Headless proof of stable code identities for rusthrc and hrc-pty, on a
 # TEMPORARY keychain: no login keychain, trust setting or dialog is touched.
 #
-#   scripts/hrc-owner-codesign-e2e.sh [--out <dir>] [--scratch <dir>] <old-release> <release-b> <release-c>
+#   scripts/hrc-owner-codesign-e2e.sh [--out <dir>] [--scratch <dir>] [--aspd-socket <path>] <old-release> <release-b> <release-c>
 #
 # Each release is an atomic release dir (release-*/ with praesidium-release.json
-# and bin/rusthrc), for example ~/.bun/install/hrc-runtime-releases/release-*.
+# and bin/{rusthrc,hrc-pty}), for example ~/.bun/install/hrc-runtime-releases/release-*.
 # <old-release> may predate the fixed owner exe; <release-b> and <release-c>
 # must ship it (their rusthrc resolves its release from <owner>/bin/rusthrc).
 # The three must share the store schema of <release-b>, which migrates the
@@ -14,6 +14,8 @@
 # It runs the real scripts/macos-codesign-identity.sh and scripts/hrc-owner.sh
 # against a scratch OWNER_ROOT, a scratch owner plist (never loaded into
 # launchd) and a scratch store, and starts the fixed exe as a scratch daemon.
+# With --aspd-socket it also births tabularasa seats through ASP and checks
+# the actual supervisor executable in the signed and no-identity cases.
 # Failure modes it rules out:
 #   - create needs a pre-made or login keychain, or a console (it must make
 #     the signing keychain, a 0600 password file and the search-list entry)
@@ -36,11 +38,13 @@ repo="$(cd "$(dirname "$0")/.." && pwd)"
 stamp="$(date -u +%Y%m%dT%H%M%SZ)"
 out="$HOME/praesidium/var/wrkq-artifacts/T-12224/e2e-$stamp"
 scratch="$HOME/praesidium/var/scratch/hrc-runtime/T-12224/e2e-$stamp"
+aspd_socket=""
 releases=()
 while (($#)); do
   case "$1" in
     --out) out="$2"; shift ;;
     --scratch) scratch="$2"; shift ;;
+    --aspd-socket) aspd_socket="$2"; shift ;;
     -*) echo "unknown option $1" >&2; exit 2 ;;
     *) releases+=("$(cd "$1" && pwd -P)") ;;
   esac
@@ -49,6 +53,8 @@ done
 ((${#releases[@]} == 3)) || { sed -n '5,13p' "$0" >&2; exit 2; }
 [[ ! -e "$scratch" ]] || { echo "scratch $scratch must not exist" >&2; exit 2; }
 mkdir -p "$out" "$scratch"
+# Security's search list reports canonical paths (for example, /private/tmp).
+scratch="$(cd "$scratch" && pwd -P)"
 exec > >(tee "$out/transcript.log") 2>&1
 
 OLD="${releases[0]}" B="${releases[1]}" C="${releases[2]}"
@@ -60,9 +66,12 @@ DECOY_PWFILE="$scratch/codesign/decoy.keychain.password"
 OWNER="$scratch/owner"
 PLIST="$scratch/LaunchAgents/com.praesidium.hrc-server.plist"
 FIXED="$OWNER/bin/rusthrc"
+FIXED_PTY="$OWNER/bin/hrc-pty"
 passes=0
+finished=0
 results=()
 daemon_pid=""
+seat_runtime=""
 orig_keychains=()
 
 log() { printf '\n== %s\n' "$*"; }
@@ -77,7 +86,9 @@ show() { printf '$ %s\n' "$*"; "$@"; }
 
 cleanup() {
   local rc=$?
+  if ((rc == 0 && !finished)); then rc=1; fi
   set +e
+  [[ -n "$seat_runtime" ]] && scratch_hrc runtime terminate "$seat_runtime" --force --reason "owner codesign e2e cleanup"
   [[ -n "$daemon_pid" ]] && kill "$daemon_pid" 2>/dev/null && wait "$daemon_pid" 2>/dev/null
   if ((${#orig_keychains[@]})); then
     security list-keychains -d user -s "${orig_keychains[@]}"
@@ -99,6 +110,7 @@ cleanup() {
   } | jq . > "$out/result.json"
   echo "[e2e] $verdict ($passes checks); $out/result.json"
   if ((rc == 0)); then rm -rf "$scratch"; else echo "[e2e] scratch kept: $scratch"; fi
+  exit "$rc"
 }
 trap cleanup EXIT
 
@@ -112,6 +124,10 @@ select_release() { ln -sfh "$1" "$scratch/installed"; }
 dr_of() { codesign -dr - "$1" 2>/dev/null | sed -n 's/^#* *designated => //p'; }
 cdhash_of() { codesign -dvvv "$1" 2>&1 | sed -n 's/^CDHash=//p'; }
 plist_exe() { plutil -extract ProgramArguments.0 raw -o - "$PLIST"; }
+scratch_hrc() {
+  env -i HOME="$HOME" PATH="/usr/bin:/bin:/usr/sbin:/sbin:/opt/homebrew/bin:$HOME/.local/bin:$HOME/.bun/bin" \
+    HRC_RUNTIME_DIR="$scratch/run" HRC_STATE_DIR="$scratch/state" "$FIXED" "$@"
+}
 
 log "inputs"
 for r in "$OLD" "$B" "$C"; do echo "$(basename "$r") sourceCommit $(manifest "$r" .hrcBuild.sourceCommit)"; done
@@ -124,18 +140,18 @@ while IFS= read -r k; do
 done < <(security list-keychains -d user)
 
 log "decoy keychain $DECOY: a same-named certificate elsewhere in the search list"
-show bash "$repo/scripts/macos-codesign-identity.sh" create --keychain "$DECOY" --password-file "$DECOY_PWFILE" --name "$NAME"
+OWNER_ROOT="$OWNER" show bash "$repo/scripts/macos-codesign-identity.sh" create --keychain "$DECOY" --password-file "$DECOY_PWFILE" --name "$NAME"
 DECOY_HASH="$(security find-identity -p codesigning "$DECOY" | awk -v q="\"$NAME\"" 'index($0, q) && $1 ~ /^[0-9]+\)$/ { print $2; exit }')"
 echo "decoy identity $DECOY_HASH"
 
 log "identity via macos-codesign-identity.sh create: it makes the keychain, password file and search-list entry"
-idscript() { bash "$repo/scripts/macos-codesign-identity.sh" "$@" --keychain "$KC" --password-file "$KC_PWFILE" --name "$NAME"; }
+idscript() { OWNER_ROOT="$OWNER" bash "$repo/scripts/macos-codesign-identity.sh" "$@" --keychain "$KC" --password-file "$KC_PWFILE" --name "$NAME"; }
 show idscript create
 check "create made the signing keychain" test -f "$KC"
 check "password file is mode 0600" test "$(stat -f %Lp "$KC_PWFILE")" == 600
 check "signing keychain is in the user search list" grep -qxF "$KC" < <(security list-keychains -d user | sed -e 's/^[[:space:]]*"//' -e 's/"[[:space:]]*$//')
 check "decoy keychain is still in the search list" grep -qxF "$DECOY" < <(security list-keychains -d user | sed -e 's/^[[:space:]]*"//' -e 's/"[[:space:]]*$//')
-status="$(OWNER_ROOT="$OWNER" idscript status --sign-probe)"
+status="$(idscript status --sign-probe)"
 echo "$status"
 check "identity present in the temporary keychain" grep -q '^IDENTITY=present ' <<<"$status"
 check "sign probe uses the identity without a dialog" grep -q '^SIGN_PROBE=ok identifier "com.praesidium.codesign-probe" and certificate leaf = H"' <<<"$status"
@@ -145,6 +161,10 @@ check "create is idempotent (second run skips the import)" grep -q '1/4 skip: ce
 
 log "scratch store and owner plist"
 mkdir -p "$scratch/state" "$scratch/run" "$scratch/LaunchAgents" "$scratch/tmux"
+if [[ -n "$aspd_socket" ]]; then
+  [[ -S "$aspd_socket" ]] || die "no ASP socket at $aspd_socket"
+  "$HOME/.local/bin/wrkqadm" migrate --db "$scratch/wrkq.db"
+fi
 "$B/bin/rusthrc" store migrate "$scratch/state/state.sqlite"
 cat > "$PLIST" <<EOF
 <?xml version="1.0" encoding="UTF-8"?>
@@ -181,7 +201,8 @@ log "ad-hoc fallback: no identity configured"
 select_release "$OLD"
 adhoc="$(owner OWNER_ROOT="$scratch/owner-adhoc" bash "$repo/scripts/hrc-owner.sh" stage --expect-commit "$(manifest "$OLD" .hrcBuild.sourceCommit)")"
 echo "$adhoc"
-check "stage without identity says it keeps ad-hoc" grep -q "keeps the linker's ad-hoc signature" <<<"$adhoc"
+check "stage without identity logs the fallback once" test "$(grep -c 'hrc-pty uses the release copy' <<<"$adhoc")" == 1
+check "stage without identity leaves the fixed hrc-pty absent" test ! -e "$scratch/owner-adhoc/bin/hrc-pty"
 check "ad-hoc fixed exe is a regular file" test -f "$scratch/owner-adhoc/bin/rusthrc" -a ! -L "$scratch/owner-adhoc/bin/rusthrc"
 show codesign -dvv "$scratch/owner-adhoc/bin/rusthrc"
 check "ad-hoc fixed exe is ad-hoc signed" grep -q '^Signature=adhoc' < <(codesign -dvv "$scratch/owner-adhoc/bin/rusthrc" 2>&1)
@@ -224,6 +245,16 @@ check "release B keeps the SAME designated requirement" test "$(dr_of "$FIXED")"
 check "codesign --verify -R <DR> passes for release B" codesign --verify --strict -R "=$DR" "$FIXED"
 check "codesign --verify -R <DR> passes for the old build" codesign --verify --strict -R "=$DR" "$scratch/signed-old"
 cp -p "$FIXED" "$scratch/signed-b"
+check "release B: fixed hrc-pty is a regular file" test -f "$FIXED_PTY" -a ! -L "$FIXED_PTY"
+show codesign -dvvv "$FIXED_PTY"
+PTY_DR="$(dr_of "$FIXED_PTY")"
+expected_pty_dr="identifier \"com.praesidium.hrc-pty\" and certificate leaf = H\"$leaf\""
+echo "designated => $PTY_DR"
+check "release B: hrc-pty requirement names its identifier and rusthrc's certificate" test "$PTY_DR" == "$expected_pty_dr"
+check "release B: hrc-pty verifies against the requirement" codesign --verify --strict -R "=$PTY_DR" "$FIXED_PTY"
+b_pty_cdhash="$(cdhash_of "$FIXED_PTY")"
+check "release B: hrc-pty has a cdhash" test -n "$b_pty_cdhash"
+b_pty_inode="$(stat -f %i "$FIXED_PTY")"
 
 log "refresh-plist: the one-time move to the fixed exe"
 before="$(plutil -convert json -o - "$PLIST" | jq -S .)"
@@ -239,18 +270,47 @@ check "previous plist kept" test -f "$PLIST.pre-fixed-exe"
 again="$(owner bash "$repo/scripts/hrc-owner.sh" refresh-plist)"
 check "a second refresh is a no-op" grep -qx 'REFRESH_NEEDED=0' <<<"$again"
 
+pty_check() {
+  local expected="$1" signature="$2" pid="" exe details
+  scratch_hrc start "tabularasa@hrc-runtime:codesign-$signature-$$" \
+    -p 'Reply with exactly the word OK and nothing else. No tools.' --json > "$out/seat-$signature-start.json"
+  seat_runtime="$(jq -er '.runtime.runtimeId' "$out/seat-$signature-start.json")"
+  for _ in $(seq 1 60); do
+    if scratch_hrc runtime inspect "$seat_runtime" --json > "$out/seat-$signature-inspect.json" 2>/dev/null &&
+      pid="$(jq -er '.hrc | select(.transport == "hrcpty") | .substrate.pid | numbers' "$out/seat-$signature-inspect.json")"; then
+      break
+    fi
+    sleep 1
+  done
+  [[ -n "$pid" ]] || die "$seat_runtime did not report an hrc-pty supervisor pid"
+  show ps -ww -p "$pid" -o pid=,comm=
+  exe="$(ps -ww -p "$pid" -o comm= | sed 's/^[[:space:]]*//')"
+  check "seat $seat_runtime: supervisor pid $pid runs $expected" test "$exe" == "$expected"
+  details="$(codesign -dvv "$exe" 2>&1)"
+  echo "$details"
+  if [[ "$signature" == fixed ]]; then
+    check "seat supervisor is signed as com.praesidium.hrc-pty" grep -qx 'Identifier=com.praesidium.hrc-pty' <<<"$details"
+    check "seat supervisor has the staged designated requirement" codesign --verify --strict -R "=$PTY_DR" "$exe"
+  else
+    check "fallback seat supervisor is ad-hoc signed" grep -qx 'Signature=adhoc' <<<"$details"
+  fi
+  show scratch_hrc runtime terminate "$seat_runtime" --force --reason "owner codesign e2e complete"
+  seat_runtime=""
+}
+
 # Starts the fixed exe as a scratch daemon (the plist's argv and roots) and
 # checks the release it reports.
 daemon_check() {
-  local release="$1" id commit status
+  local release="$1" seat_check="${2:-}" id commit status
   id="$(basename "$release")"
   commit="$(manifest "$release" .hrcBuild.sourceCommit)"
   printf '{"nodeId":"t12224-e2e","peers":{}}\n' > "$scratch/federation.json"
   chmod 600 "$scratch/federation.json"
-  env -i HOME="$HOME" PATH="/usr/bin:/bin:/usr/sbin:/sbin:/opt/homebrew/bin" TMPDIR="$scratch/" TMUX_TMPDIR="$scratch/tmux" \
+  env -i HOME="$HOME" PATH="/usr/bin:/bin:/usr/sbin:/sbin:/opt/homebrew/bin:$HOME/.local/bin:$HOME/.bun/bin" TMPDIR="$scratch/" TMUX_TMPDIR="$scratch/tmux" \
     HRC_RUNTIME_DIR="$scratch/run" HRC_STATE_DIR="$scratch/state" HRC_PEER_CONFIG_FILE="$scratch/federation.json" \
     HRC_WRKQ_DB="$scratch/wrkq.db" WRKQ_DB="$scratch/wrkq.db" HRC_EVENT_INGEST_SOCKET="$scratch/run/ingest.sock" \
-    HRC_ACP_WEBHOOK_URL= HRC_ASPD_SOCKET="$scratch/run/no-aspd.sock" \
+    HRC_LAUNCHD_LABEL=hrc.owner.codesign.e2e HRC_MAIL_KICKER_ENABLED=0 ASP_HOME="$HOME/praesidium/var/spaces-repo" \
+    HRC_ACP_WEBHOOK_URL= HRC_ASPD_SOCKET="${aspd_socket:-$scratch/run/no-aspd.sock}" \
     "$(plist_exe)" server serve >> "$scratch/daemon-$id.log" 2>&1 &
   daemon_pid=$!
   status=""
@@ -269,24 +329,37 @@ daemon_check() {
   check "$id: releasePath is the owner's staged copy" test "$(jq -r .release.releasePath <<<"$status")" == "$OWNER/hrc-runtime-releases/$id"
   check "$id: runningEqualsInstalled" test "$(jq -r .release.runningEqualsInstalled <<<"$status")" == true
   check "$id: fixed exe --version names the release" grep -q "releaseId $id, sourceCommit $commit" < <("$FIXED" --version)
+  if [[ -n "$aspd_socket" && "$seat_check" == fixed ]]; then
+    pty_check "$FIXED_PTY" fixed
+  elif [[ -n "$aspd_socket" && "$seat_check" == fallback ]]; then
+    pty_check "$OWNER/hrc-runtime-releases/$id/bin/hrc-pty" fallback
+  fi
   kill "$daemon_pid"
   wait "$daemon_pid" 2>/dev/null || true
   daemon_pid=""
 }
 
 log "scratch daemon from the fixed exe, release B"
-daemon_check "$B"
+daemon_check "$B" fixed
 
 log "stage release C, then roll back to B"
 select_release "$C"
 show owner bash "$repo/scripts/hrc-owner.sh" stage --expect-commit "$(manifest "$C" .hrcBuild.sourceCommit)"
 check "release C: same designated requirement" test "$(dr_of "$FIXED")" == "$DR"
+show codesign -dvvv "$FIXED_PTY"
+check "release C: hrc-pty is a new file at the same fixed path" test -f "$FIXED_PTY" -a ! -L "$FIXED_PTY" -a "$(stat -f %i "$FIXED_PTY")" != "$b_pty_inode"
+c_pty_cdhash="$(cdhash_of "$FIXED_PTY")"
+check "release C: hrc-pty is a different build (cdhash $b_pty_cdhash vs $c_pty_cdhash)" test -n "$c_pty_cdhash" -a "$b_pty_cdhash" != "$c_pty_cdhash"
+check "release C: hrc-pty has the same designated requirement" test "$(dr_of "$FIXED_PTY")" == "$PTY_DR"
+check "release C: hrc-pty verifies against the requirement" codesign --verify --strict -R "=$PTY_DR" "$FIXED_PTY"
 daemon_check "$C"
 select_release "$B"
 show owner bash "$repo/scripts/hrc-owner.sh" stage --expect-commit "$(manifest "$B" .hrcBuild.sourceCommit)"
 check "rollback to B: fixed exe re-copied as a regular file" test -f "$FIXED" -a ! -L "$FIXED"
 check "rollback to B: same designated requirement" test "$(dr_of "$FIXED")" == "$DR"
 check "rollback to B: verifies against the requirement" codesign --verify --strict -R "=$DR" "$FIXED"
+check "rollback to B: hrc-pty has B's cdhash" test "$(cdhash_of "$FIXED_PTY")" == "$b_pty_cdhash"
+check "rollback to B: hrc-pty verifies against the requirement" codesign --verify --strict -R "=$PTY_DR" "$FIXED_PTY"
 daemon_check "$B"
 
 if grep -q 'predates the fixed owner exe' <<<"$staged"; then
@@ -299,3 +372,11 @@ if grep -q 'predates the fixed owner exe' <<<"$staged"; then
   check "refused stage left the fixed exe alone" cmp -s "$FIXED" "$scratch/before-refusal"
   check "refused stage left the link on B" test "$(cd "$OWNER/hrc-runtime-current" && pwd -P)" == "$OWNER/hrc-runtime-releases/$(basename "$B")"
 fi
+
+log "remove the configured identity and restage B"
+mv "$OWNER/codesign.identity" "$scratch/disabled.identity"
+select_release "$B"
+show owner bash "$repo/scripts/hrc-owner.sh" stage --expect-commit "$(manifest "$B" .hrcBuild.sourceCommit)"
+check "restage without an identity removes the stale fixed hrc-pty" test ! -e "$FIXED_PTY"
+daemon_check "$B" fallback
+finished=1

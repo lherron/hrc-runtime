@@ -185,6 +185,12 @@ configured so that macOS TCC grants survive releases (T-12224;
 `just refresh-owner-exe <node>` still execs the release link
 `~/praesidium/var/hrc-owner/hrc-runtime-current/bin/rusthrc`.
 
+With the node signing identity configured, staging also places a signed
+`com.praesidium.hrc-pty` at `~/praesidium/var/hrc-owner/bin/hrc-pty` for
+the macOS Local Network grant. New seat supervisors use this path, or the
+daemon's release copy when the fixed binary is absent. Running supervisors
+keep their executable until the seat restarts.
+
 - **Deploy.** On a rusthrc owner, `just install` alone changes nothing that
   runs, so the lane stages the new release (`hrc-owner.sh stage`, which also
   prunes old staged releases; see `docs/state-retention.md`) before the
