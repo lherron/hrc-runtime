@@ -15,18 +15,18 @@ retention: `broker/ledger_prune.rs`, `broker/ledger_prune/retention.rs` and
   per matched row and the summary last (`sweep-zombies`: `matched`, `zombied`, `skipped`, `errors`;
   `reconcile-active`: `matched`, `reaped`, `repaired`, `suspect`, `skipped`, `errors`), so read it with
   `| tail -1`; `--older-than` defaults to 30m. Native `reconcile-active` reaps only active runs with transport
-  `sdk|tmux|headless` (`broker/reconcile.rs:71`); its abandoned pass takes every transport (`:323-325`) and labels
-  any non-sdk/headless row, hrcpty included, `transport: "tmux"` (`:58-63`). A non-dry `sweep-zombies` or
+  `sdk|tmux|headless` (`crates/hrc-native/src/server/broker/reconcile.rs#candidates`); its abandoned pass takes every transport (`crates/hrc-native/src/server/broker/reconcile.rs#abandoned`) and labels
+  any non-sdk/headless row, hrcpty included, `transport: "tmux"` (`crates/hrc-native/src/server/broker/reconcile.rs#transport`). A non-dry `sweep-zombies` or
   `reconcile-active` first withdraws unwritten broker submissions (`broker.zombie_withdraw`, 98e11490, b386d2e2), and a
   non-dry `reconcile-active` settles dead-broker submissions on its own read connection (`broker.submission.settled`,
   e8adf1dd); a dry-run shows neither (source-only, 2026-11-23; this skill never `--yes`es live).
   Bun only: the accepted-never-started settlement (`unstarted_submission_settled` rows, ed974915) is "not yet
-  native" (`broker/reconcile.rs:5-6`).
+  native" (`crates/hrc-native/src/server/broker/reconcile.rs#once`).
 - `~/.bun/bin/hrc admin metrics report [--since D] [--json]`: `commands`, `counters`, `routes`, `slowest`, `largest`,
   `launch`, `diagnostics`, `uncorrelatedServerCount`. Since fda12fed it reads every dated
   `<writer>-YYYY-MM-DD.ndjson` file (`cli`, `rusthrc-server`, `script`, `server`) and counts the `rusthrc` bin:
-  `--since 1h` scanned 3 files and listed 40 `rusthrc …` command rows (2026-11-16; `admin/metrics_report/mod.rs:72-80`).
-  The daemon deletes every writer's day files older than 14 d (`front/accounting.rs:175-196`).
+  `--since 1h` scanned 3 files and listed 40 `rusthrc …` command rows (2026-11-16; `crates/hrc-cli/src/admin/metrics_report/mod.rs#file_could_contain_window`).
+  The daemon deletes every writer's day files older than 14 d (`crates/hrc-native/src/server/front/accounting.rs#Writer.flush`).
 - `~/.bun/bin/hrc admin metrics routes [--since D] [--by route|client|route,client] [--listener main|ingest|peer|registry]
   [--idle] [--json]` (T-11541): read-only rollup of `server-*.ndjson` request records (`count`, `records`,
   `errors`, `errorRate`, `ms.p50|p95|max`, `firstSeen`/`lastSeen`; `client` is the User-Agent `<name>/<version>`).
@@ -60,18 +60,18 @@ retention: `broker/ledger_prune.rs`, `broker/ledger_prune/retention.rs` and
   (2026-11-16, `T-13633/09-new-verbs/drive.txt`). A concurrent second call is 409 `prune_in_progress` (source-only). Dead ready/busy hrcpty seats are staled
   by the daemon's own aging pass instead (source-only, 2026-11-02: `broker/maintenance.rs` `hrcpty_aging`,
   logged as `runtime.hrcpty_aging_complete`).
-- `~/.bun/bin/hrc admin status --json`: prints `/v1/status .aspToolchain`. **Vacuous on native:** `server.rs:1028`
+- `~/.bun/bin/hrc admin status --json`: prints `/v1/status .aspToolchain`. **Vacuous on native:** `crates/hrc-native/src/server.rs#status`
   hard-codes `{toolchainRootActive:false, binaries:[]}`, so live answers that although its plist sets
   `HRC_ASP_TOOLCHAIN_ROOT=/Users/lherron/.bun/bin` (2026-11-02, still on 2026-11-16; product gap T-12306, open).
 - `~/.bun/bin/hrc runtime diagnostics [selector] [--json]`: `first_turn_missing` watchdog trips (read-only).
 - `~/.bun/bin/hrc capture status <target> --json`: the broker-authoritative capture state (`open`, `deferredCount`); native
   also projects that state into the DB, so it is a scratch verb (source-only, 2026-11-02:
-  `crates/hrc-native/src/server/turns/io.rs:197-198`).
+  `crates/hrc-native/src/server/turns/io.rs#capture_status`).
 - `~/.bun/bin/hrc admin broker-verify candidates <scopeRef> --json`: `{scopeRef, candidates: [{schema, invocationId,
   runtimeId, runId, generation, driver, brokerDriver, state, …}]}`; native reads `state.sqlite` read-only
-  directly, no daemon (source-only, 2026-11-02: `admin/broker_verify.rs:54-56`).
+  directly, no daemon (source-only, 2026-11-02: `crates/hrc-cli/src/admin/broker_verify.rs#candidates`).
 - `~/.bun/bin/hrc admin worktrees audit --json` (`mode`, `projectsInspected`, `results`, `summary`): completed-task linked
-  worktrees. It calls `~/.local/bin/wrkq` by path since 6cf48b52 (T-12759, completed; `admin/worktrees.rs:258-261`),
+  worktrees. It calls `~/.local/bin/wrkq` by path since 6cf48b52 (T-12759, completed; `crates/hrc-cli/src/admin/worktrees.rs#wrkq`),
   so it works in a prae seat and even with `PATH=/usr/bin:/bin`: `mode dry-run`, `summary {matched 9, wouldPrune 2,
   skipped 7}`, rc 0 (2026-11-16; it failed `spawnSync wrkq ENOENT` through 2026-11-09). `worktrees prune` (native)
   is not driven.
@@ -146,7 +146,7 @@ for f in $(ls -tr ~/praesidium/var/logs/hrc-runtime/rusthrc-owner.log.*.gz); do 
   activate this change or retire a job. This skill never alters installed jobs.
 - **The native CLI no longer panics when a pipe reader closes early** (36e30532; T-12760 completed). Live
   `runtime list --json` (1.8 MB) piped to `head -c 5` exits 0 with no panic text (2026-11-23); through 2026-11-16 it
-  printed `panicked at hrc-cli/src/metrics.rs:106:10: write stdout: … Broken pipe` and exited 1. A check needs
+  printed `write stdout: … Broken pipe` as a panic (now handled by `crates/hrc-cli/src/metrics.rs#stdout`) and exited 1. A check needs
   output bigger than the 64 KB pipe buffer: a 39 KB `monitor events` piped to `head -c 200` passes either way.
 - The dry-run `admin runs` verbs on live answer `matched: 0` in steady state; a non-zero `matched` is the signal
   to look, not to `--yes` (2026-10-05 `reconcile-active` matched a `run_abandoned_by_runtime` run on

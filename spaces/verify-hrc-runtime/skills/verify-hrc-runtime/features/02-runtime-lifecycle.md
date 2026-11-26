@@ -20,7 +20,7 @@ restart, capture, send) and `server/broker/{broker,start,hrcpty}.rs` (births, hr
   live answer is `{sessionRef, hostSessionId, created, runtime, follow}`; `runId`, `runtimeId`, `generation`,
   `startIdentity.invocationId`, `observation` and `stage: accepted` sit under `.runtime`. `--wait
   started|completed` waits past `accepted`; `completed` sends `turnPolicy: guarded` with a 6 h client bound, and an
-  unwaited `start -p` turn is open (source-only, 2026-11-16: `crates/hrc-cli/src/launch.rs:164-175`, 9e2ae5d0).
+  unwaited `start -p` turn is open (source-only, 2026-11-16: `crates/hrc-cli/src/launch.rs#execute_start`, 9e2ae5d0).
 - `~/.bun/bin/hrc show <selector> [--json]`: resolves runtime, then host session, then message; prints `kind`. For a
   runtime the fields are top-level (`status`, `transport`, …).
 - `~/.bun/bin/hrc runtime list --json` (a bare array of non-terminated runtimes; `--all` adds terminated ones), `~/.bun/bin/hrc runtime inspect <id> --json`
@@ -39,7 +39,7 @@ restart, capture, send) and `server/broker/{broker,start,hrcpty}.rs` (births, hr
   `~/.bun/bin/hrc session meta get <target> --json`: `{metadata, metadataSources}`, empty on a fresh scope.
 - `~/.bun/bin/hrc runtime capture <runtimeId>`: the screen text, rc 0, on an hrcpty seat (substrate capture). A runtime with
   no pane refuses "cannot capture a non-interactive runtime; use the runtime event stream instead" (source-only,
-  2026-11-02: `crates/hrc-native/src/server/turns/io.rs:105-110`).
+  2026-11-02: `crates/hrc-native/src/server/turns/io.rs#capture`).
 - `~/.bun/bin/hrc peek <target> [--lines N]`: the live screen tail; works on hrcpty though its help says "tmux pane".
 - `~/.bun/bin/hrc send <target> <text> [--no-enter] [--json]`: literal input; works on hrcpty though its help says "live tmux
   runtime". No envelope or obligation, but a submitting send answers `{delivered, runId, status: started}` and its
@@ -49,7 +49,7 @@ restart, capture, send) and `server/broker/{broker,start,hrcpty}.rs` (births, hr
   no birth.
 - `~/.bun/bin/hrc runtime terminate <id> [--reason R] [--drop-continuation]`: ends the runtime and keeps an idle hrcpty
   seat's continuation (`droppedContinuation: false`); a seat with an active HRC-launched run drops it by default
-  (source-only, 2026-11-16: `server/turns/control.rs:566-573`). The reason is stored but not shown (Gotchas).
+  (source-only, 2026-11-16: `crates/hrc-native/src/server/turns/control.rs#terminate_runtime`). The reason is stored but not shown (Gotchas).
   Terminate is idempotent since 2df74cc2: a repeat on a terminated runtime answers the same `ok: true` JSON, rc 0,
   and writes no second `runtime.terminated` (1 row, the first reason, 2026-11-16).
 - `~/.bun/bin/hrc resume <scope> [--no-attach] [-p <prompt>]`: re-births from the stored continuation into a new host session
@@ -58,9 +58,9 @@ restart, capture, send) and `server/broker/{broker,start,hrcpty}.rs` (births, hr
   generation+1 with no continuation (`{ok, priorHostSessionId, hostSessionId, generation, launch: {status,
   runtimeId}}`) and terminates the old runtime. A seat that is not idle is refused `ok: false`, `code:
   runtime_busy` ("seat is turn-active; not restarted" on 2026-11-02), rc 1, nothing changed; a seat it cannot probe is refused
-  `seat_unobservable` (source-only, 2026-11-02: `crates/hrc-native/src/server/turns/restart.rs:144-200` at 4b31f208);
+  `seat_unobservable` (source-only, 2026-11-02: `crates/hrc-native/src/server/turns/restart.rs#assert_idle` at 4b31f208);
   `--force` skips the check. Native replays no `initialPrompt` and answers at launch (source-only, 2026-11-02:
-  `server/broker/broker.rs:199-211`, `restart.rs:300-326`); the historical Bun replay is outside the native scratch surface. Not `restartme` and not `server restart`.
+  `crates/hrc-native/src/server/broker/broker.rs#prepare_dispatch`, `crates/hrc-native/src/server/turns/restart.rs#rotate_and_launch`); the historical Bun replay is outside the native scratch surface. Not `restartme` and not `server restart`.
   Since 5f13a397 (T-13969) `POST /v1/sessions/restart` also takes `provision: {model?, reasoning_effort?}`, HTTP only
   (`hrc restart` sends none): another key, an effort outside low|medium|high|xhigh or a non-object answers 400
   `malformed_request` and nothing changes; an accepted override answers `summonDirectives` beside `launch`, the
@@ -78,17 +78,17 @@ restart, capture, send) and `server/broker/{broker,start,hrcpty}.rs` (births, hr
   `session.work.changed` in `hrc_events` (2026-11-09, `T-12756/02-runtime-lifecycle/drive-handoff-seat.txt`).
 - A start or turn on a host session a rotation retired is refused 409 `stale_context` (`reason:
   host_session_retired`), and a resume whose harness differs from the carried continuation 409
-  `continuation_harness_mismatch` (source-only, 2026-11-09: 846648d8, `server/broker/broker.rs:60-92`,
-  `compile.rs:108-140`; the CLI's `send`/`turn` take no `host:` selector to reach it).
+  `continuation_harness_mismatch` (source-only, 2026-11-09: 846648d8, `crates/hrc-native/src/server/broker/broker.rs#require_active_host`,
+  `crates/hrc-native/src/server/broker/compile.rs#continuation_gate`; the CLI's `send`/`turn` take no `host:` selector to reach it).
 - `~/.bun/bin/hrc seat screen <scope> [--lane L] [--styled]`: JSON lines `{text, cursor, cols, rows, screen}` of the seat's
   current screen, a read-only alternative to `peek` that ends on close (`timeout 4` → rc 124 after one line on
   2026-11-16); an unknown seat is `unknown_seat (HTTP 409)`, rc 2 (`T-13633/09-new-verbs/drive.txt`).
 - `~/.bun/bin/hrc session annotation list|put|delete|act <target>`: seat and generation annotations (`--ns`, `--kind`,
   `--id`, `--subject seat|generation`, `--expect-*` fences). `list` on a fresh scope answered `{annotations: []}`,
   rc 0 (2026-11-16); the writes are not driven.
-- New birth refusals (source-only, 2026-11-16): `cwd_missing` (`broker/compile.rs:336-340`), aspd errors as 422
+- New birth refusals (source-only, 2026-11-16): `cwd_missing` (`crates/hrc-native/src/server/broker/compile.rs#require_cwd`), aspd errors as 422
   `aspd_refused` / `aspd_compile_rejected` (7c58dede). Live task births get `SCRATCH=var/scratch/<project>/<task>`;
-  an hv scratch birth gets none (its root is not named `hrc`, `broker.rs:940-947`).
+  an hv scratch birth gets none (its root is not named `hrc`, `crates/hrc-native/src/server/broker/dispatch_env.rs#scratch_dir`).
 - Not driven here: `start --force-restart|--new-session|--no-viewer|--app-server-viewer|--on-conflict`,
   `~/.bun/bin/hrc run` (feature 8 covers attach), `~/.bun/bin/hrc restartme`, `session rotate`, `session drop-continuation`, `runtime
   interrupt`, and the native metadata writes `session meta set|clear`, `session retitle`.
@@ -137,7 +137,7 @@ hv run <task> -- ~/.bun/bin/hrc restart $T --json; echo "rc=$?"                 
 
 - **A long root fails each birth on native, not the boot.** The broker's sockets must fit 104 bytes; native checks
   at birth ("broker socket path too long", an internal error; `<runtime>/btmux/<12>-<32>.sock` is root+57 bytes)
-  (source-only, 2026-11-16: `crates/hrc-native/src/server/broker/broker.rs:975-992`). Historical Bun behavior (outside the native scratch surface):
+  (source-only, 2026-11-16: `crates/hrc-native/src/server/broker/broker.rs#launch`). Historical Bun behavior (outside the native scratch surface):
   the boot refusal "runtime root socket path too long" since 955416e9 (T-10330), which `hv scratch up` reports
   as `daemon_exited` (2026-10-19, `T-11363`). That is why `hv` roots live under `/tmp/hv`.
 - **`~/.bun/bin/hrc start --json` is not turn evidence.** It answers `stage: accepted`; read `turn.completed` and the final
@@ -148,11 +148,11 @@ hv run <task> -- ~/.bun/bin/hrc restart $T --json; echo "rc=$?"                 
 - **`~/.bun/bin/hrc runtime list --json` is a bare array**, not `{runtimes: […]}`. Terminated runtimes drop out of it, and
   `~/.bun/bin/hrc show <scope>` then refuses "did not match any runtime among 0 known candidates", rc 2.
 - **`terminate --reason` is stored but not surfaced.** The reason lands in `runtime_state_json.terminationReason`
-  (1f63a58b; `server/turns/control.rs:634`) and in the `runtime.terminated` event payload, but `~/.bun/bin/hrc runtime inspect` shows neither
+  (1f63a58b; `crates/hrc-native/src/server/turns/control.rs#terminate_runtime`) and in the `runtime.terminated` event payload, but `~/.bun/bin/hrc runtime inspect` shows neither
   (`.hrc.terminationReason` null, no path holds the string) (2026-11-02; product task filed by T-12291). Read it
   from `hrc_events`.
 - **`runtime.terminated` says `transport: "sdk"` for an hrcpty runtime** (`audit_transport`,
-  `crates/hrc-native/src/server/turns/control.rs:362-366`, maps anything not `headless` to `sdk`) (2026-11-02;
+  `crates/hrc-native/src/server/turns/control.rs#interrupt`, maps anything not `headless` to `sdk`) (2026-11-02;
   product task T-12306; still `sdk` on 2026-11-16). Don't grade the transport from that event.
 - **A restart right after `send` can race the busy check.** After `send`, `runtime list` stays `ready` ~1 s
   before `busy`. `send`, `sleep 3`, `restart` restarted (generation 4) instead of refusing; polling saw `ready` at

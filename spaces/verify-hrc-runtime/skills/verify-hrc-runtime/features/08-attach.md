@@ -23,11 +23,11 @@ spawn the argv and wait); daemon `crates/hrc-native/src/server/projection/surfac
   bindingFence: {generation, hostSessionId, runtimeId, supervisorPid}}`; no windowId, paneId or `:tui`.
   Concurrent callers each get a whole descriptor (b6468220, T-10760; 2026-11-02, T-12291). Only an id starting
   `rt-` takes this form; any other selector is a scope. The daemon runs a lease liveness reconcile first, which
-  can stale a dead seat (source-only, 2026-11-16: `crates/hrc-native/src/server/turns/io.rs:33`). The HTTP door also takes
+  can stale a dead seat (source-only, 2026-11-16: `crates/hrc-native/src/server/turns/io.rs#attach`). The HTTP door also takes
   `GET /v1/attach?scopeRef=<scopeRef>[&laneRef][&mode]`: on the scratch it returned the same hrcpty descriptor,
   and both selectors together are 400 "scopeRef and runtimeId are mutually exclusive" (2026-11-16); a peer-homed
   scope answers `{transport: "hrc-stream", node, argv: [hrc-pty, attach, --seat, <scope>, --lane, <lane>]}`
-  (source-only: `projection/surfaces.rs:87-136`). `GET /v1/presentation/runtimes` rows carry attach discovery
+  (source-only: `crates/hrc-native/src/server/projection/surfaces.rs#seat_descriptor`). `GET /v1/presentation/runtimes` rows carry attach discovery
   `{transport: hrcpty, node, streams: [pty, screen], modes: [read-only, take-control]}` (2026-11-16).
 - `~/.bun/bin/hrc attach <scope> --dry-run [--json]`: the static local plan, `{dryRun, scope, sessionRef, runtimeLookup,
   recovery, action, serverConsulted: false}`; its `recovery` text still says detached OpenAI sessions
@@ -41,15 +41,15 @@ spawn the argv and wait); daemon `crates/hrc-native/src/server/projection/surfac
   hrcpty descriptor (four fence keys) and with `--dry-run` refused rc 2 (2026-11-09, T-12756).
 - A scope with no session refuses "no session exists for "<scope>". Start one with: hrc start <scope>", rc 1
   (2026-11-09, T-12756); one with no live runtime says to resume, and every candidate unavailable is
-  `runtime_unavailable`, rc 1 (source-only, 2026-11-09: `launch/terminal.rs:35,46,52-56`).
+  `runtime_unavailable`, rc 1 (source-only, 2026-11-09: `crates/hrc-cli/src/launch/terminal.rs#attach`).
 - Caller attribution (d1505962): the `hrc-pty attach` client runs with `PRAESIDIUM_CALLER=hrc-cli`, the supervisor
   with `rusthrc`, its `harness-broker` child with `hrc-pty`, and the claude child has none (`env_remove`,
-  `crates/hrc-pty/src/serve.rs:1004`; walked by pid on the scratch, 2026-11-09). The attach request logs
+  `crates/hrc-pty/src/serve.rs#spawn`; walked by pid on the scratch, 2026-11-09). The attach request logs
   `route: /v1/runtimes/attach, caller: <your seat>`.
 - tmux seats (codex `harness=codex`, e.g. arris): the argv is `tmux -S <run>/btmux/<driver>--<rt>.sock
   attach-session -t hrc-<driver>-<rt>:tui`, a `tmux detach-client` prints `[detached (from session …)]` and exits
   0, the descriptor fence has windowId/paneId, and a scope with no TTY fails `open terminal failed: not a
-  terminal`, rc 2 (source-only, 2026-11-16: `projection/surfaces.rs:194-283`, last driven 2026-10-26, T-11864).
+  terminal`, rc 2 (source-only, 2026-11-16: `crates/hrc-native/src/server/projection/surfaces.rs#descriptor_value`, last driven 2026-10-26, T-11864).
 - `hrc-pty attach --seat <scopeRef> [--lane L] [--read-only] [--status-fd N]` (cfc206f1): a seat-addressed client over
   the daemon's `/v1/streams/open`, reconnecting with backoff (250 ms to 5 s), exit 0/2 (first open refused)/64
   (usage). Run from the scratch release with the scratch roots, `--read-only --status-fd 3` wrote
@@ -93,7 +93,7 @@ ghostmux kill-surface -t <id> --force
 - **A no-TTY scope attach hangs, it does not fail.** Always `</dev/null` and `timeout`; the old "rc 2" check is
   tmux-only. While it hangs it is a read-write client.
 - **A read-write client changes the seat** (`broker/seat_retirement.rs`, `guard`,
-  and `crates/hrc-pty/src/serve.rs:824-840`): the retire door refuses while a read-write client is attached.
+  and `crates/hrc-pty/src/serve.rs#data_connection`): the retire door refuses while a read-write client is attached.
   Typed keystrokes hold
   back queued broker input until the human is idle, and since 8a94a921 the PTY is sized to the smallest writable
   client (an equal-size tab left `seat screen`'s 98×35 unchanged on 2026-11-16, so that drive did not discriminate).
@@ -103,10 +103,10 @@ ghostmux kill-surface -t <id> --force
   empty or wrong parent matched a live production seat's claude on 2026-11-09; resolve the supervisor by its
   `/tmp/hv/<name>/run/bipc/<hash>` socket and list `pgrep -P` of that pid.
 - Scope attach binds the Ghostty surface when `GHOSTTY_SURFACE_UUID` is set, which every ghostmux tab sets
-  (source-only, 2026-11-02: `launch/terminal.rs:112-135`).
+  (source-only, 2026-11-02: `crates/hrc-cli/src/launch/terminal.rs#spawn_attach`).
 - tmux seats only: bound every `tmux -S` with `timeout` and glob only `btmux/*-rt-*.sock`
   (`codex-app-server-renderer-control.*.sock` is not tmux and hangs it); the socket name is truncated, the
-  session name carries the full runtime id (source-only, 2026-11-16: `broker/startup/sweeps.rs:325`; last driven
+  session name carries the full runtime id (source-only, 2026-11-16: `crates/hrc-native/src/server/broker/startup/sweeps.rs#lease_sweep`; last driven
   2026-10-26, T-11864).
 
 ## Proven when

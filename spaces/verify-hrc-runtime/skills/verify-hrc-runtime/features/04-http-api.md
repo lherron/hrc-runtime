@@ -21,7 +21,7 @@ observation routes a consumer pages. Code: `crates/hrc-native/src/server.rs` (`d
   ascending `hrcSeq`, with `ledgerIncarnationId`, `headHrcSeq` (the global head, not the page's) and
   `truncated` (older matching rows exist). Filters: `hostSessionId`, `generation`, `scopeRef`, `laneRef`,
   `runtimeId`, `runId`, `category`, `eventKind`, `sourceRef`, and since d01da18b `fromTs`/`toTs` (inclusive) and
-  `liveOnly=true|false` (`evidence_origin IS NULL`) (lifecycle_events.rs:65-103, tail :154-200). `afterSeq=S` is an
+  `liveOnly=true|false` (`evidence_origin IS NULL`) (`crates/hrc-native/src/server/projection/lifecycle_events.rs#filters`, `crates/hrc-native/src/server/projection/lifecycle_events.rs#handle`). `afterSeq=S` is an
   exclusive lower bound that returns the newest `limit` rows above S. Live read-only on 2026-11-16: `afterSeq=head-10&limit=3`
   gave the newest three, `truncated: true`; `afterSeq=-1` 400 "afterSeq must be a safe integer greater than or equal
   to 0"; `liveOnly=x` 400 "liveOnly must be true or false"; `liveOnly=true&fromTs=…&toTs=…` stayed inside the window
@@ -35,19 +35,19 @@ observation routes a consumer pages. Code: `crates/hrc-native/src/server.rs` (`d
   head; a local one answers here with no header (live, 2026-11-02, T-12291: minisvc → `svc`, the T-12291 seat →
   none). An unresolvable home is a retryable 503 `session_home_pending|unknown|unreachable|malformed`, and `GET
   /v1/runs`, bounded-stream, `sessions/get|metadata|work|annotations` and `POST /v1/sessions/resolve` route too
-  (source-only, 2026-11-02: routing.rs:52-100, :133-166, :255). `.capabilities.federatedSessionRead` is hard-coded
-  `true` (server.rs:1029). `localOnly=true` on `GET /v1/sessions/get|annotations` skips home routing on the unix
+  (source-only, 2026-11-02: `crates/hrc-native/src/server/placement/federation/routing.rs#scope_of`, `crates/hrc-native/src/server/placement/federation/routing.rs#route_request`). `.capabilities.federatedSessionRead` is hard-coded
+  `true` (`crates/hrc-native/src/server.rs#status`). `localOnly=true` on `GET /v1/sessions/get|annotations` skips home routing on the unix
   socket: live minisvc `sessions/get` answered `x-hrc-home-node: svc` without it and no header with it
-  (2026-11-09); the peer listener refuses it 403 `local_only_forbidden` (source-only: peer_listener.rs:226-240).
+  (2026-11-09); the peer listener refuses it 403 `local_only_forbidden` (source-only: `crates/hrc-native/src/server/placement/federation/peer_listener.rs#route_request`).
 - `GET /v1/events/page?afterSeq=S&limit=N[&ledgerIncarnationId=I]` (T-11441, the kernel's forward reader):
   `{ledgerIncarnationId, head, rows, scannedThrough}`, rows ascending from `afterSeq+1`; `scannedThrough` is the
   last row on a full page (`afterSeq=0&limit=5` → 5), else `head`. `afterSeq` is required, `limit` is 1..1000, a
   wrong incarnation is 409 `cursor_invalid` (2026-11-02, T-12291). It is not scope-routed, and `head` is the
   allocated sequence (`sqlite_sequence`), which can exceed the tail's `MAX(hrc_seq)` after a delete (source-only,
-  2026-11-02: routing.rs:52, crates/hrc-store/src/events.rs:17-27,68-82); equal on the drive (124/124).
+  2026-11-02: `crates/hrc-native/src/server/placement/federation/routing.rs#scope_of`, `crates/hrc-store/src/events.rs#Store.allocated_hrc_seq` and `crates/hrc-store/src/events.rs#Store.event_page`); equal on the drive (124/124).
 - Unserved routes answer Bun's plain-text `404 Not Found` and log one serve.log line each:
   `route.not_served {method, path, servedBy: "native", reason: "not-served-natively"}` (the reason lost its
-  `-no-bun-socket` suffix with e60e97a3; `server/front/proxy.rs:19-27`). Driven 2026-11-02 for the retired `/v1/registrations/gc`, `/v1/bridges`,
+  `-no-bun-socket` suffix with e60e97a3; `crates/hrc-native/src/server/front/proxy.rs#not_served`). Driven 2026-11-02 for the retired `/v1/registrations/gc`, `/v1/bridges`,
   `/v1/launches` and the never-ported Bun routes `/v1/messages/wait`, `/v1/in-flight-input`,
   `/v1/runtimes/capture/release` (6 × 404, 6 lines), and on 2026-11-16 with the f682cba8-retired
   `/v1/transcript-index/status` too (7 × 404, 7 lines). Native 404s any unimplemented method+path, so a GET suffices.
@@ -131,7 +131,7 @@ curl -s -D- -o /dev/null --unix-socket $L 'http://hrc/v1/events/tail?limit=1&sco
 - `/v1/sessions` is a bare array; `.sessions` on it is a jq error.
 - **Which daemon answered:** read serve.log's `server.listening {owner: "rusthrc", role: "native"}` (no
   `bunSocket` since e60e97a3) and the per-request `http.request … servedBy: "native"` (2026-11-02, T-12291). `.api.listenSocketPath ==
-  .api.socketPath` is hard-coded on native (server.rs:1028) and proves nothing. Every non-stream request is
+  .api.socketPath` is hard-coded on native (`crates/hrc-native/src/server.rs#status`) and proves nothing. Every non-stream request is
   logged now, with `caller` (from `x-praesidium-caller`, `unknown` for curl) beside `client` (the user-agent).
   The six unserved-route lines log `http.request … route: "unmatched"` too (2026-11-09).
 - `headHrcSeq` stays the global head on a history page (124 on every page on 2026-11-02; 59 on T-10297, 46 on

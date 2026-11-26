@@ -28,7 +28,7 @@ daemon `crates/hrc-native/src/main.rs` (`server serve` dispatch), `server.rs` (`
   `x target-resolve (Invalid scope input …)` row after the owner rows, exit 1 (the scratch printed its four `+`
   rows, then the `x` row, 2026-11-16). The daemon builds the rows at
   `GET /v1/doctor` (`[{name,status,detail}]`, 200 on a scratch, 2026-11-16). A socket file whose `GET /v1/doctor`
-  fails gives one `hrc-daemon` fail row (source-only, 2026-11-16: `local/doctor.rs:18-27`); no socket file gives no
+  fails gives one `hrc-daemon` fail row (source-only, 2026-11-16: `crates/hrc-cli/src/local/doctor.rs#command`); no socket file gives no
   rows (Gotchas). `placement-skew` warns when the bindings scan hit its budget (feature 5). `--json` is
   `[{name, status, detail}]`, grouped `placement-policy` rows add `count` and `bindings[]`. Exit 0 with warns, 1
   with `--strict` and a warn.
@@ -37,7 +37,7 @@ daemon `crates/hrc-native/src/main.rs` (`server serve` dispatch), `server.rs` (`
   `route`, `selector`, `enqueuedCount`, `pendingCount`, `receiptState`).
 - `~/.bun/bin/hrc server tmux status [--json]`: `available`, `version`, `running`, `sessions`, `leases`, probed client-side
   with no daemon call, plus `leaseDiagnostics {total, probed, skipped}` (source-only, 2026-11-02:
-  `crates/hrc-cli/src/local/server.rs:129-164`). Scratch human status: `tmux: available (not running)`.
+  `crates/hrc-cli/src/local/server.rs#leases`). Scratch human status: `tmux: available (not running)`.
 - `rusthrc server serve` has no harness guard. Use `hv` to scrub inherited harness and owner context.
   Native boot creates a missing store and applies forward migrations before binding, under its store lock
   (T-13056); a foreign or ahead migration set still refuses. Do not use `server start` for a scratch:
@@ -102,12 +102,12 @@ curl -s --unix-socket ~/praesidium/var/run/hrc/hrc.sock http://hrc/v1/status | j
   top-level read answers `null` exactly like a dead field (2026-10-05, `T-10297`; no top-level key on native
   2026-11-02). Assert `.release.mode` first (`atomic` live, `unmanaged` scratch).
 - **`listenSocketPath == socketPath` cannot be wrong on native.** Both come from `<runtime>/hrc.sock`
-  (`crates/hrc-native/src/server.rs:1033`), equal on live and scratch alike (2026-11-02; same at 4b31f208). Prove which daemon
+  (`crates/hrc-native/src/server.rs#status`), equal on live and scratch alike (2026-11-02; same at 4b31f208). Prove which daemon
   answered by the log's `server.listening` / `servedBy:"native"` lines, not by that comparison.
 - **Nothing guards `rusthrc server serve` in an agent shell.** It creates a missing store and boots, and its births
-  inherit your `CLAUDECODE` and friends (source-only, 2026-11-16: `crates/hrc-native/src/main.rs:37-60`). An empty store is no isolation guard. Start real daemons only through `hv scratch up`
+  inherit your `CLAUDECODE` and friends (source-only, 2026-11-16: `crates/hrc-native/src/main.rs#main`). An empty store is no isolation guard. Start real daemons only through `hv scratch up`
   (scrubbed env, own ghostmux tab). Never run `~/.bun/bin/hrc server start` with scratch env vars: it kickstarts the loaded
-  production job `com.praesidium.hrc-server` (source-only, 2026-11-16: `crates/hrc-cli/src/server_start.rs:204-207`).
+  production job `com.praesidium.hrc-server` (source-only, 2026-11-16: `crates/hrc-cli/src/server_start.rs#prepare`).
   Native prunes no release dirs, unlike Bun (source-only, 2026-11-16: `hrc-runtime-releases` appears only in `crates/hrc-common/src/release.rs`; the daemon's runtime and worktree prunes touch store rows and worktrees, not releases), but from a
   production tree it pins itself to that release (SKILL.md).
 - **The no-daemon controls write CLI metrics unless told not to.** `HRC_STATE_DIR=/tmp/hv-none-s ~/.bun/bin/hrc doctor`

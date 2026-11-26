@@ -73,7 +73,7 @@ These are the ids used in the native, so a script can address them by id.
   `MacHostConfig.swift`). It asks hrc-kernel for `resource.attach` and gets
   back a `tmux-attach` descriptor.
 - **`leaf` Terminal leaf pane.** `TerminalSurfaceView`. It never builds a
-  tmux target itself. `TmuxAttachCommand` (`Sources/Terminal/ResourceDescriptor.swift:167`)
+  tmux target itself. `TmuxAttachCommand` (loggia `Sources/Terminal/ResourceDescriptor.swift`)
   validates the kernel-issued descriptor and turns it into the attach argv.
   If the target were re-derived on the Swift side, it would land on the blank
   broker window instead of the tui pane.

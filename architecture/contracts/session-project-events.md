@@ -1,6 +1,7 @@
 # `session.*` and `turn.*` project events
 
-**Owner:** hrc-runtime. **Producer:** `session-project-events.ts` (hrc-server daemon).
+**Owner:** hrc-runtime. The native daemon publishes these facts through
+`crates/hrc-native/src/server/lifecycle/publication.rs`.
 **Envelope:** wrkq `wrkq.projectEvent.post` (wrkq T-08388, migration 000061).
 **Introduced:** T-08389. **Lifecycle (`started`/`ended`), tail, full ref:** T-08928.
 

@@ -1,567 +1,96 @@
-# HRC CLI Reference
+# HRC CLI workflows
 
-Status: CANONICAL
-Date: 2026-10-18
-Applies to: `hrc` (hrc-runtime, `apiVersion 0.1.0`). The `hrcchat` binary was removed (f77f12b9); agent messaging is `wrkc say`.
+Agents use `prae` for seat coordination, observations and task or room work.
+Use `hrc` for the operator and daemon surfaces. `hrc <command> --help`
+shows the options supported by the installed CLI. `hrc info` explains the
+agent and human views, and `hrc admin --help` lists maintenance commands.
 
-`hrc` is the local runtime control plane for agent sessions: it gives a target a stable identity, preserves continuity across launches, manages live runtimes, and lets an operator or another agent inspect/attach/start/interrupt a runtime. Tracked agent work is `hrc turn`; messaging is `wrkc say <ref> --to <agent> -`.
+## Start and attach
 
-This reference covers the common command surface. For the full flag accounting of any command, run `hrc <group> <cmd> --help`.
+From a real terminal, `hrc run cody@agent-spaces` starts or reuses the
+seat and attaches to it. `hrc start cody@agent-spaces` provisions without
+attaching the invoking terminal. `hrc attach cody@agent-spaces` attaches to
+an existing live seat. A runtime ID passed to `hrc attach` prints the
+runtime's attach descriptor.
 
-## ASP v2 selection contract (T-08690)
+`run` and attached `resume` ask ASP for presentation. If a live runtime
+was born without it, HRC refuses with `stale_context` and reports
+`replacementRequired: true`. The live runtime is left intact. Similarly,
+`start --no-viewer` and `--app-server-viewer` choose different Codex
+execution/presentation routes at birth. A conflicting live presentation is
+refused before replacement.
 
-`hrc` flags and summons express request intent; they do not select a
-profile, target, route, worker, driver, or HRC presentation default. For a new
-broker birth HRC preserves missing fields. Explicit request overrides use the
-optional camelCase `requested` fields; raw per-summon overrides remain
-source-distinct under `selectionContext.summonDirectives` with the snake_case
-keys `harness`, `model_provider`, `model`, `reasoning_effort`, and
-`presentation`. `presentation` is boolean and explicit `false` survives.
-ASP—not this CLI or HRC—merges strict
-v4 profile, schema-2 project target, summon directives, and request overrides,
-then validates and selects the execution.
+For a fresh roster claim, use `start --on-conflict suffix` to choose the
+next free slot or `--on-conflict reject` to claim one exact scope. Read the
+actual scope from `claim`. Use the same `--idempotency-key` and request when
+retrying an uncertain claim. A changed request conflicts. A newer claim that
+has recycled the seat supersedes the recorded result.
 
-The legacy Codex-specific `--no-viewer` / `--app-server-viewer` route narrative
-below is superseded by this v2 contract wherever it implies HRC selects a route
-or driver. Removed v1 selector aliases are refused rather than mapped. An
-explicit presentation conflict never replaces a live runtime; omission does not
-request replacement.
+`start -p 'prompt'` claims or starts the runtime and delivers a separate
+turn. `--wait completed` waits on a guarded turn and prints that turn's
+answer. For HTTP clients, keyed claim-and-start binds
+`runtimeIntent.initialPrompt` into the claim. Without `coldBirth`, the
+client follows it with a separately admitted turn. With
+`coldBirth: {"promptMode":"append-to-priming"}`, a birth carries the prompt
+as part of priming, under the turn-admission lease. Check
+`initialPrompt.delivered`, `runId` and `submissionId` to prove delivery.
+An already live runtime or a self-brokered birth reports
+`initialPrompt.delivered: false`. See
+`crates/hrc-native/src/server/broker/start.rs#Claim.start`.
 
-`hrc info` and root `hrc --help` are audience projections of the live command
-graph. Selection precedence is explicit `--agent` / `--human`, then an
-agent-identity environment, then stdout TTY (human only for a TTY with no agent
-identity). Every projection labels its view; explicitly naming a command always
-shows its complete help. `hrc admin --help` always shows the full maintenance
-cellar.
+The [target handle contract](target-handles.md) describes scope and lane
+identity. The [operations runbook](operations-runbook.md#viewer-and-mail-delivery-ownership)
+describes the viewer and mail owners.
 
----
+### Place a viewer tab
 
-## Target handles and scope refs
+Set `--viewer-window console` on start to use a window that carries the
+`console` key. Stamp the window itself before starting the per-user viewer.
 
-### Target handle (shorthand) — what you type
-
-Most user-facing commands (`run`, `start`, `attach`, `turn`, `summon`, `send`, `peek`, monitor selectors) accept a shorthand **target handle**:
-
-```
-<agentId>
-<agentId>@<projectId>
-<agentId>@<projectId>:<taskId>
-<agentId>@<projectId>:<taskId>/<roleName>
-```
-
-A handle may also pin a **lane** with `~<lane>`:
-
-```
-<handle>~<lane>
-```
-
-Examples:
-
-```
-cody
-cody@agent-spaces
-cody@agent-spaces:T-123
-cody@agent-spaces:T-123/reviewer
-cody@agent-spaces~repair
-cody@agent-spaces:T-123/reviewer~planning
-```
-
-Resolution rules:
-- If `@<projectId>` is omitted, HRC infers it: explicit `--project-id` → `ASP_PROJECT` → the cwd-inferred project. For an interactive (TTY) invocation where the cwd is a registered project that differs from `ASP_PROJECT`, the physical cwd wins (a stderr note is printed).
-- Managed handle commands (`run`/`start`/`attach`) default the lane to `main` when `~<lane>` is omitted.
-- Low-level `hrc session resolve` defaults to `main` unless `--lane` is passed.
-
-### Scope ref / session ref (canonical) — what HRC stores and prints
-
-The handle resolves to a canonical, fully-qualified **scopeRef** and **sessionRef**. These are what appear in JSON output and error messages:
-
-```
-scopeRef     agent:<agentId>:project:<projectId>
-sessionRef   agent:<agentId>:project:<projectId>/lane:<lane>
-```
-
-Example: `cody@agent-spaces` → `scopeRef = agent:cody:project:agent-spaces`, `sessionRef = agent:cody:project:agent-spaces/lane:main`.
-
-### Monitor selectors — the addressing form for `monitor show|watch|wait`
-
-The monitor commands accept a selector that is either a target handle (resolved as above to a session selector) or an explicit prefixed selector:
-
-```
-<handle>                       e.g. clod@agent-spaces  (session selector)
-msg:<messageId>                a specific durable message
-seq:<n>                        a durable message by sequence
-scope:<ref> | session:<ref> | host:<id> | runtime:<id>   explicit typed selectors
-scope:<prefix>:* | T-XXXXX     fan-in selectors (need --until-any / --until-all)
-```
-
-`response` waits need exactly one `msg:` or `seq:` selector.
-
-A bare/empty selector means "all events / aggregate snapshot".
-
----
-
-## Command groups
-
-### `run` / `start` / `attach` — managed runtime lifecycle
-
-```bash
-# Resolve, launch (or reattach), and attach to the TUI:
-hrc run cody@agent-spaces
-
-# With an initial prompt:
-hrc run cody@agent-spaces -p "Continue."
-hrc run cody@agent-spaces --prompt-file ./brief.md
-
-# Start detached (headless), do not attach:
-hrc start cody@agent-spaces
-
-# Attach to an already-running target (a runtimeId prints its attach descriptor JSON instead):
-hrc attach cody@agent-spaces
-hrc attach rt-1c9cb9ec-9538-411a-b3d3-5feb7628bc54
-```
-
-Shared notable flags (`run`/`start`): `--force-restart` (replace the runtime with a fresh PTY while preserving the conversation), `--new-session` (rotate to a fresh host session and conversation), `--dry-run` (daemon plan preview — no side effects; `run --dry-run` is exempt from the TTY gate), `--debug`, `--project-id <id>`, `--project-root <path>`, `--json` (on error, emit structured JSON incl. broker admission-rejection detail), `--no-register`, `-p <text>`, `--prompt-file <path>`. `run` adds `--attach-only`; `start` adds `--cwd <path>`, `--idempotency-key <key>` and `--wait [started|completed]`. `run` is interactive-only; use `hrc start <scope> [-p <prompt>]` for non-interactive provisioning; its `-p` turn goes through `POST /v1/turns` and accepts steers, except with `--wait completed`, where the CLI asks for a guarded turn because it is waiting to print that turn's answer. `attach` takes `--dry-run` and `--json`.
-
-2026-11-02 amendment (T-12316, Daedalus EN-42466): the native exact/suffix
-claim-and-start API retains `runtimeIntent.initialPrompt` in its canonical
-request binding. Without `coldBirth`, it omits the prompt from the runtime
-launch, and the caller delivers the message separately through `/v1/turns`
-using the claimed host session and the same action key. Every explicit repeat must call claim-and-start first:
-changing the message under that key refuses before delivery. The host-session
-ensure API still refuses `initialPrompt`. Claim and turn admission are separate
-operations; claim success alone proves no message delivery.
-
-2026-11-23 amendment (T-14472): a claim-and-start request that carries
-`coldBirth: {"promptMode": "append-to-priming"}` and a non-empty
-`runtimeIntent.initialPrompt` delivers the prompt appended to the launch
-priming, on the call whose start births the runtime, as a run-carrying birth
-inside the continuity gate. `promptMode: "replace-priming"` is refused
-(`malformed_request`), and so is `coldBirth` without a prompt. The request
-takes the turn-admission lease at door entry, before replay or claim, so a
-draining daemon refuses `server_draining` with no claim effect; retry with the
-same key. The response then carries an `initialPrompt` block:
-`{"delivered": true, "runId", "submissionId"}` (the launch run's broker
-submission id, positive delivery evidence); `{"delivered": false, "reason":
-"runtime_reused"}` when this call's start found the runtime already live (an
-identical replay, or a concurrent birth that won the gate) and delivered
-nothing; or `{"delivered": false, "reason": "self_brokered"}` on the
-self-brokered participant branch, which never delivers. `claim.replayed` still
-tells a replay from a first call. Without `coldBirth` there is no block.
-
-That two-step shape is the claim-and-start contract only. It is not how a cold
-seat must be started on a message. To start a cold seat on a message in one
-turn that accepts steers, call `POST /v1/targets/ensure` (only when the seat
-has no session yet) and then `POST /v1/submissions/invoke` with `runtimeIntent`
-and `coldBirth`. The canonical description of the doors is
-`crates/hrc-native/README.md`, section "Turn doors".
-
-`run` (and `resume`, the same attached door) always asks ASP for presentation: the server sets `selection.presentation: true` in the compile request, which overrides summon directives, the project target, the agent profile and the catalog default. A scope whose live runtime was born without presentation (for example a headless seat woken by mail) is refused `stale_context` (`field: presentation`, `replacementRequired: true`) with the runtime untouched; terminate it first to run fresh.
-
-#### Viewer placement and the collision roster (`start` only)
-
-```bash
-# Land this session's viewer tab in the window stamped with key `console`:
-hrc start mable@hrc-runtime --viewer-window console
-
-# Never hijack a live `:primary` — claim the next free roster slot instead:
-hrc start mable@hrc-runtime --on-conflict suffix --viewer-window console --json
-
-# Claim EXACTLY this scope, or refuse if it is already occupied:
-hrc start cody@hrc-runtime:hrcdev --on-conflict reject --json
-```
-
-- **`--no-viewer`** — run this start HEADLESS with no operator viewer or
-  terminal (T-08553). This selects a different execution route, not a hidden
-  window: a Codex start that the node would send to the interactive TUI or give
-  a `tmux-tui` viewer runs on the headless codex-app-server route instead, and
-  prepares through aspd when `HRC_ASPD_SOCKET` is configured. Omitted ⇒ node
-  defaults unchanged. Refused together with `--viewer-window`, for interactive
-  or Claude-redirected starts (`presentation_operator_unsupported`), and when the
-  scope already has a live runtime with a viewer or TUI (`presentation_conflict`;
-  the live runtime is untouched — terminate it first to start fresh):
-
-  ```bash
-  hrc start cody@hrc-runtime:T-00000 --no-viewer -p "hello" --wait completed --json
-  ```
-- **`--app-server-viewer`** — run this Codex start on the headless
-  codex-app-server WITH the attachable tmux renderer viewer (T-08554,
-  `presentation.operator: tmux-tui`). It exempts the interactive TUI redirect
-  like `--no-viewer`; with `HRC_ASPD_SOCKET` configured it prepares through aspd
-  and the renderer runs from the worker's own ASP release. `hrc attach <scope>`
-  opens the viewer; a tmux detach leaves the worker running. Refused together
-  with `--no-viewer`, for interactive or Claude-redirected starts
-  (`presentation_operator_unsupported`; whether the selected execution can
-  present the viewer is ASP's validation), and when the scope's live runtime does
-  not already present that viewer (`presentation_conflict`, untouched):
-
-  ```bash
-  hrc start cody@hrc-runtime:T-00000 --app-server-viewer -p "hello" --wait completed --json
-  hrc attach cody@hrc-runtime:T-00000
-  ```
-
-  On a node with the Codex redirect off (max3, T-08555) this is also what a plain
-  `hrc start <codex scope> -p …` gives a scope with nothing established; the
-  route decision then records `operatorPresentationSource: node-default`.
-- **`--viewer-window <key>`** — free-form window key recorded on the session
-  intent, so every later viewer respawn lands in the same window. Absent ⇒
-  today's single "Headless Sessions" window. Not offered on `hrc run`, whose
-  session lives in the invoking terminal.
-- **`--on-conflict suffix`** — the daemon picks, claims, and starts a free slot
-  from the fixed roster `primary`, `primary-nova`, `primary-comet`,
-  `primary-pulsar`, `primary-quasar`, `primary-meteor`, `primary-aurora`,
-  `primary-zenith`, `primary-eclipse`, `primary-orbit`, `primary-cosmos`, all
-  inside one request. A live session is never hijacked and a claimed slot always
-  starts a fresh conversation. The response reports the actual claimed scope
-  under `claim`. Reuse the same `--idempotency-key` to retry a press without
-  burning a second slot; every slot occupied returns
-  `session_roster_exhausted`. Suffixed slots are ordinary handles —
-  `mable@hrc-runtime:primary-nova` addresses normally over `wrkc`, `hrc turn` and federation.
-- **`--on-conflict reject`** — claim the ONE scope named on the command line or
-  refuse; there is no next slot and no reuse. A free scope is rotated (fresh
-  conversation) and a virgin scope is minted, both inside one request; an
-  occupied one returns `session_scope_occupied` having mutated nothing. HRC,
-  not the terminal, resolves where the scope lives, so a pinned task such as
-  `cody@hrc-runtime:hrcdev` provisions on its own node over authenticated
-  federation. Retry semantics match `suffix`: same `--idempotency-key` and same
-  body replays the same claim, a different body is `idempotency_key_conflict`,
-  and a claim whose session was recycled by a newer press is
-  `roster_claim_superseded`. This is the same contract HRC Mobile uses for
-  manually typed task scopes.
-
-**Adopting a window as the `console` key** is a one-time `hrc-viewer` operator
-procedure. Stamp the WINDOW itself before starting or restarting the per-user
-viewer — enumerate the managed windows, then write the key onto the one you want
-(T-07121). No pane is marked and nothing in that window is ever reaped:
-
-```bash
-ghostmux list-windows --json      # pick the id of the window you want to keep
+```sh
+ghostmux list-windows --json
 ghostmux metadata set --window-id <windowId> \
   '{"hrc_role":"headless-sessions-window","hrc_window_key":"console"}'
-ghostmux list-windows --meta hrc_window_key=console --json   # verify
+ghostmux list-windows --meta hrc_window_key=console --json
 ```
 
-`hrc-viewer` resolves the keyed window by that metadata alone, so closing any tab
-in it — including the one you stamped from — leaves the key intact. If the whole
-window is closed, the viewer creates a fresh keyed window on its next reconcile:
-degraded, never broken. The window registry is in-memory, so repeat the stamp
-after a Ghostty restart when the `console` placement must be preserved.
+Closing a tab leaves the key intact. The viewer creates a new keyed window if
+the keyed window closes. Repeat the stamp after a Ghostty restart to reuse a
+specific window.
 
-On a ScriptableGhostty without the windows API (404), `hrc-viewer` falls back to
-the older anchor-pane scheme, where the key rides on a long-lived surface
-instead:
+## Follow a turn
 
-```bash
-ghostmux metadata set -t <surfaceId> '{"hrc_role":"headless-window-anchor","hrc_window_key":"console"}'
-ghostmux metadata set -t <surfaceId> '{"hrc_role":"headless-sessions-window","hrc_window_key":"console"}' --window
+For a direct HRC turn, the default dispatch joins a running turn or starts
+one. `--queue` schedules its own turn behind the active one. `--wait final`
+waits on the admitted turn. The admission receipt identifies work to observe.
+Verify the result from the terminal turn event.
+
+```sh
+hrc turn --attach cody@hrc-runtime --stacked 20s
+hrc monitor wait cody@hrc-runtime --until turn-finished --since <hrcSeq> --timeout 30s --json
 ```
 
-A clean interactive `/quit` ends the run normally (the broker reaps the tmux lease); after the tmux client exits, `hrc run` prints the broker-pushed session-summary block if one was recorded at graceful `/quit`; this is not an attach failure.
-
-Maintenance subcommands: `hrc admin runs sweep-zombies [--older-than <d>] [--dry-run|--yes] [--json]`, `hrc admin runs reconcile-active [...]`, `hrc admin worktrees audit [--project <id>] [--root <path>] [--json]`, and `hrc admin worktrees prune [--project <id>] [--root <path>] [--dry-run|--yes] [--json]` (dry-run is the default). Worktree pruning refuses non-completed, dirty, unmerged, or live-runtime-occupied checkouts; it never deletes branch refs.
-
-### `monitor show | watch | wait | events | transcript | stats | search`
-
-`monitor` is the single observation noun. `show|watch|wait` read normalized HRC
-events and use global `hrcSeq`; `events|transcript|stats` read the durable broker
-invocation ledger and use invocation-local `seq`. The selector front door is
-shared, but the cursor grammars are deliberately not unified. Monitor conditions
-**never** evaluate the broker invocation ledger.
-
-```bash
-# Point-in-time snapshot (aggregate, or scoped to a selector):
-hrc monitor show
-hrc monitor show clod@agent-spaces
-hrc monitor show --json clod@agent-spaces
-hrc monitor show msg:<messageId>
-
-# Stream/replay the lifecycle event log:
-hrc monitor watch                                   # replay last 100 events
-hrc monitor watch clod@agent-spaces --follow
-hrc monitor watch <selector> --from-seq <n> --follow
-hrc monitor watch <selector> --follow --until idle --timeout 10s
-hrc monitor watch <selector> --follow --since <pre-dispatch-cursor>
-
-# Wait for a condition and exit with its result code:
-hrc monitor wait clod@agent-spaces --until turn-finished --timeout 5s
-hrc monitor wait msg:<messageId> --until response --timeout 5m
-hrc monitor wait <selector> --until turn-finished --until runtime-dead
-
-# Durable invocation-ledger reads:
-hrc monitor events <runtimeId|invocationId|scope> --seq 20..80 --ndjson
-hrc monitor transcript <runtimeId|invocationId|scope> --previous --tail 100
-hrc monitor stats <runtimeId|invocationId|scope> --json
-```
-
-- **`monitor show`** — `[selector]`, `--json`. Point-in-time view only.
-- **`monitor watch`** — `[selector...]`, `--from-seq <n>` / `--last <n>` (mutually exclusive), `--follow`, repeatable `--until`, `--until-any`, or `--until-all`, `--timeout <duration>`, `--stall-after <duration>`, `--forever`, `--since <seq|duration>`, `--json` / `--pretty` / `--format <tree|compact|verbose|json|ndjson|invocation-events>`, `--max-lines <n>`, `--scope-width <n>`, `--kind <kinds>`, `--tool <names>`, `--grep <substr>`, `--milestone`, `--all-events`. Exactly one condition family is legal. Without `--follow` or an explicit condition it replays then exits.
-- **`monitor wait`** — `[selectors...]` with repeatable `--until`, `--until-any`, or `--until-all`, plus `--timeout <duration>`, `--stall-after <duration>`, `--since <seq|duration>` (requires a turn-finished condition), and `--json`. Valid conditions: `turn-finished`, `idle`, `busy`, `response`, `runtime-dead`. Exact selectors use `--until`; task/prefix/multiple selectors use a quantified family. `response` requires exactly one `msg:` or `seq:` selector. `--until-all` accepts level conditions only.
-- **`monitor transcript`** — an invocation activity transcript (tool starts/results,
-  completed assistant messages, and driver notices), not conversation readback.
-  It can include user activity and supports `--previous [n]` plus `--tail <n>`
-  for bounded recap.
-- **`monitor session-report`** — viewer-oriented runtime broker summary.
-- **`monitor search <query>`** — search completed transcript turns across runtimes: `--agent`, `--project`, `--task`, `--target`, `--since <duration-or-iso>`, `--until <iso>`, `--limit <n>`, `--candidate-limit <n>`, `--json`.
-
-Blocking/follow mode without explicit conditions uses the visible OR pair `turn-finished` / `runtime-dead` (as `--until` for one exact selector, `--until-any` for set-shaped selectors); `monitor watch --follow --forever` opts out. Plain replay has no implicit conditions. Level truth that predates the arm returns exit 10. Quantified `ANY` admits later members, while `ALL` freezes membership at arm and reports one daemon-owned observation cut.
-
-Durations accept suffixed forms like `5s`, `10s`, `30m`, `5m`.
-
-### `server status | restart | stop`
-
-```bash
-# Health/liveness snapshot (consolidates the old `server health`):
-hrc server status
-hrc server status --json
-
-# Restart the daemon (the daemon authorizes and restarts itself). Allowed callers:
-# mable@<project>:primary (any node), mable@<project>:minisvc (svc only),
-# mable@hrc-runtime:hrcdev (hrcdev only). Everyone else, including credential-less
-# operators, is refused (use the break-glass).
-hrc server restart --reason "<why>"
-hrc server restart --node svc --wait --reason "<why>"
-
-# Stop the daemon:
-hrc server stop --reason "<why>"
-```
-
-Authorization (T-09861): `stop` and `restart` are requests to the daemon, which authorizes them server-side from the lifecycle credential it minted for the caller's runtime (a 0600 file at `<runtime root>/lifecycle/<runtimeId>.credential`, located via `HRC_RUNTIME_ID`); env scope strings are attribution only. Allowed: `mable@<project>:primary` on any node (`--node <id>` reaches a federation peer), and on its own node only `mable@<project>:minisvc` (svc) or `mable@hrc-runtime:hrcdev` (hrcdev). Everyone else, including every credential-less caller, is refused with the node's authorized callers named. `--reason <text>` is required, and `--wait`/`--force` (and `restart --drain`) are authorized before anything runs. Against a daemon that predates the contract the CLI fails closed and names the break-glass (`launchctl kickstart -k gui/$UID/com.praesidium.hrc-server`, recorded `unattributed` at the next boot). This stops accidental and doctrinal violations and makes deliberate ones detectable and attributable; it does not stop a determined same-uid actor.
-
-In-flight gating (daemon-side, after authorization): `stop` and `restart` refuse by default when runs are still in flight. Use `--wait` to drain (poll up to `--wait-timeout-ms`, default 300000) or `--force` to proceed anyway. For `restart`, tmux-transport runs are excluded from the gate (they survive a daemon restart); only headless/sdk runs block it. After the grant, `restart` waits up to `--proof-timeout-ms` (default 30000) for a healthy daemon whose `processStartedAt` differs from the pre-restart process (for `--node`, the peer's federation health); an unproved restart exits nonzero with `[restart_unproven]`. `restart --drain` closes daemon turn admission, drains (up to `--drain-timeout-ms`, default 300000), rechecks, then restarts; it is mutually exclusive with `--wait`. `stop` waits up to `--proof-timeout-ms` (default 30000) to observe the daemon gone.
-
-Related backend control: `hrc server tmux status [--json]`. Note: `hrc server restart` does **not** reload launchd plist `EnvironmentVariables`.
-
-### `runtime list | inspect | status | diagnostics | capture | interrupt | terminate | sweep | prune`
-
-```bash
-hrc runtime list
-hrc runtime list --host-session-id <id> --json
-hrc ls runtimes --session <hostSessionId> --all --json
-hrc runtime list --transport tmux --status busy
-hrc ls runtimes --scope clod@agent-spaces:T-123 --json
-hrc runtime list --all
-```
-
-`runtime list` filters: `--host-session-id <id>` (or `--session <id>`),
-`--transport <tmux|headless|sdk>`, `--status <csv>`, `--older-than <duration>`,
-`--scope <scopeRef|handle>`, `--agent <agent>`, `--task <task>`, `--stale`,
-`--all-nodes` (best-effort node-labeled inventory across peers), `--json`. The default view excludes
-terminal runtime history; `--all` explicitly retrieves it through bounded
-server pages. The `hrc ls runtimes` orientation alias accepts the same filters.
-At the HTTP layer, `GET /v1/runtimes` defaults to 100 rows, accepts
-`limit=1..500`, and returns an opaque continuation in
-`x-hrc-next-cursor` for the next request's `cursor` query parameter. Operator-only worktree audit/prune requests
-`worktreeOccupancy=true` with `all=true&omitState=true`. Each selected row then
-carries a `worktreeOccupancy` object, with `cwd` from the active invocation or
-last invocation by creation time/id when available. Older daemons lacking that
-object on live rows refuse native pruning; the CLI never opens the store.
-
-`runtime inspect <runtimeId> [--probe] [--json]` returns two explicitly nested
-authority views: `hrc` (the HRC runtime store) and `broker` (whose `source` stays
-`broker` or `hrc-derived`). The CLI never flattens the two authorities into one
-apparent field set.
-
-
-### Session continuity
-
-`hrc session rotate <hostSessionId>` archives the active host session, creates
-generation+1, and copies continuation forward by default. This is distinct from
-`hrc session drop-continuation <hostSessionId>`, which removes the continuation
-key in place and records its barrier. The operator gestures for a fresh
-conversation are `/quit` (or `/clear`) inside the harness,
-`hrc session drop-continuation <hostSessionId>`,
-`hrc run|start <scope> --new-session`, and `hrc restart <scope> [--force]`
-(generation+1, continuation dropped, relaunched; refuses a busy seat without
-`--force`).
-
-### `hrc restartme` — agent self-restart (T-09872)
-
-An agent restarts ITSELF into a fresh context: write a handoff,
-`hrc restartme --handoff <id>`, end your turn.
-
-```
-wrkq handoff create --scope <agent>@<project> -t '<title>' --body-file - <<'EOF'
-<objective, decisions, durable evidence, remaining work, next action>
-EOF
-hrc restartme --handoff H-xxxxx   # arm; prints "restart armed (handoff H-xxxxx); end your turn now ..."
-hrc restartme --cancel            # disarm
-```
-
-- Self-only, no target. The daemon identifies the caller from its lifecycle
-  credential (`<runtimeRoot>/lifecycle/<runtimeId>.credential`, located by
-  `HRC_RUNTIME_ID`, attributed by `HRC_SESSION_REF`). Restarting another seat
-  is `hrc restart <scope>` (or `hrc turn --fresh-context <target>`).
-- The daemon refuses unless `<id>` is a **pending** HRC seat handoff
-  (`hrc handoff create`, `prae seat handoff create`) for the caller's seat and
-  lane; an id it does not hold is `handoff_not_found`. Without `--handoff` it refuses
-  `[handoff_required]` (exit 1) with the recipe on stderr.
-- Arming binds to the broker turn active right now (`no_active_turn` otherwise).
-  Only that turn's terminal fires it; an older turn's late terminal does not.
-- On that terminal HRC rotates the session (generation+1, continuation
-  dropped; `context.cleared` with `reason: self-restart`) and delivers the
-  successor's first prompt: read the pending seat handoff with
-  `prae seat handoff get <id> --json`, absorb it, acknowledge it, continue.
-- Ledger: `session.restart_armed` → `turn.completed` → `context.cleared` →
-  `session.restart_executed`; `session.restart_cancelled` on `--cancel`.
-- Refused for external-lifecycle participants (`participant_rotation_unsupported`).
-  An armed intent is in daemon memory: a daemon restart before the turn ends
-  drops it; re-arm.
-- Exit: 0 armed/cancelled; 1 refused; 2 usage.
-
-### Retired spellings
-
-The pre-consolidation spellings `broker`, `launch`, `inflight`, `surface`,
-`bridge`, `events`, `metrics`, `session-report`, `session clear-context`,
-`runtime ensure|adopt`, and `run sweep-zombies|reconcile-active` were removed
-after a fleet-wide quiet telemetry week (T-07011 Phase 4). They are no longer
-registered: the group spellings fail as unknown commands, and `hrc run <word>`
-treats the word as a scope, except the subcommands `export` and `annotate`.
-
-### Invocation post-mortem forensics
-
-The monitor forensics commands read the durable invocation ledger through the HRC daemon and include terminated runtimes:
-
-```bash
-hrc monitor events <runtimeId|invocationId|scope> --type tool.call.started,driver.notice --seq 20..80 --ndjson
-hrc monitor transcript <runtimeId|invocationId|scope> --previous --tail 100
-hrc monitor stats <runtimeId|invocationId|scope> --json
-```
-
-A scope ref or target handle must resolve to one runtime. When it resolves to several, the error lists every candidate; pass `--latest` to select the newest live runtime or `--previous [n]` to select prior (non-live) history newest-first — any runtime that will never run another turn, whether it terminated cleanly or was rotated out and left `stale`. Human event and transcript output clips large payloads with an explicit marker. `monitor events --ndjson` and `monitor transcript --full` preserve complete content.
-
-### `hrc turn`
-
-```bash
-# Preview local target and intent resolution without dispatching:
-hrc turn --dry-run cody@agent-spaces "Review the repo."
-
-# Dispatch tracked work and emit bounded NDJSON progress:
-hrc turn --stacked 30s cody@agent-spaces "Long task."
-
-# Observe the admitted turn already running on a seat (dispatches nothing):
-hrc turn --attach cody@hrc-runtime:T-08200/smoke --stacked 20s
-```
-
-`turn` args are `<target> [prompt]`; use `-` for stdin or `--file <path>`.
-The default door is steer (send now): the body joins the target's running turn,
-or starts one when none is running, and `--wait final` waits on that turn.
-`--queue` selects enqueue (send after): the body is its own turn behind the
-running one. `--steer` is a no-op alias of the default.
-Its native options are `--attach`, `--as`, `--fresh-context` / `--new`, `--dry-run`,
-`--format`, `--pretty`, `--stall-after` (default `1h`), `--stacked`,
-`--follow`, `--wait`, `--timeout`, `--quiet`, `--reply-to`,
-`--cross-scope-reply`, `--queue`, `--steer`, `--preempt`, `--ttl`, `--file`, and
-`--response-format-json-schema`.
-
-`--attach` is observe-only: it resolves the target with messaging placement
-semantics, finds exactly one admitted active run from live session/runtime
-state, replays that run's ledger, and then follows it through the ordinary turn
-renderer. With `--stacked`, the first line is either `flush:"attach"` covering
-the complete replay boundary or the run's terminal line if it ended while the
-observer subscribed. Catch-up has a fixed 30-second infrastructure deadline;
-`--stall-after` begins only after catch-up completes. Exit 6 means there was no
-single admitted run to observe and emits no frame. A prompt, `-`, `--file`, or
-any dispatch/sender option is invalid with `--attach`. `messageId` is omitted
-from `turn_stacked` when the originating input identity is unavailable.
-
-`hrc turn` is declared in `crates/hrc-cli/surface.json` and executed natively by
-`crates/hrc-cli/src/turn/`. The `hrcchat` package and binary have been removed.
-
----
-
-## Deprecated → current migration map
-
-The legacy `hrc status` / `hrc events` / `hrc server health` commands have been **removed** and reject as unknown commands (`hrc: unknown command: status — did you mean 'start'?`). The `hrcchat` binary has been removed entirely. Use the canonical replacements below.
-
-| Deprecated (removed) | Current | Notes |
-| --- | --- | --- |
-| `hrc status` | `hrc monitor show` | Aggregate daemon/session snapshot moved to the monitor namespace. |
-| `hrc status <scope> --json` | `hrc monitor show --json <selector>` | JSON exposes canonical `scopeRef`/`scopeHandle`. |
-| `hrc status <scope> --events <n>` | `hrc monitor show <selector>` + `hrc monitor watch <selector>` | `show` is the point-in-time view; `watch` owns event replay/streaming. |
-| `hrc events` | `hrc monitor watch` | Finite replay defaults to the last 100 events. |
-| `hrc events <scope> --from-seq <n> --follow` | `hrc monitor watch <selector> --from-seq <n> --follow` | Same selector family; monitor-owned conditions via `--until`. |
-| `hrc server health` | `hrc server status` | Health consolidated into status; JSON diagnostics via `--json`. |
-| `hrcchat status` | `hrc monitor show` | Per-target status moves to monitor selectors. |
-| `hrcchat watch` | `hrc monitor watch` | Use monitor selectors + conditions. |
-| `hrcchat wait` | `hrc monitor wait` | Message waits use `msg:<messageId>` selectors. |
-| `hrcchat dm --wait` | `hrc turn <target> - --wait final` (tracked work) or `wrkc say` (messaging) | `hrc turn --wait final` emits one JSON object at the turn's terminal. |
-
----
-
-## Exit codes
-
-### `hrc server status`
-
-| Code | Meaning |
-| ---: | --- |
-| 0 | healthy — daemon socket responds and API health passes |
-| 1 | not running — no live daemon process or socket |
-| 2 | usage error, or degraded/stale daemon state |
-| 3 | local status probe failed |
-
-### `hrc monitor wait` (condition result → exit code)
-
-The exit code is the result code of the awaited condition (from the hrc-core monitor condition engine).
-
-| Code | Result(s) | Meaning |
-| ---: | --- | --- |
-| 0 | matched after arm | Condition satisfied (`outcome:success`). |
-| 10 | already true at arm | Requested level truth predated the wait (`outcome:success`). |
-| 11 | no session ever | No matching session appeared (`outcome:not_matched`). |
-| 12 | runtime-death obstruction | Death prevented a different requested condition (`outcome:not_matched`). |
-| 13 | `turn_failed`, implicit `runtime_dead` / `runtime_crashed` | A failed terminal was positively observed (`outcome:observed_failure`). |
-| 20 | `timeout` | Wait window elapsed (`outcome:not_matched`). |
-| 21 | `stalled` | Inactivity threshold elapsed (`outcome:not_matched`). |
-| 22 | `context_changed`, `turn_finished_without_response` | Context changed or the expected response became impossible (`outcome:not_matched`). |
-| 23 | `monitor_error` | Internal monitor/event-stream error (`outcome:error`). |
-| 130 | `interrupted` | Caller interrupted the wait (`outcome:error`). |
-
-Usage/selector rejection exits 2 before arm and emits no terminal event.
-
-### `hrc` general
-
-- `2` — CLI usage error (unknown command/option, bad argument, validation failure); also emitted for `hrc: unknown command: <x>` / `hrc: unknown option: --x` on removed surfaces.
-- `0` — success / help displayed.
-
-### `hrc turn`
-
-`hrc turn` exit codes: `1` stall or `--wait` timeout, `3` infrastructure, `4` runtime dead or error, `5` permission blocked, `6` nothing to attach (`--attach`), `130` interrupted.
-
----
-
-Source of truth: the hand-maintained command graph, flags and help text in `crates/hrc-cli/surface.json` (scope-verb flags included); execution in `crates/hrc-cli/src`; monitor exit codes in `crates/hrc-cli/src/monitor/engine.rs` (`exit`); turn exit codes in `crates/hrc-cli/src/turn/`. Command names checked against `surface.json` on 2026-11-10 (T-13157). Run `hrc <command> --help` for the complete flag set.
-
-### Seat work (native)
-
-`hrc seat work get <scope>` reads the continuity's `kind`, tagged `work`, and
-`workEtag`. To bind work, use `hrc seat work set <scope> --task T-12247
---if-match N`, replacing N with the observed `workEtag`. Alternatively choose
-`--workstream <id>` or `--none`. A stale etag refuses with `stale_seat_work`
-and leaves the stored association unchanged. Work survives generation rotation.
-
-Task seats start bound to their task; free seats start with `{ "kind": "none" }`.
-The stored seat `kind` (`task`, `standing`, `adhoc`) follows the agent's declared
-placement homes and pins and refreshes when its profile changes. Binding work
-does not change kind.
-
-2026-11-02 amendment (praesidium-kernel r1.9, T-12360): these fields now
-appear on `seat` nodes in `praesidium:praesidium`. Read seats, runtimes and
-annotations through `prae seat`, `prae runtime` and `prae ext list` (document
-types `seat`, `runtime`, `seat.ext`). Rusthrc's `kernel.sock` retains only
-five operator operations: `seat.summon`, `seat.send`,
-`seat.annotation.put`, `seat.annotation.act` and `seat.annotation.delete`.
-Seat restarts go through the Praesidium kernel's `seat-restart` module
-(`restart.cold|recap|handoff|force|cancel`, T-14486); its `seat.restart` was
-removed in T-14514. `POST /v1/sessions/restart` admits only that module and
-the operator (`hrc restart` outside an HRC runtime names `agent:lance`).
-It exposes no document, observation types or attach capability; seat attachment
-belongs to the Praesidium kernel.
-
-### `seat screen <scopeRef> [--lane <lane>] [--styled]`
-
-Open a passive screen stream through the local daemon, including for a seat
-homed on a peer. Stdout is one compact JSON snapshot per line: `text`,
-`cursor: {x,y,visible}`, `cols`, `rows`, and `screen`. The current screen comes
-first, then only changed snapshots, at most two per second. `--styled` retains
-terminal escape sequences. The stream never attaches or resizes the seat.
-A stream close ends the command; it does not reconnect. Interrupt to stop.
-An initial refusal exits 2; a transport failure exits 1.
+`turn --attach` only observes. It requires exactly one admitted active run
+and reports exit 6 if there is no single run. Stacked catch-up begins with the
+complete replay boundary or the turn's terminal frame if the run ends while
+the observer subscribes.
+
+Use `hrc monitor events <invocationId> --seq 20..80 --ndjson` for
+post-mortem evidence, including retired runtimes. These sequences belong to
+the broker invocation. Monitor conditions use the HRC lifecycle ledger's
+`hrcSeq`. See the [monitor contract](monitor-spec.md) for condition and exit
+semantics.
+
+## Session continuity
+
+A runtime restart can preserve the conversation even though the process
+changes. `hrc restart <scope>` rotates the session and starts with no
+continuation. It refuses a busy seat unless explicitly forced.
+`hrc resume <scope>` uses the stored continuation. For an explicit
+continuation barrier, use `hrc session drop-continuation <hostSessionId>`.
+
+For self-restart, create a pending HRC seat handoff through
+`prae seat handoff create`, arm `prae seat restart --handoff-id <id>`,
+then end the turn. The arm binds to that turn's terminal event. The
+successor reads and acknowledges the handoff. Use
+`prae seat restart --cancel` to disarm it.

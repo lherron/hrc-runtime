@@ -87,9 +87,8 @@ source:
   - wrkc:EN-51636
   - wrkc:EN-51638
   - wrkc:EN-51640
-  - ../praesidium-kernel/docs/proposals/turn-attention-module.md
-  - ../praesidium-kernel/architecture/contracts/turn-attention-module.yaml
-  - ../praesidium-kernel/architecture/contracts/module-host.yaml
+  - praesidium-kernel architecture/contracts/turn-attention-module.yaml
+  - praesidium-kernel architecture/contracts/module-host.yaml
   - wrkq:T-12015
   - wrkq:T-12644
   - architecture/contracts/hrc-rust-migration.yaml

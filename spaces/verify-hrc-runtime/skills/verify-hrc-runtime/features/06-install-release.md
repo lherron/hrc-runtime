@@ -25,9 +25,9 @@ release into `~/praesidium/var/hrc-owner/hrc-runtime-releases/` and repoints
   ~/praesidium/var/hrc-owner/bin/rusthrc server serve`, the signed fixed exe (2026-11-16; through 2026-11-09 the
   plist named `hrc-owner/hrc-runtime-current/bin/rusthrc`). That exe is the owner release's `bin/rusthrc` re-signed
   with the identity in `var/hrc-owner/codesign.identity` (`Identifier=com.praesidium.rusthrc`, `TeamIdentifier=not
-  set`), so `cmp` against the release bin differs by design (hrc-owner.sh:323-329); prove it is current by
+  set`), so `cmp` against the release bin differs by design (`scripts/hrc-owner.sh#prepare_owner_exe`); prove it is current by
   `var/hrc-owner/bin/rusthrc --version`, which names `releaseId <owner current>, sourceCommit <sha>` (the stage
-  probe requires that, hrc-owner.sh:338-346). It still reports `release.mode atomic` with the owner release as
+  probe requires that, `scripts/hrc-owner.sh#prepare_owner_exe`). It still reports `release.mode atomic` with the owner release as
   `releasePath`. `hrc-owner.sh` verbs: `kind` (prints `rusthrc`), `log-path`, `schema-state`, `stage`, `log-mark`,
   `boot-check`, `refresh-plist`, `bootstrap`. `hrc-owner.sh stage` proceeds on a
   `current` or `pending` store and backs the store up first when `pending` (T-13056). `hrc-owner.sh schema-state
@@ -46,7 +46,7 @@ release into `~/praesidium/var/hrc-owner/hrc-runtime-releases/` and repoints
   `…/var/hrc-owner/bin` on 2026-11-16 (the owner link spelling through 2026-11-09); schema
   `0136_runs_minted_submission_id`, `pending: []` (2026-11-23). `runningEqualsInstalled` compares releasePath with `releasePath/../../hrc-runtime-current`, the
   OWNER link, so after `just install` without `hrc-owner.sh stage` it still reads `true` (source-only,
-  2026-11-16: front/release.rs:111-133). Install moves `~/.bun` current, stage moves the owner's, only `hrc
+  2026-11-16: `crates/hrc-native/src/server/front/release.rs#Release.capture`). Install moves `~/.bun` current, stage moves the owner's, only `hrc
   server restart` moves "running": compare `basename "$(readlink ~/.bun/install/hrc-runtime-current)"` with
   `.release.releaseId` yourself.
 - The dirty guard: `bun scripts/install-dirty-guard.ts --source-root=$PWD` refuses tracked source
@@ -56,12 +56,12 @@ release into `~/praesidium/var/hrc-owner/hrc-runtime-releases/` and repoints
   release except current and those a live host process holds (cwd, manifest or `bin/*` open, or argv inside;
   T-11830), names them in `heldBy` and prints `held by live processes …`; a holder probe that fails its own
   control refuses `live-holders-unavailable`. On an owner node the daemon's releasePath is in the owner tree,
-  so it keeps nothing extra for the daemon (source-only, 2026-11-02: release-prune.ts:216-219). 1 directory there
+  so it keeps nothing extra for the daemon (source-only, 2026-11-02: `packages/hrc-core/src/release-prune.ts#pruneReleaseDirs`). 1 directory there
   on 2026-11-02, 2 on 2026-11-09. **Native prunes nothing**: a native scratch left both trees unchanged (2026-11-02, T-12291,
   `00-guard`); the daemon-start prune `server.start.release_prune` is Bun only. `hrc-owner.sh stage` prunes the
   owner tree as its last step (T-12695): it keeps current, the newest 5, the daemon's release and any held by a
   live process, and prints `[stage] release prune: …` or `… skipped: <reason>; nothing deleted`
-  (hrc-owner.sh:212-263). The tree went from 53 (2026-11-02) to 17 (2026-11-09, 2.8 GB) to 16 (2026-11-16, 2.2 GB):
+  (`scripts/hrc-owner.sh#prune_owner_releases`). The tree went from 53 (2026-11-02) to 17 (2026-11-09, 2.8 GB) to 16 (2026-11-16, 2.2 GB):
   the newest 5 plus 11 older ones, each named by ≥1 live process argv (`T-13633/06-install-release/drive.txt`).
 - `hrc-owner.sh stage` on a `pending` store writes a `pre-activate-*.sqlite` backup with `rusthrc store backup`
   (`VACUUM INTO`, read-only, passes `quick_check`) after a free-space check (store + WAL + 2 GiB), and deletes
@@ -116,15 +116,14 @@ cd ~/praesidium/hrc-runtime && bun scripts/install-dirty-guard.ts --source-root=
   with HEAD.
 - **`runningEqualsInstalled: true` is not "the latest install is running" on an owner node.** It compares
   against the owner link only; an install that was never staged still reads `true` (source-only, 2026-11-02:
-  front/release.rs:110-133).
+  `crates/hrc-native/src/server/front/release.rs#Release.capture`).
 - **The daemon holds no manifest, and no release file at all under the fixed exe.** lsof on pid 81530 showed only the
   owner release's `bin/rusthrc` and `rusthrc-owner.log` (2026-11-02, T-12291); pid 37077 showed only
   `var/hrc-owner/bin/rusthrc` and the log (2026-11-16), so lsof no longer names the running release: read
   `.release.releasePath` and the exe's `--version`. It holds `var/run/hrc/kernel.sock`; the `hrc-kernel.sock` compatibility symlink is gone since c3a8535a (2026-11-23:
   `kernel.sock`, `kernel.sock.lock` and stale `hrc-kernel.lock`, `hrc-kernel.sock.lock`). "Every atomic daemon holds its own manifest for life" is Bun only.
 - **A held owner release outlives its holders until the next stage.** 16 of 53 staged releases were held by
-  live processes on 2026-11-02, mostly `hrc-pty` seat supervisors, some with a link-spelled argv (T-12291
-  sources/06.md §0), so the owner-tree prune relies on the lsof/txt holder probe as well as argv (T-12695). In
+  live processes on 2026-11-02, mostly `hrc-pty` seat supervisors, some with a link-spelled argv (T-12291, owner-release holder census), so the owner-tree prune relies on the lsof/txt holder probe as well as argv (T-12695). In
   `~/.bun` a held release likewise outlives its holders until the next install.
 - **Any Bun daemon started from a release is a pruner for its directory** (Bun only): a scratch Bun `~/.bun/bin/hrc server
   serve` from the installed tree deleted production's running release on 2026-10-26 (04:50Z, EN-36056); in

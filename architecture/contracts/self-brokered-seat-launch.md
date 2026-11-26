@@ -1,11 +1,10 @@
 # Self-brokered seat launch contract
 
-Status: approved design, 2026-11-12. Daedalus APPROVE of T-13434 rev 3
-in reply to EN-52514. Implementation and acceptance remain pending.
+Daedalus approved T-13434 revision 3 on 2026-11-12 (EN-52514). The native
+launcher and its e2e gates implement the approved contract.
 
-This is the submitted revision, preserved verbatim below. Sections 3 through
-11 are elevated by `hrc-runtime.self-brokered-seat-launch`; section 12 is
-work-planning provenance. This contract is the declared exception to the
+The invariant `hrc-runtime.self-brokered-seat-launch` adopts sections 3
+through 11 of this design. Section 12 records the delivery plan. This contract is the declared exception to the
 compiled-birth and external-participant clauses identified in the linked
 active records. The existing admission stage order remains authoritative.
 
@@ -18,8 +17,6 @@ Rev 3 answers Daedalus's rejections: F1 (EN-52508) in section 5, F2 (EN-52508) i
 Task T-13434, hrc-runtime. Author mable@hrc-runtime:foundrypty, 2026-11-12.
 Authority: Lance, 2026-11-12, room T-13430: "Approve HRC starting Foundry's project seats? — Approve" and "Let HRC retire idle Foundry seats at 60 minutes? — Approve."
 Companions: Foundry's side is `foundry/architecture/contracts/foundry-hrc-born-seats-v1.md` (draft r1). agent-spaces' side is section 3 of this spec.
-
-Read from source; nothing in this spec has been run.
 
 ## 1. What this adds
 
@@ -51,7 +48,11 @@ launch_command = ["foundry", "seat-launch"]
 - A compile request for a self-brokered agent is refused, as it is for `participant-only`.
 - Order of release: aspd on all three nodes, then HRC, then any profile edit. An aspd that predates this fails to parse the new value.
 
-HRC reads those two fields where it reads `participant-only` today (`placement/federation/gate.rs:520`). The `participant-only` refusal does not apply to `self-brokered`.
+HRC reads the launch declaration in
+`crates/hrc-native/src/server/placement/federation/policy.rs#launch_command`.
+The `participant-only` refusal in
+`crates/hrc-native/src/server/placement/federation/gate.rs#decide` does not
+apply to `self-brokered`.
 
 ## 4. Launcher contract
 
@@ -99,7 +100,7 @@ For an external participant every stage is unchanged, including the `participant
 
 ### 5.2 Doors with no input (ensure, start, resume)
 
-These reach `assert_reserved_address_allows_birth` and then `broker::birth` (`server/broker/broker.rs:280`). For a self-brokered scope they run allocation and launch back to back in that one call and deliver nothing. No plan exists before them, so the ordering problem of 5.1 does not arise.
+These reach `assert_reserved_address_allows_birth` and then `broker::birth` (`crates/hrc-native/src/server/broker/broker.rs#birth`). For a self-brokered scope they run allocation and launch back to back in that one call and deliver nothing. No plan exists before them, so the ordering problem of 5.1 does not arise.
 
 `broker::birth` keeps its refusal for a scope held by an external participant.
 
@@ -121,7 +122,7 @@ Guarantees other projects build on, each proved by a gate in section 10:
 
 ## 7. Ownership and liveness
 
-Today one predicate, `is_external_lifecycle_owner` (`server/broker/controller/mod.rs:733`), answers two different questions at about 26 sites. This spec splits it:
+The native controller separates process ownership from broker protocol ownership:
 
 - **`external_lifecycle(rt)`**: someone else starts and stops the process. True for an external participant, false for a self-brokered seat.
 - **`participant_served(rt)`**: the broker is the participant's own, so HRC reconnects by establishment, not by the ordinary broker reattach. True for both.
@@ -130,11 +131,11 @@ A self-brokered runtime records `lifecycleOwner: "hrc"` and `participant.lifecyc
 
 Sites that ask who owns the process use `external_lifecycle`, so a self-brokered seat is treated as any hrc-pty seat there: crash marking, liveness reconcile, user-exit reap, teardown, terminate (ordinary terminate, not `evict_external`), seat retirement, aging and prune guards, restart garbage collection, run sweep and reconcile, start-refused settle.
 
-Sites that ask how to talk to the broker use `participant_served`: the `invocation.exited` route to `participant::mark_terminal`, stale-on-attach-failure, startup reattach (`establishment::resume`, never `broker::hello` with a release identity), and the self-restart refusal (`turns/restart.rs:271`).
+Sites that ask how to talk to the broker use `participant_served`: the `invocation.exited` route to `participant::mark_terminal`, stale-on-attach-failure, startup reattach (`establishment::resume`, never `broker::hello` with a release identity), and the self-restart refusal (`crates/hrc-native/src/server/turns/restart.rs#refuse_participant`).
 
 The first build task produces the classified site list as its artifact, with no behaviour change, before any other task starts. A site whose HRC-owned path reads the aspd preparation record must be named there, because a self-brokered runtime has none.
 
-Liveness for a self-brokered seat (`lease.rs:401-414` and its callers):
+Liveness for a self-brokered seat (`crates/hrc-native/src/server/broker/lease.rs#hrcpty_dead_reason` and its callers):
 - supervisor missing: dead, as today;
 - supervisor `broker.state` is `none` by design and is not a death;
 - child exited: dead, reason `broker_hrcpty_child_exited`.
@@ -144,7 +145,7 @@ Terminate and retirement end the supervisor's lease, mark the attempt terminal a
 
 ## 8. What HRC records
 
-The runtime row matches an HRC-launched hrc-pty seat (`hrc-store/src/broker.rs:193-208`): transport `hrcpty`; substrate `leased-hrcpty` with supervisor socket and pid; presentation `hrcpty` with the attach command and `operatorAttachable`. `GET /v1/attach`, seat streams, the attach row member and `hrc-pty attach --seat` then work with no change of their own. The dead `hrcpty` branch in `establishment.rs:242-247` is deleted: a self-brokered seat owns its terminal's stdio and takes no terminal-surface lease.
+The runtime row matches an HRC-launched hrc-pty seat (`crates/hrc-store/src/broker.rs#Store.finish_broker_start`): transport `hrcpty`; substrate `leased-hrcpty` with supervisor socket and pid; presentation `hrcpty` with the attach command and `operatorAttachable`. `GET /v1/attach`, seat streams, the attach row member and `hrc-pty attach --seat` then work with no change of their own. A self-brokered seat owns its terminal's stdio and takes no separate terminal-surface lease. See `crates/hrc-native/src/server/broker/participants/establishment.rs#realize`.
 
 ## 9. Failed and interrupted starts
 
