@@ -3,7 +3,8 @@
 
 Uses the hrcpty substrate's fake aspd, stub broker and private state root.
 The retire-door cases (T-14454 gate 2) cover module-only authorization,
-request validation, busy/active/attached refusal, the activity fence,
+request validation, busy/active refusal, refusal while a person is typing
+(an untouched attached pane does not hold the seat, T-14698), the activity fence,
 opaque policy diagnostics in the response and log, process teardown,
 repeat refusal, and continuation reuse. C is a busy Codex seat, D is a
 ready Claude seat, and R is the Codex seat retired by the door.
@@ -262,34 +263,56 @@ def main():
         with sqlite3.connect(r.db_path, timeout=30) as db:
             db.execute("UPDATE runtimes SET active_run_id=NULL WHERE runtime_id=? AND active_run_id='run-e2e-staged'", (d['rt'],))
         refused('4.D.active-run', d, out, status, 409, 'active_run')
-        # A real read-write client on D's hrc-pty supervisor, held open across the call.
-        opsock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
-        opsock.settimeout(10)
-        opsock.connect(str(d['sock']))
-        opf = opsock.makefile('r')
-        for i, (m, prm) in enumerate((('hello', {'token': d['token'].read_text().strip()}), ('attach', {'readOnly': False})), 1):
-            opsock.sendall((json.dumps({'jsonrpc': '2.0', 'id': i, 'method': m, 'params': prm}) + '\n').encode())
-            reply = json.loads(opf.readline())
-        attach_id = reply['result']['attachId']
-        data = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
-        data.connect(str(d['sock']))
-        data.sendall((json.dumps({'attach': attach_id}) + '\n').encode())
-        def drain_attach():
-            while data.recv(65536):
-                pass
+        def attach_rw(s):
+            """A real read-write client on s's hrc-pty supervisor; returns (send, close)."""
+            opsock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+            opsock.settimeout(10)
+            opsock.connect(str(s['sock']))
+            opf = opsock.makefile('r')
+            for i, (m, prm) in enumerate((('hello', {'token': s['token'].read_text().strip()}), ('attach', {'readOnly': False})), 1):
+                opsock.sendall((json.dumps({'jsonrpc': '2.0', 'id': i, 'method': m, 'params': prm}) + '\n').encode())
+                reply = json.loads(opf.readline())
+            attach_id = reply['result']['attachId']
+            data = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+            data.connect(str(s['sock']))
+            data.sendall((json.dumps({'attach': attach_id}) + '\n').encode())
 
-        drain = threading.Thread(target=drain_attach, daemon=True)
-        drain.start()
-        rw = r.wait(lambda: ops(d['sock'], d['token'], 'status')['status']['clients'].get('readWrite'), 10, 'read-write client')
+            def drain_attach():
+                try:
+                    while data.recv(65536):
+                        pass
+                except OSError:
+                    pass
+
+            drain = threading.Thread(target=drain_attach, daemon=True)
+            drain.start()
+
+            def close():
+                try:
+                    data.shutdown(socket.SHUT_RDWR)
+                except OSError:
+                    pass
+                drain.join(timeout=10)
+                data.close()
+                opf.close()
+                opsock.close()
+            return data.sendall, close
+
+        def pty_status(s):
+            return ops(s['sock'], s['token'], 'status')['status']
+
+        # A person typing into D's pane holds it (T-14698): a read-write
+        # client that has sent a keystroke, held open across the call.
+        send, close = attach_rw(d)
+        rw = r.wait(lambda: pty_status(d)['clients'].get('readWrite'), 10, 'read-write client')
+        send(b'x')
+        typed = r.wait(lambda: pty_status(d).get('humanIdleMs') is not None and pty_status(d), 10, 'keystroke seen')
         status, out = door(ask(d))
-        refused('4.D.attached-client', d, out, status, 409, 'attached_client')
-        r.check('4.D.client-was-read-write', rw == 1, readWrite=rw)
-        data.shutdown(socket.SHUT_RDWR)
-        drain.join(timeout=10)
-        data.close()
-        opf.close()
-        opsock.close()
-        r.wait(lambda: ops(d['sock'], d['token'], 'status')['status']['clients'].get('readWrite') == 0, 10, 'client gone')
+        refused('4.D.attached-client-typed', d, out, status, 409, 'attached_client')
+        r.check('4.D.client-was-read-write-and-typed', rw == 1 and typed['humanIdleMs'] < 30 * 60 * 1000,
+                readWrite=rw, humanIdleMs=typed.get('humanIdleMs'))
+        close()
+        r.wait(lambda: pty_status(d)['clients'].get('readWrite') == 0, 10, 'client gone')
 
         # The fence: an instant one second off is refused; the same instant in another format is not.
         at = r.runtime(rr['rt'])['last_activity_at']
@@ -298,6 +321,11 @@ def main():
         off = (when - timedelta(seconds=1)).strftime('%Y-%m-%dT%H:%M:%S.%f')[:-3] + 'Z'
         status, out = door(ask(rr, off))
         refused('4.R.stale-expect-activity-changed', rr, out, status, 409, 'activity_changed', lastActivityAt=at)
+        # An attached pane nobody has typed into does not hold R (T-14698).
+        _, close_r = attach_rw(rr)
+        untouched = r.wait(lambda: pty_status(rr)['clients'].get('readWrite') == 1 and pty_status(rr), 10, 'R read-write client')
+        r.check('4.R.untouched-pane-attached', 'humanIdleMs' in untouched and untouched['humanIdleMs'] is None,
+                readWrite=untouched['clients'].get('readWrite'), humanIdleMs=untouched.get('humanIdleMs', 'missing'))
         novel = 'e2e.novel-trigger/policy-edit-v9'
         same_instant = at[:-1] + '+00:00'
         request = ask(rr, same_instant, trigger=novel, rule='e2e:door-rule-7', policyRevision='rev-2026-11-23T10:00')
@@ -322,6 +350,7 @@ def main():
         r.wait(lambda: not alive(rr['pid']), 15, 'R supervisor gone')
         r.check('4.R.processes-gone', not alive(rr['pid']) and not descendants_of([str(rr['sock'].parent)]),
                 leftovers=descendants_of([str(rr['sock'].parent)]))
+        close_r()
         status, out = door(request)
         r.check('4.R.repeat-not-ready', status == 409 and out.get('error', {}).get('code') == 'not_ready'
                 and out['error'].get('detail', {}).get('status') == 'terminated', status=status, response=out)

@@ -54,16 +54,34 @@ async fn guard(server: &Shared, rt: &db::Rt) -> anyhow::Result<Option<&'static s
     if protected {
         return Ok(Some("protected_input"));
     }
-    // A person typing into the seat is using it, whatever the task says.
+    // A person typing into the seat is using it, whatever the task says. An
+    // attached pane nobody has typed into lately is not (T-14698): hrcpty
+    // seats are born with a viewer pane attached, so attachment alone would
+    // hold every seat forever. A person only watching does not hold the seat.
     if let Some((socket, pid)) = hrcpty::substrate(rt)
         && let Some(status) = lease::hrcpty_status(&socket, pid).await
         && status["clients"]["readWrite"]
             .as_u64()
             .is_some_and(|n| n > 0)
+        && recently_typed(&status)
     {
         return Ok(Some("attached_client"));
     }
     Ok(None)
+}
+
+/// How recently a person must have typed into an attached pane to hold it.
+const TYPED_WINDOW_MS: u64 = 30 * 60 * 1000;
+
+/// True when hrc-pty's `humanIdleMs` is under [`TYPED_WINDOW_MS`]. `null`
+/// means nobody has typed since the pty started. An hrc-pty without the key
+/// predates keystroke tracking, so it cannot tell and the pane still holds.
+fn recently_typed(status: &Value) -> bool {
+    match status.get("humanIdleMs") {
+        None => true,
+        Some(Value::Null) => false,
+        Some(idle) => idle.as_u64().is_none_or(|ms| ms < TYPED_WINDOW_MS),
+    }
 }
 
 /// Close a still-idle seat to admission before the terminate awaits, as the

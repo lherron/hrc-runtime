@@ -11,8 +11,12 @@ predicate: >
   runtime.retire operation reaches only the runtime's home HRC. HRC admits
   only the seat-retirement module principal and scope on POST
   /v1/runtimes/retire. The owner checks readiness, active and nonterminal
-  runs, protected input, app scope, external lifecycle ownership and
-  read-write clients. It compares the expected runtime activity timestamp
+  runs, protected input, app scope, external lifecycle ownership and a
+  read-write client through which a person typed within the last 30
+  minutes, by the supervisor's keystroke idle time. An attached pane nobody
+  typed into does not hold the seat, so a person only watching does not
+  either. A supervisor that does not report keystroke idle time holds the
+  seat while a read-write client is attached. It compares the expected runtime activity timestamp
   as an instant and closes to admission before terminating with the
   continuation kept. The supervisor's attach count is checked at decision
   time. Attach admission may race that check. Operator termination retains
@@ -25,9 +29,12 @@ predicate: >
   does not interpret them as policy.
 authority: >
   Lance's 2026-11-23 directive in wrkq:T-14454 and Daedalus approval of
-  specification r4, task etag 7, in reply to EN-60357.
+  specification r4, task etag 7, in reply to EN-60357. Lance's
+  2026-11-26 ruling in wrkq:T-14698 narrowed the read-write client guard
+  to recent typing.
 source:
   - wrkq:T-14454
+  - wrkq:T-14698
   - architecture/records/invariants/hrc-runtime.self-brokered-seat-launch.yaml
   - architecture/records/invariants/hrc-runtime.hrcpty-seat-supervision.yaml
   - architecture/records/invariants/hrc-runtime.operator-owner-authority.yaml
@@ -38,6 +45,7 @@ required_tests:
   - T-14454 r4 isolated retire-door guards and module authority acceptance
   - T-14454 r4 deletion of the legacy sweep with continued module retirements after rollout
   - T-14454 r4 live module retirement with continuation kept and policy edit without restart
+  - T-14698 isolated retire door refuses a typed-into pane and retires past an untouched one
 last_verified: Pending implementation and rollout evidence.
 reopen_when: Module or HRC authority, locality, runtime activity source, completion authority, guards, continuation disposition or retirement request semantics change.
 supersedes: []

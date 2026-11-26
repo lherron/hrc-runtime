@@ -466,7 +466,9 @@ idle windows and completed-task lookups. It calls the kernel's
 
 `POST /v1/runtimes/retire` accepts only the module identity. HRC checks the
 runtime is ready and refuses app scopes, externally owned runtimes, active or
-nonterminal runs, protected input and hrcpty seats with a read-write client.
+nonterminal runs, protected input and hrcpty seats where a person typed into
+an attached read-write client within the last 30 minutes. A pane that is only
+attached, such as a viewer opened at birth, does not hold the seat.
 It fences on the expected activity timestamp and atomically closes admission
 by moving the runtime from `ready` to `stopping`.
 
