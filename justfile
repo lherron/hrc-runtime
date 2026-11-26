@@ -342,6 +342,11 @@ deploy-svc ref="@max3" aspd="@max3" restart="wait":
 deploy-hrcdev ref="@max3" aspd="@max3" restart="wait":
     @just _deploy-node "hrcdev" "hrcdev" "{{ ref }}" "{{ aspd }}" "{{ restart }}" "no-publish"
 
+# Wait for post-push verify, then deploy the HRC SHA to svc, max3, and hrcdev
+[positional-arguments]
+deploy-chain sha aspd="current":
+    @bash scripts/deploy-chain.sh "$1" "$2"
+
 # The targets are resolved ONCE and passed to every node as literals. Letting
 # each node resolve `@max3` for itself would race a concurrent max3 install and
 # could leave nodes on different builds while reporting success.
@@ -682,7 +687,9 @@ _deploy-node ssh-target expected-node target-ref="origin/main" aspd-ref="origin/
       aspd_ref="$(just _max3-aspd-commit)"
     fi
 
-    phase1_log="$(mktemp "${TMPDIR:-/tmp}/deploy-{{ expected-node }}.XXXXXX")"
+    deploy_scratch="${SCRATCH:-$HOME/praesidium/var/scratch/hrc-runtime/primary}"
+    mkdir -p "$deploy_scratch"
+    phase1_log="$(mktemp "$deploy_scratch/deploy-{{ expected-node }}.XXXXXX")"
     trap 'rm -f "$phase1_log"' EXIT
     # ---- phase 1 on the node: containment, aspd, install ----------------------
     {
@@ -836,8 +843,9 @@ _deploy-node ssh-target expected-node target-ref="origin/main" aspd-ref="origin/
     else
       # Under $HOME: rbuild mirrors these at the same absolute path on build1, which
       # the absolute --target-dir, --pull and remap paths in asp-release rely on.
-      mkdir -p "$HOME/praesidium/var/scratch/hrc-runtime"
-      build_wt="$(mktemp -d "$HOME/praesidium/var/scratch/hrc-runtime/aspd-build.XXXXXX")"
+      build_scratch="${SCRATCH:-$HOME/praesidium/var/scratch/hrc-runtime/primary}"
+      mkdir -p "$build_scratch"
+      build_wt="$(mktemp -d "$build_scratch/aspd-build.XXXXXX")"
       rmdir "$build_wt"
       drop_build_wt() { git -C "$asp_repo" worktree remove --force "$build_wt" >/dev/null 2>&1 || true; }
       trap drop_build_wt EXIT

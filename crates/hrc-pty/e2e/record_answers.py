@@ -179,7 +179,9 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--binary", required=True)
     parser.add_argument("--out", required=True)
-    parser.add_argument("--scratch", default=os.path.expanduser("~/praesidium/var/scratch/hrc-runtime/record-answers"))
+    scratch_base = os.environ.get("SCRATCH") or os.path.expanduser(
+        "~/praesidium/var/scratch/hrc-runtime/primary")
+    parser.add_argument("--scratch", default=os.path.join(scratch_base, "record-answers"))
     parser.add_argument("--answers", default=DEFAULT_ANSWERS)
     parser.add_argument("--harness", default="claude", help="key in answers.harnesses (claude or pi)")
     driver(parser.parse_args())

@@ -53,6 +53,13 @@ runs max3 first, which re-proves max3's running target and publishes it, and
 then svc and hrcdev. To move the fleet forward, bring max3 to latest first
 (`deploy-max3`), then run `deploy-fleet`.
 
+`just deploy-chain <full HRC SHA> [<satellite ASP SHA>|current]` waits for the
+SHA's green post-push verify, then deploys svc, max3, and hrcdev with force
+restarts. The default `current` resolves each satellite's ASP target just before
+its deploy. The driver prints its per-run log directory under `$SCRATCH` or
+`~/praesidium/var/scratch/hrc-runtime/primary/`. For a store migration, start
+with hrcdev and compare the schema after each node before advancing.
+
 **Only max3 publishes.** `deploy-max3`, and the max3 leg of `deploy-fleet`,
 publish the selected release to the fleet registry after the restart readback
 (`just _publish-selected-release`). The svc and hrcdev legs are `no-publish`.

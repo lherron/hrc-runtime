@@ -37,7 +37,8 @@ set -euo pipefail
 repo="$(cd "$(dirname "$0")/.." && pwd)"
 stamp="$(date -u +%Y%m%dT%H%M%SZ)"
 out="$HOME/praesidium/var/wrkq-artifacts/T-12224/e2e-$stamp"
-scratch="$HOME/praesidium/var/scratch/hrc-runtime/T-12224/e2e-$stamp"
+# Keep the directory name short enough for the scratch daemon's Unix sockets.
+scratch="${SCRATCH:-$HOME/praesidium/var/scratch/hrc-runtime/primary}/cs-$stamp"
 aspd_socket=""
 releases=()
 while (($#)); do
