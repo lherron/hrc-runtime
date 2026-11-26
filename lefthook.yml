@@ -43,8 +43,7 @@ pre-push:
   # Keep the hook alive for deleted paths, which Lefthook omits from push_files.
   files: printf 'lefthook.yml\n'
   commands:
-    # No use_stdin: the gate reads the index, not the pushed refs, so it does
-    # not compete with code-validation for the hook's single stdin.
+    # These checks read the checkout and leave the hook's stdin to the push fact.
     lock-hygiene:
       priority: 1
       run: bun scripts/check-lock-hygiene.ts
@@ -53,12 +52,11 @@ pre-push:
     architecture-records:
       priority: 2
       run: bun scripts/check-architecture-records.ts
-    # TS verify runs post-push on mini. The stdin owner runs the path-scoped
-    # cargo leg, then reports the push; Lefthook cannot fan stdin out.
+    # The Cargo leg runs in post-push verify on mini. Report the ref updates.
     git-push-fact:
       priority: 3
       use_stdin: true
-      run: bun scripts/pre-push-validation.ts {0}
+      run: bun scripts/record-git-push.ts {0}
 
 post-commit:
   commands:

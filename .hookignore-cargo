@@ -8,8 +8,9 @@
 !lefthook.yml
 !.githooks/
 !.hookignore*
+!scripts/lib/hook-change-scope*
+!scripts/lib/hook-scope-ignore*
 !scripts/lib/language-scope*
 !scripts/lib/native-release*
 !scripts/validation-scope.ts
-!scripts/pre-push-validation.ts
 !scripts/atomic-install.ts

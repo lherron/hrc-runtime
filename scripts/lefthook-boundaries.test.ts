@@ -252,7 +252,7 @@ describe('lefthook v2 configuration', () => {
     )
   })
 
-  test('pre-push runs light gates plus scoped cargo and reports the push', async () => {
+  test('pre-push runs light gates and reports the push', async () => {
     const config = await readConfig()
     const prePush = config['pre-push']
     expect(prePush.files).toBe("printf 'lefthook.yml\\n'")
@@ -265,7 +265,6 @@ describe('lefthook v2 configuration', () => {
       priority: 2,
       run: 'bun scripts/check-architecture-records.ts',
     })
-    // TS verify runs post-push on mini; Rust/shared inputs run cargo before push.
     expect(Object.keys(prePush.commands).sort()).toEqual([
       'architecture-records',
       'git-push-fact',
@@ -274,7 +273,7 @@ describe('lefthook v2 configuration', () => {
     expect(prePush.commands['git-push-fact']).toEqual({
       priority: 3,
       use_stdin: true,
-      run: 'bun scripts/pre-push-validation.ts {0}',
+      run: 'bun scripts/record-git-push.ts {0}',
     })
     expect(config['post-commit'].commands['wrkp-git-commit'].run).toBe(
       'wrkp="$HOME/.local/bin/wrkp"; [ -x "$wrkp" ] && "$wrkp" git commit || true'
