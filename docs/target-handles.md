@@ -20,7 +20,8 @@ for placement/routing, which is a separate concern from identity).
 
 Managed commands (`hrc run`, `hrc start`, `hrc attach`) and monitor
 selectors accept these handle forms. Their defaulting rules differ below;
-`wrkc` is a separate CLI with its own addressing contract (`wrkc info`).
+`prae` is a separate CLI with its own seat addressing contract
+(`prae describe seat`).
 
 ```
 <agentId>

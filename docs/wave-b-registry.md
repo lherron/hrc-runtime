@@ -125,41 +125,11 @@ The service uses mini's existing config, auth, and storage:
 The plist sets `VERDACCIO_PUBLIC_URL=http://mini:4873`, so package metadata and
 tarball URLs advertise the canonical network endpoint instead of loopback.
 
-Installing or modifying a system-domain LaunchDaemon requires root. Validate
-and stage the system definition before disturbing the live GUI LaunchAgent:
-
-```bash
-plutil -lint launchd/com.praesidium.verdaccio.plist
-sudo install -m 644 -o root -g wheel \
-  launchd/com.praesidium.verdaccio.plist \
-  /Library/LaunchDaemons/com.praesidium.verdaccio.plist
-sudo plutil -lint /Library/LaunchDaemons/com.praesidium.verdaccio.plist
-```
-
-Port 4873 cannot be owned by both jobs. Do not boot out the old GUI job until
-the system plist is installed and validated. Preserve its plist as rollback
-material during the handoff:
-
-```bash
-launchctl print gui/501/com.lherron.verdaccio
-launchctl bootout gui/501/com.lherron.verdaccio
-sudo launchctl bootstrap system \
-  /Library/LaunchDaemons/com.praesidium.verdaccio.plist
-```
-
-Require the system job and canonical endpoint to be healthy before removing
-the old GUI LaunchAgent plist:
-
-```bash
-sudo launchctl print system/com.praesidium.verdaccio
-lsof -nP -iTCP:4873 -sTCP:LISTEN
-curl -fsS http://mini:4873/-/ping
-rm /Users/lherron/Library/LaunchAgents/com.lherron.verdaccio.plist
-```
-
-If the system job does not become healthy, boot it out and bootstrap the
-preserved GUI plist as rollback. Do not remove the GUI plist or modify
-config/auth/storage during a failed cutover.
+The system job replaced the earlier GUI LaunchAgent
+`gui/501/com.lherron.verdaccio`; that agent and its plist are gone. Installing
+or modifying the system-domain LaunchDaemon requires root and is an operator
+action on mini: validate the edited source with `plutil -lint` before installing
+it, and confirm health with the checks below afterwards.
 
 ## Verification
 
@@ -184,22 +154,12 @@ does not prove the daemon is running the selected package release.
 ## Max3 retirement and recovery
 
 The max3 Verdaccio service and global installation were retired on 2026-07-23.
-Its verified cold recovery archive is:
+Its cold recovery archive (`var/backups/verdaccio-retired/20260723T201530Z/`)
+is no longer present on max3 or mini (checked 2026-11-25). The archive was
+recovery evidence only: it was never imported into mini, compared for
+historical equivalence, or used as an automatic fallback registry.
 
-```text
-/Users/lherron/praesidium/var/backups/verdaccio-retired/20260723T201530Z/max3-verdaccio-cold.tar
-```
-
-SHA-256:
-
-```text
-d982c7e47274298d91db9f98963f8339fa0851407941f581b26076d3cd96fc08
-```
-
-The archive is recovery evidence only. It is not imported into mini, compared
-for historical equivalence, or used as an automatic fallback registry.
-
-TrueNAS backup is explicitly deferred. Until that work lands, mini-local disk
-holds both the live canonical store and the retired max3 archive. Lance accepts
-the temporary risk that loss of mini's disk can lose both. Do not claim remote
-backup durability that has not been implemented and verified.
+TrueNAS backup is explicitly deferred. Until that work lands, the live
+canonical store exists only on mini's local disk. Lance accepts the temporary
+risk that loss of that disk loses it. Do not claim remote backup durability
+that has not been implemented and verified.
