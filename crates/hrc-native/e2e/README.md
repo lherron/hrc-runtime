@@ -37,9 +37,6 @@ Reusable modules: `lifecycle_fixture.py`, `no_intent_fixture.py`,
 `hrc-cli/e2e/native_seat.py`, `n2_scratch.py`, `n3_scratch.py`, `n2_aspd_proxy.py`, and
 `n4_federation.Node`. The scratch helpers support native owners only;
 `--installed-release` remains accepted for command compatibility and is ignored.
-T-13156 retired the paired capture harness `seat_capture.py` and its
-`target_placement.py` and `runtime_surfaces.py` importers under R1, along with
-the unproduced comparator suites in `conformance/hrc-parity`.
 `peer_caller.py` checks original caller attribution across two private native
 nodes (locate, JSON read/write, stream, registry, concurrent/absent/invalid callers;
 T-12661). It takes the standard binary/release/socket/scratch/artifacts arguments;
