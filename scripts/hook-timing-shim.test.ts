@@ -231,6 +231,7 @@ describe('.githooks timing shim', () => {
     // A second init/baseline/push/copy cycle consumed the shared test deadline
     // under load before the missing-wrkp commit could finish (T-11600).
     await rm(fixture.wrkpPath)
+    expect(existsSync(fixture.wrkpPath)).toBeFalse()
     await stageCode(fixture, "'missing'")
     ok(['commit', '-m', 'missing wrkp'], fixture.work, env(fixture))
     expect(ok(['rev-list', '--count', 'HEAD'], fixture.work).trim()).toBe('3')
