@@ -1,5 +1,6 @@
 //! The daemon's store mutex, instrumented (T-12413). On the multithreaded
-//! Tokio runtime a contended acquisition hands the worker back to Tokio.
+//! Tokio runtime a contended acquisition waits briefly before handing the
+//! worker back to Tokio.
 //! A hold at or above the threshold logs `store.lock_held` with the acquiring
 //! call site, the hold and the wait, after the mutex is released.
 //! All completed holds also feed a per-minute accounting line.
@@ -7,11 +8,14 @@ use hrc_store::Store;
 use serde_json::{Value, json};
 use std::{
     cmp::Reverse,
-    collections::HashMap,
+    collections::{HashMap, VecDeque},
     mem::ManuallyDrop,
     ops::{Deref, DerefMut},
     panic::Location,
-    sync::{Arc, LockResult, Mutex, MutexGuard, PoisonError, TryLockError},
+    sync::{
+        Arc, LockResult, Mutex, MutexGuard, PoisonError,
+        mpsc::{Receiver, RecvTimeoutError, SyncSender, sync_channel},
+    },
     time::{Duration, Instant},
 };
 use tokio::runtime::{Handle, RuntimeFlavor};
@@ -21,6 +25,7 @@ pub const HOLD_THRESHOLD: Duration = Duration::from_millis(250);
 
 const ACCOUNTING_INTERVAL: Duration = Duration::from_secs(60);
 const TOP_SITES: usize = 5;
+const WORKER_WAIT_BUDGET: Duration = Duration::from_millis(2);
 
 type Observe = Arc<dyn Fn(Value) + Send + Sync>;
 
@@ -50,8 +55,15 @@ impl Totals {
     }
 }
 
+#[derive(Default)]
+struct Admission {
+    occupied: bool,
+    waiting: VecDeque<SyncSender<()>>,
+}
+
 pub struct StoreLock {
     inner: Mutex<Store>,
+    admission: Mutex<Admission>,
     sites: Mutex<HashMap<&'static Location<'static>, Totals>>,
     threshold: Duration,
     observe: Observe,
@@ -70,6 +82,7 @@ impl StoreLock {
     ) -> Self {
         Self {
             inner: Mutex::new(store),
+            admission: Mutex::new(Admission::default()),
             sites: Mutex::new(HashMap::new()),
             threshold,
             observe: Arc::new(observe),
@@ -87,23 +100,56 @@ impl StoreLock {
             waited: asked.elapsed(),
             acquired: Instant::now(),
         };
-        let guard = match self.inner.try_lock() {
-            Ok(guard) => Ok(guard),
-            Err(TryLockError::Poisoned(poisoned)) => Err(poisoned),
-            Err(TryLockError::WouldBlock) => {
-                if Handle::try_current()
-                    .is_ok_and(|handle| handle.runtime_flavor() == RuntimeFlavor::MultiThread)
-                {
-                    tokio::task::block_in_place(|| self.inner.lock())
-                } else {
-                    self.inner.lock()
-                }
-            }
-        };
-        match guard {
+        self.claim_slot();
+        match self.inner.lock() {
             Ok(guard) => Ok(wrap(guard)),
             Err(poisoned) => Err(PoisonError::new(wrap(poisoned.into_inner()))),
         }
+    }
+
+    // The slot provides timed admission, while the store mutex retains its
+    // standard guard and poisoning semantics.
+    fn claim_slot(&self) {
+        let receiver = {
+            let mut admission = self.admission.lock().unwrap();
+            if !admission.occupied {
+                admission.occupied = true;
+                return;
+            }
+            let (grant, ready) = sync_channel(1);
+            admission.waiting.push_back(grant);
+            ready
+        };
+        let mut pending = PendingSlot {
+            lock: self,
+            receiver: Some(receiver),
+        };
+        let ready = pending.receiver.as_ref().unwrap();
+        if Handle::try_current()
+            .is_ok_and(|handle| handle.runtime_flavor() == RuntimeFlavor::MultiThread)
+        {
+            match ready.recv_timeout(WORKER_WAIT_BUDGET) {
+                Ok(()) => {}
+                Err(RecvTimeoutError::Timeout) => {
+                    tokio::task::block_in_place(|| ready.recv().unwrap());
+                }
+                Err(RecvTimeoutError::Disconnected) => unreachable!("store admission lost"),
+            }
+        } else {
+            ready.recv().unwrap();
+        }
+        pending.receiver = None;
+    }
+
+    fn release_slot(&self) {
+        let mut admission = self.admission.lock().unwrap();
+        while let Some(waiter) = admission.waiting.pop_front() {
+            // Reserve the slot for the oldest live waiter across its handoff.
+            if waiter.try_send(()).is_ok() {
+                return;
+            }
+        }
+        admission.occupied = false;
     }
 
     fn report(&self, since: Instant) -> Instant {
@@ -148,6 +194,28 @@ impl StoreLock {
     }
 }
 
+struct PendingSlot<'a> {
+    lock: &'a StoreLock,
+    receiver: Option<Receiver<()>>,
+}
+
+impl Drop for PendingSlot<'_> {
+    fn drop(&mut self) {
+        let Some(receiver) = self.receiver.take() else {
+            return;
+        };
+        let admission = self.lock.admission.lock().unwrap();
+        let granted = receiver.try_recv().is_ok();
+        // Disconnect under the admission mutex so a concurrent release either
+        // granted us the slot already or will skip this receiver.
+        drop(receiver);
+        drop(admission);
+        if granted {
+            self.lock.release_slot();
+        }
+    }
+}
+
 pub(super) fn start_accounting(server: &super::Shared) {
     let weak = Arc::downgrade(server);
     let mut since = Instant::now();
@@ -186,6 +254,7 @@ impl Drop for StoreGuard<'_> {
         let held = self.acquired.elapsed();
         // SAFETY: dropped exactly once, here; the field is never used again.
         unsafe { ManuallyDrop::drop(&mut self.guard) };
+        self.lock.release_slot();
         // The report and this update can proceed without taking the store mutex.
         self.lock
             .sites
