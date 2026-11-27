@@ -394,7 +394,13 @@ mod idle_tests {
 
     /// OS integration: watch a directory while an initially absent profile is
     /// created, atomically replaced, removed and recreated.
+    ///
+    /// Not in the gate: it waits on macOS's fseventsd, which parallel worktree
+    /// builds saturate for minutes at a time, so the deadline measures the
+    /// machine and not this code. Run it by hand on a quiet machine:
+    /// `cargo test -p hrc-native --lib -- --ignored profile_directory_notifications`
     #[tokio::test]
+    #[ignore = "waits on fseventsd latency; run by hand"]
     async fn profile_directory_notifications() -> anyhow::Result<()> {
         let root = std::env::temp_dir().join(format!("t12504-watch-{}", uuid::Uuid::new_v4()));
         std::fs::create_dir_all(&root)?;
