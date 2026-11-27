@@ -1,6 +1,6 @@
 //! HRC-owned broker disappearance settles mirrored format-1 admissions.
 use super::{
-    controller,
+    Shared, controller,
     evidence::SUBMISSION_TERMINALS,
     owner,
     projection::{db, turns},
@@ -195,18 +195,16 @@ fn unavailable_sql() -> String {
     )
 }
 
-/// Retry broker death after a runtime became unavailable. An indexed seek
-/// per historical invocation keeps runtimes with no mirrored admissions out
-/// of the PID probe set.
-pub(super) fn settle_unavailable(tx: &Transaction<'_>, now: &str, trigger: &str) -> Result<()> {
-    let ids = unavailable_runtimes(tx)?;
-    settle_runtimes(tx, &ids, now, trigger)
-}
-
-/// The scan half of `settle_unavailable`. It reads the admission history of
-/// every dead broker runtime, so reconcile runs it on its own WAL reader.
-pub(super) fn unavailable_runtimes(db: &rusqlite::Connection) -> Result<Vec<String>> {
-    let mut stmt = db.prepare(&unavailable_sql())?;
+/// The scan half of the unavailable-runtime repair, on its own WAL reader. It
+/// reads the admission history of every dead broker runtime, cold from disk
+/// (2-3 s per sweep and about 6 s at boot on max3), so neither the sweep nor
+/// the boot runs it under the store lock. The lock covers only the settles.
+pub(super) fn unavailable_runtimes(server: &Shared) -> Result<Vec<String>> {
+    let mut reader = hrc_store::Store::open_readonly(&server.state.join("state.sqlite"))?;
+    if !server.front {
+        crate::server::statement_telemetry::install(&mut reader, server.accounting.clone())?;
+    }
+    let mut stmt = reader.sqlite.prepare(&unavailable_sql())?;
     let ids = stmt
         .query_map([], |r| r.get::<_, String>(0))?
         .collect::<rusqlite::Result<Vec<_>>>()?;

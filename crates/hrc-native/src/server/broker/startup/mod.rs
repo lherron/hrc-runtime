@@ -720,10 +720,12 @@ pub async fn reconcile(server: &Shared) -> Result<()> {
         startup_issue("hrcpty log sweep failed", json!({}), &e);
     }
     if let Err(e) = (|| -> Result<()> {
+        let ids = super::submission_loss::unavailable_runtimes(server)?;
         let db = server.store.lock().unwrap();
         let tx = db.sqlite.unchecked_transaction()?;
-        super::submission_loss::settle_unavailable(
+        super::submission_loss::settle_runtimes(
             &tx,
+            &ids,
             &hrc_store::timestamp(),
             "startup_terminal_sweep",
         )?;

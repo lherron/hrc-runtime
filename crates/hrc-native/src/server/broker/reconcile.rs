@@ -474,19 +474,7 @@ pub async fn once(
     threshold: i64,
 ) -> Result<Value, ApiError> {
     if !dry_run {
-        // The candidate scan walks every dead broker runtime's admission
-        // history, cold from disk on each sweep (2-3 s on max3), so it runs
-        // on its own WAL reader and the store lock covers only the settles.
-        let ids = {
-            let mut reader = hrc_store::Store::open_readonly(&server.state.join("state.sqlite"))?;
-            if !server.front {
-                crate::server::statement_telemetry::install(
-                    &mut reader,
-                    server.accounting.clone(),
-                )?;
-            }
-            super::submission_loss::unavailable_runtimes(&reader.sqlite)?
-        };
+        let ids = super::submission_loss::unavailable_runtimes(server)?;
         let db = server.store.lock().unwrap();
         let before = db.sqlite.total_changes();
         let tx = db
