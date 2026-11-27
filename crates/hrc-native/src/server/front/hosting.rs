@@ -245,6 +245,7 @@ pub async fn serve(role: Role) -> Result<()> {
         started_at,
         started: Instant::now(),
     });
+    store_lock::start_accounting(&server);
     status_runtime::start(&server);
     start_owner_services(&server).await?;
     // §8.1 item 5: the owner's kernel, after the store and before the listener
