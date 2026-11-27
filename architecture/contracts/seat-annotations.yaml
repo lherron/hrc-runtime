@@ -76,6 +76,15 @@ predicate: >
   seam remain; HRC alone owns semantic fences and replay, with no Cardo
   idempotency declaration. Kernel annotation writes retain system:hrc-kernel
   attribution. This changes no storage, admission, events or read ownership.
+  Amendment 2026-11-27 (T-14783): seat.annotation.get is a read-only,
+  unfenced HRC mount operation using the same subject and key as put.
+  It resolves scope-home authority before using the existing annotation GET
+  route's local store read. The exact row is returned as ext, with its body
+  and updatedAt together, matching prae ext get. A missing key refuses
+  not_found, a foreign home refuses foreign_seat, and unknown or pending
+  home authority retains its retryable refusal. The operation appends no
+  annotation acts or other ledger events and changes no store rows or
+  Praesidium document.
 authority: >
   Daedalus approval of T-12183 seat-annotations-lineage r1.1 at e2f87751,
   submitted on the EN-39516 review thread, 2026-10-31. HRC storage ownership,
@@ -89,7 +98,9 @@ authority: >
   of rusthrc reads while preserving its operator operations (T-12360).
   Daedalus approval of T-13588 spec r2 submitted in EN-54676, 2026-11-15,
   adopts the cardo-lattice-v1 r22 HRC embedding disposition.
+  Mable approved the additive mount read in T-14783 on 2026-11-27.
 source:
+  - wrkq:T-14783
   - wrkq:T-13588
   - wrkq:T-12362
   - wrkq:T-12183

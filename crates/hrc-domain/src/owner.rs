@@ -11,7 +11,8 @@ pub struct OwnerReply {
 
 pub trait OwnerCall: Send + Sync {
     /// Every HTTP status is a reply. `Err` means HRC was not reached and
-    /// carries `hrc_unavailable`.
+    /// carries `hrc_unavailable` or a local admission refusal. GET parameters
+    /// are sent as a query by the owner implementation.
     fn call(&self, method: &str, route: &str, body: Option<&Value>)
     -> Result<OwnerReply, HrcError>;
 }
@@ -23,7 +24,8 @@ const OWNER_ROUTES: &[(&str, &str)] = &[
     ("POST", "/v1/runtimes/start"),
     ("POST", "/v1/sessions/resume-continuation"),
     ("POST", "/v1/submissions/steer"),
-    ("PUT", "/v1/sessions/annotations"),
+    ("GET", crate::annotation::ROUTE),
+    ("PUT", crate::annotation::ROUTE),
     ("POST", "/v1/sessions/annotations/act"),
     ("POST", "/v1/sessions/annotations/delete"),
 ];
@@ -45,7 +47,7 @@ pub fn post(owner: &dyn OwnerCall, route: &str, body: &Value) -> Result<Value, H
     call(owner, "POST", route, body)
 }
 
-/// One allowlisted owner route with a JSON body; a non-2xx is its HRC code.
+/// One allowlisted owner route with JSON arguments. A non-2xx keeps its HRC code.
 pub fn call(
     owner: &dyn OwnerCall,
     method: &str,

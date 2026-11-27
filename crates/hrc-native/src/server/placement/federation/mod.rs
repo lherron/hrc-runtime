@@ -25,6 +25,7 @@ pub mod summon;
 
 pub use locate::{bindings, designations, locate};
 pub use projection::{peer_health, runtimes};
+pub(super) use routing::foreign_read_home;
 pub use routing::{route_request, scope_of};
 
 use super::stderr_json;

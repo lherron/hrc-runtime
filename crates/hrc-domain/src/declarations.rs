@@ -43,7 +43,7 @@ pub(crate) fn described(mut declaration: Value) -> Value {
             match name {
                 "seat.annotation.put" => args["body"] = json!({"text":"Ready for review"}),
                 "seat.annotation.act" => args["action"] = json!("sent"),
-                "seat.annotation.delete" => (),
+                "seat.annotation.get" | "seat.annotation.delete" => (),
                 _ => unreachable!("undeclared HRC operation: {name}"),
             }
             args
@@ -55,5 +55,8 @@ pub(crate) fn described(mut declaration: Value) -> Value {
 
 /// The ops-only HRC provider.
 pub fn declarations() -> Value {
-    json!({"provider":"hrc","version":"1","node_families":[],"node_types":[],"operations":[crate::summon::declaration(),crate::send::declaration(),crate::annotation::put_declaration(),crate::annotation::act_declaration(),crate::annotation::delete_declaration()]})
+    json!({"provider":"hrc","version":"1","node_families":[],"node_types":[],"operations":[
+        crate::summon::declaration(),crate::send::declaration(),crate::annotation::get_declaration(),
+        crate::annotation::put_declaration(),crate::annotation::act_declaration(),crate::annotation::delete_declaration()
+    ]})
 }

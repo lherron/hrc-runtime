@@ -1,4 +1,4 @@
-//! seat.annotation.put, .act and .delete (seat-annotations r1.1 §5):
+//! seat.annotation.get, .put, .act and .delete:
 //! bindings over in-process owner dispatch, as seat.send. They call the same
 //! annotation routes the CLI does, so admission, the `expect` fences, the
 //! ledger rows and the refusal codes are hrc-store's. Cardo declares no fence:
@@ -12,10 +12,11 @@ use cardo_runtime::service::DispatchFailure;
 use serde::Deserialize;
 use serde_json::{Map, Value, json};
 
+pub const GET: &str = "seat.annotation.get";
 pub const PUT: &str = "seat.annotation.put";
 pub const ACT: &str = "seat.annotation.act";
 pub const DELETE: &str = "seat.annotation.delete";
-const ROUTE: &str = "/v1/sessions/annotations";
+pub const ROUTE: &str = "/v1/sessions/annotations";
 
 fn key_fields() -> Map<String, Value> {
     let mut fields = Map::new();
@@ -30,6 +31,13 @@ fn key_fields() -> Map<String, Value> {
     fields
 }
 const KEY_REQUIRED: [&str; 5] = ["session_ref", "subject", "ns", "kind", "id"];
+
+pub fn get_declaration() -> Value {
+    crate::declarations::described(json!({"name":GET,"fences":"none","effect":"read",
+        "description":"Read one local seat or generation annotation from HRC. The ext row includes its body and updatedAt fence. An absent annotation refuses not_found.",
+        "input":{"kind":"object","fields":key_fields(),"required":KEY_REQUIRED},
+        "output":{"kind":"object","fields":{"ext":{"kind":"json"}},"required":["ext"]}}))
+}
 
 pub fn put_declaration() -> Value {
     let mut fields = key_fields();
@@ -93,6 +101,50 @@ fn response_invalid(what: &str) -> DispatchFailure {
         code: "hrc_response_invalid".into(),
         message: format!("HRC omitted {what}; the write requires readback"),
         details: json!({}),
+    }
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct AnnotationGet {
+    session_ref: String,
+    subject: String,
+    generation: Option<u64>,
+    ns: String,
+    kind: String,
+    id: String,
+}
+
+impl AnnotationGet {
+    pub fn run(args: Value, owner: &dyn OwnerCall) -> Result<Value, DispatchFailure> {
+        let get: Self = parse(args)?;
+        match (get.subject.as_str(), get.generation) {
+            ("seat", None) => (),
+            ("generation", Some(generation)) if generation > 0 => (),
+            _ => {
+                return Err(invalid(
+                    "supply a positive generation only for subject generation",
+                ));
+            }
+        }
+        let mut query = key_body(
+            &get.session_ref,
+            &get.subject,
+            get.generation,
+            [&get.ns, &get.kind, &get.id],
+        )?;
+        // The read route filters by subject, generation, namespace and kind.
+        // Select the exact id from that owner snapshot, as prae ext get does.
+        query.as_object_mut().unwrap().remove("id");
+        let response = owner::call(owner, "GET", ROUTE, &query)?;
+        let rows = response["annotations"].as_array().ok_or_else(|| {
+            crate::HrcError::new("hrc_response_invalid", "HRC omitted the annotations array")
+        })?;
+        let row = rows
+            .iter()
+            .find(|row| row["id"] == get.id && row["ns"] == get.ns && row["kind"] == get.kind)
+            .ok_or_else(|| crate::HrcError::new("not_found", "annotation not found"))?;
+        Ok(json!({"ext":row}))
     }
 }
 

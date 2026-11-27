@@ -1,11 +1,11 @@
 //! HRC's protocol 3 kernel is a side surface: startup failure never stops HTTP.
 mod handlers;
 
-use super::{Shared, call_local, stderr_json};
+use super::{Shared, call_local, federation, stderr_json};
 use anyhow::{Context, anyhow};
 use cardo_app::parts::{self, Args, Health, Lock, Paths, Record, Setup, Start, StartedBy};
 use hrc_domain::{
-    HrcError,
+    HrcError, annotation,
     owner::{OwnerCall, OwnerReply},
 };
 use serde_json::{Value, json};
@@ -26,10 +26,58 @@ impl OwnerCall for LocalOwner {
         route: &str,
         body: Option<&Value>,
     ) -> Result<OwnerReply, HrcError> {
-        self.runtime
-            .block_on(call_local(&self.server, method, route, body))
+        self.runtime.block_on(async {
+            if let ("GET", annotation::ROUTE, Some(query)) = (method, route, body) {
+                let route = self.annotation_read_route(query).await?;
+                self.dispatch("GET", &route, None).await
+            } else {
+                self.dispatch(method, route, body).await
+            }
+        })
+    }
+}
+
+impl LocalOwner {
+    async fn dispatch(
+        &self,
+        method: &str,
+        route: &str,
+        body: Option<&Value>,
+    ) -> Result<OwnerReply, HrcError> {
+        call_local(&self.server, method, route, body)
+            .await
             .map(|(status, body)| OwnerReply { status, body })
             .map_err(|e| HrcError::new("hrc_unavailable", format!("{e:#}")))
+    }
+
+    async fn annotation_read_route(&self, query: &Value) -> Result<String, HrcError> {
+        let scope = query["scopeRef"].as_str().expect("annotation scope");
+        let foreign = federation::foreign_read_home(&self.server, scope)
+            .await
+            .map_err(|e| HrcError {
+                code: e.code.into(),
+                message: e.message,
+                detail: e.detail,
+            })?;
+        if let Some(home) = foreign {
+            return Err(HrcError {
+                code: "foreign_seat".into(),
+                message: format!("seat is homed on {home}"),
+                detail: Some(json!({"home":home,"scopeRef":scope})),
+            });
+        }
+        // Authority is already resolved. Use the existing node-local GET
+        // path so dispatch does not resolve the home a second time.
+        let mut params = form_urlencoded::Serializer::new(String::new());
+        for (name, value) in query.as_object().expect("annotation query") {
+            if let Some(value) = value.as_str() {
+                params.append_pair(name, value);
+            } else {
+                params.append_pair(name, &value.to_string());
+            }
+        }
+        params.append_pair("localOnly", "true");
+        Ok(format!("{}?{}", annotation::ROUTE, params.finish()))
     }
 }
 
@@ -236,6 +284,7 @@ mod tests {
             [
                 "seat.summon",
                 "seat.send",
+                "seat.annotation.get",
                 "seat.annotation.put",
                 "seat.annotation.act",
                 "seat.annotation.delete"

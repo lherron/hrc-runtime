@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """Ops-only HRC wire E2E (2026-11-02, praesidium-kernel r1.9 / T-12360).
-Private real daemon, stub broker, private wrkqd. Proves six owner operations,
+Private real daemon, stub broker, private wrkqd. Proves the owner operations,
 stale fences, discovery without HRC types/documents, startup/stop ordering,
 lock failure isolation and retired front-mode refusal. Projection/attach coverage
 moved to praesidium-kernel and campaign T-12361; no live service is modified.
@@ -16,6 +16,7 @@ from pathlib import Path
 import shutil
 import signal
 import socket
+import sqlite3
 import subprocess
 import sys
 import threading
@@ -317,9 +318,11 @@ def main():
             time.sleep(.01)
         r.check('2.caller-logged', bool(caller_logs()), records=caller_logs())
         d = discovery['result']
-        expected = {'seat.summon', 'seat.send', 'seat.annotation.put',
+        expected = {'seat.summon', 'seat.send', 'seat.annotation.get', 'seat.annotation.put',
                     'seat.annotation.act', 'seat.annotation.delete'}
-        r.check('2.exact-five-ops', {o['name'] for o in d['operations'] if o['provider'] == 'seat'} == expected)
+        r.check('2.exact-seat-ops', {o['name'] for o in d['operations'] if o['provider'] == 'seat'} == expected)
+        get_ops = [o for o in d['operations'] if o['name'] == 'seat.annotation.get']
+        r.check('2.annotation-get-is-read', len(get_ops) == 1 and get_ops[0]['effect'] == 'read')
         r.check('2.no-hrc-types', not [t for t in d['node_types'] if t['provider'] == 'hrc'])
         r.check('2.no-cardo-idempotency', all(not o.get('idempotency') for o in d['operations'] if o['name'] in expected))
         resync = wire(kernel, 'resync')
@@ -375,9 +378,64 @@ def main():
                 and all(v.get('rule') and v.get('message') and v.get('fix') for v in details['violations']),
                 reply=stale)
 
+        scope = ref.split('/lane:')[0]
+        foreign_scope = cold.split('/lane:')[0] + '-foreign'
+        retired_scope = cold.split('/lane:')[0] + '-retired'
+        stamp = put['result']['updated_at']
+        with sqlite3.connect(r.db_path, timeout=30) as db:
+            db.executemany(
+                'INSERT INTO placement_ledger (scope_ref, home_node_id, state, retired_at,'
+                ' retirement_reason, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)',
+                [(foreign_scope, 'another-node', 'active', None, None, stamp, stamp),
+                 (retired_scope, 'hkf', 'retired', stamp, 'fixture', stamp, stamp)])
+
+        def read_state(scope_ref):
+            return dict(
+                rows=r.rows('SELECT * FROM seat_annotations WHERE scope_ref=?', (scope_ref,)),
+                events=r.rows('SELECT COUNT(*) AS total, COUNT(CASE WHEN event_kind=? THEN 1 END) AS acts'
+                              ' FROM hrc_events WHERE scope_ref=?', ('session.annotation.action', scope_ref))[0])
+
+        before = read_state(scope)
+        got = wire(kernel, 'seat.annotation.get', key)
+        after = read_state(scope)
+        r.check('3.annotation-get-first-revision', got.get('ok') is True
+                and got['result']['ext']['body'] == {'v': 1}
+                and got['result']['ext']['updatedAt'] == stamp, reply=got)
+        r.check('3.annotation-get-first-read-only', before == after,
+                before=before['events'], after=after['events'])
+
+        newer = wire(kernel, 'seat.annotation.put', dict(**key, body={'v': 2}, expect={'updatedAt': stamp}))
+        assert newer.get('ok'), newer
+        generation_key = dict(key, subject='generation', generation=1)
+        put_generation = wire(kernel, 'seat.annotation.put', dict(generation_key, body={'g': 1}))
+        assert put_generation.get('ok'), put_generation
+        scopes = (scope, foreign_scope, retired_scope)
+        before = {s: read_state(s) for s in scopes}
+        got_newer = wire(kernel, 'seat.annotation.get', key)
+        r.check('3.annotation-get-newer-revision', got_newer.get('ok') is True
+                and got_newer['result']['ext']['body'] == {'v': 2}
+                and got_newer['result']['ext']['updatedAt'] == newer['result']['updated_at']
+                and newer['result']['updated_at'] != stamp, put=newer, reply=got_newer)
+        got_generation = wire(kernel, 'seat.annotation.get', generation_key)
+        r.check('3.annotation-get-generation', got_generation.get('ok') is True
+                and got_generation['result']['ext']['body'] == {'g': 1}
+                and got_generation['result']['ext']['updatedAt'] == put_generation['result']['updated_at'],
+                reply=got_generation)
+        for name, target, expected_code in (
+            ('missing', dict(key, id='missing'), 'not_found'),
+            ('foreign', dict(key, session_ref=foreign_scope + '/lane:main'), 'foreign_seat'),
+            ('home-pending', dict(key, session_ref=retired_scope + '/lane:main'), 'session_home_pending'),
+        ):
+            reply = wire(kernel, 'seat.annotation.get', target)
+            r.check('3.annotation-get-' + name, reply.get('ok') is False and reply['error']['code'] == expected_code,
+                    reply=reply)
+        after = {s: read_state(s) for s in scopes}
+        r.check('3.annotation-gets-read-only', before == after,
+                before={s: v['events'] for s, v in before.items()}, after={s: v['events'] for s, v in after.items()})
+
         act = wire(kernel, 'seat.annotation.act', dict(**key, action='sent', attributes={'ok': True}))
         r.check('3.annotation-act', act.get('ok'), reply=act)
-        deleted = wire(kernel, 'seat.annotation.delete', dict(**key, expect={'updatedAt': put['result']['updated_at']}))
+        deleted = wire(kernel, 'seat.annotation.delete', dict(**key, expect={'updatedAt': newer['result']['updated_at']}))
         r.check('3.annotation-delete', deleted.get('ok') and deleted['result'] == {'deleted': True}, reply=deleted)
         # Submit real literal input to the stub broker and grade the turn ledger.
         sent = wire(kernel, 'seat.send', dict(session_ref=ref, host_session_id=host, expected_generation=1,
@@ -407,7 +465,7 @@ def main():
         r.check('3.stale-context', stale.get('ok') is False and stale['error']['code'] == 'stale_context', reply=stale)
         records = r.rows("SELECT event_kind,payload_json FROM hrc_events WHERE scope_ref=? AND event_kind LIKE 'session.annotation.%'",
                          (ref.split('/lane:')[0],))
-        r.check('3.annotation-ledger', len(records) == 3 and all(json.loads(e['payload_json'])['updatedBy'] == 'system:hrc-kernel' for e in records if e['event_kind'] == 'session.annotation.changed'), records=records)
+        r.check('3.annotation-ledger', len(records) == 5 and all(json.loads(e['payload_json'])['updatedBy'] == 'system:hrc-kernel' for e in records if e['event_kind'] == 'session.annotation.changed'), records=records)
         # A submission that does not ask to wait answers at admission, while
         # its run is still active (the stub turn sits on a question).
         held_ref = f'agent:{AGENT}:project:{PROJECT}:task:pty-{uuid.uuid4().hex[:8]}/lane:main'

@@ -136,8 +136,12 @@ fn unreachable(scope: &str, home: &str, detail: impl Into<String>) -> ApiError {
     )
 }
 
-/// `routeScopeRead`: `Ok(None)` local, `Ok(Some(peer))` forward, or a 503.
-async fn route(server: &Server, raw: &str) -> Result<Option<(String, FederationPeer)>, ApiError> {
+/// Resolve scope-read authority before selecting a transport.
+/// A named home is foreign. An unknown or retiring home keeps its refusal.
+pub(in crate::server) async fn foreign_read_home(
+    server: &Server,
+    raw: &str,
+) -> Result<Option<String>, ApiError> {
     // Only agent scopes are ever placed; anything else reads locally.
     let scope = raw.trim();
     if scope.is_empty() || hrc_common::scope::validate_scope(scope).is_err() {
@@ -170,15 +174,23 @@ async fn route(server: &Server, raw: &str) -> Result<Option<(String, FederationP
             None => Ok(None),
         },
         Authority::Bound { local: true, .. } => Ok(None),
-        Authority::Bound { binding, .. } => match node.peer(&binding.home) {
-            None => Err(unreachable(
-                scope,
-                &binding.home,
-                "home peer is not declared in federation.json",
-            )),
-            Some(peer) => Ok(Some((binding.home, peer.clone()))),
-        },
+        Authority::Bound { binding, .. } => Ok(Some(binding.home)),
     }
+}
+
+/// `routeScopeRead`: `Ok(None)` local, `Ok(Some(peer))` forward, or a 503.
+async fn route(server: &Server, raw: &str) -> Result<Option<(String, FederationPeer)>, ApiError> {
+    let Some(home) = foreign_read_home(server, raw).await? else {
+        return Ok(None);
+    };
+    let peer = server.federation.peer(&home).ok_or_else(|| {
+        unreachable(
+            raw.trim(),
+            &home,
+            "home peer is not declared in federation.json",
+        )
+    })?;
+    Ok(Some((home, peer.clone())))
 }
 
 /// Route one request. `None` means serve it locally.

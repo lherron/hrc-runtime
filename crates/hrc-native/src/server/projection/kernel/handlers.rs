@@ -2,7 +2,7 @@
 use cardo_app::parts::{Failure, Openings, Unfenced};
 use cardo_runtime::service::DispatchFailure;
 use hrc_domain::{
-    annotation::{self, AnnotationAct, AnnotationDelete, AnnotationPut},
+    annotation::{self, AnnotationAct, AnnotationDelete, AnnotationGet, AnnotationPut},
     owner::OwnerCall,
     send::{self, SeatSend},
     summon::{self, Summon},
@@ -35,6 +35,7 @@ fn run(name: &str, args: Value, owner: &dyn OwnerCall) -> Result<Value, Dispatch
     match name {
         summon::OPERATION => Summon::parse(args)?.run(owner),
         send::OPERATION => SeatSend::parse(args)?.run(owner),
+        annotation::GET => AnnotationGet::run(args, owner),
         annotation::PUT => AnnotationPut::parse(args)?.run(owner),
         annotation::ACT => AnnotationAct::parse(args)?.run(owner),
         annotation::DELETE => AnnotationDelete::parse(args)?.run(owner),
