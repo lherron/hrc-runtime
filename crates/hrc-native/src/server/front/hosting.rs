@@ -295,6 +295,10 @@ pub async fn serve(role: Role) -> Result<()> {
                 .controller
                 .shutting_down
                 .store(true, std::sync::atomic::Ordering::SeqCst);
+            // Followers woken by the shutdown row above may have checked the
+            // flag before this store; wake them again so they see it now,
+            // inside the drain budget, not at their next keepalive.
+            owned.ledger_committed();
         })
         .into_future();
     tokio::pin!(serving);

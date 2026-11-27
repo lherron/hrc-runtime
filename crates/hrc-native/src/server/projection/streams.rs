@@ -200,7 +200,7 @@ impl HttpBody for FollowBody {
                         .accepted(id, seq, Some(0));
                 }
             }
-            if r.value["type"] == "ledger_replaced" {
+            if r.value["type"] == "ledger_replaced" || r.value["type"] == "daemon_stopping" {
                 q.closed = true;
             }
             return Poll::Ready(Some(Ok(Frame::data(r.bytes))));
@@ -598,7 +598,13 @@ pub fn open(
                 .load(std::sync::atomic::Ordering::SeqCst)
             {
                 let mut q = state.lock().unwrap();
-                q.closed = true;
+                if broker {
+                    // Say why the follow ends: a bare EOF reads as idle to a
+                    // consumer. Queued rows drain first; the body closes after.
+                    q.terminal = Some(Record::new(json!({"type":"daemon_stopping"})));
+                } else {
+                    q.closed = true;
+                }
                 q.wake();
                 break;
             }
