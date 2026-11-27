@@ -266,7 +266,10 @@ pub async fn serve(role: Role) -> Result<()> {
         json!({"pid":std::process::id(),"socketPath":owner.socket,"owner":"rusthrc","role":role}),
     );
     let (shutdown_started, mut shutdown_began) = tokio::sync::oneshot::channel();
-    let serving = axum::serve(listener, app)
+    let serving = axum::serve(
+        accounting::ObservedListener(listener),
+        accounting::observe_writes(app),
+    )
         .with_graceful_shutdown(async move {
             let mut requested = owned.lifecycle.requested.subscribe();
             let (reason, grant) = tokio::select! {

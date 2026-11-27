@@ -189,7 +189,11 @@ fn serve_listener(
 ) {
     let (stop, stopped) = tokio::sync::oneshot::channel::<()>();
     let task = tokio::spawn(async move {
-        let serve = axum::serve(listener, app).with_graceful_shutdown(async move {
+        let serve = axum::serve(
+            super::accounting::ObservedListener(listener),
+            super::accounting::observe_writes(app),
+        )
+        .with_graceful_shutdown(async move {
             let _ = stopped.await;
         });
         match serve.await {

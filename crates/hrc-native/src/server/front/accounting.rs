@@ -1,9 +1,12 @@
 //! Bun-compatible main-listener accounting. Requests only enqueue in memory;
 //! a separate writer owns filesystem work and flushes on clean shutdown.
 use axum::{
+    Router,
     body::{Body, Bytes},
-    extract::Request,
+    extract::{ConnectInfo, Request, connect_info::IntoMakeServiceWithConnectInfo},
+    middleware::{self, Next},
     response::Response,
+    serve::{IncomingStream, Listener},
 };
 use chrono::{SecondsFormat, Utc};
 use http_body::{Body as HttpBody, Frame, SizeHint};
@@ -11,12 +14,16 @@ use serde_json::{Value, json};
 use std::{
     collections::HashMap,
     fs::{self, OpenOptions},
-    io::Write,
+    io::{self, IoSlice, Write},
     path::PathBuf,
     pin::Pin,
     sync::{Arc, Mutex},
     task::{Context, Poll},
     time::{Duration, Instant, SystemTime},
+};
+use tokio::{
+    io::{AsyncRead, AsyncWrite, ReadBuf},
+    sync::Notify,
 };
 include!("accounting_routes.rs");
 const FILE_PREFIX: &str = "rusthrc-server-";
@@ -43,7 +50,7 @@ struct Queue {
 }
 pub(super) struct Accounting {
     queue: Mutex<Queue>,
-    ready: tokio::sync::Notify,
+    ready: Notify,
     samples: Mutex<HashMap<String, Sample>>,
     enabled: bool,
 }
@@ -51,7 +58,7 @@ impl Accounting {
     pub fn new() -> Arc<Self> {
         Arc::new(Self {
             queue: Mutex::new(Queue::default()),
-            ready: tokio::sync::Notify::new(),
+            ready: Notify::new(),
             samples: Mutex::new(HashMap::new()),
             enabled: std::env::var("HRC_METRICS").as_deref() != Ok("0"),
         })
@@ -299,6 +306,7 @@ pub(super) struct Entry {
     caller: String,
     request_id: String,
     started: Instant,
+    connection: Option<Connection>,
 }
 impl Entry {
     pub fn new(request: &Request) -> Self {
@@ -352,6 +360,10 @@ impl Entry {
                 .unwrap_or("")
                 .into(),
             started: Instant::now(),
+            connection: request
+                .extensions()
+                .get::<ConnectInfo<Connection>>()
+                .map(|info| info.0.clone()),
         }
     }
     /// A non-main listener: its routes are exact paths, the rest `unmatched`.
@@ -378,7 +390,8 @@ impl Entry {
         }
         v
     }
-    pub fn observe(self, accounting: Arc<Accounting>, response: Response) -> Response {
+    pub fn observe(mut self, accounting: Arc<Accounting>, response: Response) -> Response {
+        let answered = Instant::now();
         let ms = self.started.elapsed().as_secs_f64() * 1000.0;
         let now = Utc::now();
         let status = response.status().as_u16();
@@ -435,11 +448,38 @@ impl Entry {
             emit(level(status), "http.request", "http", self.base(status));
         }
         let (parts, body) = response.into_parts();
+        let connection = self.connection.take().filter(|_| !stream);
+        let entry = Arc::new(self);
+        if let Some(connection) = &connection {
+            let status = parts.status;
+            let length = if parts
+                .headers
+                .contains_key(axum::http::header::TRANSFER_ENCODING)
+            {
+                None
+            } else {
+                length.or_else(|| body.size_hint().exact())
+            };
+            let empty = entry.method == "HEAD"
+                || entry.method == "CONNECT" && status.is_success()
+                || status.is_informational()
+                || matches!(status.as_u16(), 204 | 304)
+                || body.is_end_stream()
+                || length == Some(0);
+            *connection.0.delivery.lock().unwrap() = Some(Delivery {
+                entry: entry.clone(),
+                status: status.as_u16(),
+                answered,
+                length,
+                bytes: 0,
+                body_outcome: empty.then_some("end"),
+            });
+        }
         Response::from_parts(
             parts,
             Body::new(ObservedBody {
                 body,
-                entry: self,
+                entry,
                 status,
                 stream: stream && status < 400,
                 error_json,
@@ -448,7 +488,7 @@ impl Entry {
                 pending,
                 accounting,
                 closed: false,
-                answered: Instant::now(),
+                connection,
             }),
         )
     }
@@ -470,7 +510,7 @@ fn emit(level: &str, event: &str, component: &str, data: Value) {
 }
 struct ObservedBody {
     body: Body,
-    entry: Entry,
+    entry: Arc<Entry>,
     status: u16,
     stream: bool,
     error_json: bool,
@@ -479,15 +519,10 @@ struct ObservedBody {
     pending: Option<Value>,
     accounting: Arc<Accounting>,
     closed: bool,
-    /// When the handler answered. http.request's durationMs stops here, so a
-    /// body the runtime is slow to deliver, or one the client abandons, is
-    /// logged on close as `http.response.slow`.
-    answered: Instant,
+    connection: Option<Connection>,
 }
-/// A body delivered this long after its handler answered is logged.
-const SLOW_BODY: Duration = Duration::from_secs(1);
 impl ObservedBody {
-    fn close(&mut self, outcome: &str) {
+    fn close(&mut self, outcome: &'static str) {
         if self.closed {
             return;
         }
@@ -517,13 +552,11 @@ impl ObservedBody {
             }
             emit(level(self.status), "http.request", "http", data);
         }
-        let body = self.answered.elapsed();
-        if !self.stream && (outcome != "end" || body >= SLOW_BODY) {
-            let mut data = self.entry.base(self.status);
-            data["bodyMs"] = ((body.as_secs_f64() * 10000.0).round() / 10.0).into();
-            data["bytes"] = self.bytes.into();
-            data["outcome"] = outcome.into();
-            emit("warn", "http.response.slow", "http", data);
+        if outcome != "cancel"
+            && let Some(connection) = &self.connection
+            && let Some(delivery) = connection.0.delivery.lock().unwrap().as_mut()
+        {
+            delivery.body_outcome = Some(outcome);
         }
     }
 }
@@ -566,6 +599,16 @@ impl HttpBody for ObservedBody {
                         self.error.extend_from_slice(data);
                     }
                 }
+                if let Some(connection) = &self.connection
+                    && let Some(delivery) = connection.0.delivery.lock().unwrap().as_mut()
+                {
+                    delivery.bytes = self.bytes;
+                    // Hyper can finish a fixed-length response without polling
+                    // the body again after the last data frame.
+                    if delivery.length == Some(self.bytes) || frame.is_trailers() {
+                        delivery.body_outcome = Some("end");
+                    }
+                }
             }
             Poll::Ready(Some(Err(_))) => self.close("error"),
             Poll::Ready(None) => self.close("end"),
@@ -590,6 +633,171 @@ impl Drop for ObservedBody {
         } else {
             "cancel"
         });
+    }
+}
+
+/// One observation per HTTP/1 connection. The body marks the end of the
+/// response, then Hyper drains its encoded headers and frames before calling
+/// the socket's flush. The next request waits for that boundary even if it
+/// was pipelined, so a later response cannot delay the earlier measurement.
+#[derive(Clone, Default)]
+pub(super) struct Connection(Arc<ConnectionState>);
+
+#[derive(Default)]
+struct ConnectionState {
+    delivery: Mutex<Option<Delivery>>,
+    flushed: Notify,
+}
+
+struct Delivery {
+    entry: Arc<Entry>,
+    status: u16,
+    answered: Instant,
+    length: Option<u64>,
+    bytes: u64,
+    body_outcome: Option<&'static str>,
+}
+
+impl Connection {
+    fn complete(&self, outcome: &'static str) {
+        let completed = Instant::now();
+        let delivery = {
+            let mut pending = self.0.delivery.lock().unwrap();
+            if outcome == "end"
+                && !pending
+                    .as_ref()
+                    .is_some_and(|d| d.body_outcome == Some("end"))
+            {
+                return;
+            }
+            pending.take()
+        };
+        if let Some(delivery) = delivery {
+            self.0.flushed.notify_one();
+            let outcome = if delivery.body_outcome == Some("error") {
+                "error"
+            } else {
+                outcome
+            };
+            let body = completed.duration_since(delivery.answered);
+            if outcome != "end" || body >= Duration::from_secs(1) {
+                let mut data = delivery.entry.base(delivery.status);
+                data["bodyMs"] = ((body.as_secs_f64() * 10000.0).round() / 10.0).into();
+                data["bytes"] = delivery.bytes.into();
+                data["outcome"] = outcome.into();
+                emit("warn", "http.response.slow", "http", data);
+            }
+        }
+    }
+}
+
+pub(super) fn observe_writes(app: Router) -> IntoMakeServiceWithConnectInfo<Router, Connection> {
+    app.layer(middleware::from_fn(
+        |ConnectInfo(connection): ConnectInfo<Connection>, request: Request, next: Next| async move {
+            while connection.0.delivery.lock().unwrap().is_some() {
+                connection.0.flushed.notified().await;
+            }
+            next.run(request).await
+        },
+    ))
+    .into_make_service_with_connect_info()
+}
+
+pub(super) struct ObservedListener<L>(pub L);
+
+impl<L: Listener> Listener for ObservedListener<L> {
+    type Io = ObservedIo<L::Io>;
+    type Addr = L::Addr;
+
+    async fn accept(&mut self) -> (Self::Io, Self::Addr) {
+        let (socket, addr) = self.0.accept().await;
+        (
+            ObservedIo {
+                socket,
+                connection: Connection::default(),
+            },
+            addr,
+        )
+    }
+
+    fn local_addr(&self) -> io::Result<Self::Addr> {
+        self.0.local_addr()
+    }
+}
+
+impl<L: Listener> axum::extract::connect_info::Connected<IncomingStream<'_, ObservedListener<L>>>
+    for Connection
+{
+    fn connect_info(stream: IncomingStream<'_, ObservedListener<L>>) -> Self {
+        stream.io().connection.clone()
+    }
+}
+
+pub(super) struct ObservedIo<T> {
+    socket: T,
+    connection: Connection,
+}
+
+impl<T> ObservedIo<T> {
+    fn observe_error<R>(&self, result: Poll<io::Result<R>>) -> Poll<io::Result<R>> {
+        if matches!(result, Poll::Ready(Err(_))) {
+            self.connection.complete("error");
+        }
+        result
+    }
+}
+
+impl<T: AsyncRead + Unpin> AsyncRead for ObservedIo<T> {
+    fn poll_read(
+        mut self: Pin<&mut Self>,
+        cx: &mut Context<'_>,
+        buf: &mut ReadBuf<'_>,
+    ) -> Poll<io::Result<()>> {
+        let result = Pin::new(&mut self.socket).poll_read(cx, buf);
+        self.observe_error(result)
+    }
+}
+
+impl<T: AsyncWrite + Unpin> AsyncWrite for ObservedIo<T> {
+    fn poll_write(
+        mut self: Pin<&mut Self>,
+        cx: &mut Context<'_>,
+        buf: &[u8],
+    ) -> Poll<io::Result<usize>> {
+        let result = Pin::new(&mut self.socket).poll_write(cx, buf);
+        self.observe_error(result)
+    }
+
+    fn poll_write_vectored(
+        mut self: Pin<&mut Self>,
+        cx: &mut Context<'_>,
+        bufs: &[IoSlice<'_>],
+    ) -> Poll<io::Result<usize>> {
+        let result = Pin::new(&mut self.socket).poll_write_vectored(cx, bufs);
+        self.observe_error(result)
+    }
+
+    fn is_write_vectored(&self) -> bool {
+        self.socket.is_write_vectored()
+    }
+
+    fn poll_flush(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<io::Result<()>> {
+        let result = Pin::new(&mut self.socket).poll_flush(cx);
+        if matches!(result, Poll::Ready(Ok(()))) {
+            self.connection.complete("end");
+        }
+        self.observe_error(result)
+    }
+
+    fn poll_shutdown(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<io::Result<()>> {
+        let result = Pin::new(&mut self.socket).poll_shutdown(cx);
+        self.observe_error(result)
+    }
+}
+
+impl<T> Drop for ObservedIo<T> {
+    fn drop(&mut self) {
+        self.connection.complete("cancel");
     }
 }
 
