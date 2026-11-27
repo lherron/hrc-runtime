@@ -24,10 +24,12 @@ predicate: >
   lifecycle headers; this existing local route requires no lifecycle
   credential. It classifies only scopes whose task segment
   does not match T- followed by digits. It reads the last assistant message_end
-  from turn.message, not the transcript index. Lance authorizes hosted jev
-  egress of the verbatim last 2500 characters of final text, last 400 characters
+  from turn.message, not the transcript index. Lance authorizes egress of
+  the verbatim last 2500 characters of final text, last 400 characters
   of turn.user_prompt, and agent, project and seat identity, with no masking,
-  obfuscation or redaction. Foundry is included. The hosted call has a
+  obfuscation or redaction, to hosted jev and to OpenAI Decisions under the
+  Praesidium kernel decision module's own OpenAI project, for calibration and
+  production. Foundry is included. The hosted call has a
   three-second timeout and cannot delay or fail turn completion. Errors,
   timeouts and non-2xx responses log and append nothing; there are no retries
   or classification queues. A private persisted cursor supports catch-up;
@@ -82,8 +84,15 @@ authority: >
   module and owner-admitted HRC module writes; the HRC owner's port and
   cutover read is EN-51638. This changes classifier hosting, transport and
   cutover ownership, not HRC append or presentation semantics.
+  OpenAI Decisions egress by Lance's 2026-11-27 ruling ("Allow. Turn text
+  may go to OpenAI Decisions, for calibration and production."), card
+  hrc-text-to-openai, recorded in wrkq:T-14773 C-40660 and relayed in
+  EN-64329, for the decision-module move T-14775. Egress only: classifier
+  hosting, timeout and failure handling are unchanged here.
 source:
   - wrkq:T-13374
+  - wrkq:T-14773
+  - wrkc:EN-64329
   - wrkc:EN-51636
   - wrkc:EN-51638
   - wrkc:EN-51640
