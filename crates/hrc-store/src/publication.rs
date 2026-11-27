@@ -34,7 +34,12 @@ impl Store {
         values.extend(kinds.iter().map(|k| Sql::Text((*k).into())));
         values.push(Sql::Integer(limit));
         let markers = vec!["?"; kinds.len()].join(",");
-        self.lifecycle_rows(&format!("SELECT * FROM hrc_events WHERE hrc_seq > ? AND source_ref IS NULL AND event_kind IN ({markers}) ORDER BY hrc_seq ASC LIMIT ?"),&values,true)
+        // The kind index, pinned (T-14780): with no sqlite_stat1 the planner
+        // walks idx_hrc_events_source_ref_seq over every event past the cursor.
+        // The server cursor only moves on server.started/stopped, so that scan
+        // covers everything since the last restart, under the store lock, on
+        // every ledger commit.
+        self.lifecycle_rows(&format!("SELECT * FROM hrc_events INDEXED BY idx_hrc_events_kind_seq WHERE hrc_seq > ? AND source_ref IS NULL AND event_kind IN ({markers}) ORDER BY hrc_seq ASC LIMIT ?"),&values,true)
     }
     pub fn publication_prior_turn(&self, runtime: &str, before: i64) -> Result<Option<Value>> {
         Ok(self.lifecycle_rows("SELECT * FROM hrc_events WHERE runtime_id=? AND hrc_seq<? AND source_ref IS NULL AND evidence_origin IS NULL AND event_kind IN ('turn.started','turn.completed','turn.failed','turn.reaped','runtime.terminated','runtime.crashed','runtime.dead','runtime.stale') ORDER BY hrc_seq DESC LIMIT 1",&[Sql::Text(runtime.into()),Sql::Integer(before)],true)?.pop().filter(|v|v["eventKind"]=="turn.started"))
