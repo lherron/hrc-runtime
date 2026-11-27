@@ -886,6 +886,9 @@ pub(crate) mod tests {
             controller: Default::default(),
             reaped: Default::default(),
             ledger: tokio::sync::watch::Sender::new(0),
+            event_head: std::sync::Mutex::new(crate::server::events::HeadReader::open(
+                &state.join("state.sqlite"),
+            )?),
             lifecycle: lifecycle::State::new(&runtime, true),
             probing: Default::default(),
             literal: Default::default(),

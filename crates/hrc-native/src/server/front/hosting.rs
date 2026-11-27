@@ -184,6 +184,7 @@ pub async fn serve(role: Role) -> Result<()> {
     } else {
         Store::open(&db)?
     };
+    let event_head = Mutex::new(events::HeadReader::open(&db)?);
     // Node identity resolves before ownership: a malformed federation config
     // refuses loudly rather than letting the daemon come up as the wrong node.
     let federation = federation::Node::new(
@@ -232,6 +233,7 @@ pub async fn serve(role: Role) -> Result<()> {
         transcript: transcript::State::default(),
         reaped: Mutex::new(HashSet::new()),
         ledger: tokio::sync::watch::Sender::new(0),
+        event_head,
         lifecycle: lifecycle::State::new(&runtime, !front),
         probing: Mutex::new(HashSet::new()),
         literal: Mutex::new(HashMap::new()),

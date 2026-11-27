@@ -7,7 +7,7 @@ use axum::{
     response::{IntoResponse, Response},
 };
 use serde_json::json;
-use std::collections::HashMap;
+use std::{collections::HashMap, path::Path, sync::Arc};
 
 pub fn implements(method: &Method, path: &str) -> bool {
     *method == Method::GET
@@ -248,7 +248,7 @@ pub fn history(server: &Shared, q: &HashMap<String, String>) -> Result<Response,
         .is_some()
         .then(|| integer(&q, "limit", 1))
         .transpose()?;
-    let mut reader = History::new(server, q, from, remaining)?;
+    let mut reader = History::new(server, q, from, remaining, Head::fresh(server)?);
     // The first chunk is read here so its failure keeps its HTTP status.
     let first = reader.chunk()?;
     let rest = futures_util::stream::unfold(reader, |mut reader| async move {
@@ -261,7 +261,7 @@ pub fn history(server: &Shared, q: &HashMap<String, String>) -> Result<Response,
                 Err(e) => {
                     // A mid-stream failure aborts the body, which the client
                     // sees as an incomplete response, never a short success.
-                    reader.next = reader.head.saturating_add(1);
+                    reader.next = reader.head.seq.saturating_add(1);
                     let error = std::io::Error::other(e.message);
                     return Some((Err(error), reader));
                 }
@@ -280,6 +280,59 @@ pub fn history(server: &Shared, q: &HashMap<String, String>) -> Result<Response,
         .into_response())
 }
 
+pub(super) struct Head {
+    pub(super) seq: i64,
+    pub(super) incarnation: String,
+}
+
+pub(super) struct HeadReader {
+    // Share one short WAL snapshot per observed watch generation without
+    // joining the write connection's store-lock queue.
+    db: hrc_store::Store,
+    cached: Option<(u64, Arc<Head>)>,
+}
+
+impl HeadReader {
+    pub(super) fn open(path: &Path) -> anyhow::Result<Self> {
+        Ok(Self {
+            db: hrc_store::Store::open_readonly(path)?,
+            cached: None,
+        })
+    }
+
+    fn read(&self) -> anyhow::Result<Arc<Head>> {
+        let tx = self.db.sqlite.unchecked_transaction()?;
+        let head = Head {
+            seq: self.db.max_hrc_seq()?,
+            incarnation: self.db.ledger_incarnation()?,
+        };
+        tx.commit()?;
+        Ok(Arc::new(head))
+    }
+}
+
+impl Head {
+    pub(super) fn fresh(server: &Server) -> anyhow::Result<Arc<Self>> {
+        server.event_head.lock().unwrap().read()
+    }
+
+    pub(super) fn on_wake(server: &Server) -> anyhow::Result<Arc<Self>> {
+        let mut reader = server.event_head.lock().unwrap();
+        // Sample the generation before the SQLite snapshot. A commit that
+        // races the snapshot either appears in it or has a later wake to
+        // invalidate the cache. The read-only connection only sees commits.
+        let generation = *server.ledger.borrow();
+        if let Some((cached_generation, head)) = &reader.cached
+            && *cached_generation == generation
+        {
+            return Ok(head.clone());
+        }
+        let head = reader.read()?;
+        reader.cached = Some((generation, head.clone()));
+        Ok(head)
+    }
+}
+
 /// A history read a chunk per store hold: rows from `next` through `head`,
 /// oldest first, at most `remaining` of them, fenced on the ledger
 /// incarnation read with `head`.
@@ -287,54 +340,45 @@ pub(crate) struct History {
     server: Shared,
     q: HashMap<String, String>,
     next: i64,
-    head: i64,
+    head: Arc<Head>,
     remaining: Option<i64>,
-    incarnation: String,
 }
 impl History {
-    /// Capture head and incarnation in one hold; `q` is already filtered.
-    pub(crate) fn new(
+    pub(super) fn new(
         server: &Shared,
         q: HashMap<String, String>,
         from: i64,
         remaining: Option<i64>,
-    ) -> Result<Self, ApiError> {
-        let (head, incarnation) = {
-            let db = server.store.lock().unwrap();
-            (db.max_hrc_seq()?, db.ledger_incarnation()?)
-        };
-        Ok(Self {
+        head: Arc<Head>,
+    ) -> Self {
+        Self {
             server: server.clone(),
             q,
             next: from,
             head,
             remaining,
-            incarnation,
-        })
-    }
-    pub(crate) fn head(&self) -> i64 {
-        self.head
+        }
     }
     /// The next chunk's rows (possibly none), or None when done.
     pub(crate) fn rows(&mut self) -> Result<Option<Vec<serde_json::Value>>, ApiError> {
-        if self.next > self.head || self.remaining == Some(0) {
+        if self.next > self.head.seq || self.remaining == Some(0) {
             return Ok(None);
         }
         let end = self
             .next
             .saturating_add(CHUNK_SPAN)
-            .min(self.head.saturating_add(1));
+            .min(self.head.seq.saturating_add(1));
         let take = self.remaining.map_or(CHUNK_ROWS, |r| r.min(CHUNK_ROWS));
         let rows = {
             let db = self.server.store.lock().unwrap();
             let current = db.ledger_incarnation()?;
-            if current != self.incarnation {
+            if current != self.head.incarnation {
                 return Err(ApiError::domain(
                     StatusCode::CONFLICT,
                     "cursor_invalid",
                     "event ledger incarnation is no longer current",
                     Some(
-                        json!({"expectedLedgerIncarnationId":self.incarnation,"currentLedgerIncarnationId":current}),
+                        json!({"expectedLedgerIncarnationId":self.head.incarnation,"currentLedgerIncarnationId":current}),
                     ),
                 ));
             }

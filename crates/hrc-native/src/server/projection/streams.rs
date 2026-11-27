@@ -241,14 +241,28 @@ enum Source {
         run: Option<String>,
     },
 }
-fn read(server: &Shared, source: &Source, after: i64) -> Result<(i64, Vec<Value>), ApiError> {
+fn read(
+    server: &Shared,
+    source: &Source,
+    after: i64,
+    live: bool,
+) -> Result<(i64, Vec<Value>), ApiError> {
     match source {
         Source::Lifecycle(q) => {
+            let head = if live {
+                events::Head::on_wake(server)?
+            } else {
+                events::Head::fresh(server)?
+            };
+            let seq = head.seq;
+            if seq <= after {
+                return Ok((seq, Vec::new()));
+            }
             // Follow replay from an old cursor is the whole ledger: a chunk
             // per store hold, fenced at the head captured first (T-12413).
-            let history = events::History::new(server, q.clone(), after.saturating_add(1), None)?;
-            let head = history.head();
-            Ok((head, history.collect()?))
+            let history =
+                events::History::new(server, q.clone(), after.saturating_add(1), None, head);
+            Ok((seq, history.collect()?))
         }
         Source::Broker {
             runtime,
@@ -296,6 +310,10 @@ fn bounded_append(
     filters: &HashMap<String, String>,
     after: i64,
 ) -> Result<Option<i64>, ApiError> {
+    let observed = events::Head::on_wake(server)?;
+    if observed.seq <= after && observed.incarnation == state.lock().unwrap().incarnation {
+        return Ok(Some(after));
+    }
     let db = server.store.lock().unwrap();
     let tx = db
         .sqlite
@@ -498,7 +516,7 @@ fn replay_snapshot(
         tx.commit().map_err(anyhow::Error::from)?;
         head.max(after)
     } else {
-        let (head, rows) = read(server, source, after)?;
+        let (head, rows) = read(server, source, after, false)?;
         for row in rows {
             let seq = if broker {
                 row["seq"].as_i64().unwrap()
@@ -540,7 +558,7 @@ pub fn open(
                 Some(json!({"field":"follow"})),
             ));
         }
-        let (_, rows) = read(server, &source, after)?;
+        let (_, rows) = read(server, &source, after, false)?;
         let raw = rows.iter().map(|v| format!("{v}\n")).collect::<String>();
         return Ok((
             [("content-type", "application/x-ndjson; charset=utf-8")],
@@ -638,7 +656,7 @@ pub fn open(
                 }
                 continue;
             }
-            match read(&owner, &source, cursor) {
+            match read(&owner, &source, cursor, true) {
                 Ok((head, rows)) => {
                     let mut q = state.lock().unwrap();
                     for row in rows {

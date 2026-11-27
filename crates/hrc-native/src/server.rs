@@ -209,6 +209,7 @@ struct Server {
     reaped: Mutex<HashSet<String>>,
     /// Bumped after every committed ledger write; followers re-query on change.
     ledger: tokio::sync::watch::Sender<u64>,
+    event_head: Mutex<events::HeadReader>,
     lifecycle: lifecycle::State,
     /// Runtimes with a seat probe in flight (probeSeatInBackground).
     probing: Mutex<HashSet<String>>,
