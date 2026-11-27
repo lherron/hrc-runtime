@@ -1,6 +1,5 @@
-//! The daemon's store mutex, instrumented (T-12413). Every request path takes
-//! `server.store`; a holder that keeps it for seconds stalls every other
-//! route, /v1/health included, while the slow-statement log names only SQL.
+//! The daemon's store mutex, instrumented (T-12413). On the multithreaded
+//! Tokio runtime a contended acquisition hands the worker back to Tokio.
 //! A hold at or above the threshold logs `store.lock_held` with the acquiring
 //! call site, the hold and the wait, after the mutex is released.
 use hrc_store::Store;
@@ -9,9 +8,10 @@ use std::{
     mem::ManuallyDrop,
     ops::{Deref, DerefMut},
     panic::Location,
-    sync::{Arc, LockResult, Mutex, MutexGuard, PoisonError},
+    sync::{Arc, LockResult, Mutex, MutexGuard, PoisonError, TryLockError},
     time::{Duration, Instant},
 };
+use tokio::runtime::{Handle, RuntimeFlavor};
 
 /// Same default as the slow-statement threshold.
 pub const HOLD_THRESHOLD: Duration = Duration::from_millis(250);
@@ -53,7 +53,20 @@ impl StoreLock {
             waited: asked.elapsed(),
             acquired: Instant::now(),
         };
-        match self.inner.lock() {
+        let guard = match self.inner.try_lock() {
+            Ok(guard) => Ok(guard),
+            Err(TryLockError::Poisoned(poisoned)) => Err(poisoned),
+            Err(TryLockError::WouldBlock) => {
+                if Handle::try_current()
+                    .is_ok_and(|handle| handle.runtime_flavor() == RuntimeFlavor::MultiThread)
+                {
+                    tokio::task::block_in_place(|| self.inner.lock())
+                } else {
+                    self.inner.lock()
+                }
+            }
+        };
+        match guard {
             Ok(guard) => Ok(wrap(guard)),
             Err(poisoned) => Err(PoisonError::new(wrap(poisoned.into_inner()))),
         }
