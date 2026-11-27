@@ -448,6 +448,7 @@ impl Entry {
                 pending,
                 accounting,
                 closed: false,
+                answered: Instant::now(),
             }),
         )
     }
@@ -478,7 +479,13 @@ struct ObservedBody {
     pending: Option<Value>,
     accounting: Arc<Accounting>,
     closed: bool,
+    /// When the handler answered. http.request's durationMs stops here, so a
+    /// body the runtime is slow to deliver, or one the client abandons, is
+    /// logged on close as `http.response.slow`.
+    answered: Instant,
 }
+/// A body delivered this long after its handler answered is logged.
+const SLOW_BODY: Duration = Duration::from_secs(1);
 impl ObservedBody {
     fn close(&mut self, outcome: &str) {
         if self.closed {
@@ -509,6 +516,37 @@ impl ObservedBody {
                 }
             }
             emit(level(self.status), "http.request", "http", data);
+        }
+        let body = self.answered.elapsed();
+        if !self.stream && (outcome != "end" || body >= SLOW_BODY) {
+            let mut data = self.entry.base(self.status);
+            data["bodyMs"] = ((body.as_secs_f64() * 10000.0).round() / 10.0).into();
+            data["bytes"] = self.bytes.into();
+            data["outcome"] = outcome.into();
+            emit("warn", "http.response.slow", "http", data);
+        }
+    }
+}
+/// A request whose handler future is dropped before it answers (the client
+/// gave up) logs `http.request` with status 499 rather than nothing.
+pub(super) struct InFlight(Option<Entry>);
+impl InFlight {
+    pub fn new(entry: Entry) -> Self {
+        Self(Some(entry))
+    }
+    pub fn observe(mut self, accounting: Arc<Accounting>, response: Response) -> Response {
+        self.0
+            .take()
+            .expect("in-flight entry")
+            .observe(accounting, response)
+    }
+}
+impl Drop for InFlight {
+    fn drop(&mut self) {
+        if let Some(entry) = self.0.take() {
+            let mut data = entry.base(499);
+            data["code"] = "client_cancelled".into();
+            emit("warn", "http.request", "http", data);
         }
     }
 }

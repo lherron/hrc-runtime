@@ -418,7 +418,7 @@ impl Server {
     }
 }
 async fn dispatch(State(server): State<Shared>, request: Request) -> Response {
-    let entry = accounting::Entry::new(&request);
+    let entry = accounting::InFlight::new(accounting::Entry::new(&request));
     let mutating = request.method() != Method::GET;
     let headers = request.headers().clone();
     let response = federation::with_caller(&headers, dispatch_inner(&server, request, false)).await;

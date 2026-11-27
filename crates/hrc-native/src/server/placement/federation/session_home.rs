@@ -1,5 +1,5 @@
 //! Session-facing view of the same authority used by federation locate.
-use super::{Authority, ledger_row, resolve_home};
+use super::{Authority, LedgerRow, ledger_row, resolve_home};
 use crate::server::Server;
 use serde_json::{Value, json};
 use std::{
@@ -29,6 +29,10 @@ pub async fn home(server: &Server, scope: &str) -> Value {
     // Always observe the durable local ledger, including a new local claim.
     // No store mutex is held while the registry is consulted.
     let local = ledger_row(&server.store.lock().unwrap().sqlite, scope);
+    home_from(server, scope, local).await
+}
+
+async fn home_from(server: &Server, scope: &str, local: Option<LedgerRow>) -> Value {
     let active = local.as_ref().is_some_and(|r| r.state == "active");
     let revision = {
         let cache = server.federation.session_home.lock().unwrap();
@@ -62,10 +66,24 @@ pub async fn home(server: &Server, scope: &str) -> Value {
     value
 }
 
+/// One store acquisition for the whole page's ledger rows: a per-row lock
+/// queues each row behind every other holder of the daemon's store mutex.
 pub async fn annotate(server: &Server, sessions: &mut [Value]) {
-    for session in sessions {
-        if let Some(scope) = session["scopeRef"].as_str() {
-            session["home"] = home(server, scope).await;
+    let locals = {
+        let db = server.store.lock().unwrap();
+        sessions
+            .iter()
+            .map(|s| {
+                s["scopeRef"]
+                    .as_str()
+                    .map(|scope| ledger_row(&db.sqlite, scope))
+            })
+            .collect::<Vec<_>>()
+    };
+    for (session, local) in sessions.iter_mut().zip(locals) {
+        if let (Some(local), Some(scope)) = (local, session["scopeRef"].as_str().map(str::to_owned))
+        {
+            session["home"] = home_from(server, &scope, local).await;
         }
     }
 }
