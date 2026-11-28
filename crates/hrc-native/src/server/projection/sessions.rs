@@ -303,16 +303,28 @@ fn read_seats(value: &Value) -> Result<Seats, ApiError> {
 }
 
 fn read(server: &Server, body: &[u8]) -> Result<Response, ApiError> {
-    let value = parse_body(body)?;
-    if !value.is_object() {
-        return Err(ApiError::bad("request body must be an object", None));
-    }
+    let value = super::parse_read_body(
+        body,
+        &["hostSessionIds", "seats", "updatedSince", "cursor", "limit"],
+    )?;
     let limit = value
         .get("limit")
         .map_or(Some(100), Value::as_u64)
         .filter(|limit| (1..=200).contains(limit))
         .ok_or_else(|| ApiError::bad("limit must be an integer between 1 and 200", None))?
         as usize;
+    if let Some(ids) = value.get("hostSessionIds") {
+        if ["seats", "updatedSince", "cursor"]
+            .iter()
+            .any(|key| value.get(key).is_some())
+        {
+            return Err(ApiError::bad(
+                "hostSessionIds cannot be combined with seats, updatedSince or cursor",
+                None,
+            ));
+        }
+        return read_by_hosts(server, ids);
+    }
     let optional_string = |key| {
         value
             .get(key)
@@ -381,6 +393,53 @@ fn read(server: &Server, body: &[u8]) -> Result<Response, ApiError> {
         None
     };
     Ok(Json(json!({"items":items,"nextCursor":next})).into_response())
+}
+
+fn read_by_hosts(server: &Server, ids: &Value) -> Result<Response, ApiError> {
+    let ids = ids
+        .as_array()
+        .filter(|ids| (1..=500).contains(&ids.len()) && ids.iter().all(Value::is_string))
+        .ok_or_else(|| {
+            ApiError::bad("hostSessionIds must be an array of 1 to 500 strings", None)
+        })?;
+    let db = server.open_reader()?;
+    let tx = db
+        .sqlite
+        .unchecked_transaction()
+        .map_err(anyhow::Error::from)?;
+    let mut items = Vec::with_capacity(ids.len());
+    for id in ids {
+        let host = id.as_str().unwrap();
+        let record = by_host_record(&db, host)?
+            .unwrap_or_else(|| json!({"hostSessionId":host,"error":{"code":"not_found"}}));
+        items.push(record);
+    }
+    tx.commit().map_err(anyhow::Error::from)?;
+    Ok(Json(json!({"items":items,"nextCursor":null})).into_response())
+}
+
+/// Hydrate the by-host record inside the caller's read snapshot.
+pub(super) fn by_host_record(db: &hrc_store::Store, host: &str) -> Result<Option<Value>, ApiError> {
+    let Some(mut session) = db.session(host)? else {
+        return Ok(None);
+    };
+    let scope = session["scopeRef"].as_str().unwrap();
+    let lane = session["laneRef"].as_str().unwrap();
+    // System summary sessions have no continuity (as in the session list).
+    let identity = db.optional_identity(scope, lane)?;
+    let metadata = db.metadata(scope, hrc_store::storage_lane(lane))?;
+    if let Some(identity) = identity {
+        session["identity"] = identity;
+    }
+    session["metadata"] = metadata["metadata"].clone();
+    if let Some(title) = session["metadata"]
+        .get("title")
+        .filter(|v| v.is_string())
+        .cloned()
+    {
+        session["title"] = title;
+    }
+    Ok(Some(session))
 }
 
 fn list(server: &Server, query: &HashMap<String, String>) -> Result<Response, ApiError> {

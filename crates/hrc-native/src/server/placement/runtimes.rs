@@ -254,6 +254,7 @@ pub fn query(
 struct ReadSelectors {
     scope_refs: Vec<String>,
     runtime_ids: Vec<String>,
+    host_session_ids: Vec<String>,
 }
 
 pub fn read(
@@ -262,10 +263,18 @@ pub fn read(
     mode: Terminal,
     finish: impl FnOnce(&hrc_store::Store, &mut [Value]) -> Result<(), ApiError>,
 ) -> Result<Response, ApiError> {
-    let value = super::parse_body(body)?;
-    if !value.is_object() {
-        return Err(ApiError::bad("request body must be an object", None));
-    }
+    let fields: &[_] = if mode == Terminal::Recent {
+        &["scopeRefs", "runtimeIds", "hostSessionIds", "omitState"]
+    } else {
+        &[
+            "scopeRefs",
+            "runtimeIds",
+            "hostSessionIds",
+            "omitState",
+            "all",
+        ]
+    };
+    let value = super::parse_read_body(body, fields)?;
     let selectors = |key| {
         value.get(key).cloned().map_or_else(
             || Ok(Vec::new()),
@@ -278,20 +287,29 @@ pub fn read(
     let batch = ReadSelectors {
         scope_refs: selectors("scopeRefs")?,
         runtime_ids: selectors("runtimeIds")?,
+        host_session_ids: selectors("hostSessionIds")?,
     };
-    let count = batch.scope_refs.len() + batch.runtime_ids.len();
+    let count = batch.scope_refs.len() + batch.runtime_ids.len() + batch.host_session_ids.len();
     if !(1..=500).contains(&count) {
-        return Err(ApiError::bad(
-            "provide between 1 and 500 scopeRefs and runtimeIds in total",
-            None,
-        ));
+        let message = if value.get("hostSessionIds").is_some() {
+            "provide between 1 and 500 scopeRefs, runtimeIds and hostSessionIds in total"
+        } else {
+            "provide between 1 and 500 scopeRefs and runtimeIds in total"
+        };
+        return Err(ApiError::bad(message, None));
     }
     let omit_state = match value.get("omitState") {
         None => false,
         Some(Value::Bool(value)) => *value,
         _ => return Err(ApiError::bad("omitState must be a boolean", None)),
     };
-    let q = HashMap::from([("omitState".to_owned(), omit_state.to_string())]);
+    let mut q = HashMap::from([("omitState".to_owned(), omit_state.to_string())]);
+    if let Some(all) = value.get("all") {
+        let all = all
+            .as_bool()
+            .ok_or_else(|| ApiError::bad("all must be a boolean", None))?;
+        q.insert("all".to_owned(), all.to_string());
+    }
     let (mut rows, _) = query_with_reader(
         &q,
         false,
@@ -358,11 +376,13 @@ fn query_with_reader(
     if let Some(batch) = batch {
         clause.push(
             "rowid IN (SELECT rowid FROM runtimes WHERE scope_ref IN (SELECT value FROM json_each(?)) \
-             UNION SELECT rowid FROM runtimes WHERE runtime_id IN (SELECT value FROM json_each(?)))",
+             UNION SELECT rowid FROM runtimes WHERE runtime_id IN (SELECT value FROM json_each(?)) \
+             UNION SELECT rowid FROM runtimes WHERE host_session_id IN (SELECT value FROM json_each(?)))",
         );
         values.extend([
             json!(batch.scope_refs).to_string(),
             json!(batch.runtime_ids).to_string(),
+            json!(batch.host_session_ids).to_string(),
         ]);
     }
     let recent_clause;

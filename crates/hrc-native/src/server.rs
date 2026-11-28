@@ -926,6 +926,22 @@ fn implemented(method: &Method, path: &str) -> bool {
 fn parse_body(body: &[u8]) -> std::result::Result<Value, ApiError> {
     serde_json::from_slice(body).map_err(|_| ApiError::bad("request body must be valid JSON", None))
 }
+fn parse_read_body(body: &[u8], fields: &[&str]) -> Result<Value, ApiError> {
+    let value = parse_body(body)?;
+    let object = value
+        .as_object()
+        .ok_or_else(|| ApiError::bad("request body must be an object", None))?;
+    if let Some(field) = object
+        .keys()
+        .find(|field| !fields.contains(&field.as_str()))
+    {
+        return Err(ApiError::bad(
+            format!("unknown field: {field}"),
+            Some(json!({"field":field})),
+        ));
+    }
+    Ok(value)
+}
 fn parse_session_ref(raw: &str) -> std::result::Result<(&str, &str), ApiError> {
     let parts = raw.trim().split('/').collect::<Vec<_>>();
     if parts.len() != 2 || !parts[1].starts_with("lane:") {
@@ -1008,35 +1024,12 @@ async fn handle(
     }
     if method == Method::GET && path.starts_with("/v1/sessions/by-host/") {
         let host = path.trim_start_matches("/v1/sessions/by-host/");
-        // Read-only: one request-local snapshot, off the store mutex (as T-14803).
-        // ACP's mobile sessions view calls this once per session.
         let db = server.open_reader()?;
         let _snapshot = db
             .sqlite
             .unchecked_transaction()
             .map_err(anyhow::Error::from)?;
-        let mut s = db
-            .session(host)?
-            .ok_or_else(|| ApiError::missing_host(host))?;
-        // System summary sessions have no continuity (as in the session list).
-        if let Some(identity) = db.optional_identity(
-            s["scopeRef"].as_str().unwrap(),
-            s["laneRef"].as_str().unwrap(),
-        )? {
-            s["identity"] = identity;
-        }
-        s["metadata"] = db.metadata(
-            s["scopeRef"].as_str().unwrap(),
-            hrc_store::storage_lane(s["laneRef"].as_str().unwrap()),
-        )?["metadata"]
-            .clone();
-        if let Some(title) = s["metadata"]
-            .get("title")
-            .filter(|v| v.is_string())
-            .cloned()
-        {
-            s["title"] = title;
-        }
+        let s = sessions::by_host_record(&db, host)?.ok_or_else(|| ApiError::missing_host(host))?;
         return Ok(Json(s).into_response());
     }
     if method == Method::GET && path == "/v1/runtimes/live-refs" {
