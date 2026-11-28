@@ -97,24 +97,30 @@ pub async fn ensure_target_session(
                 {
                     return Ok(raced);
                 }
-                let db = server.store.lock().unwrap();
-                let host = super::resume::mint(
-                    &db.sqlite,
-                    &session,
-                    session["generation"].as_i64().unwrap_or(0) + 1,
-                    if persist { Some(intent) } else { None },
-                    Some(&session["continuation"]),
-                    json!({"created":true,"summon":true,"priorHostSessionId":session["hostSessionId"],"reason":"successor-from-continuation"}),
-                )?;
-                let mut successor = db
-                    .session(&host)?
-                    .ok_or_else(|| ApiError::missing_host(&host))?;
-                // Unlike a fresh address, this continuity already existed
-                // when Bun inserted the successor and supplies its identity.
-                if let Some(identity) = db.optional_identity(scope, lane)? {
-                    successor["identity"] = identity;
-                }
-                Ok(successor)
+                server.write(|db| {
+                    let host = super::resume::mint(
+                        &db.sqlite,
+                        &session,
+                        session["generation"].as_i64().unwrap_or(0) + 1,
+                        if persist { Some(intent) } else { None },
+                        Some(&session["continuation"]),
+                        json!({
+                            "created": true,
+                            "summon": true,
+                            "priorHostSessionId": session["hostSessionId"],
+                            "reason": "successor-from-continuation",
+                        }),
+                    )?;
+                    let mut successor = db
+                        .session(&host)?
+                        .ok_or_else(|| ApiError::missing_host(&host))?;
+                    // Unlike a fresh address, this continuity already existed
+                    // when Bun inserted the successor and supplies its identity.
+                    if let Some(identity) = db.optional_identity(scope, lane)? {
+                        successor["identity"] = identity;
+                    }
+                    Ok(successor)
+                })
             })
             .await?;
             server.ledger_committed();
@@ -124,11 +130,9 @@ pub async fn ensure_target_session(
         super::federation::summon::assert_scope_not_retired(server, scope, "ensure-target").await?;
         if persist {
             let identity = session.get("identity").cloned();
-            session = server
-                .store
-                .lock()
-                .unwrap()
-                .update_session_intent(session["hostSessionId"].as_str().unwrap_or(""), intent)?;
+            session = server.write(|db| {
+                db.update_session_intent(session["hostSessionId"].as_str().unwrap_or(""), intent)
+            })?;
             if let Some(identity) = identity {
                 session["identity"] = identity;
             }
@@ -146,18 +150,20 @@ pub async fn ensure_target_session(
             provision: intent.get("provision").cloned(),
         };
         let (mut session, created) = with_summon_authority(server, summon, || async {
-            Ok(server.store.lock().unwrap().create_target_session(
-                scope,
-                lane,
-                if persist { Some(intent) } else { None },
-                birth_cause,
-            )?)
+            Ok(server.write(|db| {
+                db.create_target_session(
+                    scope,
+                    lane,
+                    if persist { Some(intent) } else { None },
+                    birth_cause,
+                )
+            })?)
         })
         .await?;
         // Bun's fresh response is the pre-continuity insert result. Identity
         // becomes available on subsequent reads, after continuity publication.
         if !created {
-            session["identity"] = server.store.lock().unwrap().identity(scope, lane)?;
+            session["identity"] = server.read()?.identity(scope, lane)?;
         }
         session
     };

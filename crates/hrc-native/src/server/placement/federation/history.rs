@@ -141,17 +141,19 @@ fn tail(server: &Shared, history: &Coordinator) -> anyhow::Result<()> {
     const BATCH: i64 = 500;
     let head = HeadReader::message_head(server)?;
     while *history.cursor.lock().unwrap() < head {
-        let db = server.store.lock().unwrap();
-        let mut cursor = history.cursor.lock().unwrap();
-        let rows = db.message_query(&json!({"afterSeq":*cursor,"limit":BATCH}))?;
-        for record in &rows {
-            if history.stopped.load(Ordering::SeqCst) {
-                return Ok(());
+        let caught_up = server.write(|db| -> anyhow::Result<bool> {
+            let mut cursor = history.cursor.lock().unwrap();
+            let rows = db.message_query(&json!({"afterSeq":*cursor,"limit":BATCH}))?;
+            for record in &rows {
+                if history.stopped.load(Ordering::SeqCst) {
+                    return Ok(true);
+                }
+                observe_record(server, db, record);
+                *cursor = (*cursor).max(record["messageSeq"].as_i64().unwrap_or(0));
             }
-            observe_record(server, &db, record);
-            *cursor = (*cursor).max(record["messageSeq"].as_i64().unwrap_or(0));
-        }
-        if (rows.len() as i64) < BATCH {
+            Ok((rows.len() as i64) < BATCH)
+        })?;
+        if caught_up {
             return Ok(());
         }
     }
@@ -167,15 +169,14 @@ pub fn observe(server: &Shared, message_id: &str) {
         return;
     }
     *coordinator(server).last_checkpoint.lock().unwrap() = None;
-    let observed = {
-        let db = server.store.lock().unwrap();
+    let observed = server.write(|db| {
         db.message_query(&json!({"messageId":message_id}))
             .map(|rows| {
                 rows.into_iter()
                     .next()
-                    .map(|r| observe_record(server, &db, &r))
+                    .map(|r| observe_record(server, db, &r))
             })
-    };
+    });
     if let Err(error) = observed {
         log(
             "federation.collective_history.observe_failed",
@@ -350,22 +351,27 @@ async fn drain_due(server: &Shared) -> anyhow::Result<(bool, bool)> {
         let Some(_write) = server.owner_writes.enter() else {
             return Ok((false, false));
         };
-        let db = server.store.lock().unwrap();
-        match sent {
-            Ok(()) => {
-                changed = true;
-                db.history_delivered(
-                    &replication.message_id,
-                    &replication.fingerprint,
-                    &attempted_at,
-                )?;
+        let should_continue = server.write(|db| -> anyhow::Result<bool> {
+            match sent {
+                Ok(()) => {
+                    changed = true;
+                    db.history_delivered(
+                        &replication.message_id,
+                        &replication.fingerprint,
+                        &attempted_at,
+                    )?;
+                }
+                Err(message) => {
+                    retry(db, &replication, attempted, &attempted_at, &message)?;
+                    // Every row targets the same authority: one failed probe is
+                    // enough for this drain.
+                    return Ok(false);
+                }
             }
-            Err(message) => {
-                retry(&db, &replication, attempted, &attempted_at, &message)?;
-                // Every row targets the same authority: one failed probe is
-                // enough for this drain.
-                break;
-            }
+            Ok(true)
+        })?;
+        if !should_continue {
+            break;
         }
     }
     if changed {
@@ -471,7 +477,7 @@ fn local_fallback(
     code: &str,
     message: &str,
 ) -> Result<Value, ApiError> {
-    let db = server.store.lock().unwrap();
+    let db = server.read()?;
     Ok(json!({
         "messages": db.message_query(filter)?,
         "history": status("local", false, server.federation.node_id(), pending, None, Some(json!({"code":code,"message":message}))),
@@ -485,7 +491,7 @@ pub async fn query(server: &Shared, filter: &Value) -> Result<Option<Value>, Api
         return query_authority(server, filter).map(Some);
     }
     drain_due(server).await?;
-    let pending = server.store.lock().unwrap().local_history_pending()?;
+    let pending = server.read()?.local_history_pending()?;
     if server.federation.peer(AUTHORITY).is_none() {
         return local_fallback(
             server,
@@ -565,11 +571,7 @@ pub fn query_authority(server: &Shared, filter: &Value) -> Result<Value, ApiErro
         .filter(|n| !confirmed.contains(*n))
         .collect();
     unconfirmed.sort();
-    let records = server
-        .store
-        .lock()
-        .unwrap()
-        .history_query(&filter, AUTHORITY)?;
+    let records = server.read()?.history_query(&filter, AUTHORITY)?;
     let lagging = !unconfirmed.is_empty();
     let degraded = lagging.then(|| {
         json!({"code":"collective_lagging","message":format!("awaiting catch-up checkpoint from {}", unconfirmed.join(", "))})
@@ -661,10 +663,9 @@ pub fn accept_replication(server: &Shared, peer: &str, body: &Value) -> Result<V
         .enter()
         .ok_or("collective history write fence is closed")?;
     server
-        .store
-        .lock()
-        .unwrap()
-        .history_record_observation(&observation(peer, &record), &timestamp(), AUTHORITY)
+        .write(|db| {
+            db.history_record_observation(&observation(peer, &record), &timestamp(), AUTHORITY)
+        })
         .map_err(|e| e.to_string())?;
     Ok(json!({"outcome":"accepted","messageId":record["messageId"]}))
 }

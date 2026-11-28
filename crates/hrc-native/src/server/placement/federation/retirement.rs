@@ -24,7 +24,7 @@ pub async fn retire(server: &Shared, body: Value) -> Result<Response, ApiError> 
     let request = json!({"scopeRef":scope,"reason":reason});
     let lock = summon::scope_lock(&scope);
     let _lock = lock.lock().await;
-    let before = { ledger_row(&server.store.lock().unwrap().sqlite, &scope) };
+    let before = ledger_row(&server.read()?.sqlite, &scope);
     let view = |r: &LedgerRow| json!({"state":r.state,"record":r.binding.record()});
     let result = |ok: bool, outcome: &str, state: &str, retryable: bool, detail: &str| json!({"request":request,"ok":ok,"outcome":outcome,"state":state,"retryable":retryable,"detail":detail});
     let Some(before) = before.filter(|r| r.binding.home == node.node_id()) else {
@@ -35,29 +35,28 @@ pub async fn retire(server: &Shared, body: Value) -> Result<Response, ApiError> 
             false,
             "retirement must be performed by the scope old home",
         );
-        if let Some(row) = ledger_row(&server.store.lock().unwrap().sqlite, &scope) {
+        if let Some(row) = ledger_row(&server.read()?.sqlite, &scope) {
             out["ledger"] = view(&row);
         }
         return Ok(Json(out).into_response());
     };
-    if before.state == "active" {
-        let live: Vec<String> = {
-            let store = server.store.lock().unwrap();
-            store.sqlite.prepare(&format!("SELECT runtime_id FROM runtimes WHERE scope_ref=? AND status NOT IN ({}) ORDER BY created_at,runtime_id", hrc_store::status::unavailable_sql())).map_err(anyhow::Error::from)?
-                .query_map([&scope], |row| row.get(0)).map_err(anyhow::Error::from)?
-                .collect::<rusqlite::Result<_>>().map_err(anyhow::Error::from)?
-        };
+    let live_refusal = |live: Vec<String>| {
+        let mut out = result(
+            false,
+            "live-runtime-present",
+            "old-home-live",
+            true,
+            "old-home runtimes must terminate before retirement",
+        );
+        out["ledger"] = view(&before);
+        out["liveRuntimeIds"] = json!(live);
+        Json(out).into_response()
+    };
+    let active = before.state == "active";
+    if active {
+        let live = live_runtime_ids(&server.read()?.sqlite, &scope)?;
         if !live.is_empty() {
-            let mut out = result(
-                false,
-                "live-runtime-present",
-                "old-home-live",
-                true,
-                "old-home runtimes must terminate before retirement",
-            );
-            out["ledger"] = view(&before);
-            out["liveRuntimeIds"] = json!(live);
-            return Ok(Json(out).into_response());
+            return Ok(live_refusal(live));
         }
     }
     let retired_at = before
@@ -65,8 +64,15 @@ pub async fn retire(server: &Shared, body: Value) -> Result<Response, ApiError> 
         .clone()
         .unwrap_or_else(hrc_store::timestamp);
     let idempotent = before.state == "retired";
-    let local = {
-        let db = server.store.lock().unwrap();
+    let local = server.write(|db| -> anyhow::Result<_> {
+        // An empty snapshot is only a candidate. Recheck on the writer before
+        // changing authority, with the scope gate still held against births.
+        if active {
+            let live = live_runtime_ids(&db.sqlite, &scope)?;
+            if !live.is_empty() {
+                return Ok(Err(live));
+            }
+        }
         let tx = db
             .sqlite
             .unchecked_transaction()
@@ -75,14 +81,17 @@ pub async fn retire(server: &Shared, body: Value) -> Result<Response, ApiError> 
         let row = ledger_row(&tx, &scope)
             .ok_or_else(|| anyhow::anyhow!("retirement ledger disappeared"))?;
         tx.commit().map_err(anyhow::Error::from)?;
-        row
+        Ok(Ok(row))
+    })?;
+    let local = match local {
+        Ok(row) => row,
+        Err(live) => return Ok(live_refusal(live)),
     };
     node.invalidate_session_home();
     server.ledger_committed();
     // Retirement is already durable if continuity fencing fails. Never release
     // registry authority after such a failure; retry repeats this separate step.
-    {
-        let db = server.store.lock().unwrap();
+    server.write(|db| -> anyhow::Result<()> {
         let tx = db
             .sqlite
             .unchecked_transaction()
@@ -125,7 +134,8 @@ pub async fn retire(server: &Shared, body: Value) -> Result<Response, ApiError> 
         tx.execute("DELETE FROM continuities WHERE scope_ref=?", [&scope])
             .map_err(anyhow::Error::from)?;
         tx.commit().map_err(anyhow::Error::from)?;
-    }
+        Ok(())
+    })?;
     server.ledger_committed();
     let deleted = match &node.client {
         Client::Local(db) => {
@@ -203,4 +213,14 @@ pub async fn retire(server: &Shared, body: Value) -> Result<Response, ApiError> 
         json!({"scopeRef":scope,"localNodeId":node.node_id()}),
     );
     Ok(Json(out).into_response())
+}
+
+fn live_runtime_ids(db: &Connection, scope: &str) -> anyhow::Result<Vec<String>> {
+    let mut stmt = db.prepare(&format!(
+        "SELECT runtime_id FROM runtimes WHERE scope_ref=? AND status NOT IN ({}) ORDER BY created_at,runtime_id",
+        hrc_store::status::unavailable_sql()
+    ))?;
+    Ok(stmt
+        .query_map([scope], |row| row.get(0))?
+        .collect::<rusqlite::Result<_>>()?)
 }

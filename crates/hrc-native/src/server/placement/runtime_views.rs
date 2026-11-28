@@ -146,11 +146,7 @@ pub async fn inspect(server: &Shared, body: Value) -> Result<Response, ApiError>
         Err(error) if error.code == "unknown_runtime" => {
             // Exhaustion explains an absent runtime. Existing runtime views
             // remain readable by lifecycle consumers such as the mail kicker.
-            if let Some(attempt) = server
-                .store
-                .lock()
-                .unwrap()
-                .participant_attempt_for_runtime(id)?
+            if let Some(attempt) = server.read()?.participant_attempt_for_runtime(id)?
                 && attempt["establishment_work_state"] == "exhausted"
             {
                 return Err(ApiError::domain(
@@ -168,9 +164,7 @@ pub async fn inspect(server: &Shared, body: Value) -> Result<Response, ApiError>
     };
     let now = chrono::Utc::now().timestamp_millis();
     let session = server
-        .store
-        .lock()
-        .unwrap()
+        .read()?
         .session(runtime["hostSessionId"].as_str().unwrap_or(""))?
         .ok_or_else(|| ApiError::missing_host(runtime["hostSessionId"].as_str().unwrap_or("")))?;
     let s = &runtime["runtimeStateJson"];
@@ -192,7 +186,7 @@ pub async fn inspect(server: &Shared, body: Value) -> Result<Response, ApiError>
         }
     }
     let (invocation_state, highwater) = {
-        let db = server.store.lock().unwrap();
+        let db = server.read()?;
         db.sqlite.query_row("SELECT invocation_state,last_event_seq FROM broker_invocations WHERE invocation_id=?",[runtime["activeInvocationId"].as_str()],|r|Ok((r.get::<_,String>(0)?,r.get::<_,Option<i64>>(1)?))).map(|(a,b)|(json!(a),json!(b))).unwrap_or((Value::Null,Value::Null))
     };
     if runtime["controllerKind"] == "harness-broker" {
@@ -299,7 +293,7 @@ pub async fn inspect(server: &Shared, body: Value) -> Result<Response, ApiError>
 }
 /// retainedEvidenceInspectFacts: the latest outcome per invocation.
 pub fn retained_evidence(server: &Server, id: &str) -> Result<Vec<Value>, ApiError> {
-    let db = server.store.lock().unwrap();
+    let db = server.read()?;
     let mut statement=db.sqlite.prepare("SELECT invocation_id,outcome,outcome_class,trigger,attempts,recorded_at FROM retained_evidence_outcomes o WHERE o.runtime_id=? AND o.outcome_id=(SELECT MAX(i.outcome_id) FROM retained_evidence_outcomes i WHERE i.runtime_id=? AND i.invocation_id=o.invocation_id) ORDER BY o.outcome_id ASC").map_err(anyhow::Error::from)?;
     Ok(statement.query_map([id,id],|r|Ok(json!({"invocationId":r.get::<_,String>(0)?,"outcome":r.get::<_,String>(1)?,"class":r.get::<_,String>(2)?,"trigger":r.get::<_,String>(3)?,"attempts":r.get::<_,i64>(4)?,"recordedAt":r.get::<_,String>(5)?}))).map_err(anyhow::Error::from)?.collect::<Result<Vec<_>,_>>().map_err(anyhow::Error::from)?)
 }
@@ -350,7 +344,7 @@ pub fn find_target_session(server: &Server, raw: &str) -> Result<Option<Value>, 
         vec![lane]
     };
     let mut session = {
-        let db = server.store.lock().unwrap();
+        let db = server.read()?;
         let mut sessions: Vec<_> = db
             .sessions_in_scope(scope)?
             .into_iter()
@@ -373,7 +367,7 @@ pub fn find_target_session(server: &Server, raw: &str) -> Result<Option<Value>, 
         };
         session
     };
-    let identity = server.store.lock().unwrap().identity(
+    let identity = server.read()?.identity(
         scope,
         hrc_store::storage_lane(session["laneRef"].as_str().unwrap_or("main")),
     )?;
@@ -416,7 +410,7 @@ pub async fn list_targets(
     let lane = optional("lane").map(|v| if v == "default" { "main" } else { v });
     let dormant = q.get("includeDormant").is_some_and(|v| v == "true");
     let sessions = {
-        let db = server.store.lock().unwrap();
+        let db = server.read()?;
         let mut sessions = Vec::new();
         let mut statement = db
             .sqlite
@@ -535,7 +529,7 @@ pub async fn target_session_view(
         raw_lane
     }
     .to_owned();
-    let runtimes = server.store.lock().unwrap().runtimes_where(
+    let runtimes = server.read()?.runtimes_where(
         "host_session_id=?",
         [session["hostSessionId"].as_str().unwrap_or("")],
     )?;
@@ -621,12 +615,7 @@ pub async fn target_session_view(
     }
     out.insert("laneRef".into(), hrc_store::canonical_lane(&lane).into());
     out.insert("state".into(), state.into());
-    if let Some(reservation) = server
-        .store
-        .lock()
-        .unwrap()
-        .participant_reservation(scope, &lane)?
-    {
+    if let Some(reservation) = server.read()?.participant_reservation(scope, &lane)? {
         out.insert("disposition".into(), reservation["disposition"].clone());
         out.insert(
             "dispositionAt".into(),

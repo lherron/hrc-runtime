@@ -37,7 +37,7 @@ fn nonempty(v: &Value) -> Option<&str> {
 /// hosting subtree, keyed by each returned live runtime, rather than hydrating
 /// large runtime state blobs or scanning terminal history.
 pub(super) fn attach_members(server: &Server, rows: &mut [Value]) -> Result<(), ApiError> {
-    let db = server.store.lock().unwrap();
+    let db = server.read()?;
     attach_members_from(&db, server, rows)
 }
 

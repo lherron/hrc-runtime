@@ -75,11 +75,7 @@ where
         super::policy::policy_for(server, request.scope_ref).await
     {
         let (agent, _, _) = super::policy::scope_parts(request.scope_ref);
-        server
-            .store
-            .lock()
-            .unwrap()
-            .refresh_seat_kinds(agent, &policy["placement"])?;
+        server.write(|db| db.refresh_seat_kinds(agent, &policy["placement"]))?;
     }
     assert_authority(server, &request).await?;
     mint().await
@@ -111,7 +107,8 @@ async fn assert_authority(server: &Shared, request: &SummonRequest<'_>) -> Resul
     if evaluation.reason == "registry-bound-local"
         && let Some(binding) = &evaluation.registry_binding
     {
-        install_active(&server.store.lock().unwrap().sqlite, binding)
+        server
+            .write(|db| install_active(&db.sqlite, binding))
             .map_err(|e| ApiError::from(anyhow::anyhow!(e)))?;
         server.federation.invalidate_session_home();
     }
@@ -282,7 +279,8 @@ async fn commit_establishment(
             json!({"homeNodeId":bound}),
         ));
     }
-    install_active(&server.store.lock().unwrap().sqlite, binding)
+    server
+        .write(|db| install_active(&db.sqlite, binding))
         .map_err(|e| ApiError::from(anyhow::anyhow!(e)))?;
     server.federation.invalidate_session_home();
     Ok(())
@@ -300,8 +298,8 @@ pub async fn assert_scope_not_retired(
     if !config.source_exists || config.gate_mode == "off" {
         return Ok(());
     }
-    let retired = super::ledger_row(&server.store.lock().unwrap().sqlite, scope)
-        .is_some_and(|row| row.state == "retired");
+    let retired =
+        super::ledger_row(&server.read()?.sqlite, scope).is_some_and(|row| row.state == "retired");
     if !retired {
         return Ok(());
     }
@@ -328,11 +326,7 @@ pub async fn assert_reserved_address_allows_birth(
     lane: &str,
     door: &str,
 ) -> Result<(), ApiError> {
-    let refusal = server
-        .store
-        .lock()
-        .unwrap()
-        .target_birth_refusal(scope, lane)?;
+    let refusal = server.read()?.target_birth_refusal(scope, lane)?;
     if refusal.is_some()
         && super::policy::launch_command(server, scope)
             .await?

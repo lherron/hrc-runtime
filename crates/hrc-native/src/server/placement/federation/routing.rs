@@ -148,7 +148,7 @@ pub(in crate::server) async fn foreign_read_home(
         return Ok(None);
     }
     let node = &server.federation;
-    let local = ledger_row(&server.store.lock().unwrap().sqlite, scope);
+    let local = ledger_row(&server.read()?.sqlite, scope);
     let resolution = resolve_home(node, local, scope, node.configured(), true, |error| {
         log(
             "warn",

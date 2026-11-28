@@ -65,7 +65,7 @@ fn terminal(v: &Value) -> bool {
     TERMINAL.iter().any(|s| v["status"] == *s)
 }
 pub fn runtime(server: &Server, id: &str) -> Result<Value, ApiError> {
-    server.store.lock().unwrap().runtime(id)?.ok_or_else(|| {
+    server.read()?.runtime(id)?.ok_or_else(|| {
         ApiError::domain(
             StatusCode::NOT_FOUND,
             "unknown_runtime",
@@ -605,7 +605,7 @@ pub async fn seat(server: &Shared, id: &str) -> Result<Response, ApiError> {
         .cloned()
         .unwrap_or(Value::Null);
     let (classes, seq) = {
-        let db = server.store.lock().unwrap();
+        let db = server.read()?;
         let classes = db
             .sqlite
             .query_row(

@@ -272,19 +272,20 @@ pub fn start_refresh(server: &crate::server::Shared) {
                 }
             }
             if agent_generation != Some(server.continuity_generation.load(Ordering::Relaxed)) {
-                let db = server.store.lock().unwrap();
-                agent_generation = Some(server.continuity_generation.load(Ordering::Relaxed));
-                let mut stmt = db
-                    .sqlite
-                    .prepare(
-                        "SELECT DISTINCT agent_id FROM continuities WHERE agent_id IS NOT NULL",
-                    )
-                    .expect("seat policy agents");
-                agents = stmt
-                    .query_map([], |r| r.get::<_, String>(0))
-                    .expect("seat policy rows")
-                    .collect::<rusqlite::Result<Vec<_>>>()
-                    .unwrap_or_default();
+                server.write(|db| {
+                    agent_generation = Some(server.continuity_generation.load(Ordering::Relaxed));
+                    let mut stmt = db
+                        .sqlite
+                        .prepare(
+                            "SELECT DISTINCT agent_id FROM continuities WHERE agent_id IS NOT NULL",
+                        )
+                        .expect("seat policy agents");
+                    agents = stmt
+                        .query_map([], |r| r.get::<_, String>(0))
+                        .expect("seat policy rows")
+                        .collect::<rusqlite::Result<Vec<_>>>()
+                        .unwrap_or_default();
+                });
             }
             for agent in &agents {
                 if observed.contains(agent) {
@@ -349,11 +350,8 @@ pub fn start_refresh(server: &crate::server::Shared) {
                 }
                 match policy {
                     Policy::Resolved { policy, .. } => {
-                        let refreshed = server
-                            .store
-                            .lock()
-                            .unwrap()
-                            .refresh_seat_kinds(agent, &policy["placement"]);
+                        let refreshed =
+                            server.write(|db| db.refresh_seat_kinds(agent, &policy["placement"]));
                         match refreshed {
                             Ok(changed) => {
                                 if changed {

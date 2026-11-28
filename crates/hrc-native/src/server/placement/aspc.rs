@@ -881,7 +881,7 @@ pub fn placement_bindings(
         ));
     }
     let local = server.federation.node_id().to_owned();
-    let db = server.store.lock().unwrap();
+    let db = server.read()?;
     // Bun also returns an empty enumeration for an absent pre-federation
     // ledger or a repository read error. This route never creates the table.
     let bindings = db.sqlite.prepare(

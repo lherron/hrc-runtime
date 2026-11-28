@@ -183,7 +183,9 @@ async fn locate_peer(node: &Node, peer: &FederationPeer, scope: &str) -> Value {
 /// This node's runtimes for one scope, oldest first: locate's `observed`
 /// block and the peer `observed-runtimes` answer read the same rows.
 pub(super) fn scope_runtimes(server: &Server, scope: &str) -> Vec<Value> {
-    let db = server.store.lock().unwrap();
+    let Ok(db) = server.read() else {
+        return Vec::new();
+    };
     db.sqlite
         .prepare(
             "SELECT runtime_id, lane_ref, status, transport, updated_at FROM runtimes
@@ -269,7 +271,10 @@ pub(super) async fn observe_peer(node: &Node, peer: &FederationPeer, scope: &str
 async fn locate_scope(server: &Server, scope: &str) -> Value {
     let node = &server.federation;
     let declared = declared(server, scope).await;
-    let local = ledger_row(&server.store.lock().unwrap().sqlite, scope);
+    let local = server
+        .read()
+        .ok()
+        .and_then(|db| ledger_row(&db.sqlite, scope));
     let resolution = resolve_home(node, local, scope, node.configured(), false, |_| {}).await;
     let ledger = match &resolution.local {
         None => json!({"state":"absent"}),
@@ -434,29 +439,32 @@ async fn scan_bindings(server: &Server) -> Value {
     // unreadable policy only for a live binding (T-11372); a dormant one is
     // resolved again by its next summon.
     let rows: Vec<(String, Binding, bool)> = server
-        .store
-        .lock()
-        .unwrap()
-        .sqlite
-        .prepare(&format!(
-            "SELECT p.scope_ref, p.home_node_id, p.created_at, p.updated_at,
-                    EXISTS(SELECT 1 FROM runtimes r WHERE r.scope_ref = p.scope_ref AND r.status NOT IN ({}))
-               FROM placement_ledger p WHERE p.state = 'active' ORDER BY p.scope_ref",
-            hrc_store::status::unavailable_sql()
-        ))
-        .and_then(|mut stmt| {
-            stmt.query_map([], |r| {
-                Ok((
-                    r.get::<_, String>(0)?,
-                    Binding {
-                        home: r.get(1)?,
-                        created_at: r.get(2)?,
-                        updated_at: r.get(3)?,
-                    },
-                    r.get::<_, bool>(4)?,
+        .read()
+        .ok()
+        .and_then(|db| {
+            db
+                .sqlite
+                .prepare(&format!(
+                    "SELECT p.scope_ref, p.home_node_id, p.created_at, p.updated_at,
+                            EXISTS(SELECT 1 FROM runtimes r WHERE r.scope_ref = p.scope_ref AND r.status NOT IN ({}))
+                       FROM placement_ledger p WHERE p.state = 'active' ORDER BY p.scope_ref",
+                    hrc_store::status::unavailable_sql()
                 ))
-            })?
-            .collect()
+                .and_then(|mut stmt| {
+                    stmt.query_map([], |r| {
+                        Ok((
+                            r.get::<_, String>(0)?,
+                            Binding {
+                                home: r.get(1)?,
+                                created_at: r.get(2)?,
+                                updated_at: r.get(3)?,
+                            },
+                            r.get::<_, bool>(4)?,
+                        ))
+                    })?
+                    .collect()
+                })
+                .ok()
         })
         .unwrap_or_default();
     let started = Instant::now();

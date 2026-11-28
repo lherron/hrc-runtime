@@ -28,7 +28,10 @@ impl super::Node {
 pub async fn home(server: &Server, scope: &str) -> Value {
     // Always observe the durable local ledger, including a new local claim.
     // No store mutex is held while the registry is consulted.
-    let local = ledger_row(&server.store.lock().unwrap().sqlite, scope);
+    let local = match server.read() {
+        Ok(db) => ledger_row(&db.sqlite, scope),
+        Err(_) => return json!({"state":"unknown","nodeId":null}),
+    };
     home_from(server, scope, local).await
 }
 
@@ -66,11 +69,18 @@ async fn home_from(server: &Server, scope: &str, local: Option<LedgerRow>) -> Va
     value
 }
 
-/// One store acquisition for the whole page's ledger rows: a per-row lock
-/// queues each row behind every other holder of the daemon's store mutex.
+/// Read the whole page's local ledger rows in a single snapshot.
 pub async fn annotate(server: &Server, sessions: &mut [Value]) {
+    if sessions.is_empty() {
+        return;
+    }
     let locals = {
-        let db = server.store.lock().unwrap();
+        let Ok(db) = server.read() else {
+            for session in sessions.iter_mut().filter(|s| s["scopeRef"].is_string()) {
+                session["home"] = json!({"state":"unknown","nodeId":null});
+            }
+            return;
+        };
         sessions
             .iter()
             .map(|s| {

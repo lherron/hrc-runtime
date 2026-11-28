@@ -417,7 +417,18 @@ async fn decide(server: &Shared, request: &Request<'_>) -> Evaluation {
     }
     let node = &server.federation;
     let local = node.node_id();
-    let row = ledger_row(&server.store.lock().unwrap().sqlite, scope);
+    let row = match server.read() {
+        Ok(db) => ledger_row(&db.sqlite, scope),
+        Err(error) => {
+            return Evaluation {
+                retryable: true,
+                ..refuse(
+                    "placement-read-failed",
+                    format!("Could not read local placement for {scope}: {error}"),
+                )
+            };
+        }
+    };
     if row.as_ref().is_some_and(|r| r.state == "retired") {
         return refuse(
             "scope-retired",
