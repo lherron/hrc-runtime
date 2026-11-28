@@ -4,14 +4,21 @@
 //! A hold at or above the threshold logs `store.lock_held` with the acquiring
 //! call site, the hold and the wait, after the mutex is released.
 //! All completed holds also feed a per-minute accounting line.
+use super::{
+    ReadSnapshot, accounting, attached, controller, events, federation, handoff, ledger, lifecycle,
+    projection, publication, release, rpc, seat_restart, self_restart, sessions,
+    statement_telemetry, status_runtime, subscribers, transcript, writes,
+};
+use anyhow::Result;
 use hrc_store::Store;
 use serde_json::{Value, json};
 use std::{
     cmp::Reverse,
-    collections::{HashMap, VecDeque},
+    collections::{HashMap, HashSet, VecDeque},
     mem::ManuallyDrop,
     ops::{Deref, DerefMut},
     panic::Location,
+    path::PathBuf,
     sync::{
         Arc, LockResult, Mutex, MutexGuard, PoisonError,
         mpsc::{Receiver, RecvTimeoutError, SyncSender, sync_channel},
@@ -91,8 +98,8 @@ impl ReaderPool {
     }
 }
 
-pub struct StoreLock {
-    pub(super) readers: Arc<ReaderPool>,
+pub(super) struct StoreLock {
+    readers: Arc<ReaderPool>,
     inner: Mutex<Store>,
     admission: Mutex<Admission>,
     sites: Mutex<HashMap<&'static Location<'static>, Totals>>,
@@ -100,7 +107,144 @@ pub struct StoreLock {
     observe: Observe,
 }
 
-impl super::Server {
+// Declared here so the raw writer is private even to other server modules.
+pub(super) struct Server {
+    pub(super) command_targets: serde_json::Map<String, Value>,
+    store: StoreLock,
+    pub(super) session_read_walks: sessions::ReadWalks,
+    pub(super) accounting: Arc<accounting::Accounting>,
+    pub(super) brokers: Mutex<HashMap<String, rpc::JsonRpc>>,
+    pub(super) participant_work: Mutex<HashSet<String>>,
+    pub(super) participant_host_requests: Mutex<HashMap<String, Instant>>,
+    /// "scope\0lane" -> the continuity's start gate (broker::seat_gate, T-12418).
+    pub(super) seat_gates: Mutex<HashMap<String, Arc<tokio::sync::Mutex<()>>>>,
+    /// Broker projection memory; lock after `store`.
+    pub(super) projection: Mutex<projection::Memory>,
+    pub(super) subscribers: Mutex<subscribers::Registry>,
+    /// Upgraded connections outlive HTTP responses; explicitly drain them at stop.
+    pub(super) seat_streams: Mutex<tokio::task::JoinSet<()>>,
+    pub(super) wrkq: ledger::Client,
+    pub(super) publication: publication::State,
+    pub(super) handoff: handoff::State,
+    pub(super) self_restart: self_restart::State,
+    /// Seat-restart door outcomes by idempotency key (T-14486).
+    pub(super) seat_restart: seat_restart::Replay,
+    pub(super) controller: controller::State,
+    /// Runtimes whose user-exit lease reap already fired.
+    pub(super) reaped: Mutex<HashSet<String>>,
+    /// Bumped after every committed ledger write; followers re-query on change.
+    pub(super) ledger: tokio::sync::watch::Sender<u64>,
+    pub(super) event_head: Mutex<events::HeadReader>,
+    pub(super) continuity_generation: Arc<std::sync::atomic::AtomicU64>,
+    pub(super) lifecycle: lifecycle::State,
+    /// Runtimes with a seat probe in flight (probeSeatInBackground).
+    pub(super) probing: Mutex<HashSet<String>>,
+    /// runtime -> literal text buffered until an Enter (pendingBrokerLiteralInputs).
+    pub(super) literal: Mutex<HashMap<String, String>>,
+    /// pendingStartId -> prepared attached start (attachedRunOperations).
+    pub(super) attached: Mutex<HashMap<String, attached::Pending>>,
+    /// Background writers commit inside this fence; shutdown closes and drains it.
+    pub(super) owner_writes: writes::OwnerWrites,
+    /// Resident transcript index follower (tick serialization, repair count).
+    pub(super) transcript: transcript::State,
+    pub(super) runtime: PathBuf,
+    /// federation.json identity, peers and registry client (resolved at boot).
+    pub(super) federation: federation::Node,
+    /// Front-door role: only front::is_front_safe routes are served natively.
+    pub(super) front: bool,
+    pub(super) state: PathBuf,
+    pub(super) release: release::Release,
+    pub(super) event_loop: Mutex<status_runtime::Lag>,
+    pub(super) started_at: String,
+    pub(super) started: Instant,
+}
+
+pub(super) struct ServerInit {
+    pub(super) command_targets: serde_json::Map<String, Value>,
+    pub(super) accounting: Arc<accounting::Accounting>,
+    pub(super) event_head: Mutex<events::HeadReader>,
+    pub(super) continuity_generation: Arc<std::sync::atomic::AtomicU64>,
+    pub(super) runtime: PathBuf,
+    pub(super) federation: federation::Node,
+    pub(super) front: bool,
+    pub(super) state: PathBuf,
+    pub(super) release: release::Release,
+    pub(super) started_at: String,
+}
+
+impl Server {
+    pub(super) fn new(store: StoreLock, init: ServerInit) -> Self {
+        let ServerInit {
+            command_targets,
+            accounting,
+            event_head,
+            continuity_generation,
+            runtime,
+            federation,
+            front,
+            state,
+            release,
+            started_at,
+        } = init;
+        Self {
+            command_targets,
+            accounting,
+            store,
+            session_read_walks: Default::default(),
+            brokers: Mutex::new(HashMap::new()),
+            participant_work: Mutex::new(HashSet::new()),
+            participant_host_requests: Mutex::new(HashMap::new()),
+            seat_gates: Mutex::new(HashMap::new()),
+            projection: Mutex::new(projection::Memory::default()),
+            subscribers: Mutex::new(subscribers::Registry::default()),
+            seat_streams: Mutex::new(tokio::task::JoinSet::new()),
+            wrkq: ledger::Client::default(),
+            publication: publication::State::default(),
+            handoff: handoff::State::default(),
+            self_restart: self_restart::State::default(),
+            seat_restart: Default::default(),
+            controller: controller::State::default(),
+            owner_writes: writes::OwnerWrites::default(),
+            transcript: transcript::State::default(),
+            reaped: Mutex::new(HashSet::new()),
+            ledger: tokio::sync::watch::Sender::new(0),
+            event_head,
+            continuity_generation,
+            lifecycle: lifecycle::State::new(&runtime, !front),
+            probing: Mutex::new(HashSet::new()),
+            literal: Mutex::new(HashMap::new()),
+            attached: Mutex::new(HashMap::new()),
+            runtime,
+            federation,
+            front,
+            state,
+            release,
+            event_loop: Default::default(),
+            started_at,
+            started: Instant::now(),
+        }
+    }
+
+    /// An independent WAL reader for request-local snapshots.
+    pub(super) fn open_reader(&self) -> Result<Store> {
+        if let Some(reader) = self.store.readers.take() {
+            return Ok(reader);
+        }
+        let mut reader = Store::open_readonly(&self.state.join("state.sqlite"))?;
+        if !self.front {
+            statement_telemetry::install(&mut reader, self.accounting.clone())?;
+        }
+        Ok(reader)
+    }
+
+    /// Open a WAL snapshot for one synchronous read phase. Open a fresh
+    /// snapshot after a write to see its commit.
+    pub(super) fn read(&self) -> Result<ReadSnapshot> {
+        let mut snapshot = ReadSnapshot::begin(self.open_reader()?)?;
+        snapshot.pool = Some(self.store.readers.clone());
+        Ok(snapshot)
+    }
+
     /// Serialize the closure on the writer connection. The closure owns any
     /// transaction boundary and must release the writer before awaiting work.
     #[track_caller]
@@ -133,7 +277,7 @@ impl StoreLock {
     }
     /// `Mutex::lock`, recording the caller. Poisoning is passed through.
     #[track_caller]
-    pub fn lock(&self) -> LockResult<StoreGuard<'_>> {
+    fn lock(&self) -> LockResult<StoreGuard<'_>> {
         let at = Location::caller();
         let asked = Instant::now();
         let wrap = |guard| StoreGuard {
@@ -279,7 +423,7 @@ pub(super) fn start_accounting(server: &super::Shared) {
     });
 }
 
-pub struct StoreGuard<'a> {
+struct StoreGuard<'a> {
     guard: ManuallyDrop<MutexGuard<'a, Store>>,
     lock: &'a StoreLock,
     at: &'static Location<'static>,
@@ -348,7 +492,7 @@ mod tests {
     // Regressions: a slow hold goes unreported, names the wrong call site,
     // reports while the mutex is still held, or a fast hold is reported.
     #[test]
-    fn slow_holds_name_their_call_site_after_release() -> anyhow::Result<()> {
+    fn slow_holds_name_their_call_site_after_release() -> Result<()> {
         let (_scratch, store) = fixture::ScratchStore::new()?;
         let seen = Arc::new(Mutex::new(Vec::<Value>::new()));
         let lock = Arc::new(StoreLock::observed(store, Duration::from_millis(50), {

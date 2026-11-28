@@ -665,8 +665,7 @@ mod tests {
     #[test]
     fn page_hydrates_only_selected_runtime() -> anyhow::Result<()> {
         let (_scratch, server) = server("off", false)?;
-        {
-            let mut db = server.store.lock().unwrap();
+        server.write(|db| -> anyhow::Result<()> {
             let session = db.create_session("agent:test:project:fixture", "main")?.0;
             for (id, status, state) in [
                 ("a", "terminated", "invalid JSON outside the page"),
@@ -675,7 +674,8 @@ mod tests {
             ] {
                 db.sqlite.execute("INSERT INTO runtimes(runtime_id,host_session_id,scope_ref,lane_ref,generation,transport,status,supports_inflight_input,runtime_state_json,created_at,updated_at) VALUES(?,?,'agent:test:project:fixture','main',1,'hrcpty',?,0,?,'2026-01-01T00:00:00Z','now')", rusqlite::params![id, session["hostSessionId"].as_str(), status, state])?;
             }
-        }
+            Ok(())
+        })?;
         let mut q: HashMap<String, String> = [
             ("all", "true"),
             ("status", "busy,ready,terminated"),
@@ -712,8 +712,7 @@ mod tests {
     fn peer_inventory_reads_live_and_recent_runtimes_only() -> anyhow::Result<()> {
         let (_scratch, server) = server("off", false)?;
         let seen = Arc::new(Mutex::new(Vec::new()));
-        {
-            let mut db = server.store.lock().unwrap();
+        server.write(|db| -> anyhow::Result<()> {
             let session = db.create_session("agent:test:project:fixture", "main")?.0;
             let recent = chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Millis, true);
             for (id, status, activity, state) in [
@@ -734,7 +733,8 @@ mod tests {
             ] {
                 db.sqlite.execute("INSERT INTO runtimes(runtime_id,host_session_id,scope_ref,lane_ref,generation,transport,status,supports_inflight_input,runtime_state_json,last_activity_at,created_at,updated_at) VALUES(?,?,'agent:test:project:fixture','main',1,'hrcpty',?,0,?,?,'2026-01-01T00:00:00Z',?)", rusqlite::params![id, session["hostSessionId"].as_str(), status, state, activity, recent])?;
             }
-        }
+            Ok(())
+        })?;
         let (rows, _) = query_with_reader(
             &HashMap::new(),
             false,
@@ -782,8 +782,7 @@ mod tests {
     #[test]
     fn omit_state_lists_lean_rows_without_reading_state() -> anyhow::Result<()> {
         let (_scratch, server) = server("off", false)?;
-        {
-            let mut db = server.store.lock().unwrap();
+        server.write(|db| -> anyhow::Result<()> {
             let session = db.create_session("agent:test:project:fixture", "main")?.0;
             for (id, status, state) in [
                 // Parsing this row's state fails the read.
@@ -793,7 +792,8 @@ mod tests {
             ] {
                 db.sqlite.execute("INSERT INTO runtimes(runtime_id,host_session_id,scope_ref,lane_ref,generation,transport,status,supports_inflight_input,runtime_state_json,last_activity_at,created_at,updated_at) VALUES(?,?,'agent:test:project:fixture','main',1,'hrcpty',?,0,?,'2026-01-01T00:00:00Z','2026-01-01T00:00:00Z','now')", rusqlite::params![id, session["hostSessionId"].as_str(), status, state])?;
             }
-        }
+            Ok(())
+        })?;
         let q = |pairs: &[(&str, &str)]| -> HashMap<String, String> {
             pairs
                 .iter()
@@ -873,13 +873,13 @@ mod tests {
     fn hot_runtime_and_session_reads_are_index_driven() -> anyhow::Result<()> {
         let (_scratch, server) = server("off", false)?;
         let seen = Arc::new(Mutex::new(Vec::new()));
-        {
-            let mut db = server.store.lock().unwrap();
+        server.write(|db| -> anyhow::Result<()> {
             let session = db.create_session("agent:test:project:fixture", "main")?.0;
             db.sqlite.execute("INSERT INTO runtimes(runtime_id,host_session_id,scope_ref,lane_ref,generation,transport,status,supports_inflight_input,runtime_state_json,last_activity_at,created_at,updated_at) VALUES('live',?,'agent:test:project:fixture','main',1,'hrcpty','busy',0,'{}','2026-01-01T00:00:00Z','2026-01-01T00:00:00Z','2026-01-01T00:00:00Z')", [session["hostSessionId"].as_str()])?;
             let sink = seen.clone();
             db.instrument_statements(0.0, move |s| sink.lock().unwrap().push(s.sql))?;
-        }
+            Ok(())
+        })?;
         let q = |pairs: &[(&str, &str)]| -> HashMap<String, String> {
             pairs
                 .iter()
@@ -905,14 +905,15 @@ mod tests {
             true,
             Terminal::Exclude,
         )?;
-        {
-            let db = server.store.lock().unwrap();
+        // Exercise the statements on the instrumented writer connection.
+        server.write(|db| -> anyhow::Result<()> {
             db.live_refs()?;
-            hrc_store::presentation::runtimes(&db)?;
+            hrc_store::presentation::runtimes(db)?;
             db.sessions_for_projection(None, None, Some("2026-01-01T00:00:00Z"))?;
-        }
+            Ok(())
+        })?;
         let statements: Vec<String> = seen.lock().unwrap().clone();
-        let db = server.store.lock().unwrap();
+        let db = server.read()?;
         let mut checked = 0;
         for sql in statements
             .iter()

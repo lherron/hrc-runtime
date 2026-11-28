@@ -27,6 +27,7 @@ mod statement_telemetry;
 mod status_runtime;
 #[path = "server/front/store_lock.rs"]
 mod store_lock;
+use store_lock::Server;
 
 #[path = "server/broker/attached.rs"]
 mod attached;
@@ -173,7 +174,7 @@ use axum::{
 use hrc_store::{Store, timestamp};
 use serde_json::{Value, json};
 use std::{
-    collections::{HashMap, HashSet},
+    collections::HashMap,
     env, fs,
     io::Write,
     os::unix::fs::PermissionsExt,
@@ -219,56 +220,6 @@ impl Drop for ReadSnapshot {
 }
 
 type Shared = Arc<Server>;
-struct Server {
-    command_targets: serde_json::Map<String, Value>,
-    store: store_lock::StoreLock,
-    session_read_walks: sessions::ReadWalks,
-    accounting: Arc<accounting::Accounting>,
-    brokers: Mutex<HashMap<String, rpc::JsonRpc>>,
-    participant_work: Mutex<HashSet<String>>,
-    participant_host_requests: Mutex<HashMap<String, Instant>>,
-    /// "scope\0lane" -> the continuity's start gate (broker::seat_gate, T-12418).
-    seat_gates: Mutex<HashMap<String, Arc<tokio::sync::Mutex<()>>>>,
-    /// Broker projection memory; lock after `store`.
-    projection: Mutex<projection::Memory>,
-    subscribers: Mutex<subscribers::Registry>,
-    /// Upgraded connections outlive HTTP responses; explicitly drain them at stop.
-    seat_streams: Mutex<tokio::task::JoinSet<()>>,
-    wrkq: ledger::Client,
-    publication: publication::State,
-    handoff: handoff::State,
-    self_restart: self_restart::State,
-    /// Seat-restart door outcomes by idempotency key (T-14486).
-    seat_restart: seat_restart::Replay,
-    controller: controller::State,
-    /// Runtimes whose user-exit lease reap already fired.
-    reaped: Mutex<HashSet<String>>,
-    /// Bumped after every committed ledger write; followers re-query on change.
-    ledger: tokio::sync::watch::Sender<u64>,
-    event_head: Mutex<events::HeadReader>,
-    continuity_generation: Arc<std::sync::atomic::AtomicU64>,
-    lifecycle: lifecycle::State,
-    /// Runtimes with a seat probe in flight (probeSeatInBackground).
-    probing: Mutex<HashSet<String>>,
-    /// runtime -> literal text buffered until an Enter (pendingBrokerLiteralInputs).
-    literal: Mutex<HashMap<String, String>>,
-    /// pendingStartId -> prepared attached start (attachedRunOperations).
-    attached: Mutex<HashMap<String, attached::Pending>>,
-    /// Background writers commit inside this fence; shutdown closes and drains it.
-    owner_writes: writes::OwnerWrites,
-    /// Resident transcript index follower (tick serialization, repair count).
-    transcript: transcript::State,
-    runtime: PathBuf,
-    /// federation.json identity, peers and registry client (resolved at boot).
-    federation: federation::Node,
-    /// Front-door role: only front::is_front_safe routes are served natively.
-    front: bool,
-    state: PathBuf,
-    release: release::Release,
-    event_loop: Mutex<status_runtime::Lag>,
-    started_at: String,
-    started: Instant,
-}
 
 pub fn runtime_root() -> Result<PathBuf> {
     let home = env::var("HOME").context("HOME is required")?;
@@ -450,26 +401,6 @@ impl IntoResponse for ApiError {
     }
 }
 impl Server {
-    /// An independent WAL reader for request-local snapshots.
-    fn open_reader(&self) -> Result<Store> {
-        if let Some(reader) = self.store.readers.take() {
-            return Ok(reader);
-        }
-        let mut reader = Store::open_readonly(&self.state.join("state.sqlite"))?;
-        if !self.front {
-            statement_telemetry::install(&mut reader, self.accounting.clone())?;
-        }
-        Ok(reader)
-    }
-
-    /// Open a WAL snapshot for one synchronous read phase. Open a fresh
-    /// snapshot after a write to see its commit.
-    fn read(&self) -> Result<ReadSnapshot> {
-        let mut snapshot = ReadSnapshot::begin(self.open_reader()?)?;
-        snapshot.pool = Some(self.store.readers.clone());
-        Ok(snapshot)
-    }
-
     /// A wake carries no data: something committed, so followers query again.
     pub(super) fn ledger_committed(&self) {
         self.ledger.send_modify(|g| *g = g.wrapping_add(1));

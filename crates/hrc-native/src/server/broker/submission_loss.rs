@@ -249,7 +249,7 @@ mod tests {
     #[test]
     fn dead_runtime_scan_looks_up_invocations_by_runtime() {
         let (_scratch, server) = server("off", false).unwrap();
-        let db = server.store.lock().unwrap();
+        let db = server.read().unwrap();
         for sql in [unavailable_sql(), RUNTIME_INVOCATIONS.to_owned()] {
             let p = plan(&db.sqlite, &sql);
             assert!(

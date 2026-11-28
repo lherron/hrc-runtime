@@ -1281,8 +1281,7 @@ mod tests {
         let keep = bipc.join("keep");
         let live = json!({"broker":{"endpoint":{"kind":"unix-jsonrpc-ndjson","socketPath":keep.join("broker.sock"),"attachTokenRef":{"kind":"file","path":keep.join("attach.token")}}}});
         let unbound = json!({"broker":{"eventLedgerPath":bipc.join("unbound/events.ndjson")}});
-        {
-            let db = server.store.lock().unwrap();
+        server.write(|db| -> Result<()> {
             let host: String =
                 db.sqlite
                     .query_row("SELECT host_session_id FROM sessions LIMIT 1", [], |r| {
@@ -1295,7 +1294,8 @@ mod tests {
                 db.sqlite.execute("INSERT INTO runtimes(runtime_id,host_session_id,scope_ref,lane_ref,generation,transport,status,status_changed_at,supports_inflight_input,controller_kind,runtime_state_json,created_at,updated_at) VALUES(?,?,'agent:test:project:fixture','main',1,'headless',?,'2026-01-01T00:00:00Z',0,'harness-broker',?,'2026-01-02T00:00:00Z','now')", rusqlite::params![id, host, status, state.to_string()])?;
             }
             db.sqlite.execute("INSERT INTO broker_invocations(invocation_id,operation_id,runtime_id,broker_protocol,broker_driver,invocation_state,capabilities_json,spec_hash,start_request_hash,selected_profile_hash,spec_projection_json,created_at,updated_at) VALUES('inv-unbound','op','rt-unbound','harness-broker/0.2','test','exited','{}','h','h','h','{}','now','now')", [])?;
-        }
+            Ok(())
+        })?;
         let now = chrono::Utc::now().timestamp_millis() + 1_000;
         let mut r = json!({});
         ipc_dir_sweep(&server, &mut r, 0, now, 0).await?;
@@ -1303,7 +1303,7 @@ mod tests {
         assert!(!bipc.join("unbound").exists(), "unbound dir kept");
         assert!(!bipc.join("orphan").exists(), "orphan dir kept");
         assert_eq!(r["removedBrokerIpcDirs"], 2, "{r}");
-        let outcome: String = server.store.lock().unwrap().sqlite.query_row(
+        let outcome: String = server.read()?.sqlite.query_row(
             "SELECT outcome FROM retained_evidence_outcomes WHERE runtime_id='rt-unbound' AND invocation_id='inv-unbound'",
             [],
             |r| r.get(0),

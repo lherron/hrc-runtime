@@ -464,16 +464,14 @@ mod idle_tests {
     #[tokio::test]
     async fn idle_fixture_measurement() -> anyhow::Result<()> {
         let (_scratch, server, seen) = observed(1)?;
-        server
-            .store
-            .lock()
-            .unwrap()
-            .message_insert(&serde_json::json!({
+        server.write(|db| {
+            db.message_insert(&serde_json::json!({
                 "messageId":"idle-fixture-message","kind":"dm","phase":"request",
                 "from":{"kind":"entity","entity":"agent:sender"},
                 "to":{"kind":"entity","entity":"agent:receiver"},
                 "body":"startup catch-up","execution":{"state":"not_applicable"}
-            }))?;
+            }))
+        })?;
         server.write(|db| {
             db.sqlite.execute(
                 "UPDATE runtimes SET status='ready' WHERE runtime_id='filler-0000'",
@@ -490,12 +488,7 @@ mod idle_tests {
                 [],
             )
         })?;
-        server
-            .store
-            .lock()
-            .unwrap()
-            .sqlite
-            .execute("DELETE FROM continuities", [])?;
+        server.write(|db| db.sqlite.execute("DELETE FROM continuities", []))?;
         history::start(&server);
         super::start_refresh(&server);
         tokio::time::sleep(Duration::from_millis(300)).await;

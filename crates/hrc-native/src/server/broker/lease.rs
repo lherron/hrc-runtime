@@ -764,8 +764,7 @@ mod tests {
     #[test]
     fn a_probe_never_overwrites_a_committed_crash() -> anyhow::Result<()> {
         let (_scratch, server) = crate::server::turns::admission::tests::server("off", false)?;
-        {
-            let mut store = server.store.lock().unwrap();
+        server.write(|store| -> anyhow::Result<()> {
             let session = store
                 .create_session("agent:test:project:fixture", "main")?
                 .0;
@@ -773,13 +772,14 @@ mod tests {
                 "INSERT INTO runtimes(runtime_id,host_session_id,scope_ref,lane_ref,generation,transport,status,supports_inflight_input,controller_kind,created_at,updated_at) VALUES('rt-crashed',?,?,'main',1,'hrcpty','crashed',0,'harness-broker','now','now')",
                 params![session["hostSessionId"].as_str(), session["scopeRef"].as_str()],
             )?;
-        }
+            Ok(())
+        })?;
         not_live(
             &server,
             "rt-crashed",
             json!({"reason":"broker_hrcpty_broker_exited"}),
         )?;
-        let store = server.store.lock().unwrap();
+        let store = server.read()?;
         let status: String = store.sqlite.query_row(
             "SELECT status FROM runtimes WHERE runtime_id='rt-crashed'",
             [],

@@ -1152,10 +1152,7 @@ mod seat_gate_tests {
 
     fn seat(server: &Shared) -> Value {
         server
-            .store
-            .lock()
-            .unwrap()
-            .create_session(SCOPE, "main")
+            .write(|db| db.create_session(SCOPE, "main"))
             .unwrap()
             .0
     }
@@ -1210,8 +1207,7 @@ mod seat_gate_tests {
             .unwrap_err();
         assert_retired(error, &host);
         let on_retired: i64 = server
-            .store
-            .lock()
+            .read()
             .unwrap()
             .sqlite
             .query_row(
@@ -1243,13 +1239,12 @@ mod seat_gate_tests {
             "the second start must wait for the sibling birth"
         );
         // The sibling's birth lands its runtime, then releases the gate.
-        server.store.lock().unwrap().sqlite.execute("INSERT INTO runtimes(runtime_id,host_session_id,scope_ref,lane_ref,generation,transport,status,supports_inflight_input,controller_kind,created_at,updated_at) VALUES('rt-sibling',?,?,'main',1,'headless','ready',1,'harness-broker','now','now')", params![host, SCOPE]).unwrap();
+        server.write(|db| db.sqlite.execute("INSERT INTO runtimes(runtime_id,host_session_id,scope_ref,lane_ref,generation,transport,status,supports_inflight_input,controller_kind,created_at,updated_at) VALUES('rt-sibling',?,?,'main',1,'headless','ready',1,'harness-broker','now','now')", params![host, SCOPE])).unwrap();
         drop(sibling);
         let started = second.await.unwrap().unwrap();
         assert_eq!(started["runtimeId"], "rt-sibling");
         let live: i64 = server
-            .store
-            .lock()
+            .read()
             .unwrap()
             .sqlite
             .query_row(

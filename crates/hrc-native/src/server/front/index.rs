@@ -264,8 +264,7 @@ mod tests {
     {
         let (_scratch, server) = server("off", false)?;
         let mut expected = Vec::new();
-        {
-            let mut db = server.store.lock().unwrap();
+        server.write(|db| -> anyhow::Result<()> {
             for (task, lane, missing) in [
                 ("T-8154", "main", false),
                 ("historical", "lane:historical", false),
@@ -289,7 +288,8 @@ mod tests {
                         .get::<_, i64>(0))?,
                 3
             );
-        }
+            Ok(())
+        })?;
         let mut cursor = None;
         let mut seen = Vec::new();
         for page in 0..3 {

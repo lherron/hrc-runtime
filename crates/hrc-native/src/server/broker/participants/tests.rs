@@ -39,15 +39,14 @@ async fn allocate(server: &Shared, root: &Path, n: usize) -> Answer {
 }
 fn count(server: &Shared, table: &str) -> i64 {
     server
-        .store
-        .lock()
+        .read()
         .unwrap()
         .sqlite
         .query_row(&format!("SELECT count(*) FROM {table}"), [], |r| r.get(0))
         .unwrap()
 }
 fn exec(server: &Shared, sql: &str, p: &[&dyn rusqlite::ToSql]) {
-    server.store.lock().unwrap().sqlite.execute(sql, p).unwrap();
+    server.write(|db| db.sqlite.execute(sql, p)).unwrap();
 }
 async fn external(server: &Shared, root: &Path) -> Value {
     match register_core(
@@ -245,8 +244,7 @@ async fn cutover_refuses_a_live_external_host() {
         ext["identity"]["registrationId"]
     );
     let owner: String = server
-        .store
-        .lock()
+        .read()
         .unwrap()
         .sqlite
         .query_row(
@@ -283,10 +281,7 @@ async fn attach_without_offered_continuation() {
     let v = done(attach(&server, &offered, descriptor(&offered, &root, None)).await);
     assert_eq!(v["status"], "attached", "{v}");
     assert_eq!(v["prepared"], true);
-    let resume: String = server
-        .store
-        .lock()
-        .unwrap()
+    let resume: String = server.read().unwrap()
         .sqlite
         .query_row(
             "SELECT continuation_resume_state FROM participant_registration_attempts WHERE attempt_id=?",

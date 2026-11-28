@@ -48,11 +48,7 @@ async fn owner_doctor_composes_node_placement_and_target_checks() -> Result<()> 
             .unwrap()
             .starts_with("[unknown_session]")
     );
-    server
-        .store
-        .lock()
-        .unwrap()
-        .create_session("agent:test:project:fixture", "main")?;
+    server.write(|db| db.create_session("agent:test:project:fixture", "main"))?;
     let (_, checks) = get(
         &server,
         "/v1/doctor?sessionRef=agent:test:project:fixture/lane:main",
@@ -69,15 +65,15 @@ async fn owner_doctor_composes_node_placement_and_target_checks() -> Result<()> 
 #[tokio::test]
 async fn owner_broker_stats_preserves_selection_and_counts() -> Result<()> {
     let (_scratch, server) = server("off", false)?;
-    {
-        let mut db = server.store.lock().unwrap();
+    server.write(|db| -> Result<()> {
         let host = db.create_session("agent:test:project:fixture", "main")?.0["hostSessionId"]
             .as_str()
             .unwrap()
             .to_owned();
         db.sqlite.execute("INSERT INTO runtimes(runtime_id,host_session_id,scope_ref,lane_ref,generation,transport,status,supports_inflight_input,controller_kind,active_invocation_id,created_at,updated_at) VALUES('rt',?,'agent:test:project:fixture','main',1,'headless','ready',0,'harness-broker','inv','now','now')", [&host])?;
         db.sqlite.execute("INSERT INTO broker_invocations(invocation_id,operation_id,runtime_id,broker_protocol,broker_driver,invocation_state,capabilities_json,spec_hash,start_request_hash,selected_profile_hash,spec_projection_json,created_at,updated_at) VALUES('inv','op','rt','harness-broker/0.2','test','running','{}','h','h','h','{}','now','now')", [])?;
-    }
+        Ok(())
+    })?;
     for (i, kind) in ["turn.started", "tool.call.started", "turn.completed"]
         .into_iter()
         .enumerate()

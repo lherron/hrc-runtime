@@ -342,32 +342,33 @@ mod worker_tests {
     use crate::server::retained::tests::observed;
 
     fn lifecycle(server: &Server, status: &str, kind: &str, generation: i64) -> Result<()> {
-        let db = server.store.lock().unwrap();
-        db.sqlite.execute(
-            "UPDATE runtimes SET status=?,generation=? WHERE runtime_id='filler-0000'",
-            rusqlite::params![status, generation],
-        )?;
-        let host: String = db.sqlite.query_row(
-            "SELECT host_session_id FROM runtimes WHERE runtime_id='filler-0000'",
-            [],
-            |r| r.get(0),
-        )?;
-        hrc_store::append_event(
-            &db.sqlite,
-            &hrc_store::EventWrite {
-                ts: &hrc_store::timestamp(),
-                host_session_id: Some(&host),
-                scope_ref: Some("agent:test:project:fixture"),
-                lane_ref: Some("main"),
-                generation: Some(generation),
-                category: "runtime",
-                event_kind: kind,
-                runtime_id: Some("filler-0000"),
-                payload_json: "{}",
-                ..Default::default()
-            },
-        )?;
-        drop(db);
+        server.write(|db| -> Result<()> {
+            db.sqlite.execute(
+                "UPDATE runtimes SET status=?,generation=? WHERE runtime_id='filler-0000'",
+                rusqlite::params![status, generation],
+            )?;
+            let host: String = db.sqlite.query_row(
+                "SELECT host_session_id FROM runtimes WHERE runtime_id='filler-0000'",
+                [],
+                |r| r.get(0),
+            )?;
+            hrc_store::append_event(
+                &db.sqlite,
+                &hrc_store::EventWrite {
+                    ts: &hrc_store::timestamp(),
+                    host_session_id: Some(&host),
+                    scope_ref: Some("agent:test:project:fixture"),
+                    lane_ref: Some("main"),
+                    generation: Some(generation),
+                    category: "runtime",
+                    event_kind: kind,
+                    runtime_id: Some("filler-0000"),
+                    payload_json: "{}",
+                    ..Default::default()
+                },
+            )?;
+            Ok(())
+        })?;
         server.ledger_committed();
         Ok(())
     }
@@ -401,10 +402,12 @@ mod worker_tests {
         let second = delivered(&path, Some(&first)).await?;
         assert_ne!(first, second);
         // Refusal precedes any cleanup wake: stale files never grant authority.
-        server.store.lock().unwrap().sqlite.execute(
-            "UPDATE runtimes SET status='terminated' WHERE runtime_id='filler-0000'",
-            [],
-        )?;
+        server.write(|db| {
+            db.sqlite.execute(
+                "UPDATE runtimes SET status='terminated' WHERE runtime_id='filler-0000'",
+                [],
+            )
+        })?;
         let mut headers = HeaderMap::new();
         headers.insert("x-hrc-lifecycle-runtime-id", "filler-0000".parse()?);
         headers.insert("x-hrc-lifecycle-credential", second.trim().parse()?);

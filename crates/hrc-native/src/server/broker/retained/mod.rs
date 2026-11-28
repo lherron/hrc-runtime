@@ -1004,8 +1004,7 @@ pub(crate) mod tests {
                 })
             }
         })?;
-        {
-            let mut db = server.store.lock().unwrap();
+        server.write(|db| -> Result<()> {
             let host = db.create_session("agent:test:project:fixture", "main")?.0["hostSessionId"]
                 .as_str()
                 .unwrap()
@@ -1013,7 +1012,8 @@ pub(crate) mod tests {
             for i in 0..n {
                 db.sqlite.execute("INSERT INTO runtimes(runtime_id,host_session_id,scope_ref,lane_ref,generation,transport,status,status_changed_at,supports_inflight_input,controller_kind,runtime_state_json,created_at,updated_at) VALUES(?,?,'agent:test:project:fixture','main',1,'headless','terminated','2026-01-01T00:00:00Z',0,'harness-broker','{}','2026-01-01T00:00:00Z','now')", rusqlite::params![format!("filler-{i:04}"), host])?;
             }
-        }
+            Ok(())
+        })?;
         Ok((scratch, server, seen))
     }
     /// The recorded holds taken from `file`.

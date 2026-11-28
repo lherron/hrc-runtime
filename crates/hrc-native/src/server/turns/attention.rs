@@ -178,24 +178,26 @@ mod tests {
     const SCOPE: &str = "agent:clod:project:hrc-runtime:task:primary";
 
     fn seed(server: &Shared, scope: &str, kind: &str, payload: &Value) -> i64 {
-        let store = server.store.lock().unwrap();
-        hrc_store::append_event(
-            &store.sqlite,
-            &hrc_store::EventWrite {
-                ts: "2026-10-28T13:50:00.000Z",
-                host_session_id: Some("hsid-a"),
-                scope_ref: Some(scope),
-                lane_ref: Some("main"),
-                generation: Some(3),
-                runtime_id: Some("rt-a"),
-                run_id: Some("run-a"),
-                category: "turn",
-                event_kind: kind,
-                payload_json: &payload.to_string(),
-                ..Default::default()
-            },
-        )
-        .unwrap()
+        server
+            .write(|store| {
+                hrc_store::append_event(
+                    &store.sqlite,
+                    &hrc_store::EventWrite {
+                        ts: "2026-10-28T13:50:00.000Z",
+                        host_session_id: Some("hsid-a"),
+                        scope_ref: Some(scope),
+                        lane_ref: Some("main"),
+                        generation: Some(3),
+                        runtime_id: Some("rt-a"),
+                        run_id: Some("run-a"),
+                        category: "turn",
+                        event_kind: kind,
+                        payload_json: &payload.to_string(),
+                        ..Default::default()
+                    },
+                )
+            })
+            .unwrap()
     }
     fn completed(server: &Shared, scope: &str, turn: &str) -> i64 {
         seed(
@@ -233,8 +235,7 @@ mod tests {
     }
     fn attention_rows(server: &Shared) -> i64 {
         server
-            .store
-            .lock()
+            .read()
             .unwrap()
             .sqlite
             .query_row(

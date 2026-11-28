@@ -34,12 +34,13 @@ async fn session_home_on_all_kernel_routes_and_runtime_less_continuity() -> anyh
         ("agent:local", "test-node", false),
         ("agent:unbound", "", false),
     ] {
-        let mut db = server.store.lock().unwrap();
-        let session = db.create_session(scope, "main")?.0;
-        if runtime {
-            db.sqlite.execute("INSERT INTO runtimes(runtime_id,host_session_id,scope_ref,lane_ref,generation,transport,status,supports_inflight_input,created_at,updated_at) VALUES('rt',?,?,'main',1,'sdk','ready',0,?,?)", rusqlite::params![session["hostSessionId"].as_str(),scope,hrc_store::timestamp(),hrc_store::timestamp()])?;
-        }
-        drop(db);
+        server.write(|db| -> anyhow::Result<()> {
+            let session = db.create_session(scope, "main")?.0;
+            if runtime {
+                db.sqlite.execute("INSERT INTO runtimes(runtime_id,host_session_id,scope_ref,lane_ref,generation,transport,status,supports_inflight_input,created_at,updated_at) VALUES('rt',?,?,'main',1,'sdk','ready',0,?,?)", rusqlite::params![session["hostSessionId"].as_str(),scope,hrc_store::timestamp(),hrc_store::timestamp()])?;
+            }
+            Ok(())
+        })?;
         if !home.is_empty() {
             binding(&server, scope, home, false)?;
         }
@@ -106,7 +107,7 @@ async fn participant_registration_refuses_foreign_scope_and_preserves_unbound() 
     assert_eq!(refused["error"]["code"], "foreign_scope");
     assert_eq!(refused["error"]["detail"]["homeNodeId"], "other-node");
     assert_eq!(
-        server.store.lock().unwrap().sqlite.query_row(
+        server.read()?.sqlite.query_row(
             "SELECT COUNT(*) FROM participant_registrations",
             [],
             |r| r.get::<_, i64>(0)

@@ -973,13 +973,13 @@ mod tests {
     async fn terminate_reason_http() -> anyhow::Result<()> {
         for reason in [Some("  operator: rotate → next\nkeep verbatim  "), None] {
             let (_scratch, server) = server("off", false)?;
-            {
-                let mut store = server.store.lock().unwrap();
+            server.write(|store| -> anyhow::Result<()> {
                 let session = store
                     .create_session("agent:test:project:fixture", "main")?
                     .0;
                 store.sqlite.execute("INSERT INTO runtimes(runtime_id,host_session_id,scope_ref,lane_ref,generation,transport,status,supports_inflight_input,controller_kind,runtime_state_json,created_at,updated_at) VALUES('rt',?,'agent:test:project:fixture','main',1,'headless','ready',0,'harness-broker',?,'now','now')", params![session["hostSessionId"].as_str(), json!({"status":"ready","retained":"value"}).to_string()])?;
-            }
+                Ok(())
+            })?;
             let subject = server.clone();
             let app = Router::new().route(
                 "/v1/terminate",
@@ -1002,7 +1002,7 @@ mod tests {
                 .await?
                 .error_for_status()?;
             task.abort();
-            let store = server.store.lock().unwrap();
+            let store = server.read()?;
             let runtime = db::runtime(&store.sqlite, "rt")?.unwrap();
             let event: String = store.sqlite.query_row("SELECT payload_json FROM hrc_events WHERE runtime_id='rt' AND event_kind='runtime.terminated'", [], |r| r.get(0))?;
             let event: Value = serde_json::from_str(&event)?;

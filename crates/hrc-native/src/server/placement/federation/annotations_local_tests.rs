@@ -20,8 +20,7 @@ async fn annotations_local_only_socket_and_peer() -> Result<()> {
             accepted_tokens: vec!["fixture".into()],
         });
     let scope = "agent:test:project:fixture";
-    let expected = {
-        let mut db = server.store.lock().unwrap();
+    let expected = server.write(|db| -> Result<_> {
         db.create_session(scope, "main")?;
         db.put_annotation(AnnotationPut {
             key: AnnotationKey {
@@ -38,9 +37,10 @@ async fn annotations_local_only_socket_and_peer() -> Result<()> {
             updated_by: "agent:test",
         })?
         .unwrap();
-        db.list_annotations(scope, "main", AnnotationFilter::default())?
-            .unwrap()
-    };
+        Ok(db
+            .list_annotations(scope, "main", AnnotationFilter::default())?
+            .unwrap())
+    })?;
     binding(&server, scope, "test-node", true)?;
     let socket = std::path::PathBuf::from(format!("/tmp/hrc-ann-{}.sock", uuid::Uuid::new_v4()));
     let listener = tokio::net::UnixListener::bind(&socket)?;

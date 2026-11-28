@@ -484,8 +484,7 @@ mod tests {
     async fn history_reads_in_chunks_and_honors_limit() -> anyhow::Result<()> {
         let (_scratch, server, seen) = observed(0)?;
         let n = 30;
-        {
-            let db = server.store.lock().unwrap();
+        server.write(|db| -> anyhow::Result<()> {
             let host: String =
                 db.sqlite
                     .query_row("SELECT host_session_id FROM sessions LIMIT 1", [], |r| {
@@ -518,15 +517,14 @@ mod tests {
                     },
                 )?;
             }
-        }
+            Ok(())
+        })?;
         // Ground truth: the old single-snapshot rendering.
         let expected = |q: &[(&str, &str)]| -> anyhow::Result<String> {
             let q: HashMap<String, String> =
                 q.iter().map(|(k, v)| ((*k).into(), (*v).into())).collect();
             let rows = server
-                .store
-                .lock()
-                .unwrap()
+                .read()?
                 .event_history(&q, 1, None, None, false, true)?;
             Ok(rows.iter().map(|r| format!("{r}\n")).collect())
         };

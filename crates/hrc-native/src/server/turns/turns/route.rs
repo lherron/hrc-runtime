@@ -831,23 +831,24 @@ mod tests {
     use crate::server::turns::admission::tests::server;
 
     fn seat(server: &Shared) -> anyhow::Result<db::Rt> {
-        let mut store = server.store.lock().unwrap();
-        let session = store
-            .create_session("agent:test:project:fixture", "main")?
-            .0;
-        let (host, scope) = (
-            session["hostSessionId"].as_str().unwrap_or(""),
-            session["scopeRef"].as_str().unwrap_or(""),
-        );
-        store.sqlite.execute("INSERT INTO runtimes(runtime_id,host_session_id,scope_ref,lane_ref,generation,transport,status,supports_inflight_input,controller_kind,active_invocation_id,created_at,updated_at) VALUES('rt',?,?,'main',1,'hrcpty','busy',0,'harness-broker','inv','now','now')", params![host, scope])?;
-        for run in ["run-held", "run-steer"] {
-            store.sqlite.execute("INSERT INTO runs(run_id,host_session_id,runtime_id,scope_ref,lane_ref,generation,transport,status,accepted_at,updated_at,invocation_id) VALUES(?,?,'rt',?,'main',1,'headless','accepted','now','now','inv')", params![run, host, scope])?;
-        }
-        store.sqlite.execute(
-            "UPDATE runtimes SET active_run_id='run-held' WHERE runtime_id='rt'",
-            [],
-        )?;
-        Ok(db::runtime(&store.sqlite, "rt")?.expect("runtime"))
+        server.write(|store| {
+            let session = store
+                .create_session("agent:test:project:fixture", "main")?
+                .0;
+            let (host, scope) = (
+                session["hostSessionId"].as_str().unwrap_or(""),
+                session["scopeRef"].as_str().unwrap_or(""),
+            );
+            store.sqlite.execute("INSERT INTO runtimes(runtime_id,host_session_id,scope_ref,lane_ref,generation,transport,status,supports_inflight_input,controller_kind,active_invocation_id,created_at,updated_at) VALUES('rt',?,?,'main',1,'hrcpty','busy',0,'harness-broker','inv','now','now')", params![host, scope])?;
+            for run in ["run-held", "run-steer"] {
+                store.sqlite.execute("INSERT INTO runs(run_id,host_session_id,runtime_id,scope_ref,lane_ref,generation,transport,status,accepted_at,updated_at,invocation_id) VALUES(?,?,'rt',?,'main',1,'headless','accepted','now','now','inv')", params![run, host, scope])?;
+            }
+            store.sqlite.execute(
+                "UPDATE runtimes SET active_run_id='run-held' WHERE runtime_id='rt'",
+                [],
+            )?;
+            Ok(db::runtime(&store.sqlite, "rt")?.expect("runtime"))
+        })
     }
 
     fn error(code: &str) -> controller::submit::BrokerError {
@@ -859,7 +860,7 @@ mod tests {
     }
 
     fn row(server: &Shared, sql: &str) -> (String, Option<String>) {
-        let store = server.store.lock().unwrap();
+        let store = server.read().unwrap();
         store
             .sqlite
             .query_row(sql, [], |r| Ok((r.get(0)?, r.get(1)?)))

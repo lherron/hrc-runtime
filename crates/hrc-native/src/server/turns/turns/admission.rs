@@ -816,7 +816,7 @@ pub fn stale_age(session: &Value, allow_stale: bool) -> Option<(i64, i64)> {
 #[cfg(test)]
 pub(crate) mod tests {
     use super::*;
-    use crate::server::{Server, accounting, federation, lifecycle, release};
+    use crate::server::{Server, accounting, federation, release};
     use std::sync::Arc;
     mod fixture {
         include!(concat!(
@@ -866,45 +866,23 @@ pub(crate) mod tests {
         };
         let federation = federation::Node::new(config, &state, false)?;
         let started_at = hrc_store::timestamp();
-        let server = Arc::new(Server {
-            session_read_walks: Default::default(),
-            command_targets: Default::default(),
-            store: lock(store),
-            accounting: accounting::Accounting::new(),
-            brokers: Default::default(),
-            participant_work: Default::default(),
-            participant_host_requests: Default::default(),
-            seat_gates: Default::default(),
-            projection: Default::default(),
-            subscribers: Default::default(),
-            seat_streams: Default::default(),
-            wrkq: Default::default(),
-            publication: Default::default(),
-            handoff: Default::default(),
-            self_restart: Default::default(),
-            seat_restart: Default::default(),
-            controller: Default::default(),
-            reaped: Default::default(),
-            ledger: tokio::sync::watch::Sender::new(0),
-            continuity_generation,
-            event_head: std::sync::Mutex::new(crate::server::events::HeadReader::open(
-                &state.join("state.sqlite"),
-            )?),
-            lifecycle: lifecycle::State::new(&runtime, true),
-            probing: Default::default(),
-            literal: Default::default(),
-            attached: Default::default(),
-            owner_writes: Default::default(),
-            transcript: Default::default(),
-            runtime,
-            federation,
-            front: false,
-            state,
-            release: release::Release::capture(&started_at)?,
-            event_loop: Default::default(),
-            started_at,
-            started: std::time::Instant::now(),
-        });
+        let server = Arc::new(Server::new(
+            lock(store),
+            crate::server::store_lock::ServerInit {
+                command_targets: Default::default(),
+                accounting: accounting::Accounting::new(),
+                continuity_generation,
+                event_head: std::sync::Mutex::new(crate::server::events::HeadReader::open(
+                    &state.join("state.sqlite"),
+                )?),
+                runtime,
+                federation,
+                front: false,
+                state,
+                release: release::Release::capture(&started_at)?,
+                started_at,
+            },
+        ));
         Ok((scratch, server))
     }
     pub(crate) fn binding(
@@ -913,29 +891,31 @@ pub(crate) mod tests {
         home: &str,
         retired: bool,
     ) -> anyhow::Result<()> {
-        let store = server.store.lock().expect("test store lock");
-        federation::install_active(
-            &store.sqlite,
-            &json!({"scopeRef":scope,"homeNodeId":home,"createdAt":"now","updatedAt":"now"}),
-        )
-        .map_err(anyhow::Error::msg)?;
-        if retired {
-            store.sqlite.execute("UPDATE placement_ledger SET state='retired',retired_at='now',retirement_reason='test' WHERE scope_ref=?", [scope])?;
-        }
-        Ok(())
+        server.write(|store| {
+            federation::install_active(
+                &store.sqlite,
+                &json!({"scopeRef":scope,"homeNodeId":home,"createdAt":"now","updatedAt":"now"}),
+            )
+            .map_err(anyhow::Error::msg)?;
+            if retired {
+                store.sqlite.execute("UPDATE placement_ledger SET state='retired',retired_at='now',retirement_reason='test' WHERE scope_ref=?", [scope])?;
+            }
+            Ok(())
+        })
     }
     fn broker(server: &Shared, session: &Value, classes: Value) -> anyhow::Result<()> {
-        let store = server.store.lock().expect("test store lock");
-        store.sqlite.execute("INSERT INTO runtimes(runtime_id,host_session_id,scope_ref,lane_ref,generation,transport,status,supports_inflight_input,controller_kind,active_invocation_id,created_at,updated_at) VALUES('rt',?,?,'main',1,'headless','ready',0,'harness-broker','inv','now','now')", rusqlite::params![session["hostSessionId"].as_str(),session["scopeRef"].as_str()])?;
-        store.sqlite.execute("INSERT INTO broker_invocations(invocation_id,operation_id,runtime_id,broker_protocol,broker_driver,invocation_state,capabilities_json,spec_hash,start_request_hash,selected_profile_hash,spec_projection_json,created_at,updated_at) VALUES('inv','op','rt','harness-broker/0.2','test','running',?,'h','h','h','{}','now','now')", [json!({"admission":{"classes":classes}}).to_string()])?;
-        Ok(())
+        server.write(|store| {
+            store.sqlite.execute("INSERT INTO runtimes(runtime_id,host_session_id,scope_ref,lane_ref,generation,transport,status,supports_inflight_input,controller_kind,active_invocation_id,created_at,updated_at) VALUES('rt',?,?,'main',1,'headless','ready',0,'harness-broker','inv','now','now')", rusqlite::params![session["hostSessionId"].as_str(),session["scopeRef"].as_str()])?;
+            store.sqlite.execute("INSERT INTO broker_invocations(invocation_id,operation_id,runtime_id,broker_protocol,broker_driver,invocation_state,capabilities_json,spec_hash,start_request_hash,selected_profile_hash,spec_projection_json,created_at,updated_at) VALUES('inv','op','rt','harness-broker/0.2','test','running',?,'h','h','h','{}','now','now')", [json!({"admission":{"classes":classes}}).to_string()])?;
+            Ok(())
+        })
     }
     fn assert_recorded_admission(
         server: &Shared,
         name: &str,
         expected: &str,
     ) -> anyhow::Result<()> {
-        let raw: String = server.store.lock().expect("test store lock").sqlite.query_row("SELECT payload_json FROM hrc_events WHERE event_kind='submission.admission' ORDER BY hrc_seq DESC LIMIT 1", [], |r| r.get(0))?;
+        let raw: String = server.read()?.sqlite.query_row("SELECT payload_json FROM hrc_events WHERE event_kind='submission.admission' ORDER BY hrc_seq DESC LIMIT 1", [], |r| r.get(0))?;
         let payload: Value = serde_json::from_str(&raw)?;
         let mut keys = vec!["door", "intent", "effectiveDoor", "trace", "outcome"];
         let outcome = match expected {
@@ -1101,10 +1081,7 @@ pub(crate) mod tests {
                 name == "retired",
             )?;
             let session = server
-                .store
-                .lock()
-                .expect("test store lock")
-                .create_session("agent:test:project:fixture", "main")?
+                .write(|db| db.create_session("agent:test:project:fixture", "main"))?
                 .0;
             if let Some(classes) = classes {
                 broker(&server, &session, classes)?;
@@ -1121,7 +1098,7 @@ pub(crate) mod tests {
                     .map_err(|e| anyhow::anyhow!("{}", e.message))?;
             }
             if name == "idempotent-replay" {
-                server.store.lock().expect("test store lock").sqlite.execute("INSERT INTO runs(run_id,host_session_id,scope_ref,lane_ref,generation,transport,status,accepted_at,updated_at,dispatch_idempotency_key) VALUES('run',?,?,'main',1,'headless','accepted','now','now','key')", rusqlite::params![session["hostSessionId"].as_str(),session["scopeRef"].as_str()])?;
+                server.write(|db| db.sqlite.execute("INSERT INTO runs(run_id,host_session_id,scope_ref,lane_ref,generation,transport,status,accepted_at,updated_at,dispatch_idempotency_key) VALUES('run',?,?,'main',1,'headless','accepted','now','now','key')", rusqlite::params![session["hostSessionId"].as_str(),session["scopeRef"].as_str()]))?;
             }
             let origin = principal.map(|p| json!({"principalRef":p}));
             let fences = (name == "stale-fence").then(|| json!({"expectedGeneration":99}));
@@ -1199,22 +1176,16 @@ pub(crate) mod tests {
     async fn auto_rotate_spares_a_live_interactive_seat() -> anyhow::Result<()> {
         for transport in ["tmux", "hrcpty"] {
             let (_scratch, server) = server("off", false)?;
-            let host = {
-                let mut store = server.store.lock().expect("test store lock");
+            let host = server.write(|store| -> anyhow::Result<_> {
                 let session = store
                     .create_session("agent:test:project:fixture", "main")?
                     .0;
                 let host = session["hostSessionId"].as_str().unwrap_or("").to_owned();
                 store.sqlite.execute("UPDATE sessions SET created_at='2026-01-01T00:00:00.000Z' WHERE host_session_id=?", [&host])?;
                 store.sqlite.execute("INSERT INTO runtimes(runtime_id,host_session_id,scope_ref,lane_ref,generation,transport,status,supports_inflight_input,controller_kind,created_at,updated_at) VALUES('rt',?,?,'main',1,?,'ready',0,'harness-broker','now','now')", rusqlite::params![host, session["scopeRef"].as_str(), transport])?;
-                host
-            };
-            let aged = server
-                .store
-                .lock()
-                .expect("test store lock")
-                .session(&host)?
-                .expect("session");
+                Ok(host)
+            })?;
+            let aged = server.read()?.session(&host)?.expect("session");
             assert!(
                 stale_age(&aged, false).is_some(),
                 "{transport}: fixture must be past the threshold"

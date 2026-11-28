@@ -862,32 +862,34 @@ mod tests {
             .to_rfc3339_opts(SecondsFormat::Millis, true)
     }
     fn event(server: &Shared, s: &Value, category: &str, kind: &str, at: &str, payload: Value) {
-        let db = server.store.lock().unwrap();
-        hrc_store::append_event(
-            &db.sqlite,
-            &hrc_store::EventWrite {
-                ts: at,
-                host_session_id: s["hostSessionId"].as_str(),
-                scope_ref: s["scopeRef"].as_str(),
-                lane_ref: Some("main"),
-                generation: s["generation"].as_i64(),
-                category,
-                event_kind: kind,
-                payload_json: &payload.to_string(),
-                ..Default::default()
-            },
-        )
-        .unwrap();
+        server
+            .write(|db| {
+                hrc_store::append_event(
+                    &db.sqlite,
+                    &hrc_store::EventWrite {
+                        ts: at,
+                        host_session_id: s["hostSessionId"].as_str(),
+                        scope_ref: s["scopeRef"].as_str(),
+                        lane_ref: Some("main"),
+                        generation: s["generation"].as_i64(),
+                        category,
+                        event_kind: kind,
+                        payload_json: &payload.to_string(),
+                        ..Default::default()
+                    },
+                )
+            })
+            .unwrap();
     }
     fn runtime(server: &Shared, s: &Value, status: &str) {
         let host = s["hostSessionId"].as_str().unwrap();
-        server.store.lock().unwrap().sqlite
+        server.write(|db| db.sqlite
             .execute_batch(&format!(
                 "INSERT INTO runtimes(runtime_id,host_session_id,scope_ref,lane_ref,generation,transport,status,supports_inflight_input,created_at,updated_at) VALUES ('rt-{host}','{host}','{}','main',{},'tmux','{status}',0,'{at}','{at}')",
                 s["scopeRef"].as_str().unwrap(),
                 s["generation"],
                 at = ts(0),
-            ))
+            )))
             .unwrap();
     }
     fn lit(lit: bool) -> Value {
@@ -967,11 +969,7 @@ mod tests {
         let mut seats = Vec::new();
         for (name, rt, events) in &cases {
             let scope = format!("agent:eq:project:p:task:{name}");
-            let (s, _) = server
-                .store
-                .lock()
-                .unwrap()
-                .create_session(&scope, "main")?;
+            let (s, _) = server.write(|db| db.create_session(&scope, "main"))?;
             event(
                 &server,
                 &s,

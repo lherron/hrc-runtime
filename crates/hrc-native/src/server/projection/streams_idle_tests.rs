@@ -18,8 +18,8 @@ async fn idle_followers_measurement() -> anyhow::Result<()> {
         })
     })?;
     seed(&server)?;
-    let head = server.store.lock().unwrap().max_hrc_seq()?;
-    let incarnation = server.store.lock().unwrap().ledger_incarnation()?;
+    let head = server.read()?.max_hrc_seq()?;
+    let incarnation = server.read()?.ledger_incarnation()?;
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await?;
     let url = format!("http://{}", listener.local_addr()?);
     let app = Router::new()
@@ -106,8 +106,7 @@ async fn idle_followers_measurement() -> anyhow::Result<()> {
     tokio::time::timeout(Duration::from_secs(3), async {
         loop {
             let indexed: i64 = server
-                .store
-                .lock()
+                .read()
                 .unwrap()
                 .sqlite
                 .query_row(
@@ -135,7 +134,7 @@ async fn idle_followers_measurement() -> anyhow::Result<()> {
     }
     check_lifecycle(&server, &mut legacy, &mut bounded, &mut cursor).await?;
     wait_cursor(&server, 6).await?;
-    let retained_turns: i64 = server.store.lock().unwrap().sqlite.query_row(
+    let retained_turns: i64 = server.read()?.sqlite.query_row(
         "SELECT count(*) FROM transcript_turns WHERE final_text='retained answer'",
         [],
         |r| r.get(0),
@@ -188,7 +187,7 @@ async fn check_lifecycle(
     cursor: &mut i64,
 ) -> anyhow::Result<()> {
     let expected: Vec<(i64, String)> = {
-        let db = server.store.lock().unwrap();
+        let db = server.read()?;
         db.sqlite
             .prepare("SELECT hrc_seq,event_kind FROM hrc_events WHERE hrc_seq>? ORDER BY hrc_seq")?
             .query_map([*cursor], |r| Ok((r.get(0)?, r.get(1)?)))?
@@ -208,15 +207,15 @@ async fn check_lifecycle(
 }
 
 fn seed(server: &Shared) -> anyhow::Result<()> {
-    {
-        let mut db = server.store.lock().unwrap();
+    server.write(|db| -> anyhow::Result<()> {
         let host = db.create_session("agent:test:project:fixture", "main")?.0["hostSessionId"]
             .as_str()
             .unwrap()
             .to_owned();
         db.sqlite.execute("INSERT INTO runtimes(runtime_id,host_session_id,scope_ref,lane_ref,generation,transport,status,supports_inflight_input,controller_kind,active_invocation_id,created_at,updated_at) VALUES('rt',?,'agent:test:project:fixture','main',1,'headless','ready',0,'harness-broker','inv','now','now')", [&host])?;
         db.sqlite.execute("INSERT INTO broker_invocations(invocation_id,operation_id,runtime_id,broker_protocol,broker_driver,invocation_state,capabilities_json,spec_hash,start_request_hash,selected_profile_hash,spec_projection_json,created_at,updated_at) VALUES('inv','op','rt','harness-broker/0.2','test','running','{}','h','h','h','{}','now','now')", [])?;
-    }
+        Ok(())
+    })?;
     Ok(())
 }
 
@@ -239,15 +238,19 @@ async fn transcript_boot_retry_and_coalesced_commits() -> anyhow::Result<()> {
             &json!({"invocationId":"inv","seq":i+1,"type":kind,"time":"2026-11-04T19:00:00.000Z","payload":{"content":"boot catchup"}}),
         )?;
     }
-    server.store.lock().unwrap().sqlite.execute_batch(
-        "ALTER TABLE transcript_index_cursor RENAME TO saved_transcript_index_cursor",
-    )?;
+    server.write(|db| {
+        db.sqlite.execute_batch(
+            "ALTER TABLE transcript_index_cursor RENAME TO saved_transcript_index_cursor",
+        )
+    })?;
     transcript::start(&server);
     wait_transcript_tick(&server).await?;
     // Repair without a ledger wake. Only the failed tick's retry can catch up.
-    server.store.lock().unwrap().sqlite.execute_batch(
-        "ALTER TABLE saved_transcript_index_cursor RENAME TO transcript_index_cursor",
-    )?;
+    server.write(|db| {
+        db.sqlite.execute_batch(
+            "ALTER TABLE saved_transcript_index_cursor RENAME TO transcript_index_cursor",
+        )
+    })?;
     wait_cursor(&server, 3).await?;
     for seq in 4..=30 {
         crate::server::controller::apply_one(
@@ -256,7 +259,7 @@ async fn transcript_boot_retry_and_coalesced_commits() -> anyhow::Result<()> {
         )?;
     }
     wait_cursor(&server, 30).await?;
-    let turns: i64 = server.store.lock().unwrap().sqlite.query_row(
+    let turns: i64 = server.read()?.sqlite.query_row(
         "SELECT count(*) FROM transcript_turns WHERE final_text='boot catchup'",
         [],
         |r| r.get(0),
@@ -277,7 +280,7 @@ async fn wait_cursor(server: &Shared, expected: i64) -> anyhow::Result<()> {
     tokio::time::timeout(Duration::from_secs(5), async {
         loop {
             let cursor =
-                hrc_store::transcript_index::cursor(&server.store.lock().unwrap().sqlite).unwrap();
+                hrc_store::transcript_index::cursor(&server.read().unwrap().sqlite).unwrap();
             if cursor == expected {
                 break;
             }
@@ -311,10 +314,12 @@ fn seed_retained_reader(server: &Shared, root: &std::path::Path) -> anyhow::Resu
     )?;
     std::fs::set_permissions(&executable, std::fs::Permissions::from_mode(0o700))?;
     let state = json!({"executionRelease":{"source":"aspd","releaseId":"fixture-reader","sourceCommit":"fixture","builtAt":"now","releaseRoot":release,"worker":{"argvPrefix":[],"protocol":"harness-broker/0.2","executable":executable}},"broker":{"eventLedgerPath":root.join("events.jsonl")}});
-    server.store.lock().unwrap().sqlite.execute(
-        "UPDATE runtimes SET status='terminated',runtime_state_json=? WHERE runtime_id='rt'",
-        [state.to_string()],
-    )?;
+    server.write(|db| {
+        db.sqlite.execute(
+            "UPDATE runtimes SET status='terminated',runtime_state_json=? WHERE runtime_id='rt'",
+            [state.to_string()],
+        )
+    })?;
     Ok(())
 }
 

@@ -242,43 +242,21 @@ pub async fn serve(role: Role) -> Result<()> {
     let writer = accounting.writer(state.clone());
     let (stop_writer, writer_stopped) = tokio::sync::oneshot::channel::<()>();
     let writer_task = tokio::spawn(writer.run(writer_stopped));
-    let server = Arc::new(Server {
-        command_targets,
-        accounting,
-        store: store_lock::StoreLock::new(store),
-        session_read_walks: Default::default(),
-        brokers: Mutex::new(HashMap::new()),
-        participant_work: Mutex::new(HashSet::new()),
-        participant_host_requests: Mutex::new(HashMap::new()),
-        seat_gates: Mutex::new(HashMap::new()),
-        projection: Mutex::new(projection::Memory::default()),
-        subscribers: Mutex::new(subscribers::Registry::default()),
-        seat_streams: Mutex::new(tokio::task::JoinSet::new()),
-        wrkq: ledger::Client::default(),
-        publication: publication::State::default(),
-        handoff: handoff::State::default(),
-        self_restart: self_restart::State::default(),
-        seat_restart: Default::default(),
-        controller: controller::State::default(),
-        owner_writes: writes::OwnerWrites::default(),
-        transcript: transcript::State::default(),
-        reaped: Mutex::new(HashSet::new()),
-        ledger: tokio::sync::watch::Sender::new(0),
-        event_head,
-        continuity_generation,
-        lifecycle: lifecycle::State::new(&runtime, !front),
-        probing: Mutex::new(HashSet::new()),
-        literal: Mutex::new(HashMap::new()),
-        attached: Mutex::new(HashMap::new()),
-        runtime,
-        federation,
-        front,
-        state,
-        release,
-        event_loop: Default::default(),
-        started_at,
-        started: Instant::now(),
-    });
+    let server = Arc::new(Server::new(
+        store_lock::StoreLock::new(store),
+        store_lock::ServerInit {
+            command_targets,
+            accounting,
+            event_head,
+            continuity_generation,
+            runtime,
+            federation,
+            front,
+            state,
+            release,
+            started_at,
+        },
+    ));
     store_lock::start_accounting(&server);
     status_runtime::start(&server);
     startup_phase("server_state", state_started);

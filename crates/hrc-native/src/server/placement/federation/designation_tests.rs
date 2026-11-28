@@ -87,15 +87,16 @@ fn node(
 }
 
 fn runtime(server: &Shared, scope: &str, id: &str, status: &str) -> anyhow::Result<()> {
-    let mut db = server.store.lock().unwrap();
-    let session = db.create_session(scope, "main")?.0;
-    let now = hrc_store::timestamp();
-    db.sqlite.execute(
-        "INSERT INTO runtimes(runtime_id,host_session_id,scope_ref,lane_ref,generation,transport,status,supports_inflight_input,created_at,updated_at)
-         VALUES(?,?,?,'main',1,'hrcpty',?,0,?,?)",
-        rusqlite::params![id, session["hostSessionId"].as_str(), scope, status, now, now],
-    )?;
-    Ok(())
+    server.write(|db| {
+        let session = db.create_session(scope, "main")?.0;
+        let now = hrc_store::timestamp();
+        db.sqlite.execute(
+            "INSERT INTO runtimes(runtime_id,host_session_id,scope_ref,lane_ref,generation,transport,status,supports_inflight_input,created_at,updated_at)
+             VALUES(?,?,?,'main',1,'hrcpty',?,0,?,?)",
+            rusqlite::params![id, session["hostSessionId"].as_str(), scope, status, now, now],
+        )?;
+        Ok(())
+    })
 }
 
 async fn designate(registry: u16, scope: &str) -> anyhow::Result<Value> {

@@ -571,28 +571,29 @@ mod tests {
     #[test]
     fn a_historical_mint_archives_the_displaced_successor() -> anyhow::Result<()> {
         let (_scratch, server) = crate::server::turns::admission::tests::server("off", false)?;
-        let mut db = server.store.lock().unwrap();
-        let scope = "agent:test:project:fixture";
-        let older = db.create_session(scope, "main")?.0;
-        let newer =
-            mint(&db.sqlite, &older, 2, None, None, json!({"created":true})).expect("successor");
-        let branch =
-            mint(&db.sqlite, &older, 3, None, None, json!({"created":true})).expect("branch");
-        let status = |host: &str| -> rusqlite::Result<String> {
-            db.sqlite.query_row(
-                "SELECT status FROM sessions WHERE host_session_id=?",
-                [host],
+        server.write(|db| {
+            let scope = "agent:test:project:fixture";
+            let older = db.create_session(scope, "main")?.0;
+            let newer = mint(&db.sqlite, &older, 2, None, None, json!({"created":true}))
+                .expect("successor");
+            let branch =
+                mint(&db.sqlite, &older, 3, None, None, json!({"created":true})).expect("branch");
+            let status = |host: &str| -> rusqlite::Result<String> {
+                db.sqlite.query_row(
+                    "SELECT status FROM sessions WHERE host_session_id=?",
+                    [host],
+                    |r| r.get(0),
+                )
+            };
+            assert_eq!(status(&newer)?, "archived");
+            assert_eq!(status(&branch)?, "active");
+            let active: i64 = db.sqlite.query_row(
+                "SELECT COUNT(*) FROM sessions WHERE scope_ref=? AND status='active'",
+                [scope],
                 |r| r.get(0),
-            )
-        };
-        assert_eq!(status(&newer)?, "archived");
-        assert_eq!(status(&branch)?, "active");
-        let active: i64 = db.sqlite.query_row(
-            "SELECT COUNT(*) FROM sessions WHERE scope_ref=? AND status='active'",
-            [scope],
-            |r| r.get(0),
-        )?;
-        assert_eq!(active, 1);
-        Ok(())
+            )?;
+            assert_eq!(active, 1);
+            Ok(())
+        })
     }
 }

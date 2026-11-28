@@ -545,15 +545,15 @@ mod tests {
             ),
             ("free", "adhoc", json!({"kind":"none"})),
         ];
-        {
-            let mut db = server.store.lock().unwrap();
+        server.write(|db| -> anyhow::Result<()> {
             for (task, _, work) in &cases {
                 let scope = format!("agent:cody:project:p:task:{task}");
                 db.create_session(&scope, "main")?;
                 assert!(db.set_seat_work(&scope, "main", work, 1)?.is_some());
             }
             db.refresh_seat_kinds("cody", &json!({"homes":{"primary":"local"}}))?;
-        }
+            Ok(())
+        })?;
         for peer in [false, true] {
             let request = Request::builder()
                 .uri(if peer {

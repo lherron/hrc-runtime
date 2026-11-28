@@ -6,27 +6,28 @@ const AT: &str = "2026-01-01T00:00:00.000Z";
 const SCOPE: &str = "agent:test:project:fixture";
 
 fn seed(server: &Shared, transport: &str, active: bool) -> Result<()> {
-    let mut store = server.store.lock().unwrap();
-    let session = store.create_session(SCOPE, "main")?.0;
-    let host = session["hostSessionId"].as_str().unwrap();
-    let db = &store.sqlite;
-    db.execute(
-        "INSERT INTO runtimes(runtime_id,host_session_id,scope_ref,lane_ref,generation,transport,status,supports_inflight_input,controller_kind,active_invocation_id,active_run_id,created_at,updated_at) VALUES('rt',?,?,'main',1,?,'ready',1,'harness-broker','inv',?,?,?)",
-        params![host, SCOPE, transport, active.then_some("run"), AT, AT],
-    )?;
-    db.execute(
-        "INSERT INTO broker_invocations(invocation_id,operation_id,runtime_id,broker_protocol,broker_driver,invocation_state,capabilities_json,spec_hash,start_request_hash,selected_profile_hash,spec_projection_json,created_at,updated_at) VALUES('inv','op','rt','harness-broker/0.2','claude-code-tmux','ready','{}','h','h','h','{}',?,?)",
-        params![AT, AT],
-    )?;
-    db.execute(
-        "INSERT INTO runs(run_id,host_session_id,runtime_id,scope_ref,lane_ref,generation,transport,status,accepted_at,updated_at,operation_id,invocation_id,dispatched_input_id,broker_submission_id) VALUES('run',?,'rt',?,'main',1,?,'accepted',?,?,'op','inv','sub','sub')",
-        params![host, SCOPE, transport, AT, AT],
-    )?;
-    db.execute(
-        "INSERT INTO submission_admissions(submission_id,run_id,runtime_id,invocation_id,door,admitted_at) VALUES('sub','run','rt','inv','steer',?)",
-        [AT],
-    )?;
-    Ok(())
+    server.write(|store| {
+        let session = store.create_session(SCOPE, "main")?.0;
+        let host = session["hostSessionId"].as_str().unwrap();
+        let db = &store.sqlite;
+        db.execute(
+            "INSERT INTO runtimes(runtime_id,host_session_id,scope_ref,lane_ref,generation,transport,status,supports_inflight_input,controller_kind,active_invocation_id,active_run_id,created_at,updated_at) VALUES('rt',?,?,'main',1,?,'ready',1,'harness-broker','inv',?,?,?)",
+            params![host, SCOPE, transport, active.then_some("run"), AT, AT],
+        )?;
+        db.execute(
+            "INSERT INTO broker_invocations(invocation_id,operation_id,runtime_id,broker_protocol,broker_driver,invocation_state,capabilities_json,spec_hash,start_request_hash,selected_profile_hash,spec_projection_json,created_at,updated_at) VALUES('inv','op','rt','harness-broker/0.2','claude-code-tmux','ready','{}','h','h','h','{}',?,?)",
+            params![AT, AT],
+        )?;
+        db.execute(
+            "INSERT INTO runs(run_id,host_session_id,runtime_id,scope_ref,lane_ref,generation,transport,status,accepted_at,updated_at,operation_id,invocation_id,dispatched_input_id,broker_submission_id) VALUES('run',?,'rt',?,'main',1,?,'accepted',?,?,'op','inv','sub','sub')",
+            params![host, SCOPE, transport, AT, AT],
+        )?;
+        db.execute(
+            "INSERT INTO submission_admissions(submission_id,run_id,runtime_id,invocation_id,door,admitted_at) VALUES('sub','run','rt','inv','steer',?)",
+            [AT],
+        )?;
+        Ok(())
+    })
 }
 
 fn envelope(seq: i64, kind: &str, payload: Value) -> Value {
@@ -38,7 +39,7 @@ async fn project(server: &Shared, event: &Value) -> Result<()> {
 }
 
 fn run(server: &Shared) -> Result<db::Run> {
-    Ok(db::run(&server.store.lock().unwrap().sqlite, "run")?.unwrap())
+    Ok(db::run(&server.read()?.sqlite, "run")?.unwrap())
 }
 
 #[tokio::test]
@@ -89,7 +90,7 @@ async fn non_landed_terminals_complete_the_submission_run() -> Result<()> {
         assert_eq!(row.status, status, "{disposition} ({reason})");
         assert_eq!(row.error_code.as_deref(), code, "{disposition} ({reason})");
         assert!(row.completed_at.is_some(), "{disposition} ({reason})");
-        let store = server.store.lock().unwrap();
+        let store = server.read()?;
         let actual: String = store.sqlite.query_row(
             "SELECT disposition FROM submission_admissions WHERE submission_id='sub'",
             [],
@@ -124,7 +125,7 @@ async fn teardown_lost_survives_invocation_exit() -> Result<()> {
     assert_eq!(exited.status, lost.status);
     assert_eq!(exited.error_code, lost.error_code);
     assert_eq!(exited.completed_at, lost.completed_at);
-    let store = server.store.lock().unwrap();
+    let store = server.read()?;
     let rt = db::runtime(&store.sqlite, "rt")?.unwrap();
     assert_eq!(rt.status, "crashed");
     assert!(rt.active_run_id.is_none());
@@ -179,7 +180,7 @@ async fn zombie_sweep_skips_pending_permission_until_it_closes() -> Result<()> {
     request["inputId"] = "sub".into();
     project(&server, &request).await?;
     let eligible = || -> Result<bool> {
-        let store = server.store.lock().unwrap();
+        let store = server.read()?;
         Ok(!candidates(&store.sqlite, i64::MAX)?.is_empty())
     };
     assert!(!eligible()?);
@@ -211,7 +212,7 @@ async fn zombie_withdraw_uses_admission_disposition_and_write_boundary() -> Resu
     let (_scratch, server) = server("off", false)?;
     seed(&server, "headless", false)?;
     let eligible = || -> Result<bool> {
-        let store = server.store.lock().unwrap();
+        let store = server.read()?;
         let run = db::run(&store.sqlite, "run")?.unwrap();
         Ok(unwritten_submission(&store.sqlite, &run)?.is_some())
     };
@@ -222,8 +223,7 @@ async fn zombie_withdraw_uses_admission_disposition_and_write_boundary() -> Resu
     )
     .await?;
     assert!(!eligible()?);
-    {
-        let store = server.store.lock().unwrap();
+    server.write(|store| -> Result<()> {
         store.sqlite.execute(
             "DELETE FROM broker_invocation_events WHERE type='input.accepted'",
             [],
@@ -232,7 +232,8 @@ async fn zombie_withdraw_uses_admission_disposition_and_write_boundary() -> Resu
             "UPDATE submission_admissions SET disposition='withdrawn' WHERE submission_id='sub'",
             [],
         )?;
-    }
+        Ok(())
+    })?;
     assert!(!eligible()?);
     Ok(())
 }
@@ -241,8 +242,7 @@ async fn zombie_withdraw_uses_admission_disposition_and_write_boundary() -> Resu
 async fn launch_carried_terminal_requires_its_admission() -> Result<()> {
     let (_scratch, server) = server("off", false)?;
     seed(&server, "headless", true)?;
-    {
-        let store = server.store.lock().unwrap();
+    server.write(|store| -> Result<()> {
         store.sqlite.execute(
             "UPDATE runs SET broker_submission_id=NULL, dispatched_input_id=NULL, correlation_json=? WHERE run_id='run'",
             [json!({"kind":"launch_carried_invoke_turn"}).to_string()],
@@ -250,7 +250,8 @@ async fn launch_carried_terminal_requires_its_admission() -> Result<()> {
         store
             .sqlite
             .execute("UPDATE broker_invocations SET run_id='run'", [])?;
-    }
+        Ok(())
+    })?;
     project(
         &server,
         &envelope(
@@ -298,15 +299,14 @@ async fn reconcile_settles_dead_broker_admission_found_off_lock() -> Result<()> 
     let dead = exited.id();
     exited.wait()?;
     let disposition = |server: &Shared| -> Result<Option<String>> {
-        let store = server.store.lock().unwrap();
+        let store = server.read()?;
         Ok(store.sqlite.query_row(
             "SELECT disposition FROM submission_admissions WHERE submission_id='sub'",
             [],
             |r| r.get(0),
         )?)
     };
-    {
-        let store = server.store.lock().unwrap();
+    server.write(|store| -> Result<()> {
         store.sqlite.execute(
             "UPDATE broker_invocations SET execution_format='format1', broker_pid=? WHERE invocation_id='inv'",
             [dead],
@@ -315,7 +315,8 @@ async fn reconcile_settles_dead_broker_admission_found_off_lock() -> Result<()> 
             "UPDATE runtimes SET status='crashed' WHERE runtime_id='rt'",
             [],
         )?;
-    }
+        Ok(())
+    })?;
     assert_eq!(disposition(&server)?, None);
     super::super::reconcile::once(&server, 0, false, 0)
         .await

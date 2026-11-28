@@ -23,8 +23,7 @@ fn fixture_on(
         Some(node) => server_on_node(node)?,
         None => server("off", false)?,
     };
-    {
-        let mut db = server.store.lock().unwrap();
+    server.write(|db| -> anyhow::Result<()> {
         for (id, scope, lane) in [
             ("caller", scope, "main"),
             ("own", scope, "alternate"),
@@ -33,7 +32,8 @@ fn fixture_on(
             let session = db.create_session(scope, lane)?.0;
             db.sqlite.execute("INSERT INTO runtimes(runtime_id,host_session_id,scope_ref,lane_ref,generation,transport,status,supports_inflight_input,controller_kind,runtime_state_json,created_at,updated_at) VALUES(?,?,?,?,1,'sdk','ready',0,'external','{\"lifecycleOwner\":\"external\"}','now','now')", rusqlite::params![id, session["hostSessionId"].as_str(), scope, lane])?;
         }
-    }
+        Ok(())
+    })?;
     credentials::reconcile(&server)?;
     let value = std::fs::read_to_string(server.runtime.join("lifecycle/caller.credential"))?;
     let mut headers = HeaderMap::new();
@@ -94,7 +94,7 @@ async fn terminate_operator_authority() -> anyhow::Result<()> {
         if expected == 403 {
             assert_eq!(value["error"]["code"], "server_lifecycle_refused");
             assert_eq!(value["error"]["detail"]["refusal"], "not_authorized");
-            let status: String = server.store.lock().unwrap().sqlite.query_row(
+            let status: String = server.read()?.sqlite.query_row(
                 "SELECT status FROM runtimes WHERE runtime_id='other'",
                 [],
                 |r| r.get(0),
@@ -121,7 +121,7 @@ async fn terminate_node_mable_seat() -> anyhow::Result<()> {
         let body = json!({"runtimeId":"other","dropContinuation":false});
         let (status, value) = call(&server, "/v1/terminate", body, headers).await?;
         assert_eq!(status, expected, "{node} {scope}: {value}");
-        let status: String = server.store.lock().unwrap().sqlite.query_row(
+        let status: String = server.read()?.sqlite.query_row(
             "SELECT status FROM runtimes WHERE runtime_id='other'",
             [],
             |r| r.get(0),
@@ -149,7 +149,7 @@ async fn terminate_own_seat_and_invalid_credentials() -> anyhow::Result<()> {
     )
     .await?;
     assert_eq!(status, 200, "{value}");
-    let status: String = server.store.lock().unwrap().sqlite.query_row(
+    let status: String = server.read()?.sqlite.query_row(
         "SELECT status FROM runtimes WHERE runtime_id='own'",
         [],
         |r| r.get(0),
@@ -176,10 +176,12 @@ async fn terminate_own_seat_and_invalid_credentials() -> anyhow::Result<()> {
                 );
             }
             "revoked" => {
-                server.store.lock().unwrap().sqlite.execute(
-                    "UPDATE runtimes SET status='terminated' WHERE runtime_id='caller'",
-                    [],
-                )?;
+                server.write(|db| {
+                    db.sqlite.execute(
+                        "UPDATE runtimes SET status='terminated' WHERE runtime_id='caller'",
+                        [],
+                    )
+                })?;
             }
             _ => unreachable!(),
         }
@@ -208,7 +210,7 @@ async fn unexposed_operator_routes_keep_legacy_admission() -> anyhow::Result<()>
         let (_scratch, server, mut headers) = fixture("agent:test:project:fixture:task:caller")?;
         // Even partial credentials must not introduce an authority rule here.
         headers.remove("x-hrc-lifecycle-credential");
-        let host: String = server.store.lock().unwrap().sqlite.query_row(
+        let host: String = server.read()?.sqlite.query_row(
             "SELECT host_session_id FROM runtimes WHERE runtime_id='other'",
             [],
             |r| r.get(0),
