@@ -414,7 +414,13 @@ impl History {
             .min(self.head.seq.saturating_add(1));
         let take = self.remaining.map_or(CHUNK_ROWS, |r| r.min(CHUNK_ROWS));
         let rows = {
-            let db = self.server.store.lock().unwrap();
+            // Read-only: a request-local snapshot, off the store mutex. Event
+            // pages and every lifecycle follower with news read through here.
+            let db = self.server.open_reader()?;
+            let _snapshot = db
+                .sqlite
+                .unchecked_transaction()
+                .map_err(anyhow::Error::from)?;
             let current = db.ledger_incarnation()?;
             if current != self.head.incarnation {
                 return Err(ApiError::domain(
@@ -548,13 +554,10 @@ mod tests {
         let (status, body) = get(&server, "/v1/events?fromSeq=1").await?;
         assert_eq!(status, 200);
         assert_eq!(body, all, "chunked history is not byte-identical");
+        // History chunks read on a request-local snapshot: none of them may
+        // take the store mutex.
         let holds = holds_at(&seen, "lifecycle_events.rs");
-        assert!(
-            holds.len() > all.lines().count() / 4,
-            "{} lifecycle_events.rs holds for {} rows: {holds:?}",
-            holds.len(),
-            all.lines().count()
-        );
+        assert!(holds.is_empty(), "history took the store lock: {holds:?}");
 
         // A sparse filter still returns exactly its rows, across empty windows.
         let (_, body) = get(&server, "/v1/events?category=input").await?;
@@ -602,12 +605,7 @@ mod tests {
             .collect();
         assert_eq!(replayed, all, "follow replay is not the history rows");
         let holds = holds_at(&seen, "lifecycle_events.rs");
-        assert!(
-            holds.len() > all.lines().count() / 4,
-            "{} lifecycle_events.rs holds for a {}-row follow replay: {holds:?}",
-            holds.len(),
-            all.lines().count()
-        );
+        assert!(holds.is_empty(), "follow replay took the store lock: {holds:?}");
         Ok(())
     }
 }
