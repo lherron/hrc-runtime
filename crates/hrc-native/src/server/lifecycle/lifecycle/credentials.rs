@@ -92,7 +92,7 @@ fn mint(directory: &Path, mut binding: Binding) -> Result<Held> {
 }
 pub fn reconcile(server: &Server) -> Result<()> {
     let rows = {
-        let store = server.store.lock().unwrap();
+        let store = server.read()?;
         let mut q = store
             .sqlite
             .prepare("SELECT runtime_id,scope_ref,generation,status FROM runtimes WHERE status IN ('starting','ready','busy','awaiting_input','stopping') AND scope_ref LIKE 'agent:%'")?;
@@ -177,7 +177,7 @@ pub fn reconcile(server: &Server) -> Result<()> {
 /// commits cannot change a credential binding. verify_caller still checks the
 /// current runtime row authoritatively on every presentation.
 fn lifecycle_dirty(server: &Server, after: &mut i64) -> Result<bool> {
-    let db = server.store.lock().unwrap();
+    let db = server.read()?;
     let head = db.allocated_hrc_seq()?;
     let dirty = db.sqlite.query_row(
         "SELECT EXISTS(SELECT 1 FROM hrc_events WHERE hrc_seq>?1 AND hrc_seq<=?2 AND event_kind GLOB 'runtime.*' AND evidence_origin IS NULL)",
@@ -189,7 +189,7 @@ fn lifecycle_dirty(server: &Server, after: &mut i64) -> Result<bool> {
 pub fn start(server: &Shared) -> Result<()> {
     // Subscribe before the snapshot, so no runtime commit can fall in a gap.
     let mut committed = server.ledger.subscribe();
-    let mut after = server.store.lock().unwrap().allocated_hrc_seq()?;
+    let mut after = server.read()?.allocated_hrc_seq()?;
     reconcile(server)?;
     let weak = Arc::downgrade(server);
     tokio::spawn(async move {
@@ -200,7 +200,7 @@ pub fn start(server: &Shared) -> Result<()> {
                 changed = committed.changed() => {
                     if changed.is_err() { break; }
                     // One reconcile per burst of commits: each run scans the
-                    // runtimes table under the store mutex, and the ledger
+                    // runtimes table on a fresh snapshot, and the ledger
                     // commits several times a second. Callers presenting a
                     // credential are re-checked for liveness at verify time.
                     tokio::time::sleep(RECONCILE_COALESCE).await;
@@ -297,9 +297,8 @@ pub fn verify_caller(server: &Server, headers: &HeaderMap) -> Result<Binding, Re
             scope.clone(),
         )
     })?;
-    let is_live = {
-        let store = server.store.lock().unwrap();
-        store
+    let runtime_row = server.read().and_then(|store| {
+        Ok(store
             .sqlite
             .query_row(
                 "SELECT scope_ref,generation,status FROM runtimes WHERE runtime_id=?",
@@ -312,13 +311,14 @@ pub fn verify_caller(server: &Server, headers: &HeaderMap) -> Result<Binding, Re
                     ))
                 },
             )
-            .optional()
-            .ok()
-            .flatten()
-            .is_some_and(|(scope, generation, status)| {
-                scope == binding.scope_ref && generation == binding.generation && live(&status)
-            })
-    };
+            .optional()?)
+    });
+    let is_live = runtime_row
+        .ok()
+        .flatten()
+        .is_some_and(|(scope, generation, status)| {
+            scope == binding.scope_ref && generation == binding.generation && live(&status)
+        });
     if !is_live {
         return Err(refuse(
             "credential_revoked",

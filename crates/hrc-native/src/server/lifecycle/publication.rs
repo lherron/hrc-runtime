@@ -154,7 +154,7 @@ async fn pump_server(server: &Shared, node: &str) -> Result<()> {
         .is_production_owner(&server.runtime, &server.state);
     loop {
         let (rows, incarnation) = {
-            let db = server.store.lock().unwrap();
+            let db = server.read()?;
             (
                 db.publication_events(SERVER, SERVER_KINDS, 50)?,
                 db.ledger_incarnation()?,
@@ -184,11 +184,7 @@ async fn pump_server(server: &Shared, node: &str) -> Result<()> {
             let Some(_write) = server.owner_writes.enter() else {
                 return Ok(());
             };
-            server
-                .store
-                .lock()
-                .unwrap()
-                .publication_advance(SERVER, e["hrcSeq"].as_i64().unwrap())?;
+            server.write(|db| db.publication_advance(SERVER, e["hrcSeq"].as_i64().unwrap()))?;
         }
         if rows.len() < 50 {
             return Ok(());
@@ -242,7 +238,7 @@ fn session_fact(e: &Value, kind: &str, a: Value, key: String, line: String) -> V
 }
 fn birth_fact(server: &Shared, e: &Value, node: &str) -> Result<Option<Value>> {
     let s = {
-        let db = server.store.lock().unwrap();
+        let db = server.read()?;
         let Some(mut s) = db.session(e["hostSessionId"].as_str().unwrap_or(""))? else {
             return Ok(None);
         };
@@ -503,9 +499,7 @@ async fn pump_session(server: &Shared, node: &str) -> Result<()> {
     let _serial = server.publication.session.lock().await;
     loop {
         let rows = server
-            .store
-            .lock()
-            .unwrap()
+            .read()?
             .publication_events(SESSION, SESSION_KINDS, 200)?;
         for e in &rows {
             let retained = e.get("evidenceOrigin").is_some();
@@ -528,9 +522,7 @@ async fn pump_session(server: &Shared, node: &str) -> Result<()> {
                     || runtime_end(kind).is_some()
                 {
                     let prior = server
-                        .store
-                        .lock()
-                        .unwrap()
+                        .read()?
                         .publication_prior_turn(runtime, e["hrcSeq"].as_i64().unwrap())?;
                     if let Some(start) = prior {
                         let end = match kind {
@@ -556,11 +548,7 @@ async fn pump_session(server: &Shared, node: &str) -> Result<()> {
             let Some(_write) = server.owner_writes.enter() else {
                 return Ok(());
             };
-            server
-                .store
-                .lock()
-                .unwrap()
-                .publication_advance(SESSION, e["hrcSeq"].as_i64().unwrap())?;
+            server.write(|db| db.publication_advance(SESSION, e["hrcSeq"].as_i64().unwrap()))?;
         }
         if rows.len() < 200 {
             return Ok(());
@@ -574,9 +562,10 @@ pub fn start(server: &Shared) -> Result<()> {
         let Some(_write) = server.owner_writes.enter() else {
             return Ok(());
         };
-        let db = server.store.lock().unwrap();
-        db.publication_initialize(SERVER)?;
-        db.publication_initialize(SESSION)?;
+        server.write(|db| {
+            db.publication_initialize(SERVER)?;
+            db.publication_initialize(SESSION)
+        })?;
     }
     let node = node_id(server);
     for stream in [SERVER, SESSION] {

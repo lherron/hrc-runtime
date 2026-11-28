@@ -120,11 +120,7 @@ fn origin(server: &Shared, from: &Value) -> Result<Option<Value>, ApiError> {
         }));
     }
     let (scope, lane) = runtime_views::parse_target_ref(from["sessionRef"].as_str().unwrap())?;
-    let identity = server
-        .store
-        .lock()
-        .unwrap()
-        .optional_identity(scope, lane)?;
+    let identity = server.read()?.optional_identity(scope, lane)?;
     Ok(identity.and_then(|i| {
         i["agentId"]
             .as_str()
@@ -162,10 +158,10 @@ async fn deliver(
     if let Some(parent) = parent {
         input["rootMessageId"] = parent["rootMessageId"].clone();
     }
-    let record = server.store.lock().unwrap().message_insert(&input)?;
+    let record = server.write(|db| db.message_insert(&input))?;
     let id = record["messageId"].as_str().unwrap();
     server.ledger_committed();
-    server.store.lock().unwrap().message_update_execution(id,&json!({"sessionRef":session_ref,"hostSessionId":session["hostSessionId"],"generation":session["generation"]}))?;
+    server.write(|db| db.message_update_execution(id,&json!({"sessionRef":session_ref,"hostSessionId":session["hostSessionId"],"generation":session["generation"]})))?;
     server
         .handoff
         .active
@@ -178,7 +174,7 @@ async fn deliver(
         let receipt=turns::route::execute(server,plan,&options).await?;
         if receipt["runId"].as_str().is_none() || receipt["runtimeId"].as_str().is_none() {return Err(ApiError::from(anyhow::anyhow!("dispatch response has no run/runtime identity")));}
         let mode=match receipt["transport"].as_str() {Some("tmux")=>"interactive",Some("sdk")=>"nonInteractive",_=>"headless"};
-        server.store.lock().unwrap().message_update_execution(id,&json!({"state":if receipt["status"]=="completed" {"completed"} else {"started"},"mode":mode,"sessionRef":session_ref,"hostSessionId":receipt["hostSessionId"],"generation":receipt["generation"],"runtimeId":receipt["runtimeId"],"runId":receipt["runId"],"transport":receipt["transport"]}))?;
+        server.write(|db| db.message_update_execution(id,&json!({"state":if receipt["status"]=="completed" {"completed"} else {"started"},"mode":mode,"sessionRef":session_ref,"hostSessionId":receipt["hostSessionId"],"generation":receipt["generation"],"runtimeId":receipt["runtimeId"],"runId":receipt["runId"],"transport":receipt["transport"]})))?;
         server.handoff.active.lock().unwrap().insert(run_id.into(),(id.into(),true));
         server.ledger_committed();
         let mut response=json!({"messageId":id,"sessionRef":session_ref,"scopeRef":scope,"laneRef":lane,"hostSessionId":receipt["hostSessionId"],"runtimeId":receipt["runtimeId"],"runId":receipt["runId"],"generation":receipt["generation"],"fromSeq":plan.observation.lifecycle_from_seq});
@@ -187,10 +183,12 @@ async fn deliver(
     }.await;
     if let Err(error) = &delivered {
         server.handoff.active.lock().unwrap().remove(run_id);
-        server.store.lock().unwrap().message_update_execution(
-            id,
-            &json!({"state":"failed","errorCode":error.code,"errorMessage":error.message}),
-        )?;
+        server.write(|db| {
+            db.message_update_execution(
+                id,
+                &json!({"state":"failed","errorCode":error.code,"errorMessage":error.message}),
+            )
+        })?;
     }
     delivered
 }
@@ -206,19 +204,12 @@ pub async fn submit(server: &Shared, body: &Value) -> Result<Value, ApiError> {
     }
     let reference = request.to["sessionRef"].as_str().unwrap();
     let parent = if let Some(id) = &request.reply_to {
-        Some(
-            server
-                .store
-                .lock()
-                .unwrap()
-                .message_by_id(id)?
-                .ok_or_else(|| {
-                    ApiError::bad(
-                        format!("unknown replyToMessageId \"{id}\""),
-                        Some(json!({"field":"replyToMessageId","replyToMessageId":id})),
-                    )
-                })?,
-        )
+        Some(server.read()?.message_by_id(id)?.ok_or_else(|| {
+            ApiError::bad(
+                format!("unknown replyToMessageId \"{id}\""),
+                Some(json!({"field":"replyToMessageId","replyToMessageId":id})),
+            )
+        })?)
     } else {
         None
     };

@@ -8,7 +8,7 @@ use std::time::{Duration, Instant};
 fn in_flight(server: &Server, request: &Request, accepted: bool) -> Result<Vec<Value>, ApiError> {
     let cutoff = (chrono::Utc::now() - chrono::Duration::minutes(5))
         .to_rfc3339_opts(chrono::SecondsFormat::Millis, true);
-    let store = server.store.lock().unwrap();
+    let store = server.read()?;
     let sql = if accepted {
         "SELECT r.run_id,r.scope_ref,r.lane_ref,r.status,r.transport,r.started_at FROM runs r LEFT JOIN runtimes rt ON rt.active_run_id=r.run_id WHERE r.status IN ('accepted','started','running') AND r.completed_at IS NULL AND ((rt.status='busy' AND (SELECT e.ts FROM hrc_events e WHERE e.runtime_id=rt.runtime_id ORDER BY e.hrc_seq DESC LIMIT 1)>?1) OR (r.status='accepted' AND r.updated_at>?1)) ORDER BY COALESCE(r.started_at,r.updated_at) ASC"
     } else {

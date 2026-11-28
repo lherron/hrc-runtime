@@ -17,134 +17,135 @@ fn pump(server: &Shared, cursor: &mut Option<i64>) -> Result<()> {
         return Ok(());
     };
     let active = server.handoff.active.lock().unwrap().clone();
-    let db = server.store.lock().unwrap();
-    let mut requests = HashMap::new();
-    let mut add = |request: Value| {
-        if let Some(run) = request["execution"]["runId"].as_str() {
-            requests.insert(run.to_owned(), request);
-        }
-    };
-    let next = match *cursor {
-        None => {
-            let head: i64 = db.sqlite.query_row(
-                "SELECT COALESCE(MAX(hrc_seq),0) FROM hrc_events",
-                [],
-                |r| r.get(0),
-            )?;
-            let mut after = 0;
-            loop {
-                let page = db.pending_handoffs(after, 100)?;
-                let Some(last) = page.last().and_then(|m| m["messageSeq"].as_i64()) else {
-                    break;
-                };
-                after = last;
-                page.into_iter().for_each(&mut add);
+    server.write(|db| {
+        let mut requests = HashMap::new();
+        let mut add = |request: Value| {
+            if let Some(run) = request["execution"]["runId"].as_str() {
+                requests.insert(run.to_owned(), request);
             }
-            head
-        }
-        Some(from) => {
-            let mut head = from;
-            let mut terminal = db.sqlite.prepare_cached(&format!("SELECT hrc_seq, run_id FROM hrc_events WHERE {TERMINAL} AND hrc_seq>? AND run_id IS NOT NULL ORDER BY hrc_seq ASC"))?;
-            for row in terminal.query_map([from], |r| {
-                Ok((r.get::<_, i64>(0)?, r.get::<_, String>(1)?))
-            })? {
-                let (seq, run) = row?;
-                head = seq;
-                if let Some(request) = db.pending_handoff_for_run(&run)? {
-                    add(request);
+        };
+        let next = match *cursor {
+            None => {
+                let head: i64 = db.sqlite.query_row(
+                    "SELECT COALESCE(MAX(hrc_seq),0) FROM hrc_events",
+                    [],
+                    |r| r.get(0),
+                )?;
+                let mut after = 0;
+                loop {
+                    let page = db.pending_handoffs(after, 100)?;
+                    let Some(last) = page.last().and_then(|m| m["messageSeq"].as_i64()) else {
+                        break;
+                    };
+                    after = last;
+                    page.into_iter().for_each(&mut add);
                 }
+                head
             }
-            head
-        }
-    };
-    for (run, (id, ready)) in active {
-        if ready && let Some(request) = db.message_by_id(&id)? {
-            requests.insert(run, request);
-        }
-    }
-    let mut ready = Vec::new();
-    for (run_id, request) in requests {
-        let terminal = db.lifecycle_rows(&format!("SELECT * FROM hrc_events WHERE run_id=? AND {TERMINAL} ORDER BY hrc_seq ASC LIMIT 1"),&[Sql::Text(run_id.clone())],true)?.pop();
-        if let Some(event) = terminal {
-            ready.push((run_id, request, event));
-        }
-    }
-    ready.sort_by_key(|(_, _, event)| event["hrcSeq"].as_i64());
-    for (run_id, request, event) in ready {
-        let run = db::run(&db.sqlite, &run_id)?;
-        let error: Option<String> = db
-            .sqlite
-            .query_row(
-                "SELECT error_message FROM runs WHERE run_id=?",
-                [&run_id],
-                |r| r.get(0),
-            )
-            .optional()?
-            .flatten();
-        let failed = event["errorCode"].as_str().is_some_and(|s| !s.is_empty())
-            || run.as_ref().is_some_and(|r| r.status == "failed");
-        let state = if failed { "failed" } else { "completed" };
-        let execution = &request["execution"];
-        let marker = &request["metadataJson"]["semanticTurnHandoff"];
-        let mode = execution["mode"]
-            .as_str()
-            .filter(|s| matches!(*s, "headless" | "interactive" | "nonInteractive"))
-            .unwrap_or("interactive");
-        let session_ref = execution["sessionRef"].as_str().unwrap_or("");
-        let runtime = event["runtimeId"]
-            .as_str()
-            .or_else(|| run.as_ref().and_then(|r| r.runtime_id.as_deref()))
-            .or_else(|| execution["runtimeId"].as_str());
-        let transport = event["transport"]
-            .as_str()
-            .or_else(|| run.as_ref().map(|r| r.transport.as_str()))
-            .or_else(|| execution["transport"].as_str())
-            .filter(|s| matches!(*s, "sdk" | "tmux" | "headless"));
-        let mut response_execution = json!({"state":state,"mode":mode,"sessionRef":session_ref,"hostSessionId":event["hostSessionId"],"generation":event["generation"]});
-        if let Some(runtime) = runtime.filter(|s| !s.is_empty()) {
-            response_execution["runtimeId"] = runtime.into();
-        }
-        response_execution["runId"] = run_id.clone().into();
-        if let Some(transport) = transport {
-            response_execution["transport"] = transport.into();
-        }
-        let mut patch = json!({"state":state});
-        if let Some(code) = event["errorCode"].as_str().filter(|s| !s.is_empty()) {
-            response_execution["errorCode"] = code.into();
-            patch["errorCode"] = code.into();
-        }
-        if let Some(error) = error.filter(|s| !s.is_empty()) {
-            response_execution["errorMessage"] = error.clone().into();
-            patch["errorMessage"] = error.into();
-        }
-        let mut response = json!({"messageId":format!("msg-{}",uuid::Uuid::new_v4()),"kind":"dm","phase":"response","from":request["to"],"to":marker.get("respondTo").unwrap_or(&request["from"]),"body":turns::final_message(&db.sqlite,&run_id)?,"replyToMessageId":request["messageId"],"rootMessageId":request["rootMessageId"],"execution":response_execution});
-        if request["metadataJson"]["federationIngress"]["delivery"]["semanticTurnHandoff"]
-            .is_object()
-            && let (Some(runtime), Some(transport)) = (runtime, transport)
-        {
-            let mut signal = json!({"version":1,"type":"terminal","sourceHrcSeq":event["hrcSeq"],"identity":{"sessionRef":session_ref,"scopeRef":event["scopeRef"],"laneRef":event["laneRef"],"hostSessionId":event["hostSessionId"],"runtimeId":runtime,"runId":run_id,"generation":event["generation"],"mode":mode,"transport":transport},"outcome":state});
-            for key in ["errorCode", "errorMessage"] {
-                if let Some(v) = patch.get(key) {
-                    signal[key] = v.clone();
+            Some(from) => {
+                let mut head = from;
+                let mut terminal = db.sqlite.prepare_cached(&format!("SELECT hrc_seq, run_id FROM hrc_events WHERE {TERMINAL} AND hrc_seq>? AND run_id IS NOT NULL ORDER BY hrc_seq ASC"))?;
+                for row in terminal.query_map([from], |r| {
+                    Ok((r.get::<_, i64>(0)?, r.get::<_, String>(1)?))
+                })? {
+                    let (seq, run) = row?;
+                    head = seq;
+                    if let Some(request) = db.pending_handoff_for_run(&run)? {
+                        add(request);
+                    }
                 }
+                head
             }
-            response["metadataJson"] = json!({"federationSemanticTurnSignal":signal});
+        };
+        for (run, (id, ready)) in active {
+            if ready && let Some(request) = db.message_by_id(&id)? {
+                requests.insert(run, request);
+            }
         }
-        let request_id = request["messageId"].as_str().unwrap();
-        if db.finalize_handoff(request_id, &response, &patch)? {
-            stderr_json(
-                "info",
-                "messages",
-                "semantic_turn_handoff.response_finalized",
-                json!({"requestMessageId":request_id,"responseMessageId":response["messageId"],"runId":run_id,"state":state}),
-            );
-            server.ledger_committed();
+        let mut ready = Vec::new();
+        for (run_id, request) in requests {
+            let terminal = db.lifecycle_rows(&format!("SELECT * FROM hrc_events WHERE run_id=? AND {TERMINAL} ORDER BY hrc_seq ASC LIMIT 1"),&[Sql::Text(run_id.clone())],true)?.pop();
+            if let Some(event) = terminal {
+                ready.push((run_id, request, event));
+            }
         }
-        server.handoff.active.lock().unwrap().remove(&run_id);
-    }
-    // Advanced only after every candidate finalized, so a failed pass retries.
-    *cursor = Some(next);
-    Ok(())
+        ready.sort_by_key(|(_, _, event)| event["hrcSeq"].as_i64());
+        for (run_id, request, event) in ready {
+            let run = db::run(&db.sqlite, &run_id)?;
+            let error: Option<String> = db
+                .sqlite
+                .query_row(
+                    "SELECT error_message FROM runs WHERE run_id=?",
+                    [&run_id],
+                    |r| r.get(0),
+                )
+                .optional()?
+                .flatten();
+            let failed = event["errorCode"].as_str().is_some_and(|s| !s.is_empty())
+                || run.as_ref().is_some_and(|r| r.status == "failed");
+            let state = if failed { "failed" } else { "completed" };
+            let execution = &request["execution"];
+            let marker = &request["metadataJson"]["semanticTurnHandoff"];
+            let mode = execution["mode"]
+                .as_str()
+                .filter(|s| matches!(*s, "headless" | "interactive" | "nonInteractive"))
+                .unwrap_or("interactive");
+            let session_ref = execution["sessionRef"].as_str().unwrap_or("");
+            let runtime = event["runtimeId"]
+                .as_str()
+                .or_else(|| run.as_ref().and_then(|r| r.runtime_id.as_deref()))
+                .or_else(|| execution["runtimeId"].as_str());
+            let transport = event["transport"]
+                .as_str()
+                .or_else(|| run.as_ref().map(|r| r.transport.as_str()))
+                .or_else(|| execution["transport"].as_str())
+                .filter(|s| matches!(*s, "sdk" | "tmux" | "headless"));
+            let mut response_execution = json!({"state":state,"mode":mode,"sessionRef":session_ref,"hostSessionId":event["hostSessionId"],"generation":event["generation"]});
+            if let Some(runtime) = runtime.filter(|s| !s.is_empty()) {
+                response_execution["runtimeId"] = runtime.into();
+            }
+            response_execution["runId"] = run_id.clone().into();
+            if let Some(transport) = transport {
+                response_execution["transport"] = transport.into();
+            }
+            let mut patch = json!({"state":state});
+            if let Some(code) = event["errorCode"].as_str().filter(|s| !s.is_empty()) {
+                response_execution["errorCode"] = code.into();
+                patch["errorCode"] = code.into();
+            }
+            if let Some(error) = error.filter(|s| !s.is_empty()) {
+                response_execution["errorMessage"] = error.clone().into();
+                patch["errorMessage"] = error.into();
+            }
+            let mut response = json!({"messageId":format!("msg-{}",uuid::Uuid::new_v4()),"kind":"dm","phase":"response","from":request["to"],"to":marker.get("respondTo").unwrap_or(&request["from"]),"body":turns::final_message(&db.sqlite,&run_id)?,"replyToMessageId":request["messageId"],"rootMessageId":request["rootMessageId"],"execution":response_execution});
+            if request["metadataJson"]["federationIngress"]["delivery"]["semanticTurnHandoff"]
+                .is_object()
+                && let (Some(runtime), Some(transport)) = (runtime, transport)
+            {
+                let mut signal = json!({"version":1,"type":"terminal","sourceHrcSeq":event["hrcSeq"],"identity":{"sessionRef":session_ref,"scopeRef":event["scopeRef"],"laneRef":event["laneRef"],"hostSessionId":event["hostSessionId"],"runtimeId":runtime,"runId":run_id,"generation":event["generation"],"mode":mode,"transport":transport},"outcome":state});
+                for key in ["errorCode", "errorMessage"] {
+                    if let Some(v) = patch.get(key) {
+                        signal[key] = v.clone();
+                    }
+                }
+                response["metadataJson"] = json!({"federationSemanticTurnSignal":signal});
+            }
+            let request_id = request["messageId"].as_str().unwrap();
+            if db.finalize_handoff(request_id, &response, &patch)? {
+                stderr_json(
+                    "info",
+                    "messages",
+                    "semantic_turn_handoff.response_finalized",
+                    json!({"requestMessageId":request_id,"responseMessageId":response["messageId"],"runId":run_id,"state":state}),
+                );
+                server.ledger_committed();
+            }
+            server.handoff.active.lock().unwrap().remove(&run_id);
+        }
+        // Advanced only after every candidate finalized, so a failed pass retries.
+        *cursor = Some(next);
+        Ok(())
+    })
 }
 
 pub fn start(server: &Shared) {

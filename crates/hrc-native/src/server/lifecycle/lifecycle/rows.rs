@@ -63,43 +63,44 @@ fn release_identity() -> Result<(Value, Value)> {
 }
 pub fn boot(server: &Server) -> Result<()> {
     let (release, commit) = release_identity()?;
-    let store = server.store.lock().unwrap();
-    let tx = store.sqlite.unchecked_transaction()?;
-    let previous = latest(&tx, None, None)?;
-    let previous_pid = previous.as_ref().and_then(|p| {
-        number(
-            &p.payload[if p.kind == "server.previous_exit_unattributed" {
-                "previousPid"
-            } else {
-                "pid"
-            }],
-        )
-    });
-    if previous
-        .as_ref()
-        .is_some_and(|p| matches!(p.kind.as_str(), "server.started" | "server.shutting_down"))
-    {
-        events::append(
-            &tx,
-            "server.previous_exit_unattributed",
-            &ev(),
-            &json!({"previousPid":previous_pid}),
-        )?;
-    }
-    let schema = tx
-        .query_row(
-            "SELECT id FROM hrc_migrations ORDER BY id DESC LIMIT 1",
-            [],
-            |r| r.get::<_, String>(0),
-        )
-        .optional()?;
-    let mut payload = json!({"pid":std::process::id(),"release":release,"sourceCommit":commit,"storeSchema":schema,"processStartedAt":server.started_at});
-    if let Some(pid) = previous_pid {
-        payload["previousPid"] = pid;
-    }
-    events::append(&tx, "server.started", &ev(), &payload)?;
-    tx.commit()?;
-    drop(store);
+    server.write(|store| -> Result<()> {
+        let tx = store.sqlite.unchecked_transaction()?;
+        let previous = latest(&tx, None, None)?;
+        let previous_pid = previous.as_ref().and_then(|p| {
+            number(
+                &p.payload[if p.kind == "server.previous_exit_unattributed" {
+                    "previousPid"
+                } else {
+                    "pid"
+                }],
+            )
+        });
+        if previous
+            .as_ref()
+            .is_some_and(|p| matches!(p.kind.as_str(), "server.started" | "server.shutting_down"))
+        {
+            events::append(
+                &tx,
+                "server.previous_exit_unattributed",
+                &ev(),
+                &json!({"previousPid":previous_pid}),
+            )?;
+        }
+        let schema = tx
+            .query_row(
+                "SELECT id FROM hrc_migrations ORDER BY id DESC LIMIT 1",
+                [],
+                |r| r.get::<_, String>(0),
+            )
+            .optional()?;
+        let mut payload = json!({"pid":std::process::id(),"release":release,"sourceCommit":commit,"storeSchema":schema,"processStartedAt":server.started_at});
+        if let Some(pid) = previous_pid {
+            payload["previousPid"] = pid;
+        }
+        events::append(&tx, "server.started", &ev(), &payload)?;
+        tx.commit()?;
+        Ok(())
+    })?;
     server.ledger_committed();
     Ok(())
 }
@@ -114,11 +115,12 @@ pub fn begin_shutdown(server: &Server, attribution: &Value) -> Result<()> {
     }
     let mut payload = attribution.clone();
     payload["pid"] = std::process::id().into();
-    let store = server.store.lock().unwrap();
-    let tx = store.sqlite.unchecked_transaction()?;
-    let seq = events::append(&tx, "server.shutting_down", &ev(), &payload)?;
-    tx.commit()?;
-    drop(store);
+    let seq = server.write(|store| -> Result<_> {
+        let tx = store.sqlite.unchecked_transaction()?;
+        let seq = events::append(&tx, "server.shutting_down", &ev(), &payload)?;
+        tx.commit()?;
+        Ok(seq)
+    })?;
     *server.lifecycle.shutting_down_seq.lock().unwrap() = Some(seq);
     server.ledger_committed();
     Ok(())
@@ -137,11 +139,12 @@ pub fn stopped(server: &Server) -> Result<()> {
         .context("shutdown has no attribution")?;
     payload["pid"] = std::process::id().into();
     payload["shuttingDownHrcSeq"] = seq.into();
-    let store = server.store.lock().unwrap();
-    let tx = store.sqlite.unchecked_transaction()?;
-    events::append(&tx, "server.stopped", &ev(), &payload)?;
-    tx.commit()?;
-    drop(store);
+    server.write(|store| -> Result<()> {
+        let tx = store.sqlite.unchecked_transaction()?;
+        events::append(&tx, "server.stopped", &ev(), &payload)?;
+        tx.commit()?;
+        Ok(())
+    })?;
     server.ledger_committed();
     Ok(())
 }

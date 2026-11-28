@@ -128,10 +128,7 @@ pub fn append(
     ev: &events::Ev,
     payload: &Value,
 ) -> Result<(), ApiError> {
-    {
-        let db = server.store.lock().unwrap();
-        events::append(&db.sqlite, kind, ev, payload)?;
-    }
+    server.write(|db| events::append(&db.sqlite, kind, ev, payload))?;
     server.ledger_committed();
     Ok(())
 }
@@ -156,7 +153,7 @@ pub async fn handle(
         )
     })?;
     let (runtime, session) = {
-        let db = server.store.lock().unwrap();
+        let db = server.read()?;
         let Some(runtime) = db.runtime(&binding.runtime_id)? else {
             return Err(refused(
                 "credential_revoked",
@@ -202,7 +199,7 @@ pub async fn handle(
 
     // Validate at the authority boundary, after resolving the credential's seat.
     // Only an HRC seat handoff arms a restart; wrkq's own handoff rows are not read.
-    let stored = server.store.lock().unwrap().seat_handoff(&handoff_id)?;
+    let stored = server.read()?.seat_handoff(&handoff_id)?;
     let Some(value) = stored else {
         return Err(refused(
             "handoff_not_found",
@@ -326,7 +323,7 @@ pub fn arm(
 
 /// The bound turn's committed, non-retained terminal after `floor`, if any.
 fn landed(server: &Shared, intent: &Intent, floor: i64) -> Result<Option<i64>, ApiError> {
-    let db = server.store.lock().unwrap();
+    let db = server.read()?;
     let mut stmt = db
         .sqlite
         .prepare(
@@ -428,7 +425,7 @@ fn string(v: &Value) -> String {
     }
 }
 pub fn high_water(server: &Shared) -> Result<i64, ApiError> {
-    let db = server.store.lock().unwrap();
+    let db = server.read()?;
     Ok(db
         .sqlite
         .query_row("SELECT COALESCE(MAX(hrc_seq),0) FROM hrc_events", [], |r| {
@@ -448,7 +445,7 @@ fn claim(server: &Shared) -> anyhow::Result<Vec<(Intent, i64)>> {
         }
         let after = *state.cursor.lock().unwrap();
         let rows: Vec<(i64, String, Option<String>, Option<String>)> = {
-            let db = server.store.lock().unwrap();
+            let db = server.read()?;
             let mut stmt = db.sqlite.prepare(
             "SELECT hrc_seq, host_session_id, runtime_id, payload_json FROM hrc_events WHERE hrc_seq > ? AND event_kind IN ('turn.completed','turn.failed','turn.interrupted') AND (evidence_origin IS NULL OR evidence_origin != 'retained') ORDER BY hrc_seq ASC LIMIT 500",
         )?;
@@ -498,7 +495,7 @@ fn seat_handoff_prompt(value: &Value, prior_generation: i64, next_generation: i6
 /// resume prompt to the successor once, then record what happened.
 async fn execute(server: &Shared, intent: Intent, terminal_seq: i64) -> Result<(), ApiError> {
     let session = {
-        let db = server.store.lock().unwrap();
+        let db = server.read()?;
         db.session(&intent.host)?
             .ok_or_else(|| ApiError::missing_host(&intent.host))?
     };
@@ -517,7 +514,7 @@ async fn execute(server: &Shared, intent: Intent, terminal_seq: i64) -> Result<(
     let next = context::session(server, &rotation)?;
     let prior_generation = session["generation"].as_i64().unwrap_or(0);
     let next_generation = next["generation"].as_i64().unwrap_or(0);
-    let pending = server.store.lock().unwrap().pending_seat_handoff(
+    let pending = server.read()?.pending_seat_handoff(
         next["scopeRef"].as_str().unwrap_or(""),
         next["laneRef"].as_str().unwrap_or("main"),
     )?;

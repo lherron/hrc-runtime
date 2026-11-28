@@ -20,18 +20,19 @@ pub fn hint(server: &Server, body: &[u8]) -> Response {
         let Some(id) = input["runtimeId"].as_str().filter(|s| !s.is_empty()) else {
             return Ok(json!({}));
         };
-        let db = server.store.lock().unwrap();
-        let Some((scope, lane)) = db.mail_runtime(id)? else {
-            return Ok(json!({}));
-        };
-        if scope.starts_with("app:") {
-            return Ok(json!({"heldCount":0,"reason":"not-mail-addressable"}));
-        }
-        let Some((count, reason)) = db.mail_hint(id, &target(&scope, &lane))? else {
-            return Ok(json!({}));
-        };
-        let hint = hrc_store::mail_hint_text(count);
-        Ok(json!({"hint":hint,"heldCount":count,"reason":reason}))
+        server.write(|db| {
+            let Some((scope, lane)) = db.mail_runtime(id)? else {
+                return Ok(json!({}));
+            };
+            if scope.starts_with("app:") {
+                return Ok(json!({"heldCount":0,"reason":"not-mail-addressable"}));
+            }
+            let Some((count, reason)) = db.mail_hint(id, &target(&scope, &lane))? else {
+                return Ok(json!({}));
+            };
+            let hint = hrc_store::mail_hint_text(count);
+            Ok(json!({"hint":hint,"heldCount":count,"reason":reason}))
+        })
     })()
     .unwrap_or_else(|error| {
         stderr_json(
@@ -58,7 +59,7 @@ pub async fn stop(server: &Shared, body: &[u8]) -> Response {
     let Some(id) = input["runtimeId"].as_str().filter(|s| !s.is_empty()) else {
         return (StatusCode::BAD_REQUEST,Json(json!({"error":{"code":"MALFORMED_REQUEST","message":"runtimeId must be a non-empty string"}}))).into_response();
     };
-    let runtime = server.store.lock().unwrap().mail_runtime(id);
+    let runtime = server.read().and_then(|db| db.mail_runtime(id));
     let runtime = match runtime {
         Ok(v) => v,
         Err(e) => return super::ApiError::from(e).into_response(),
@@ -104,12 +105,7 @@ pub async fn stop(server: &Shared, body: &[u8]) -> Response {
         .filter(|e| e["id"].as_str().is_some_and(|id| ids.contains(id)))
         .cloned()
         .collect();
-    match server
-        .store
-        .lock()
-        .unwrap()
-        .mail_stop(id, &target, &blocking)
-    {
+    match server.write(|db| db.mail_stop(id, &target, &blocking)) {
         Ok(v) => Json(v).into_response(),
         Err(e) => super::ApiError::from(e).into_response(),
     }

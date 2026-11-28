@@ -465,13 +465,7 @@ mod idle_tests {
     /// startup work accidentally removed along with the timers.
     #[tokio::test]
     async fn idle_fixture_measurement() -> anyhow::Result<()> {
-        let (_scratch, server, seen) = observed(0)?;
-        server
-            .store
-            .lock()
-            .unwrap()
-            .sqlite
-            .execute("DELETE FROM continuities", [])?;
+        let (_scratch, server, seen) = observed(1)?;
         server
             .store
             .lock()
@@ -482,10 +476,30 @@ mod idle_tests {
                 "to":{"kind":"entity","entity":"agent:receiver"},
                 "body":"startup catch-up","execution":{"state":"not_applicable"}
             }))?;
+        server.write(|db| {
+            db.sqlite.execute(
+                "UPDATE runtimes SET status='ready' WHERE runtime_id='filler-0000'",
+                [],
+            )
+        })?;
+        credentials::start(&server)?;
+        let credential = server.runtime.join("lifecycle/filler-0000.credential");
+        assert!(credential.is_file(), "startup reconciliation did not mint");
+        // Make a stray reconciliation observable without a runtime ledger event.
+        server.write(|db| {
+            db.sqlite.execute(
+                "UPDATE runtimes SET status='terminated' WHERE runtime_id='filler-0000'",
+                [],
+            )
+        })?;
+        server
+            .store
+            .lock()
+            .unwrap()
+            .sqlite
+            .execute("DELETE FROM continuities", [])?;
         history::start(&server);
         super::start_refresh(&server);
-        credentials::start(&server)?;
-        let reconcile_tag = holds_at(&seen, "credentials.rs").last().unwrap()["callerTag"].clone();
         tokio::time::sleep(Duration::from_millis(300)).await;
         assert!(
             !holds_at(&seen, "history.rs").is_empty(),
@@ -495,30 +509,18 @@ mod idle_tests {
         tokio::time::sleep(Duration::from_secs(6)).await;
         let history = holds_at(&seen, "history.rs").len();
         let policy = holds_at(&seen, "policy.rs").len();
-        let credentials_idle = holds_at(&seen, "credentials.rs").len();
+        assert!(credential.is_file(), "quiet window reconciled runtimes");
         seen.lock().unwrap().clear();
         server.ledger_committed(); // no runtime lifecycle mutation
         tokio::time::sleep(Duration::from_millis(1300)).await;
-        let credentials_wake = holds_at(&seen, "credentials.rs").len();
-        let credential_calls = holds_at(&seen, "credentials.rs");
-        assert!(
-            credential_calls
-                .iter()
-                .all(|h| h["callerTag"] != reconcile_tag),
-            "unrelated commit reconciled runtimes: {credential_calls:?}"
-        );
-        println!(
-            "T-12504 fixture: quiet6s history={history} policy={policy} credentials={credentials_idle}; unrelatedCommit credentialStoreHolds={credentials_wake}"
-        );
+        assert!(credential.is_file(), "unrelated commit reconciled runtimes");
+        println!("T-12504 fixture: quiet6s history={history} policy={policy}; credential stable");
         history::stop(&server);
         server
             .controller
             .shutting_down
             .store(true, std::sync::atomic::Ordering::SeqCst);
-        assert_eq!(
-            (history, policy, credentials_idle, credentials_wake),
-            (0, 0, 0, 1)
-        );
+        assert_eq!((history, policy), (0, 0));
         Ok(())
     }
 }

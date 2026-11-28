@@ -129,7 +129,7 @@ pub fn authorize_operator(
         return Ok(());
     }
     if let Some(id) = own_runtime {
-        let store = server.store.lock().unwrap();
+        let store = server.read()?;
         if crate::server::projection::db::runtime(&store.sqlite, id)?
             .is_some_and(|runtime| runtime.scope_ref == binding.scope_ref)
         {

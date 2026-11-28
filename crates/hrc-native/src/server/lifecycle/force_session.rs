@@ -183,7 +183,7 @@ pub async fn door(server: &Shared, headers: &HeaderMap, body: &[u8]) -> Result<R
 }
 
 fn head(server: &Shared, scope: &str, lane: &str) -> Result<Option<Value>, ApiError> {
-    let db = server.store.lock().unwrap();
+    let db = server.read()?;
     Ok(db.continuity_session(scope, lane)?)
 }
 fn active(session: &Value) -> Value {
@@ -245,7 +245,7 @@ async fn run(server: &Shared, call: Call) -> seat_restart::Outcome {
 fn record(server: &Shared, call: &Call, answer: &Value) -> Result<(), ApiError> {
     let host = answer["hostSessionId"].as_str().unwrap_or("");
     let session = {
-        let db = server.store.lock().unwrap();
+        let db = server.read()?;
         db.session(host)?
     };
     let Some(session) = session else {
@@ -340,7 +340,7 @@ async fn create(server: &Shared, call: &Call) -> seat_restart::Outcome {
     };
     let host = started["hostSessionId"].as_str().unwrap_or("").to_owned();
     let session = {
-        let db = server.store.lock().unwrap();
+        let db = server.read()?;
         db.session(&host)?
     }
     .unwrap_or(Value::Null);
@@ -356,7 +356,7 @@ async fn create(server: &Shared, call: &Call) -> seat_restart::Outcome {
 
 /// Whether the exact claim under `key` minted this session.
 fn claimed_by(server: &Shared, session: &Value, key: &str) -> Result<bool, ApiError> {
-    let db = server.store.lock().unwrap();
+    let db = server.read()?;
     let host: Option<String> = db
         .sqlite
         .query_row(
@@ -426,7 +426,7 @@ async fn launch(
         }
     }
     let session = {
-        let db = server.store.lock().unwrap();
+        let db = server.read()?;
         db.session(host)?
     }
     .unwrap_or(Value::Null);

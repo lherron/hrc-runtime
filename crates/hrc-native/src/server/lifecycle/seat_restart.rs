@@ -328,7 +328,7 @@ fn ev(session: &Value, runtime_id: Option<&str>) -> events::Ev {
     ev
 }
 fn session(server: &Shared, host: &str) -> Result<Value, ApiError> {
-    let db = server.store.lock().unwrap();
+    let db = server.read()?;
     db.session(host)?
         .ok_or_else(|| ApiError::missing_host(host))
 }
@@ -400,7 +400,7 @@ async fn turn_end(
     // flight still lands after the floor.
     let floor = self_restart::high_water(server)?;
     let runtime = {
-        let db = server.store.lock().unwrap();
+        let db = server.read()?;
         db.runtimes_where("host_session_id=?", [&req.host])?
             .into_iter()
             .filter(|r| !lease::unavailable(r["status"].as_str().unwrap_or("")))
