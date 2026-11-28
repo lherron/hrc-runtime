@@ -1008,7 +1008,13 @@ async fn handle(
     }
     if method == Method::GET && path.starts_with("/v1/sessions/by-host/") {
         let host = path.trim_start_matches("/v1/sessions/by-host/");
-        let db = server.store.lock().unwrap();
+        // Read-only: one request-local snapshot, off the store mutex (as T-14803).
+        // ACP's mobile sessions view calls this once per session.
+        let db = server.open_reader()?;
+        let _snapshot = db
+            .sqlite
+            .unchecked_transaction()
+            .map_err(anyhow::Error::from)?;
         let mut s = db
             .session(host)?
             .ok_or_else(|| ApiError::missing_host(host))?;
