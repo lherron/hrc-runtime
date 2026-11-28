@@ -1,15 +1,40 @@
 //! Broker evidence read model; the native projector owns all writes.
 use super::Store;
 use anyhow::Result;
-use rusqlite::types::Value as Sql;
+use rusqlite::{OptionalExtension, types::Value as Sql};
 use serde_json::Value;
 
 impl Store {
     pub fn invocation_projections(&self, runtime: &str) -> Result<Vec<(String, Option<String>)>> {
         let mut stmt = self.sqlite.prepare("SELECT invocation_id,spec_projection_json FROM broker_invocations WHERE runtime_id=? ORDER BY created_at ASC,invocation_id ASC")?;
-        Ok(stmt
-            .query_map([runtime], |r| Ok((r.get(0)?, r.get(1)?)))?
-            .collect::<rusqlite::Result<_>>()?)
+        stmt.query_map([runtime], |r| {
+            Ok((r.get(0)?, r.get::<_, Option<String>>(1)?))
+        })?
+        .map(|row| {
+            let (id, spec) = row?;
+            Ok((id, self.resolve_projection(spec)?))
+        })
+        .collect()
+    }
+    pub fn invocation_spec_projection(&self, invocation: &str) -> Result<Option<String>> {
+        let raw = self
+            .sqlite
+            .query_row(
+                "SELECT spec_projection_json FROM broker_invocations WHERE invocation_id=?",
+                [invocation],
+                |r| r.get(0),
+            )
+            .optional()?
+            .flatten();
+        self.resolve_projection(raw)
+    }
+    fn resolve_projection(&self, mut raw: Option<String>) -> Result<Option<String>> {
+        if let Some(mut value) = raw.as_deref().and_then(|s| serde_json::from_str(s).ok())
+            && self.resolve_payloads(&mut value)?
+        {
+            raw = Some(value.to_string());
+        }
+        Ok(raw)
     }
     pub fn broker_events(&self, predicate: &str, values: &[Sql]) -> Result<Vec<Value>> {
         self.broker_event_rows(predicate, values, true, &|v| v)

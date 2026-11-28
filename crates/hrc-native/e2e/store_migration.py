@@ -123,9 +123,9 @@ def main():
             schema = body['schema']
             assert body['running'] is True and schema['readable'] is True, body
             assert schema['pending'] == [] and schema['schemaAhead'] is False, schema
-            assert schema['storeVersion'] == schema['releaseVersion'] == '0136_runs_minted_submission_id', schema
+            assert schema['storeVersion'] == schema['releaseVersion'] == '0137_invocation_payloads', schema
             store_ids = ids(db)
-            assert len(store_ids) == 114
+            assert len(store_ids) == 115
             results.append({'case': 'fresh_state_dir_no_bun', 'pass': True, 'created': created[0],
                             'statusSchema': schema, 'pathHasBun': False})
 

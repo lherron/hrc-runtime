@@ -23,13 +23,16 @@ impl Store {
         let plan = &record["admission"]["plan"];
         let now = s(record, "preparedAt")?;
         let tx = self.sqlite.transaction()?;
-        tx.execute("INSERT INTO runtime_operations(operation_id,runtime_id,run_id,host_session_id,generation,operation_kind,controller,compile_id,plan_hash,selected_profile_id,selected_profile_hash,startup_method,turn_delivery,status,route_decision_json,preparation_json,created_at,updated_at) VALUES (?,?,?,?,?,'broker_invocation','harness-broker',?,?,?,?,'broker.startInvocationFromRequest','invocation.input','prepared',?,?,?,?)",params![s(id,"operationId")?,s(id,"runtimeId")?,id["runId"].as_str(),s(id,"hostSessionId")?,id["generation"].as_i64(),s(plan,"compileId")?,s(plan,"planHash")?,s(&execution["profile"],"profileId")?,s(&execution["profile"],"profileHash")?,record["dispatch"]["routeDecision"].to_string(),record.to_string(),now,now])?;
+        let mut stored = record.clone();
+        Self::externalize_payloads(&tx, s(id, "runtimeId")?, &mut stored)?;
+        tx.execute("INSERT INTO runtime_operations(operation_id,runtime_id,run_id,host_session_id,generation,operation_kind,controller,compile_id,plan_hash,selected_profile_id,selected_profile_hash,startup_method,turn_delivery,status,route_decision_json,preparation_json,created_at,updated_at) VALUES (?,?,?,?,?,'broker_invocation','harness-broker',?,?,?,?,'broker.startInvocationFromRequest','invocation.input','prepared',?,?,?,?)",params![s(id,"operationId")?,s(id,"runtimeId")?,id["runId"].as_str(),s(id,"hostSessionId")?,id["generation"].as_i64(),s(plan,"compileId")?,s(plan,"planHash")?,s(&execution["profile"],"profileId")?,s(&execution["profile"],"profileHash")?,record["dispatch"]["routeDecision"].to_string(),stored.to_string(),now,now])?;
         tx.commit()?;
         Ok(())
     }
     pub fn broker_preparation(&self, operation: &str) -> Result<Value> {
         let raw: String = self.sqlite.query_row("SELECT preparation_json FROM runtime_operations WHERE operation_id=? AND status='prepared'",[operation],|r|r.get(0))?;
-        let record: Value = serde_json::from_str(&raw)?;
+        let mut record: Value = serde_json::from_str(&raw)?;
+        self.resolve_payloads(&mut record)?;
         ensure!(
             record["schemaVersion"] == "hrc-aspd-preparation/v1"
                 && record["operationId"] == operation,
@@ -49,26 +52,38 @@ impl Store {
     }
     /// markAspdStartOutcome: a failed start after invocation.start was sent is
     /// recorded on the preparation, never replayed.
-    pub fn mark_start_outcome(&self, operation: &str, outcome: &str, error: &str) -> Result<()> {
-        let raw: Option<String> = self
-            .sqlite
+    pub fn mark_start_outcome(
+        &mut self,
+        operation: &str,
+        outcome: &str,
+        error: &str,
+    ) -> Result<()> {
+        let tx = self.sqlite.transaction()?;
+        let raw: Option<(String, String)> = tx
             .query_row(
-                "SELECT preparation_json FROM runtime_operations WHERE operation_id=?",
+                "SELECT runtime_id,preparation_json FROM runtime_operations WHERE operation_id=?",
                 [operation],
-                |r| r.get(0),
+                |r| Ok((r.get(0)?, r.get(1)?)),
             )
             .optional()?;
-        let Some(mut preparation) = raw.and_then(|r| serde_json::from_str::<Value>(&r).ok()) else {
+        // Preserve existing stubs while adding the outcome fields.
+        let Some((runtime_id, mut preparation)) = raw.and_then(|(runtime_id, raw)| {
+            serde_json::from_str::<Value>(&raw)
+                .ok()
+                .map(|value| (runtime_id, value))
+        }) else {
             return Ok(());
         };
         let now = timestamp();
         preparation["startOutcome"] = outcome.into();
         preparation["startOutcomeAt"] = now.clone().into();
         preparation["startOutcomeError"] = json!({"code":"broker_start_failed","message":error});
-        self.sqlite.execute(
+        Self::externalize_payloads(&tx, &runtime_id, &mut preparation)?;
+        tx.execute(
             "UPDATE runtime_operations SET preparation_json=?,updated_at=? WHERE operation_id=?",
             params![preparation.to_string(), now, operation],
         )?;
+        tx.commit()?;
         Ok(())
     }
     pub fn start_broker_graph(
@@ -112,7 +127,9 @@ impl Store {
         )?;
         ensure!(live_host, HOST_SESSION_RETIRED);
         tx.execute("INSERT INTO runtimes(runtime_id,host_session_id,scope_ref,lane_ref,generation,transport,status,tmux_json,supports_inflight_input,active_run_id,created_at,updated_at,status_changed_at,controller_kind,active_operation_id,active_invocation_id,plan_hash,selected_profile_hash,runtime_state_json) VALUES (?,?,?,?,?,?,'starting',?,1,?,?,?,?,'harness-broker',?,?,?,?,?)",params![s(id,"runtimeId")?,s(id,"hostSessionId")?,s(session,"scopeRef")?,crate::storage_lane(s(session,"laneRef")?),id["generation"].as_i64(),transport,if tmux.is_object(){Some(tmux.to_string())}else{None},id["runId"].as_str(),now,now,now,s(id,"operationId")?,s(id,"invocationId")?,s(plan,"planHash")?,s(&execution["profile"],"profileHash")?,state.to_string()])?;
-        tx.execute("INSERT INTO broker_invocations(invocation_id,operation_id,runtime_id,run_id,broker_protocol,broker_driver,invocation_state,capabilities_json,spec_hash,start_request_hash,selected_profile_hash,spec_projection_json,start_request_projection_json,owner_server_instance_id,created_at,updated_at,lifecycle_policy_hash,execution_format) VALUES (?,?,?,?,?,?,'starting','{}',?,?,?,?,?,?,?,?,?,'format1')",params![s(id,"invocationId")?,s(id,"operationId")?,s(id,"runtimeId")?,id["runId"].as_str(),s(hello,"protocolVersion")?,s(execution,"driver")?,s(&record["admission"],"specHash")?,s(&execution["profile"],"startRequestHash")?,s(&execution["profile"],"profileHash")?,start["spec"].to_string(),start.to_string(),format!("hrc-server:{}",std::process::id()),now,now,record["dispatch"]["lifecyclePolicy"]["policyHash"].as_str()])?;
+        let mut stored = start.clone();
+        Self::externalize_payloads(&tx, s(id, "runtimeId")?, &mut stored)?;
+        tx.execute("INSERT INTO broker_invocations(invocation_id,operation_id,runtime_id,run_id,broker_protocol,broker_driver,invocation_state,capabilities_json,spec_hash,start_request_hash,selected_profile_hash,spec_projection_json,start_request_projection_json,owner_server_instance_id,created_at,updated_at,lifecycle_policy_hash,execution_format) VALUES (?,?,?,?,?,?,'starting','{}',?,?,?,?,?,?,?,?,?,'format1')",params![s(id,"invocationId")?,s(id,"operationId")?,s(id,"runtimeId")?,id["runId"].as_str(),s(hello,"protocolVersion")?,s(execution,"driver")?,s(&record["admission"],"specHash")?,s(&execution["profile"],"startRequestHash")?,s(&execution["profile"],"profileHash")?,stored["spec"].to_string(),stored.to_string(),format!("hrc-server:{}",std::process::id()),now,now,record["dispatch"]["lifecyclePolicy"]["policyHash"].as_str()])?;
         // Creation is durable with the starting row, before invocation.start.
         // The existing post-commit wake exposes it to bounded-stream readers.
         event(

@@ -34,6 +34,7 @@ pub struct Inv {
     pub start_request_hash: String,
     pub selected_profile_hash: String,
 }
+// Both invocation queries use this metadata-only mapper.
 fn inv_row(r: &Row<'_>) -> rusqlite::Result<Inv> {
     Ok(Inv {
         invocation_id: r.get("invocation_id")?,

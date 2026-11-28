@@ -107,7 +107,7 @@ def main():
                     if row['event_kind']=='server.started':
                         assert payload['processStartedAt']==started_at
                         assert payload['release'] is None and payload['sourceCommit'] is None
-                        assert payload['storeSchema']=='0136_runs_minted_submission_id', payload
+                        assert payload['storeSchema']=='0137_invocation_payloads', payload
                         payload['processStartedAt']='<owner startedAt>'
                     if row['event_kind']=='server.stopped':
                         seq = payload['shuttingDownHrcSeq']

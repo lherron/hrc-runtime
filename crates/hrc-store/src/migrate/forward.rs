@@ -132,3 +132,22 @@ pub fn m0136_runs_minted_submission_id(conn: &Connection) -> anyhow::Result<()> 
     )?;
     Ok(())
 }
+
+pub fn m0137_invocation_payloads(conn: &Connection) -> anyhow::Result<()> {
+    conn.execute_batch(
+        "CREATE TABLE payloads (
+            hash TEXT PRIMARY KEY,
+            body TEXT NOT NULL,
+            byte_len INTEGER NOT NULL,
+            created_at TEXT NOT NULL
+        ) WITHOUT ROWID;
+        CREATE TABLE payload_refs (
+            hash TEXT NOT NULL REFERENCES payloads(hash),
+            runtime_id TEXT NOT NULL,
+            created_at TEXT NOT NULL,
+            PRIMARY KEY (hash, runtime_id)
+        ) WITHOUT ROWID;
+        CREATE INDEX payload_refs_runtime ON payload_refs(runtime_id);",
+    )?;
+    Ok(())
+}

@@ -57,6 +57,11 @@ pub const FORWARD: &[Forward] = &[
         rebuild: false,
         apply: forward::m0136_runs_minted_submission_id,
     },
+    Forward {
+        id: "0137_invocation_payloads",
+        rebuild: false,
+        apply: forward::m0137_invocation_payloads,
+    },
 ];
 
 /// Who moved the store, recorded in the `store.migrated` row of an upgrade.

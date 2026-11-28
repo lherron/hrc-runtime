@@ -150,6 +150,7 @@ impl Store {
     pub fn maintenance_facts(&self, runtime: &Value) -> Result<Value> {
         let id = runtime["runtimeId"].as_str().context("runtime id")?;
         let nonterminal: bool=self.sqlite.query_row("SELECT EXISTS(SELECT 1 FROM runs WHERE runtime_id=? AND status NOT IN ('completed','failed','cancelled','zombie','coalesced'))",[id],|r|r.get(0))?;
+        // Aging and prune eligibility only inspect invocation lifecycle metadata.
         let invocations = rows(
             &self.sqlite,
             "SELECT b.*,(SELECT outcome FROM retained_evidence_outcomes o WHERE o.runtime_id=b.runtime_id AND o.invocation_id=b.invocation_id ORDER BY outcome_id DESC LIMIT 1) AS retained_outcome FROM broker_invocations b WHERE runtime_id=? ORDER BY created_at,invocation_id",
@@ -315,6 +316,7 @@ const CASCADE: &[&str] = &[
     "tool_result_blob_parts",
     "tool_result_blobs",
     "runtime_operations",
+    "payload_refs",
     "runtime_buffers",
     "surface_bindings",
     "runs",
@@ -335,6 +337,25 @@ const COUNTS: &[&str] = &[
     "runs",
     "runtimes",
 ];
+fn prune_payload_refs(tx: &rusqlite::Transaction<'_>, selected: &str) -> Result<(usize, usize)> {
+    let hashes = tx
+        .prepare(
+            "DELETE FROM payload_refs
+         WHERE runtime_id IN (SELECT CAST(value AS TEXT) FROM json_each(?))
+         RETURNING hash",
+        )?
+        .query_map([selected], |r| r.get::<_, String>(0))?
+        .collect::<rusqlite::Result<Vec<_>>>()?;
+    let ref_count = hashes.len();
+    let hashes: std::collections::BTreeSet<_> = hashes.into_iter().collect();
+    let bodies = tx.execute(
+        "DELETE FROM payloads
+         WHERE hash IN (SELECT value FROM json_each(?))
+         AND NOT EXISTS (SELECT 1 FROM payload_refs WHERE payload_refs.hash=payloads.hash)",
+        [serde_json::to_string(&hashes)?],
+    )?;
+    Ok((ref_count, bodies))
+}
 impl Store {
     pub fn runtime_prune_counts(&self, ids: &[String]) -> Result<Value> {
         let selected = serde_json::to_string(ids)?;
@@ -375,6 +396,11 @@ impl Store {
             if matches!(*table, "tool_result_blob_parts" | "tool_result_blobs")
                 && !table_exists(&tx, table)?
             {
+                continue;
+            }
+            if *table == "payload_refs" {
+                let (refs, bodies) = prune_payload_refs(&tx, &selected)?;
+                rows.extend([("payload_refs", refs), ("payloads", bodies)]);
                 continue;
             }
             let n = tx.execute(&format!("WITH selected AS MATERIALIZED (SELECT CAST(value AS TEXT) AS runtime_id FROM json_each(?)) DELETE FROM {table} WHERE {}",ledger_predicate(table)),[&selected])?;

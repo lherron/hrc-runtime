@@ -265,8 +265,7 @@ async fn prepare_dispatch(server: &Shared, birth: &Birth<'_>) -> Result<(Value, 
         ["process"];
     compile::require_cwd(string(process, "cwd")?, &host, scope)?;
     let record = preparation(&prepared, &stored, &server.runtime, idempotency)?;
-    {
-        let mut db = server.store.lock().unwrap();
+    server.write(|db| -> Result<()> {
         db.prepare_broker(&record)?;
         // Both the initial compile and the unpinned retry carry profile
         // metadata here. Replace only the launch layer; the store retains
@@ -282,12 +281,11 @@ async fn prepare_dispatch(server: &Shared, birth: &Birth<'_>) -> Result<(Value, 
                 updated_by: string(&identity, "runtimeId")?,
             })?;
         }
-    }
+        Ok(())
+    })?;
     // Read committed bytes at P, not the in-memory producer graph.
     let record = server
-        .store
-        .lock()
-        .unwrap()
+        .read()?
         .broker_preparation(string(&identity, "operationId")?)?;
     Ok((identity, record))
 }
@@ -388,17 +386,16 @@ pub async fn birth(server: &Shared, birth: Birth<'_>) -> Result<Value, ApiError>
         super::response_format::preflight(&record, &hello, response_format)?;
         {
             server
-                .store
-                .lock()
-                .unwrap()
-                .start_broker_graph(
-                    &record,
-                    &session,
-                    &hello,
-                    &allocation,
-                    origin,
-                    prompt.encode_utf16().count(),
-                )
+                .write(|db| {
+                    db.start_broker_graph(
+                        &record,
+                        &session,
+                        &hello,
+                        &allocation,
+                        origin,
+                        prompt.encode_utf16().count(),
+                    )
+                })
                 .map_err(|error| {
                     if error.to_string() == hrc_store::HOST_SESSION_RETIRED {
                         retired_host(&host, "archived", None)
@@ -589,12 +586,7 @@ async fn release_failed_start(
         } else {
             "uncertain"
         };
-        let marked =
-            server
-                .store
-                .lock()
-                .unwrap()
-                .mark_start_outcome(operation, outcome, &attempt.error);
+        let marked = server.write(|db| db.mark_start_outcome(operation, outcome, &attempt.error));
         if let Err(error) = marked {
             controller::log(
                 "warn",

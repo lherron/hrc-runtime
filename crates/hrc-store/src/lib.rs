@@ -24,6 +24,7 @@ pub use broker::HOST_SESSION_RETIRED;
 mod broker_reads;
 mod events;
 mod index;
+mod invocation_payloads;
 pub use index::retain_latest_generation;
 mod lifecycle_owner;
 pub use lifecycle_owner::{external_lifecycle, participant_served};

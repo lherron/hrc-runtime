@@ -1,0 +1,12 @@
+hrc-store/src/broker.rs:prepare_broker externalize
+hrc-store/src/broker.rs:broker_preparation resolve
+hrc-store/src/broker.rs:mark_start_outcome stubs-ok Outcome updates preserve existing stubs and externalize newly written strings.
+hrc-store/src/broker.rs:mark_start_outcome externalize
+hrc-store/src/broker.rs:start_broker_graph externalize
+hrc-store/src/broker_reads.rs:invocation_projections resolve
+hrc-store/src/broker_reads.rs:invocation_spec_projection resolve
+hrc-store/src/maintenance.rs:maintenance_facts stubs-ok Ownership, aging and pruning inspect invocation lifecycle metadata only.
+hrc-store/src/participants.rs:participant_broker_graph externalize
+hrc-native/src/server/broker/sweeps.rs:priming_submission stubs-ok Only reads the schema tag and the HRC-minted input ID.
+hrc-native/src/server/projection/projection/db.rs:invocation stubs-ok inv_row selects lifecycle metadata only.
+hrc-native/src/server/projection/projection/db.rs:invocations_for_runtime stubs-ok inv_row selects lifecycle metadata only.

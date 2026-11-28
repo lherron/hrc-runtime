@@ -353,7 +353,7 @@ async fn assemble(
     }
     timings["trippedAt"] = tripped_at.into();
     let (runtime, spec) = {
-        let db = server.store.lock().unwrap();
+        let db = server.read()?;
         let runtime: Option<(String, i64, Option<String>)> = db
             .sqlite
             .query_row(
@@ -363,15 +363,7 @@ async fn assemble(
             )
             .optional()?;
         let spec: Option<String> = match &watch.invocation_id {
-            Some(id) => db
-                .sqlite
-                .query_row(
-                    "SELECT spec_projection_json FROM broker_invocations WHERE invocation_id = ?",
-                    [id],
-                    |r| r.get(0),
-                )
-                .optional()?
-                .flatten(),
+            Some(id) => db.invocation_spec_projection(id)?,
             None => None,
         };
         (runtime, spec)

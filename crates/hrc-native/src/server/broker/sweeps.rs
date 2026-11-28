@@ -79,6 +79,7 @@ pub fn duration_ms(raw: &str) -> Result<i64, ApiError> {
 /// compilerPrimingSubmissionId: the frozen v2 admission's initial input.
 fn priming_submission(db: &Connection, rt: &db::Rt) -> Option<String> {
     let operation = rt.active_operation_id.as_deref()?;
+    // Only inspect the schema tag and HRC-minted input ID, never the payload.
     let raw: String = db
         .query_row(
             "SELECT preparation_json FROM runtime_operations WHERE operation_id=?",

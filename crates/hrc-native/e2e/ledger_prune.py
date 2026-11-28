@@ -26,7 +26,7 @@ from pathlib import Path
 
 CASCADE = ['transcript_turns', 'transcript_index_invocations', 'broker_invocation_events', 'hrc_events',
            'runtime_artifacts', 'broker_projection_dispositions', 'broker_invocations', 'runtime_first_turn_watch',
-           'tool_result_blob_parts', 'tool_result_blobs', 'runtime_operations', 'runtime_buffers',
+           'tool_result_blob_parts', 'tool_result_blobs', 'runtime_operations', 'payload_refs', 'runtime_buffers',
            'surface_bindings', 'runs', 'runtimes']
 TERMINAL = ('terminated', 'dead', 'stale', 'crashed', 'detached')
 LEDGER_TABLES = ('hrc_events', 'broker_invocation_events')
@@ -71,7 +71,7 @@ def snapshot(path):
     db = ro(path)
     have = tables(db)
     out = {'totals': {}, 'runtimes': {}}
-    for t in CASCADE:
+    for t in [*CASCADE, 'payloads']:
         # hrc_events rows with no runtime are counted apart: the owner itself
         # appends them (boot, shutdown) and the prune never touches them.
         where = ' WHERE runtime_id IS NOT NULL' if t == 'hrc_events' else ''
@@ -109,7 +109,7 @@ def heads(path):
 def relocate(path, root):
     """Point every non-ledger path at this scratch root instead of max3's live var/."""
     db = sqlite3.connect(path)
-    skip = set(LEDGER_TABLES) | {'sqlite_sequence'}
+    skip = set(LEDGER_TABLES) | {'sqlite_sequence', 'payloads'}
     changed = 0
     for (t,) in db.execute("SELECT name FROM sqlite_master WHERE type='table'").fetchall():
         if t in skip or t.startswith(('transcript_', 'tool_result_')):
@@ -370,13 +370,13 @@ def main():
         db.close()
         totals_add_up = all(
             o.before['totals'][t] is None or o.before['totals'][t] - rep['rowsDeleted'].get(t, 0) == o.after['totals'][t]
-            for t in CASCADE)
+            for t in [*CASCADE, 'payloads'])
         kept_rows_intact = all(o.before['runtimes'][r] == o.after['runtimes'][r] for r in o.after['runtimes']
                                if r in o.before['runtimes'] and o.before['runtimes'][r]['status'] in TERMINAL)
         ok = (rep['stopReason'] == 'complete' and len(deleted) > 0 and deleted <= allowed and deleted == gone_after
               and all(survivors.values()) and guard_only and cascade_gone and totals_add_up and kept_rows_intact
               and dry['eligible'] == rep['eligible'] and dry['deleted'] == 0
-              and dry['wouldDelete'] == rep['rowsDeleted']
+              and dry['wouldDelete'] == {t: n for t, n in rep['rowsDeleted'].items() if t != 'payloads'}
               and session_level_kept(o))
         record('g2-operator', ok, protected=protected, survivors=survivors, deleted=len(deleted), allowedByMark=len(allowed),
                allowedButGuarded={r: skipped.get(r) for r in sorted(allowed - deleted)}, skippedByReason=rep['skipped'],
