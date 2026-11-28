@@ -291,13 +291,25 @@ export class HrcDomainError extends Error {
   readonly code: HrcErrorCode
   readonly status: HrcHttpStatus
   readonly detail: Record<string, unknown>
+  /**
+   * The literal HTTP status of the response this error was decoded from, when
+   * it came off the wire. `status` is derived from the code and is undefined
+   * for codes this build does not know; read this for the exact outcome.
+   */
+  readonly httpStatus: number | undefined
 
-  constructor(code: HrcErrorCode, message: string, detail: Record<string, unknown> = {}) {
+  constructor(
+    code: HrcErrorCode,
+    message: string,
+    detail: Record<string, unknown> = {},
+    httpStatus?: number
+  ) {
     super(message)
     this.name = 'HrcDomainError'
     this.code = code
     this.status = httpStatusForErrorCode(code)
     this.detail = detail
+    this.httpStatus = httpStatus
   }
 
   toResponse(): HrcHttpError {

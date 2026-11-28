@@ -276,13 +276,22 @@ export class HrcClientTransport {
         // ignore text extraction failure
       }
       const suffix = excerpt ? `: ${excerpt}` : ''
-      throw new Error(`HRC request failed with status ${res.status}${suffix}`)
+      throw Object.assign(new Error(`HRC request failed with status ${res.status}${suffix}`), {
+        httpStatus: res.status,
+      })
     }
 
     if (body?.error) {
-      throw new HrcDomainError(body.error.code, typedResponseErrorMessage(body), body.error.detail)
+      throw new HrcDomainError(
+        body.error.code,
+        typedResponseErrorMessage(body),
+        body.error.detail,
+        res.status
+      )
     }
-    throw new Error(`HRC request failed with status ${res.status}`)
+    throw Object.assign(new Error(`HRC request failed with status ${res.status}`), {
+      httpStatus: res.status,
+    })
   }
 
   /**
