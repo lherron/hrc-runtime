@@ -162,6 +162,9 @@ class FakeAspd:
     """aspc/0.1 over NDJSON: hello + compileHarnessInvocation, every frame logged."""
     def __init__(self, path, release, log):
         self.path, self.release, self.log = str(path), release, log
+        # Each run reads only its own protocol log: a retry into a reused
+        # artifacts directory must not see an earlier run's frames.
+        open(self.log, 'w').close()
         self.lock = threading.Lock()
         self.server = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
         self.server.bind(self.path)

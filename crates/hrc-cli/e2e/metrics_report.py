@@ -178,6 +178,31 @@ def writers_variant(root):
         '{"v":1,"kind":"script","ts":"%s","script":"reap","cmd":"-y","exitCode":0,"durMs":256}\n' % iso(datetime.now(timezone.utc)))
 
 
+def midnight_files(argv, anchor):
+    """Extra day files a sub-day --since window scans when it starts before UTC midnight.
+
+    The golden is recorded with the window inside one UTC day. Anchored within
+    the window's length after midnight, the reader also scans yesterday's day
+    file (server-{day(1)}), whose records fall outside the window: only
+    filesScanned changes, by one.
+    """
+    if '--since' not in argv:
+        return 0
+    m = re.fullmatch(r'\s*(\d+(?:\.\d+)?)([smhd])\s*', argv[argv.index('--since') + 1])
+    if not m:
+        return 0
+    window = float(m.group(1)) * {'s': 1, 'm': 60, 'h': 3600, 'd': 86400}[m.group(2)]
+    since_midnight = anchor.hour * 3600 + anchor.minute * 60 + anchor.second
+    return 1 if since_midnight < window < 86400 else 0
+
+
+def with_files(expected, extra):
+    if not expected or not extra:
+        return expected
+    bump = lambda m: m.group(1) + str(int(m.group(0)[len(m.group(1)):]) + extra)
+    return dict(expected, stdout=FILES.sub(bump, expected['stdout']))
+
+
 def normalize(text, anchor):
     for pattern, replacement in CUTOFF:
         text = re.sub(pattern, replacement, text)
@@ -225,7 +250,8 @@ def main():
     for variant, argv in cases():
         key = f'[{variant}] ' + ' '.join(argv)
         subject = observe([str(args.binary.resolve())], variant, argv)
-        results.append(dict(case=key, **{'pass': subject == golden.get(key)}, expected=golden.get(key), subject=subject))
+        expected = with_files(golden.get(key), midnight_files(argv, anchor))
+        results.append(dict(case=key, **{'pass': subject == expected}, expected=expected, subject=subject))
     # Every writer's day files read once: `writers` reads exactly as `full`,
     # with one more file scanned (script-*).
     for argv in [['admin', 'metrics', 'report'] + f for f in REPORT_FLAGS] + [['admin', 'metrics', 'routes'] + f for f in ROUTE_FLAGS]:
