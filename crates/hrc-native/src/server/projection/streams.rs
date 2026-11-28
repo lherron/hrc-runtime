@@ -284,8 +284,8 @@ fn read(
             if seq <= after {
                 return Ok((seq, Vec::new()));
             }
-            // Follow replay from an old cursor is the whole ledger: a chunk
-            // per store hold, fenced at the head captured first (T-12413).
+            // Follow replay reads the ledger in short snapshots, bounded
+            // by the head captured first (T-12413).
             let history =
                 events::History::new(server, q.clone(), after.saturating_add(1), None, head);
             Ok((seq, history.collect()?))
@@ -303,11 +303,7 @@ fn read(
             // Envelope reconstruction can hydrate spilled payloads. Keep a
             // request-local snapshot for those reads and parse off the owner
             // lock and the shared head reader.
-            let db = hrc_store::Store::open_readonly(&server.state.join("state.sqlite"))?;
-            let tx = db
-                .sqlite
-                .unchecked_transaction()
-                .map_err(anyhow::Error::from)?;
+            let db = server.read()?;
             let mut sql = "WHERE runtime_id=? AND invocation_id=? AND seq>?".to_owned();
             let mut values = vec![
                 Sql::Text(runtime.clone()),
@@ -320,7 +316,7 @@ fn read(
             }
             sql.push_str(" ORDER BY seq ASC");
             let rows = db.broker_events(&sql, &values)?;
-            tx.commit().map_err(anyhow::Error::from)?;
+            drop(db);
             let mut envelopes = Vec::new();
             let mut head = after;
             for row in rows {
@@ -353,36 +349,40 @@ fn bounded_append(
     if observed.seq <= after && observed.incarnation == state.lock().unwrap().incarnation {
         return Ok(Some(after));
     }
-    let db = server.store.lock().unwrap();
-    let tx = db
-        .sqlite
-        .unchecked_transaction()
-        .map_err(anyhow::Error::from)?;
-    let current = db.ledger_incarnation()?;
-    let mut q = state.lock().unwrap();
-    if current != q.incarnation {
-        q.records.clear();
-        q.bytes = 0;
-        q.terminal = Some(Record::new(
-            json!({"type":"ledger_replaced","expectedLedgerIncarnationId":q.incarnation,"currentLedgerIncarnationId":current}),
-        ));
-        q.wake();
-        return Ok(None);
-    }
-    let head = db.max_hrc_seq()?;
-    db.event_scan(
-        filters,
-        after.saturating_add(1),
-        head,
-        false,
-        &mut |event| {
-            let record = q.event(event);
-            q.append(record);
-            true
-        },
-    )?;
-    tx.commit().map_err(anyhow::Error::from)?;
-    Ok(Some(head))
+    // Queue publication and its ledger fence share the writer's ordering.
+    server.write(|db| {
+        let tx = db
+            .sqlite
+            .unchecked_transaction()
+            .map_err(anyhow::Error::from)?;
+        let current = db.ledger_incarnation()?;
+        let mut q = state.lock().unwrap();
+        if current != q.incarnation {
+            q.records.clear();
+            q.bytes = 0;
+            q.terminal = Some(Record::new(json!({
+                "type": "ledger_replaced",
+                "expectedLedgerIncarnationId": q.incarnation,
+                "currentLedgerIncarnationId": current,
+            })));
+            q.wake();
+            return Ok(None);
+        }
+        let head = db.max_hrc_seq()?;
+        db.event_scan(
+            filters,
+            after.saturating_add(1),
+            head,
+            false,
+            &mut |event| {
+                let record = q.event(event);
+                q.append(record);
+                true
+            },
+        )?;
+        tx.commit().map_err(anyhow::Error::from)?;
+        Ok(Some(head))
+    })
 }
 
 type Selection = (Source, i64, &'static str, Value);
@@ -412,9 +412,7 @@ fn resolve_stream_selector(
         let run = events::normalized(&q, "runId").map(str::to_owned);
         let receipt = receipt(&q)?;
         let actual: Option<i64> = server
-            .store
-            .lock()
-            .unwrap()
+            .read()?
             .sqlite
             .query_row(
                 "SELECT generation FROM runtimes WHERE runtime_id=?",
@@ -523,11 +521,7 @@ fn replay_snapshot(
         waker: None,
     };
     let cursor = if bounded {
-        let db = server.store.lock().unwrap();
-        let tx = db
-            .sqlite
-            .unchecked_transaction()
-            .map_err(anyhow::Error::from)?;
+        let db = server.read()?;
         q.incarnation = events::fence(&db, query)?;
         let head = db.max_hrc_seq()?;
         let Source::Lifecycle(filters) = source else {
@@ -552,7 +546,6 @@ fn replay_snapshot(
         q.ready = Some(Record::new(
             json!({"type":"ready","ledgerIncarnationId":q.incarnation,"acceptedAfterHrcSeq":after,"replayHeadHrcSeq":head}),
         ));
-        tx.commit().map_err(anyhow::Error::from)?;
         head.max(after)
     } else {
         let (head, rows) = read(server, source, after, false)?;

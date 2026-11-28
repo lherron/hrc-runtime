@@ -25,6 +25,7 @@ pub const HOLD_THRESHOLD: Duration = Duration::from_millis(250);
 
 const ACCOUNTING_INTERVAL: Duration = Duration::from_secs(60);
 const TOP_SITES: usize = 5;
+const WRITE_SLOW_THRESHOLD: Duration = Duration::from_millis(50);
 const WORKER_WAIT_BUDGET: Duration = Duration::from_millis(2);
 
 type Observe = Arc<dyn Fn(Value) + Send + Sync>;
@@ -75,6 +76,17 @@ pub struct StoreLock {
     observe: Observe,
 }
 
+impl super::Server {
+    /// Serialize the closure on the writer connection. The closure owns any
+    /// transaction boundary and must release the writer before awaiting work.
+    #[track_caller]
+    pub(in crate::server) fn write<T>(&self, write: impl FnOnce(&mut Store) -> T) -> T {
+        let mut guard = self.store.lock().unwrap();
+        guard.write = true;
+        write(&mut guard)
+    }
+}
+
 impl StoreLock {
     pub fn new(store: Store) -> Self {
         Self::observed(store, HOLD_THRESHOLD, |held| {
@@ -105,6 +117,7 @@ impl StoreLock {
             at,
             waited: asked.elapsed(),
             acquired: Instant::now(),
+            write: false,
         };
         self.claim_slot();
         match self.inner.lock() {
@@ -247,6 +260,7 @@ pub struct StoreGuard<'a> {
     at: &'static Location<'static>,
     waited: Duration,
     acquired: Instant,
+    write: bool,
 }
 
 impl Deref for StoreGuard<'_> {
@@ -279,12 +293,18 @@ impl Drop for StoreGuard<'_> {
                 waited: self.waited,
                 max_held: held,
             });
-        if held >= self.lock.threshold {
-            (self.lock.observe)(json!({
+        let fields = || {
+            json!({
                 "callerTag": self.at.to_string(),
                 "heldMs": held.as_secs_f64() * 1000.0,
                 "waitMs": self.waited.as_secs_f64() * 1000.0,
-            }));
+            })
+        };
+        if held >= self.lock.threshold {
+            (self.lock.observe)(fields());
+        }
+        if self.write && held > WRITE_SLOW_THRESHOLD {
+            super::stderr_json("warn", "store", "store.write_slow", fields());
         }
     }
 }

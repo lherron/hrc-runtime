@@ -172,7 +172,7 @@ pub async fn handle(
     let peer_status = json!({local.clone():{"state":"healthy","checkedAt":hrc_store::timestamp()}});
     if page {
         let (highwater, rows, more) = {
-            let db = server.store.lock().unwrap();
+            let db = server.read()?;
             let highwater: i64 = db
                 .sqlite
                 .query_row("SELECT COALESCE(MAX(hrc_seq),0) FROM hrc_events", [], |r| {
@@ -207,11 +207,7 @@ pub async fn handle(
         output.insert("peerStatus".into(), peer_status);
         Ok(Json(Value::Object(output)).into_response())
     } else {
-        let mut output = server
-            .store
-            .lock()
-            .unwrap()
-            .session_index_facets(&filters)?;
+        let mut output = server.read()?.session_index_facets(&filters)?;
         let node_count = output
             .as_object_mut()
             .unwrap()

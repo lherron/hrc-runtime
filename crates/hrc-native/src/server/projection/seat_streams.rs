@@ -40,7 +40,7 @@ struct Seat {
 }
 /// Read the current continuity, never a caller-selected runtime or socket.
 fn current(server: &super::Server, scope: &str, lane: &str) -> Result<Seat, ApiError> {
-    let store = server.store.lock().unwrap();
+    let store = server.read()?;
     let session = store
         .continuity_session(scope, lane)?
         .ok_or_else(|| refusal("unknown_seat", "seat is not known on this node"))?;

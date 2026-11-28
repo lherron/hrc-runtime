@@ -5,6 +5,7 @@ use axum::{
     http::{Method, StatusCode},
     response::{IntoResponse, Response},
 };
+use hrc_store::Store;
 use serde_json::{Value, json};
 use std::collections::HashMap;
 
@@ -25,7 +26,33 @@ pub fn handle(
     let lane = input["laneRef"].as_str().unwrap_or("main");
     let raw = format!("{scope}/lane:{}", hrc_store::storage_lane(lane));
     let (scope, lane) = parse_session_ref(&raw)?;
-    let mut db = server.store.lock().unwrap();
+    if *method == Method::GET {
+        let db = server.read()?;
+        require_continuity(&db, scope, lane)?;
+        return Ok(Json(db.seat_state(scope, lane)?).into_response());
+    }
+    server.write(|db| {
+        require_continuity(db, scope, lane)?;
+        let etag = input["ifMatch"]
+            .as_i64()
+            .filter(|n| *n > 0)
+            .ok_or_else(|| ApiError::bad("ifMatch must be a positive integer", None))?;
+        let answer = db
+            .set_seat_work(scope, lane, &input["work"], etag)
+            .map_err(|e| ApiError::bad(e.to_string(), None))?
+            .ok_or_else(|| {
+                ApiError::domain(
+                    StatusCode::CONFLICT,
+                    "stale_seat_work",
+                    "work etag changed",
+                    Some(db.seat_state(scope, lane).unwrap_or(Value::Null)),
+                )
+            })?;
+        Ok(Json(answer).into_response())
+    })
+}
+
+fn require_continuity(db: &Store, scope: &str, lane: &str) -> Result<(), ApiError> {
     if db.continuity_session(scope, lane)?.is_none() {
         return Err(ApiError::domain(
             StatusCode::NOT_FOUND,
@@ -34,23 +61,5 @@ pub fn handle(
             None,
         ));
     }
-    if *method == Method::GET {
-        return Ok(Json(db.seat_state(scope, lane)?).into_response());
-    }
-    let etag = input["ifMatch"]
-        .as_i64()
-        .filter(|n| *n > 0)
-        .ok_or_else(|| ApiError::bad("ifMatch must be a positive integer", None))?;
-    let answer = db
-        .set_seat_work(scope, lane, &input["work"], etag)
-        .map_err(|e| ApiError::bad(e.to_string(), None))?
-        .ok_or_else(|| {
-            ApiError::domain(
-                StatusCode::CONFLICT,
-                "stale_seat_work",
-                "work etag changed",
-                Some(db.seat_state(scope, lane).unwrap_or(Value::Null)),
-            )
-        })?;
-    Ok(Json(answer).into_response())
+    Ok(())
 }

@@ -126,7 +126,7 @@ pub fn handle(
     q: &HashMap<String, String>,
 ) -> Result<Response, ApiError> {
     if path == "/v1/events/head" {
-        let db = server.store.lock().unwrap();
+        let db = server.read()?;
         return Ok(
             Json(json!({"hrcSeq":db.max_hrc_seq()?,"brokerCommit":db.broker_commit()?}))
                 .into_response(),
@@ -141,14 +141,9 @@ pub fn handle(
                 Some(json!({"field":"limit","value":limit})),
             ));
         }
-        let db = server.store.lock().unwrap();
-        let tx = db
-            .sqlite
-            .unchecked_transaction()
-            .map_err(anyhow::Error::from)?;
+        let db = server.read()?;
         fence(&db, q)?;
         let value = db.event_page(after, limit)?;
-        tx.commit().map_err(anyhow::Error::from)?;
         return Ok(Json(value).into_response());
     }
     if path == "/v1/events/tail" {
@@ -177,11 +172,7 @@ pub fn handle(
             -1
         };
         let q = filters(q)?;
-        let db = server.open_reader()?;
-        let tx = db
-            .sqlite
-            .unchecked_transaction()
-            .map_err(anyhow::Error::from)?;
+        let db = server.read()?;
         let incarnation = fence(&db, &q)?;
         let head = db.max_hrc_seq()?;
         let mut rows = db.event_history(
@@ -195,17 +186,13 @@ pub fn handle(
         let truncated = rows.len() > limit as usize;
         rows.truncate(limit as usize);
         rows.reverse();
-        tx.commit().map_err(anyhow::Error::from)?;
         return Ok(Json(json!({"events":rows,"ledgerIncarnationId":incarnation,"headHrcSeq":head,"truncated":truncated})).into_response());
     }
     if path == "/v1/events/latest-by-session" {
         let q = filters(q)?;
         // A filtered read can still walk substantial history. Its own WAL
         // reader must never queue submissions/pages behind the writer mutex.
-        let mut db = hrc_store::Store::open_readonly(&server.state.join("state.sqlite"))?;
-        if !server.front {
-            super::statement_telemetry::install(&mut db, server.accounting.clone())?;
-        }
+        let db = server.read()?;
         let rows = db.latest_per_session(&q)?;
         return Ok(Json(rows).into_response());
     }
@@ -416,11 +403,7 @@ impl History {
         let rows = {
             // Read-only: a request-local snapshot, off the store mutex. Event
             // pages and every lifecycle follower with news read through here.
-            let db = self.server.open_reader()?;
-            let _snapshot = db
-                .sqlite
-                .unchecked_transaction()
-                .map_err(anyhow::Error::from)?;
+            let db = self.server.read()?;
             let current = db.ledger_incarnation()?;
             if current != self.head.incarnation {
                 return Err(ApiError::domain(

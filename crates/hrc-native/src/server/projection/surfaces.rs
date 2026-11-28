@@ -332,12 +332,5 @@ pub fn bind(server: &Server, body: Value) -> Result<Response, ApiError> {
             ),
         ));
     }
-    Ok(Json(
-        server
-            .store
-            .lock()
-            .unwrap()
-            .bind_surface(&parsed, &runtime)?,
-    )
-    .into_response())
+    Ok(Json(server.write(|db| db.bind_surface(&parsed, &runtime))?).into_response())
 }

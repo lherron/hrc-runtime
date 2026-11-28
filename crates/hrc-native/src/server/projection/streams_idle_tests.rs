@@ -37,7 +37,7 @@ async fn idle_followers_measurement() -> anyhow::Result<()> {
     let ready = bounded.chunk().await?.unwrap();
     assert!(std::str::from_utf8(&ready)?.contains("\"type\":\"ready\""));
     transcript::start(&server);
-    wait_transcript_read(&seen).await?;
+    wait_transcript_tick(&server).await?;
     seen.lock().unwrap().clear();
     tokio::time::sleep(Duration::from_millis(6_100)).await;
     let calls = seen.lock().unwrap().clone();
@@ -45,10 +45,7 @@ async fn idle_followers_measurement() -> anyhow::Result<()> {
         .iter()
         .filter(|s| s.contains("/projection/streams.rs:"))
         .count();
-    let transcript = calls
-        .iter()
-        .filter(|s| s.contains("/projection/transcript.rs:"))
-        .count();
+    let transcript = transcript::completed_ticks(&server) - 1;
     println!(
         "idle 6100ms: stream store reads={streams}, transcript head/cursor reads={transcript}"
     );
@@ -227,17 +224,7 @@ fn seed(server: &Shared) -> anyhow::Result<()> {
 // or a watch generation coalesced during indexing leaves the cursor behind.
 #[tokio::test]
 async fn transcript_boot_retry_and_coalesced_commits() -> anyhow::Result<()> {
-    let seen = Arc::new(Mutex::new(Vec::<String>::new()));
-    let (_scratch, server) = server_with("off", false, |store| {
-        StoreLock::observed(store, Duration::ZERO, {
-            let seen = seen.clone();
-            move |v| {
-                seen.lock()
-                    .unwrap()
-                    .push(v["callerTag"].as_str().unwrap().to_owned())
-            }
-        })
-    })?;
+    let (_scratch, server) = crate::server::turns::admission::tests::server("off", false)?;
     seed(&server)?;
     for (i, kind) in [
         "user.message",
@@ -256,7 +243,7 @@ async fn transcript_boot_retry_and_coalesced_commits() -> anyhow::Result<()> {
         "ALTER TABLE transcript_index_cursor RENAME TO saved_transcript_index_cursor",
     )?;
     transcript::start(&server);
-    wait_transcript_read(&seen).await?;
+    wait_transcript_tick(&server).await?;
     // Repair without a ledger wake. Only the failed tick's retry can catch up.
     server.store.lock().unwrap().sqlite.execute_batch(
         "ALTER TABLE saved_transcript_index_cursor RENAME TO transcript_index_cursor",
@@ -331,17 +318,9 @@ fn seed_retained_reader(server: &Shared, root: &std::path::Path) -> anyhow::Resu
     Ok(())
 }
 
-async fn wait_transcript_read(seen: &Mutex<Vec<String>>) -> anyhow::Result<()> {
+async fn wait_transcript_tick(server: &Shared) -> anyhow::Result<()> {
     tokio::time::timeout(Duration::from_secs(5), async {
-        loop {
-            if seen
-                .lock()
-                .unwrap()
-                .iter()
-                .any(|s| s.contains("/projection/transcript.rs:"))
-            {
-                break;
-            }
+        while transcript::completed_ticks(server) == 0 {
             tokio::time::sleep(Duration::from_millis(10)).await;
         }
     })

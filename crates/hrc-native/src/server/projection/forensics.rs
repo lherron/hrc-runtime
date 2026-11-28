@@ -96,7 +96,7 @@ fn select(server: &Server, query: &HashMap<String, String>) -> Result<Value, Api
             Some(json!({})),
         ));
     }
-    let db = server.store.lock().unwrap();
+    let db = server.read()?;
     let events =
         |predicate: &str, id: &str| db.broker_events(predicate, &[Sql::Text(id.to_owned())]);
     let body = |kind: &str,

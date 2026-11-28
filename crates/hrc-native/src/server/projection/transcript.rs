@@ -31,6 +31,8 @@ pub struct State {
     /// Serializes ticks and rebuilds (Bun's tickInFlight).
     tick: tokio::sync::Mutex<()>,
     reindexed: AtomicI64,
+    #[cfg(test)]
+    completed_ticks: std::sync::atomic::AtomicUsize,
 }
 
 /// Catch up once at boot, then follow committed ledger generations. Subscribe
@@ -83,7 +85,18 @@ fn stopping(server: &Server) -> bool {
 
 async fn tick(server: &Shared) -> Result<()> {
     let _tick = server.transcript.tick.lock().await;
-    run_tail(server).await
+    let result = run_tail(server).await;
+    #[cfg(test)]
+    server
+        .transcript
+        .completed_ticks
+        .fetch_add(1, Ordering::SeqCst);
+    result
+}
+
+#[cfg(test)]
+pub(super) fn completed_ticks(server: &Server) -> usize {
+    server.transcript.completed_ticks.load(Ordering::SeqCst)
 }
 
 /// runLedgerTail: consume the bounded global-id tail, one immediate
@@ -91,7 +104,7 @@ async fn tick(server: &Shared) -> Result<()> {
 async fn run_tail(server: &Shared) -> Result<()> {
     let head = server.clone();
     let (ceiling, mut cursor) = tokio::task::spawn_blocking(move || -> Result<(i64, i64)> {
-        let db = head.store.lock().unwrap();
+        let db = head.read()?;
         Ok((index::max_event_id(&db.sqlite)?, index::cursor(&db.sqlite)?))
     })
     .await??;
@@ -116,33 +129,34 @@ fn apply_batch(server: &Server, cursor: i64, ceiling: i64) -> Result<Option<(i64
     let Some(_write) = server.owner_writes.enter() else {
         return Ok(None);
     };
-    let mut db = server.store.lock().unwrap();
-    let tx = db
-        .sqlite
-        .transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)?;
-    let events = index::tail(&tx, cursor, ceiling, BATCH_SIZE)?;
-    let full = events.len() as i64 == BATCH_SIZE;
-    let next = if full {
-        events.last().map_or(cursor, |e| e.id)
-    } else {
-        ceiling
-    };
-    // Invocations in first-appearance order, as Bun's Map groups them.
-    let mut order: Vec<(String, Vec<LedgerEvent>)> = Vec::new();
-    let mut slot = HashMap::new();
-    for event in events {
-        let at = *slot.entry(event.invocation_id.clone()).or_insert_with(|| {
-            order.push((event.invocation_id.clone(), Vec::new()));
-            order.len() - 1
-        });
-        order[at].1.push(event);
-    }
-    for (invocation, events) in order {
-        process_invocation(server, &tx, &invocation, events)?;
-    }
-    index::set_cursor(&tx, next, &timestamp())?;
-    tx.commit()?;
-    Ok(Some((next, full)))
+    server.write(|db| {
+        let tx = db
+            .sqlite
+            .transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)?;
+        let events = index::tail(&tx, cursor, ceiling, BATCH_SIZE)?;
+        let full = events.len() as i64 == BATCH_SIZE;
+        let next = if full {
+            events.last().map_or(cursor, |e| e.id)
+        } else {
+            ceiling
+        };
+        // Invocations in first-appearance order, as Bun's Map groups them.
+        let mut order: Vec<(String, Vec<LedgerEvent>)> = Vec::new();
+        let mut slot = HashMap::new();
+        for event in events {
+            let at = *slot.entry(event.invocation_id.clone()).or_insert_with(|| {
+                order.push((event.invocation_id.clone(), Vec::new()));
+                order.len() - 1
+            });
+            order[at].1.push(event);
+        }
+        for (invocation, events) in order {
+            process_invocation(server, &tx, &invocation, events)?;
+        }
+        index::set_cursor(&tx, next, &timestamp())?;
+        tx.commit()?;
+        Ok(Some((next, full)))
+    })
 }
 
 fn process_invocation(
@@ -321,7 +335,7 @@ fn document(events: &[LedgerEvent]) -> Option<Turn> {
 
 /// TranscriptIndexStats, in Bun's key order.
 fn stats(server: &Server) -> Result<Value> {
-    let db = server.store.lock().unwrap();
+    let db = server.read()?;
     let (turns, last) = index::stats(&db.sqlite)?;
     let ledger = index::max_event_id(&db.sqlite)?;
     Ok(json!({
@@ -464,7 +478,7 @@ pub fn search(server: &Server, body: &[u8]) -> Result<Response, ApiError> {
         }
     };
     let found = {
-        let db = server.store.lock().unwrap();
+        let db = server.read()?;
         let (limit, cap) = if within {
             (limit, None)
         } else {

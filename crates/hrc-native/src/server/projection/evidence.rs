@@ -157,7 +157,7 @@ pub fn follow(
                 )
             })?,
     };
-    let rows=server.store.lock().unwrap().broker_events("WHERE id>=? AND (evidence_origin IS NULL OR evidence_origin!='retained') ORDER BY id ASC LIMIT ?",&[Sql::Integer(after),Sql::Integer(limit)])?;
+    let rows=server.read()?.broker_events("WHERE id>=? AND (evidence_origin IS NULL OR evidence_origin!='retained') ORDER BY id ASC LIMIT ?",&[Sql::Integer(after),Sql::Integer(limit)])?;
     let events: Vec<Value> = rows
         .into_iter()
         .map(|mut row| {
@@ -187,7 +187,7 @@ pub fn query(server: &Server, q: &HashMap<String, String>) -> Result<Response, A
     }
     let include = retained(q)?;
     let runtime = param(q, "runtimeId")?;
-    let db = server.store.lock().unwrap();
+    let db = server.read()?;
     if !db
         .sqlite
         .query_row(

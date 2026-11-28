@@ -55,7 +55,7 @@ fn parse_int(s: &str) -> Option<i64> {
 }
 
 pub fn handle(server: &Server, query: &HashMap<String, String>) -> Result<Response, ApiError> {
-    let db = server.store.lock().unwrap();
+    let db = server.read()?;
     if let Some(raw) = query.get("trip").filter(|t| !t.trim().is_empty()) {
         let found = match parse_int(raw.trim()) {
             None => None,
@@ -70,6 +70,7 @@ pub fn handle(server: &Server, query: &HashMap<String, String>) -> Result<Respon
                 )
                 .ok(),
         };
+        drop(db);
         let Some((trip, bundle_dir)) = found else {
             return Err(ApiError::domain(
                 StatusCode::NOT_FOUND,

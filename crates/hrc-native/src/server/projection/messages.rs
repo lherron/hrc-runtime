@@ -143,7 +143,7 @@ pub fn local_query(
     code: &str,
     message: &str,
 ) -> Result<Value, ApiError> {
-    let db = server.store.lock().unwrap();
+    let db = server.read()?;
     Ok(
         json!({"messages":db.message_query(filter)?,"history":{"source":"local","complete":false,"authorityNodeId":"svc","queriedNodeId":super::publication::node_id(server),"cursorKind":"node-local","pendingReplicationCount":db.local_history_pending()?,"degraded":{"code":code,"message":message}}}),
     )

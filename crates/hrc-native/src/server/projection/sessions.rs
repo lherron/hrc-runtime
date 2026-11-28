@@ -71,49 +71,55 @@ pub async fn handle(
     } else {
         None
     };
-    let mut db = server.store.lock().unwrap();
-    let session = db.continuity_session(scope, lane)?.ok_or_else(|| {
-        ApiError::domain(
-            StatusCode::NOT_FOUND,
-            "unknown_host_session",
-            "unknown continuity",
-            Some(json!({"scopeRef":scope,"laneRef":lane})),
-        )
-    })?;
+    let require_session = |db: &hrc_store::Store| -> Result<Value, ApiError> {
+        db.continuity_session(scope, lane)?.ok_or_else(|| {
+            ApiError::domain(
+                StatusCode::NOT_FOUND,
+                "unknown_host_session",
+                "unknown continuity",
+                Some(json!({"scopeRef":scope,"laneRef":lane})),
+            )
+        })
+    };
     if *method == Method::PATCH {
-        let clear = match input.get("clear") {
-            None => Vec::new(),
-            Some(Value::Array(v)) if v.iter().all(Value::is_string) => {
-                v.iter().map(|v| v.as_str().unwrap().to_owned()).collect()
-            }
-            _ => {
+        return server.write(|db| {
+            require_session(db)?;
+            let clear = match input.get("clear") {
+                None => Vec::new(),
+                Some(Value::Array(v)) if v.iter().all(Value::is_string) => {
+                    v.iter().map(|v| v.as_str().unwrap().to_owned()).collect()
+                }
+                _ => {
+                    return Err(ApiError::bad(
+                        "clear must be an array of keys",
+                        Some(json!({})),
+                    ));
+                }
+            };
+            let set = input.get("set").cloned().unwrap_or(json!({}));
+            let existing = db.metadata_keys(scope, lane, "api", &clear, false)?;
+            let (_, rejected) = hrc_store::validate_metadata(&set, &existing, &clear);
+            if !rejected.is_empty() {
                 return Err(ApiError::bad(
-                    "clear must be an array of keys",
-                    Some(json!({})),
+                    "invalid session metadata",
+                    Some(json!({"rejected":rejected})),
                 ));
             }
-        };
-        let set = input.get("set").cloned().unwrap_or(json!({}));
-        let existing = db.metadata_keys(scope, lane, "api", &clear, false)?;
-        let (_, rejected) = hrc_store::validate_metadata(&set, &existing, &clear);
-        if !rejected.is_empty() {
-            return Err(ApiError::bad(
-                "invalid session metadata",
-                Some(json!({"rejected":rejected})),
-            ));
-        }
-        let mut result = db.write_metadata(hrc_store::MetadataWrite {
-            scope,
-            lane,
-            source: "api",
-            set: &set,
-            clear: &clear,
-            replace: false,
-            updated_by: principal(headers),
-        })?;
-        result.as_object_mut().unwrap().remove("rejected");
-        return Ok(Some(Json(result).into_response()));
+            let mut result = db.write_metadata(hrc_store::MetadataWrite {
+                scope,
+                lane,
+                source: "api",
+                set: &set,
+                clear: &clear,
+                replace: false,
+                updated_by: principal(headers),
+            })?;
+            result.as_object_mut().unwrap().remove("rejected");
+            Ok(Some(Json(result).into_response()))
+        });
     }
+    let db = server.read()?;
+    let session = require_session(&db)?;
     let stored = db.metadata(scope, lane)?;
     // session-metadata-handlers.ts: the continuity view, then the metadata.
     let mut result = if metadata { stored.clone() } else { json!({}) };
@@ -339,11 +345,7 @@ fn read(server: &Server, body: &[u8]) -> Result<Response, ApiError> {
         .map(|s| projection_since(Some(s.trim())))
         .transpose()?;
     let cursor = optional_string("cursor")?;
-    let db = server.open_reader()?;
-    let tx = db
-        .sqlite
-        .unchecked_transaction()
-        .map_err(anyhow::Error::from)?;
+    let db = server.read()?;
     let walks = &server.session_read_walks;
     let (id, walk, start) = if let Some(cursor) = cursor {
         let raw = URL_SAFE_NO_PAD
@@ -379,7 +381,6 @@ fn read(server: &Server, body: &[u8]) -> Result<Response, ApiError> {
     let end = (start + limit).min(walk.ids.len());
     let mut items = db.session_projection_page(&walk.ids[start..end])?;
     db.annotate_sessions(&mut items, walk.seats.is_some())?;
-    tx.commit().map_err(anyhow::Error::from)?;
     let next = if end < walk.ids.len() {
         let next = URL_SAFE_NO_PAD.encode(json!([id.to_string(), end]).to_string());
         if start == 0 {
@@ -402,11 +403,7 @@ fn read_by_hosts(server: &Server, ids: &Value) -> Result<Response, ApiError> {
         .ok_or_else(|| {
             ApiError::bad("hostSessionIds must be an array of 1 to 500 strings", None)
         })?;
-    let db = server.open_reader()?;
-    let tx = db
-        .sqlite
-        .unchecked_transaction()
-        .map_err(anyhow::Error::from)?;
+    let db = server.read()?;
     let mut items = Vec::with_capacity(ids.len());
     for id in ids {
         let host = id.as_str().unwrap();
@@ -414,7 +411,6 @@ fn read_by_hosts(server: &Server, ids: &Value) -> Result<Response, ApiError> {
             .unwrap_or_else(|| json!({"hostSessionId":host,"error":{"code":"not_found"}}));
         items.push(record);
     }
-    tx.commit().map_err(anyhow::Error::from)?;
     Ok(Json(json!({"items":items,"nextCursor":null})).into_response())
 }
 
@@ -472,11 +468,7 @@ fn list(server: &Server, query: &HashMap<String, String>) -> Result<Response, Ap
     } else {
         Some(projection_since(optional(query, "updatedSince"))?)
     };
-    let db = server.open_reader()?;
-    let tx = db
-        .sqlite
-        .unchecked_transaction()
-        .map_err(anyhow::Error::from)?;
+    let db = server.read()?;
     let mut sessions = db.sessions_for_projection(scope, lane, since.as_deref())?;
     if affirmative(query, "latestGeneration") {
         hrc_store::retain_latest_generation(&mut sessions)?;
@@ -489,7 +481,6 @@ fn list(server: &Server, query: &HashMap<String, String>) -> Result<Response, Ap
     }
     db.annotate_sessions(&mut sessions, scope.is_some())?;
     let total = db.count("sessions")?;
-    tx.commit().map_err(anyhow::Error::from)?;
     let mut response = Json(json!(sessions)).into_response();
     for (key, value) in [
         ("x-hrc-session-total", total),
@@ -544,11 +535,7 @@ pub async fn resolve(server: &Shared, body: &[u8]) -> Result<Response, ApiError>
     }
     let (scope, lane) = parse_session_ref(raw)?;
     let create = b["create"] == true;
-    let existing = server
-        .store
-        .lock()
-        .unwrap()
-        .continuity_session(scope, lane)?;
+    let existing = server.read()?.continuity_session(scope, lane)?;
     let (mut session, created) = match existing {
         Some(s) => {
             // `resolve --create` is a summon surface even over existing
@@ -578,17 +565,18 @@ pub async fn resolve(server: &Shared, body: &[u8]) -> Result<Response, ApiError>
                 provision: runtime_intent.get("provision").cloned(),
             };
             super::federation::summon::with_summon_authority(server, summon, || async {
-                let mut db = server.store.lock().unwrap();
-                Ok(match db.continuity_session(scope, lane)? {
-                    Some(raced) => (raced, false),
-                    None => db.create_session(scope, lane)?,
+                server.write(|db| {
+                    Ok(match db.continuity_session(scope, lane)? {
+                        Some(raced) => (raced, false),
+                        None => db.create_session(scope, lane)?,
+                    })
                 })
             })
             .await?
         }
         None=>return Ok(Json(json!({"found":false,"hostSessionId":null,"generation":null,"created":false,"session":null})).into_response()),
     };
-    let identity = server.store.lock().unwrap().identity(scope, lane)?;
+    let identity = server.read()?.identity(scope, lane)?;
     session["identity"] = identity.clone();
     Ok(Json(json!({"found":true,"hostSessionId":session["hostSessionId"],"generation":session["generation"],"created":created,"session":session,"identity":identity})).into_response())
 }
@@ -609,7 +597,7 @@ fn attention(server: &Server, query: &HashMap<String, String>) -> Result<Respons
     let ref_string = format!("{scope}/lane:{}", hrc_store::storage_lane(lane));
     let (scope, lane) = parse_session_ref(&ref_string)?;
     let lane_ref = hrc_store::canonical_lane(lane);
-    let db = server.store.lock().unwrap();
+    let db = server.read()?;
     let session = db.continuity_session(scope, lane)?.ok_or_else(|| {
         ApiError::domain(
             StatusCode::NOT_FOUND,
@@ -722,8 +710,8 @@ fn annotations(
         |reason: String| annotation_refusal(&AnnotationRefusal::Invalid(reason), detail.clone());
     let refused = |refusal: AnnotationRefusal| annotation_refusal(&refusal, detail.clone());
     let generation = generation_field(&input, *method == Method::GET).map_err(invalid)?;
-    let mut db = server.store.lock().unwrap();
     if *method == Method::GET {
+        let db = server.read()?;
         let filter = AnnotationFilter {
             subject: optional(query, "subject"),
             generation,
@@ -733,44 +721,46 @@ fn annotations(
         let rows = db.list_annotations(scope, lane, filter)?.map_err(refused)?;
         return Ok(Json(json!({"annotations":rows})).into_response());
     }
-    let field = |name: &str| text_field(&input, name).map_err(invalid);
-    let key = AnnotationKey {
-        scope,
-        lane,
-        subject: field("subject")?,
-        generation,
-        ns: field("ns")?,
-        kind: field("kind")?,
-        id: field("id")?,
-    };
-    let expect = input.get("expect").filter(|v| !v.is_null());
-    let answer = match path {
-        "/v1/sessions/annotations" => {
-            let (annotation, created) = db
-                .put_annotation(AnnotationPut {
-                    key,
-                    body: input.get("body").unwrap_or(&Value::Null),
-                    expect,
-                    updated_by: principal(headers),
-                })?
-                .map_err(refused)?;
-            json!({"annotation":annotation,"created":created})
-        }
-        "/v1/sessions/annotations/delete" => {
-            let deleted = db
-                .delete_annotation(key, expect, principal(headers))?
-                .map_err(refused)?;
-            json!({"deleted":deleted})
-        }
-        _ => {
-            let attributes = input.get("attributes").filter(|v| !v.is_null());
-            let seq = db
-                .act_annotation(key, field("action")?, attributes)?
-                .map_err(refused)?;
-            json!({"hrcSeq":seq})
-        }
-    };
-    Ok(Json(answer).into_response())
+    server.write(|db| {
+        let field = |name: &str| text_field(&input, name).map_err(invalid);
+        let key = AnnotationKey {
+            scope,
+            lane,
+            subject: field("subject")?,
+            generation,
+            ns: field("ns")?,
+            kind: field("kind")?,
+            id: field("id")?,
+        };
+        let expect = input.get("expect").filter(|v| !v.is_null());
+        let answer = match path {
+            "/v1/sessions/annotations" => {
+                let (annotation, created) = db
+                    .put_annotation(AnnotationPut {
+                        key,
+                        body: input.get("body").unwrap_or(&Value::Null),
+                        expect,
+                        updated_by: principal(headers),
+                    })?
+                    .map_err(refused)?;
+                json!({"annotation":annotation,"created":created})
+            }
+            "/v1/sessions/annotations/delete" => {
+                let deleted = db
+                    .delete_annotation(key, expect, principal(headers))?
+                    .map_err(refused)?;
+                json!({"deleted":deleted})
+            }
+            _ => {
+                let attributes = input.get("attributes").filter(|v| !v.is_null());
+                let seq = db
+                    .act_annotation(key, field("action")?, attributes)?
+                    .map_err(refused)?;
+                json!({"hrcSeq":seq})
+            }
+        };
+        Ok(Json(answer).into_response())
+    })
 }
 
 /// Durable successor handoffs. IDs are local HRC identities; no wrkq rows import.
@@ -809,9 +799,9 @@ fn seat_handoffs(
         };
         ApiError::domain(status, code, &message, Some(json!({})))
     };
-    let mut db = server.store.lock().unwrap();
     let value = match (method.as_str(), path) {
-        ("GET", "/v1/seat-handoffs/get") => db
+        ("GET", "/v1/seat-handoffs/get") => server
+            .read()?
             .seat_handoff(field("id")?)?
             .ok_or_else(|| fail(anyhow::anyhow!("handoff_not_found")))?,
         ("GET", "/v1/seat-handoffs") => {
@@ -820,7 +810,7 @@ fn seat_handoffs(
             if scope.is_none() && project.is_none() {
                 return Err(ApiError::bad("scopeRef or project is required", None));
             }
-            let rows = db.list_seat_handoffs(
+            let rows = server.read()?.list_seat_handoffs(
                 scope,
                 input["laneRef"].as_str(),
                 project,
@@ -828,7 +818,7 @@ fn seat_handoffs(
             )?;
             json!({"handoffs":rows})
         }
-        ("POST", "/v1/seat-handoffs") => {
+        ("POST", "/v1/seat-handoffs") => server.write(|db| {
             let scope = field("scopeRef")?;
             let lane = input["laneRef"].as_str().unwrap_or("main");
             let session_ref = format!("{scope}/lane:{}", hrc_store::storage_lane(lane));
@@ -839,16 +829,16 @@ fn seat_handoffs(
                 input["title"].as_str().unwrap_or(""),
                 field("body")?,
             )
-            .map_err(fail)?
-        }
-        ("POST", "/v1/seat-handoffs/acknowledge") => {
+            .map_err(fail)
+        })?,
+        ("POST", "/v1/seat-handoffs/acknowledge") => server.write(|db| {
             let etag = input["ifMatch"]
                 .as_i64()
                 .filter(|n| *n > 0)
                 .ok_or_else(|| ApiError::bad("ifMatch must be a positive integer", None))?;
             db.acknowledge_seat_handoff(field("id")?, etag, field("note")?)
-                .map_err(fail)?
-        }
+                .map_err(fail)
+        })?,
         _ => return Err(ApiError::bad("unknown handoff route", None)),
     };
     Ok(Json(value).into_response())

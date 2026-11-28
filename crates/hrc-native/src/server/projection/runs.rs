@@ -235,7 +235,7 @@ pub fn list(server: &Server, q: &HashMap<String, String>) -> Result<Response, Ap
     } else {
         format!("WHERE {}", predicates.join(" AND "))
     };
-    let db = server.store.lock().unwrap();
+    let db = server.read()?;
     let mut stmt = db
         .sqlite
         .prepare(&format!(

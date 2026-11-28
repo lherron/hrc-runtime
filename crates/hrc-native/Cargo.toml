@@ -36,6 +36,10 @@ toml.workspace = true
 futures-util.workspace = true
 notify = "8"
 
+[dev-dependencies]
+proc-macro2 = "1"
+syn = { version = "2", features = ["full", "visit"] }
+
 [build-dependencies]
 serde_json.workspace = true
 

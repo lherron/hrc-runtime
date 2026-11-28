@@ -241,14 +241,7 @@ pub fn query(
     paginate: bool,
     mode: Terminal,
 ) -> Result<(Vec<Value>, Option<String>), ApiError> {
-    query_with_reader(
-        q,
-        paginate,
-        mode,
-        None,
-        || server.open_reader(),
-        |_, _| Ok(()),
-    )
+    query_with_reader(q, paginate, mode, None, || server.read(), |_, _| Ok(()))
 }
 
 struct ReadSelectors {
@@ -310,14 +303,7 @@ pub fn read(
             .ok_or_else(|| ApiError::bad("all must be a boolean", None))?;
         q.insert("all".to_owned(), all.to_string());
     }
-    let (mut rows, _) = query_with_reader(
-        &q,
-        false,
-        mode,
-        Some(&batch),
-        || server.open_reader(),
-        finish,
-    )?;
+    let (mut rows, _) = query_with_reader(&q, false, mode, Some(&batch), || server.read(), finish)?;
     if mode == Terminal::Exclude {
         canonicalize_lanes(&mut rows);
     }
@@ -329,7 +315,7 @@ fn query_with_reader(
     paginate: bool,
     mode: Terminal,
     batch: Option<&ReadSelectors>,
-    open: impl FnOnce() -> anyhow::Result<hrc_store::Store>,
+    open: impl FnOnce() -> anyhow::Result<super::ReadSnapshot>,
     finish: impl FnOnce(&hrc_store::Store, &mut [Value]) -> Result<(), ApiError>,
 ) -> Result<(Vec<Value>, Option<String>), ApiError> {
     let transport = optional(q, "transport");
@@ -435,10 +421,6 @@ fn query_with_reader(
         ]);
     }
     let db = open()?;
-    let tx = db
-        .sqlite
-        .unchecked_transaction()
-        .map_err(anyhow::Error::from)?;
     let clause = clause.join(" AND ");
     let mut rows = if paginate {
         list_keys(&db, &clause, values)?
@@ -546,7 +528,6 @@ fn query_with_reader(
     }
     attach_first_turn_health(&db, &mut rows, batch.is_some())?;
     finish(&db, &mut rows)?;
-    tx.commit().map_err(anyhow::Error::from)?;
     Ok((rows, next))
 }
 
@@ -672,11 +653,11 @@ mod tests {
     fn observed_reader(
         server: &Server,
         seen: &Arc<Mutex<Vec<String>>>,
-    ) -> anyhow::Result<hrc_store::Store> {
+    ) -> anyhow::Result<super::super::ReadSnapshot> {
         let mut reader = server.open_reader()?;
         let sink = seen.clone();
         reader.instrument_statements(0.0, move |s| sink.lock().unwrap().push(s.sql))?;
-        Ok(reader)
+        super::super::ReadSnapshot::begin(reader)
     }
 
     // Regressions: reading JSON outside the requested page, changing status
