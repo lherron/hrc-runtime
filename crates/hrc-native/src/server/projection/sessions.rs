@@ -197,7 +197,11 @@ fn list(server: &Server, query: &HashMap<String, String>) -> Result<Response, Ap
         };
         Some(stamp.to_rfc3339_opts(chrono::SecondsFormat::Millis, true))
     };
-    let db = server.store.lock().unwrap();
+    let db = server.open_reader()?;
+    let tx = db
+        .sqlite
+        .unchecked_transaction()
+        .map_err(anyhow::Error::from)?;
     let mut sessions = db.sessions_for_projection(scope, lane, since.as_deref())?;
     if affirmative(query, "latestGeneration") {
         hrc_store::retain_latest_generation(&mut sessions)?;
@@ -212,6 +216,7 @@ fn list(server: &Server, query: &HashMap<String, String>) -> Result<Response, Ap
         db.annotate_session(s, scope.is_some())?;
     }
     let total = db.count("sessions")?;
+    tx.commit().map_err(anyhow::Error::from)?;
     let mut response = Json(json!(sessions)).into_response();
     for (key, value) in [
         ("x-hrc-session-total", total),

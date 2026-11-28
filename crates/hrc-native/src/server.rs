@@ -414,6 +414,15 @@ impl IntoResponse for ApiError {
     }
 }
 impl Server {
+    /// An independent WAL reader for request-local snapshots.
+    fn open_reader(&self) -> Result<Store> {
+        let mut reader = Store::open_readonly(&self.state.join("state.sqlite"))?;
+        if !self.front {
+            statement_telemetry::install(&mut reader, self.accounting.clone())?;
+        }
+        Ok(reader)
+    }
+
     /// A wake carries no data: something committed, so followers query again.
     pub(super) fn ledger_committed(&self) {
         self.ledger.send_modify(|g| *g = g.wrapping_add(1));
@@ -1040,7 +1049,7 @@ async fn status(
             Some(json!({"includeSessions":v})),
         ));
     }
-    // Probed before the store lock: a slow peer must not hold it.
+    // Finish probe I/O before taking a database snapshot.
     let peer_health = if query.get("includePeerHealth").is_some_and(|v| v == "true") {
         Some(federation::peer_health(&server.federation).await)
     } else {
@@ -1048,7 +1057,11 @@ async fn status(
     };
     let aspd = aspc::service_status().await;
     let tmux = status_runtime::tmux().await;
-    let db = server.store.lock().unwrap();
+    let db = server.open_reader()?;
+    let tx = db
+        .sqlite
+        .unchecked_transaction()
+        .map_err(anyhow::Error::from)?;
     let binary = env::current_exe().map_err(anyhow::Error::from)?;
     let mut value = json!({"ok":true,"uptime":server.started.elapsed().as_secs(),"startedAt":server.started_at,"runtimeRoot":server.runtime,"stateRoot":server.state,"socketPath":server.runtime.join("hrc.sock"),"listenSocketPath":server.runtime.join("hrc.sock"),"dbPath":server.state.join("state.sqlite"),"cwd":env::current_dir().map_err(anyhow::Error::from)?,"binaryPath":binary,"packagePath":binary.parent(),"release":server.release.status(),"aspToolchain":{"toolchainRootActive":false,"binaries":[]},"aspd":aspd,"sessionCount":db.count("sessions")?,"runtimeCount":db.count("runtimes")?,"apiVersion":env!("HRC_API_VERSION"),"eventLoop":server.event_loop.lock().unwrap().snapshot(),"lastRestart":lifecycle::rows::last_restart(&db.sqlite)?,"node":server.federation.config.summary(),"mailKicker":"absent"});
     value["capabilities"] = json!({"semanticCore":{"sessions":true,"ensureRuntime":false,"dispatchTurn":true,"inFlightInput":true,"capture":true,"attach":true,"clearContext":true},"platform":{"appOwnedSessions":false,"appHarnessSessions":false,"commandSessions":true,"literalInput":true,"surfaceBindings":true,"legacyLocalBridges":[]},"bridgeDelivery":{"actualPtyInjection":false,"enter":false,"oobSuffix":false,"freshnessFence":false},"backend":{"tmux":tmux},"serverLifecycle":!server.front,"selfRestart":true,"sessionRestart":true,"federatedSessionRead":true,"runtimeListOmitState":true});
@@ -1063,6 +1076,7 @@ async fn status(
                 .collect::<Vec<_>>()
         );
     }
+    tx.commit().map_err(anyhow::Error::from)?;
     Ok(value)
 }
 

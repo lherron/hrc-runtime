@@ -177,7 +177,7 @@ pub fn handle(
             -1
         };
         let q = filters(q)?;
-        let db = server.store.lock().unwrap();
+        let db = server.open_reader()?;
         let tx = db
             .sqlite
             .unchecked_transaction()

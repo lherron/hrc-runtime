@@ -75,7 +75,7 @@ pub fn runtime(server: &Server, id: &str) -> Result<Value, ApiError> {
     })
 }
 // Pagination needs only filter/sort keys. Do not parse historical runtime
-// JSON again for each page; hydrate selected IDs while holding the same lock.
+// JSON again for each page; hydrate selected IDs in the same snapshot.
 fn list_keys(
     db: &hrc_store::Store,
     clause: &str,
@@ -241,6 +241,15 @@ pub fn query(
     paginate: bool,
     mode: Terminal,
 ) -> Result<(Vec<Value>, Option<String>), ApiError> {
+    query_with_reader(q, paginate, mode, || server.open_reader())
+}
+
+fn query_with_reader(
+    q: &HashMap<String, String>,
+    paginate: bool,
+    mode: Terminal,
+    open: impl FnOnce() -> anyhow::Result<hrc_store::Store>,
+) -> Result<(Vec<Value>, Option<String>), ApiError> {
     let transport = optional(q, "transport");
     if let Some(v) = transport
         && !["tmux", "headless", "sdk", "hrcpty"].contains(&v)
@@ -327,7 +336,11 @@ pub fn query(
             scope.to_owned(),
         ]);
     }
-    let db = server.store.lock().unwrap();
+    let db = open()?;
+    let tx = db
+        .sqlite
+        .unchecked_transaction()
+        .map_err(anyhow::Error::from)?;
     let clause = clause.join(" AND ");
     let mut rows = if paginate {
         list_keys(&db, &clause, values)?
@@ -433,6 +446,12 @@ pub fn query(
     if paginate {
         hydrate_page(&db, &mut rows, omit_state, worktree_occupancy)?;
     }
+    attach_first_turn_health(&db, &mut rows)?;
+    tx.commit().map_err(anyhow::Error::from)?;
+    Ok((rows, next))
+}
+
+fn attach_first_turn_health(db: &hrc_store::Store, rows: &mut [Value]) -> Result<(), ApiError> {
     let mut trips=db.sqlite.prepare("SELECT runtime_id,first_turn_missing_tripped_at,trip_event_seq,generation,bundle_dir FROM runtime_first_turn_watch WHERE first_turn_missing_tripped_at IS NOT NULL ORDER BY first_turn_missing_tripped_at ASC").map_err(anyhow::Error::from)?;
     let trips = trips
         .query_map([], |r| {
@@ -447,14 +466,14 @@ pub fn query(
         .map_err(anyhow::Error::from)?
         .collect::<Result<Vec<_>, _>>()
         .map_err(anyhow::Error::from)?;
-    for r in &mut rows {
+    for r in rows {
         if let Some((_, at, Some(seq), generation, bundle)) =
             trips.iter().rev().find(|(id, ..)| r["runtimeId"] == *id)
         {
             r["health"] = json!({"firstTurnMissing":{"trippedAt":at,"tripEventSeq":seq,"generation":generation,"bundleAvailable":bundle.is_some(),"retrieval":format!("hrc runtime diagnostics {seq}")}});
         }
     }
-    Ok((rows, next))
+    Ok(())
 }
 
 /// `GET /v1/runtimes` (handleListRuntimes): one page, lane refs canonical.
@@ -526,6 +545,17 @@ pub async fn seat(server: &Shared, id: &str) -> Result<Response, ApiError> {
 mod tests {
     use super::*;
     use crate::server::turns::admission::tests::server;
+    use std::sync::{Arc, Mutex};
+
+    fn observed_reader(
+        server: &Server,
+        seen: &Arc<Mutex<Vec<String>>>,
+    ) -> anyhow::Result<hrc_store::Store> {
+        let mut reader = server.open_reader()?;
+        let sink = seen.clone();
+        reader.instrument_statements(0.0, move |s| sink.lock().unwrap().push(s.sql))?;
+        Ok(reader)
+    }
 
     // Regressions: reading JSON outside the requested page, changing status
     // priority/cursor order, losing state or identity during late hydration.
@@ -578,7 +608,7 @@ mod tests {
     #[test]
     fn peer_inventory_reads_live_and_recent_runtimes_only() -> anyhow::Result<()> {
         let (_scratch, server) = server("off", false)?;
-        let seen = std::sync::Arc::new(std::sync::Mutex::new(Vec::<String>::new()));
+        let seen = Arc::new(Mutex::new(Vec::new()));
         {
             let mut db = server.store.lock().unwrap();
             let session = db.create_session("agent:test:project:fixture", "main")?.0;
@@ -601,11 +631,11 @@ mod tests {
             ] {
                 db.sqlite.execute("INSERT INTO runtimes(runtime_id,host_session_id,scope_ref,lane_ref,generation,transport,status,supports_inflight_input,runtime_state_json,last_activity_at,created_at,updated_at) VALUES(?,?,'agent:test:project:fixture','main',1,'hrcpty',?,0,?,?,'2026-01-01T00:00:00Z',?)", rusqlite::params![id, session["hostSessionId"].as_str(), status, state, activity, recent])?;
             }
-            let sink = seen.clone();
-            db.instrument_statements(0.0, move |s| sink.lock().unwrap().push(s.sql))?;
         }
-        let (rows, _) = query(&server, &HashMap::new(), false, Terminal::Recent)
-            .map_err(|e| anyhow::anyhow!("{e:?}"))?;
+        let (rows, _) = query_with_reader(&HashMap::new(), false, Terminal::Recent, || {
+            observed_reader(&server, &seen)
+        })
+        .map_err(|e| anyhow::anyhow!("{e:?}"))?;
         let ids: Vec<_> = rows.iter().map(|r| r["runtimeId"].clone()).collect();
         // Equal createdAt: runtimeId breaks the tie, as for every list.
         assert_eq!(ids, [json!("ended"), json!("live")]);
@@ -734,7 +764,7 @@ mod tests {
     #[test]
     fn hot_runtime_and_session_reads_are_index_driven() -> anyhow::Result<()> {
         let (_scratch, server) = server("off", false)?;
-        let seen = std::sync::Arc::new(std::sync::Mutex::new(Vec::<String>::new()));
+        let seen = Arc::new(Mutex::new(Vec::new()));
         {
             let mut db = server.store.lock().unwrap();
             let session = db.create_session("agent:test:project:fixture", "main")?.0;
@@ -749,7 +779,8 @@ mod tests {
                 .collect()
         };
         let run = |q: HashMap<String, String>, paginate, mode| {
-            query(&server, &q, paginate, mode).map_err(|e| anyhow::anyhow!("{e:?}"))
+            query_with_reader(&q, paginate, mode, || observed_reader(&server, &seen))
+                .map_err(|e| anyhow::anyhow!("{e:?}"))
         };
         run(q(&[]), false, Terminal::Recent)?;
         run(q(&[]), true, Terminal::Exclude)?;
