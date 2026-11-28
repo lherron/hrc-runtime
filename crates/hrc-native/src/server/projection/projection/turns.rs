@@ -64,6 +64,9 @@ pub fn set_status(
     let Some(rt) = db::runtime(db, runtime_id)? else {
         return Ok(());
     };
+    if hrc_store::status::LISTED_TERMINAL.contains(&rt.status.as_str()) {
+        return Ok(());
+    }
     let mut cols = vec![
         ("status", text(status)),
         ("status_changed_at", text(occurred_at)),
@@ -98,7 +101,9 @@ pub fn claim(db: &Connection, ctx: &Ctx, run_id: &str, occurred_at: &str, now: &
     let Some(rt) = db::runtime(db, &ctx.runtime_id)? else {
         return Ok(());
     };
-    if rt.generation != ctx.generation {
+    if rt.generation != ctx.generation
+        || hrc_store::status::LISTED_TERMINAL.contains(&rt.status.as_str())
+    {
         return Ok(());
     }
     if rt
@@ -138,12 +143,15 @@ pub fn claim(db: &Connection, ctx: &Ctx, run_id: &str, occurred_at: &str, now: &
 }
 /// clearRuntimeTurnOwnership
 pub fn clear_ownership(db: &Connection, rt: &Rt, occurred_at: &str, now: &str) -> Result<()> {
-    db.execute(
-        "UPDATE runtimes SET active_run_id = NULL, updated_at = ? WHERE runtime_id = ?",
-        params![now, rt.runtime_id],
-    )?;
+    // Release the settled run while preserving any final runtime status.
+    let status = if hrc_store::status::LISTED_TERMINAL.contains(&rt.status.as_str()) {
+        rt.status.as_str()
+    } else {
+        "ready"
+    };
     let mut cols = vec![
-        ("status", text("ready")),
+        ("active_run_id", opt_text(None)),
+        ("status", text(status)),
         ("status_changed_at", text(occurred_at)),
     ];
     cols.extend(db::activity_cols(db, &rt.runtime_id, occurred_at, now)?);
@@ -151,7 +159,7 @@ pub fn clear_ownership(db: &Connection, rt: &Rt, occurred_at: &str, now: &str) -
         if let Some(map) = s.as_object_mut() {
             map.shift_remove("activeRunId");
         }
-        s["status"] = "ready".into();
+        s["status"] = status.into();
         s["updatedAt"] = now.into();
     }) {
         cols.push(("runtime_state_json", text(state.to_string())));
@@ -545,6 +553,7 @@ fn ready_after_terminal(db: &Connection, ctx: &Ctx, envelope: &Value, now: &str)
         return Ok(());
     };
     if rt.generation != ctx.generation
+        || hrc_store::status::LISTED_TERMINAL.contains(&rt.status.as_str())
         || rt.active_run_id.is_some()
         || owners::other_open_turn(db, envelope)?
     {
@@ -773,7 +782,6 @@ pub fn project(
         }
         _ => {}
     }
-    let _ = opt_text;
     Ok(())
 }
 

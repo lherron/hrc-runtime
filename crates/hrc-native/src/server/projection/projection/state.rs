@@ -220,6 +220,11 @@ pub fn project(
     let time = envelope["time"].as_str().unwrap_or(now);
     match kind {
         "invocation.started" => {
+            if db::runtime(db, &ctx.runtime_id)?
+                .is_some_and(|rt| hrc_store::status::LISTED_TERMINAL.contains(&rt.status.as_str()))
+            {
+                return Ok(());
+            }
             let mut cols = vec![
                 ("active_invocation_id", text(invocation)),
                 ("active_operation_id", text(ctx.operation_id.as_str())),
