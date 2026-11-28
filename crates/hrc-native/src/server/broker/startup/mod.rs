@@ -4,9 +4,6 @@
 //! classification pass and the warmup attach run as one pass: every durable
 //! broker is probed, attached or staled with Bun's reason, then the orphan
 //! sweeps reclaim lease servers and renderer sockets no runtime claims.
-//!
-//! Not here yet: the bipc directory sweep (it needs the retained-evidence holds)
-//! and the retained-evidence pass that rides the GC tick.
 use super::{
     Server, Shared, broker, controller, hrcpty, lease, projection::db, rpc::JsonRpc, stderr_json,
 };
@@ -650,22 +647,16 @@ fn category(o: &Outcome) -> &'static str {
 /// table in SQL and takes the mutex once: the credential reconcile and the
 /// handoff pump hold it for cold scans during boot, and a per-row loop over
 /// every runtime queues behind them on each row.
-fn candidates(server: &Server, filter: &str) -> Result<Vec<String>> {
-    let db = server.store.lock().unwrap();
-    Ok(db::runtimes_where(&db.sqlite, filter)?
-        .into_iter()
-        .map(|rt| rt.runtime_id)
-        .collect())
-}
 /// Broker rows `skipped` would not pass over (external owners aside).
 fn broker_candidates(server: &Server) -> Result<Vec<String>> {
-    candidates(
-        server,
-        &format!(
-            "controller_kind = 'harness-broker' AND {}",
-            lease::AVAILABLE_SQL.as_str()
-        ),
-    )
+    let reader = server.open_reader()?;
+    let mut stmt = reader.sqlite.prepare(&format!(
+        "SELECT runtime_id FROM runtimes WHERE controller_kind = 'harness-broker' AND {} ORDER BY created_at, runtime_id",
+        lease::AVAILABLE_SQL.as_str()
+    ))?;
+    Ok(stmt
+        .query_map([], |row| row.get(0))?
+        .collect::<rusqlite::Result<_>>()?)
 }
 fn row(server: &Server, id: &str) -> Result<Option<db::Rt>> {
     let db = server.store.lock().unwrap();
@@ -903,49 +894,50 @@ async fn warmup(server: &Shared) -> Result<()> {
 
 /// decideLegacyRuntimeStartupDisposition: a reusable non-broker runtime can
 /// never serve a harness turn.
-/// One transaction for the whole sweep; a savepoint per row keeps a failed
-/// row from taking the others with it.
 fn legacy_sweep(server: &Server) -> Result<()> {
-    let db = server.store.lock().unwrap();
-    let tx = db.sqlite.unchecked_transaction()?;
-    let rows = db::runtimes_where(
-        &tx,
+    let reader = server.open_reader()?;
+    let rows = reader.runtimes_where(
         &format!(
             "controller_kind IS NOT 'harness-broker' AND {}",
             lease::AVAILABLE_SQL.as_str()
         ),
+        [],
     )?;
-    let mut marked = 0;
-    for rt in rows.iter().filter(|rt| !controller::external_lifecycle(rt)) {
-        let reason = if rt.controller_kind.is_none() {
+    let mut marked = false;
+    for row in rows
+        .into_iter()
+        .filter(|r| !hrc_store::external_lifecycle(&r["runtimeStateJson"]))
+    {
+        let id = row["runtimeId"]
+            .as_str()
+            .context("missing legacy runtime id")?
+            .to_owned();
+        let reason = if row["controllerKind"].is_null() {
             "legacy_no_controller_kind"
         } else {
             "legacy_non_broker_controller_kind"
         };
-        tx.execute_batch("SAVEPOINT legacy_row")?;
-        let result = lease::mark_stale(
-            &tx,
-            rt,
-            &json!({"runtimeId":rt.runtime_id,"reason":reason,"priorStatus":rt.status,"sweep":"legacy_startup_reconciliation"}),
-        );
+        let result = (|| -> Result<bool> {
+            let db = server.store.lock().unwrap();
+            let tx = db.sqlite.unchecked_transaction()?;
+            if db::runtime_record(&tx, &id)?.as_ref() != Some(&row) {
+                return Ok(false);
+            }
+            let rt = db::rt_record(&row);
+            lease::mark_stale(
+                &tx,
+                &rt,
+                &json!({"runtimeId":rt.runtime_id,"reason":reason,"priorStatus":rt.status,"sweep":"legacy_startup_reconciliation"}),
+            )?;
+            tx.commit()?;
+            Ok(true)
+        })();
         match result {
-            Ok(()) => {
-                tx.execute_batch("RELEASE legacy_row")?;
-                marked += 1;
-            }
-            Err(e) => {
-                tx.execute_batch("ROLLBACK TO legacy_row; RELEASE legacy_row")?;
-                startup_issue(
-                    "legacy runtime sweep failed",
-                    json!({"runtimeId":rt.runtime_id}),
-                    &e,
-                );
-            }
+            Ok(changed) => marked |= changed,
+            Err(e) => startup_issue("legacy runtime sweep failed", json!({"runtimeId":id}), &e),
         }
     }
-    tx.commit()?;
-    drop(db);
-    if marked > 0 {
+    if marked {
         server.ledger_committed();
     }
     Ok(())

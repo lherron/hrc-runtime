@@ -726,7 +726,7 @@ pub async fn handle(
         let all = server.store.lock().unwrap().runtimes()?;
         return manifest(server, &q, &all).await;
     }
-    Ok(Json(run(server, &q, prune, "runtime_sweep", true).await?).into_response())
+    Ok(Json(run(server, &q, prune, "runtime_sweep", None).await?).into_response())
 }
 
 /// runTmuxAgingOnce: the runtime sweep over tmux ready/busy seats past the
@@ -742,7 +742,8 @@ pub async fn tmux_aging(server: &Server) -> std::result::Result<Value, ApiError>
         drop: None,
         ids: None,
     };
-    let response = run(server, &q, false, "runtime_tmux_aging", false).await?;
+    let reader = server.open_reader()?;
+    let response = run(server, &q, false, "runtime_tmux_aging", Some(reader)).await?;
     super::stderr_json(
         "info",
         "sweep",
@@ -847,7 +848,7 @@ async fn run(
     q: &Request,
     prune: bool,
     reason: &str,
-    emit_summary: bool,
+    tmux_reader: Option<hrc_store::Store>,
 ) -> std::result::Result<Value, ApiError> {
     let defaults = if prune {
         vec!["stale".into()]
@@ -856,10 +857,18 @@ async fn run(
     };
     let statuses = q.statuses.as_ref().unwrap_or(&defaults);
     // `selected` stays the authority; SQL only skips rows it would reject.
-    let all = server.store.lock().unwrap().runtimes_where(
-        &format!("status IN ({})", vec!["?"; statuses.len()].join(",")),
-        rusqlite::params_from_iter(statuses),
-    )?;
+    let status_filter = format!("status IN ({})", vec!["?"; statuses.len()].join(","));
+    let all = match tmux_reader.as_ref() {
+        Some(reader) => reader.runtimes_where(
+            &format!("transport = 'tmux' AND {status_filter}"),
+            rusqlite::params_from_iter(statuses),
+        )?,
+        None => server
+            .store
+            .lock()
+            .unwrap()
+            .runtimes_where(&status_filter, rusqlite::params_from_iter(statuses))?,
+    };
     let age = if let Some(age) = &q.age {
         duration(age)?
     } else if prune {
@@ -875,7 +884,10 @@ async fn run(
         if !prune {
             result["droppedContinuation"] = false.into();
         }
-        let facts = server.store.lock().unwrap().maintenance_facts(&r);
+        let facts = match tmux_reader.as_ref() {
+            Some(reader) => reader.maintenance_facts(&r),
+            None => server.store.lock().unwrap().maintenance_facts(&r),
+        };
         let disposition = match &facts {
             Ok(f) => {
                 if prune {
@@ -917,12 +929,18 @@ async fn run(
                 let dropped = q
                     .drop
                     .unwrap_or(r["transport"] != "tmux" && r.get("activeRunId").is_some());
-                match server.store.lock().unwrap().age_runtime(
-                    &r,
-                    &facts.unwrap()["invocation"],
-                    dropped,
-                    reason,
-                ) {
+                let aged = (|| -> Result<bool> {
+                    let mut store = server.store.lock().unwrap();
+                    let id = r["runtimeId"].as_str().unwrap_or("");
+                    // The probe ran off-lock. Compare the complete runtime
+                    // record, then let age_runtime fence the run and PID facts.
+                    if tmux_reader.is_some() && store.runtime(id)?.as_ref() != Some(&r) {
+                        Ok(false)
+                    } else {
+                        store.age_runtime(&r, &facts.unwrap()["invocation"], dropped, reason)
+                    }
+                })();
+                match aged {
                     Ok(true) => {
                         result["status"] = "stale".into();
                         result["droppedContinuation"] = dropped.into();
@@ -956,7 +974,7 @@ async fn run(
         results.push(result);
     }
     let response = finish(results, prune);
-    if !prune && !q.dry && emit_summary {
+    if !prune && !q.dry && tmux_reader.is_none() {
         server
             .store
             .lock()

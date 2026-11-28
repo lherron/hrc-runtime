@@ -89,7 +89,7 @@ pub struct Rt {
     pub state: Option<Value>,
     pub tmux: Option<Value>,
 }
-fn rt_record(v: Value) -> Rt {
+pub(in crate::server) fn rt_record(v: &Value) -> Rt {
     Rt {
         runtime_id: v["runtimeId"].as_str().unwrap_or_default().to_owned(),
         host_session_id: v["hostSessionId"].as_str().unwrap_or_default().to_owned(),
@@ -107,10 +107,11 @@ fn rt_record(v: Value) -> Rt {
         tmux: v.get("tmuxJson").cloned(),
     }
 }
+pub fn runtime_record(db: &Connection, id: &str) -> Result<Option<Value>> {
+    Ok(hrc_store::runtime_records_where(db, "runtime_id=?", [id])?.pop())
+}
 pub fn runtime(db: &Connection, id: &str) -> Result<Option<Rt>> {
-    Ok(hrc_store::runtime_records_where(db, "runtime_id=?", [id])?
-        .pop()
-        .map(rt_record))
+    Ok(runtime_record(db, id)?.as_ref().map(rt_record))
 }
 /// Every harness-broker runtime, with runtime state pruned in SQL to the
 /// `broker` subtree: the lease sweep reads nothing else (hosting, hrcpty
@@ -132,16 +133,8 @@ pub fn broker_lease_rows(db: &Connection) -> Result<Vec<Rt>> {
     let rows = stmt
         .query_map([], hrc_store::runtime_row)?
         .collect::<rusqlite::Result<Vec<_>>>()?;
-    Ok(rows.into_iter().map(rt_record).collect())
+    Ok(rows.into_iter().map(|row| rt_record(&row)).collect())
 }
-/// Runtimes matching a fixed SQL predicate, oldest first.
-pub fn runtimes_where(db: &Connection, filter: &str) -> Result<Vec<Rt>> {
-    Ok(hrc_store::runtime_records_where(db, filter, [])?
-        .into_iter()
-        .map(rt_record)
-        .collect())
-}
-
 impl Rt {
     /// runtimeStateJson as an object (Bun spreads `runtime.runtimeStateJson ?? {}`).
     pub fn state_object(&self) -> Value {

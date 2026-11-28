@@ -4,9 +4,9 @@
 //! validated page by page, and projected under the retained-evidence fence. A
 //! recovery holds no ACK, opens no control socket and writes nothing under the
 //! ledger directory.
-use super::{Shared, controller, lease, projection, stderr_json, store_lock::StoreGuard};
+use super::{Shared, controller, lease, projection, stderr_json};
 use anyhow::Result;
-use rusqlite::{Connection, OptionalExtension, params};
+use rusqlite::{Connection, OptionalExtension, Transaction, params};
 use serde_json::{Value, json};
 use std::{
     collections::HashSet,
@@ -94,40 +94,11 @@ pub fn runtime_ids(db: &Connection) -> Result<Vec<String>> {
         .collect::<rusqlite::Result<_>>()?;
     Ok(ids)
 }
-/// The longest one whole-table pass holds the store before yielding it
-/// (T-12413): one hold over every runtime was 12-46 s on max3. Zero under
-/// test, so each runtime takes its own hold.
 const RUNTIME_SLICE: Duration = if cfg!(test) {
     Duration::ZERO
 } else {
     Duration::from_millis(50)
 };
-/// Visit `ids` in order, a slice of them per store hold, yielding between
-/// slices so waiting routes take the mutex. `lock` is the caller's, so
-/// `store.lock_held` names the pass, not this helper. A runtime gone by its
-/// turn is the visitor's to skip, as a row missing from one snapshot was.
-pub async fn each_runtime_sliced<'a>(
-    lock: impl Fn() -> StoreGuard<'a>,
-    ids: &[String],
-    mut visit: impl FnMut(&Connection, &str) -> Result<()>,
-) -> Result<()> {
-    let mut next = 0;
-    while next < ids.len() {
-        {
-            let db = lock();
-            let started = std::time::Instant::now();
-            while next < ids.len() {
-                visit(&db.sqlite, &ids[next])?;
-                next += 1;
-                if started.elapsed() >= RUNTIME_SLICE {
-                    break;
-                }
-            }
-        }
-        tokio::task::yield_now().await;
-    }
-    Ok(())
-}
 
 pub struct Row {
     pub runtime_id: String,
@@ -139,6 +110,17 @@ pub struct Row {
     pub rt: projection::db::Rt,
 }
 impl Row {
+    pub fn from_runtime(rt: projection::db::Rt, status_changed_at: Option<String>) -> Self {
+        Self {
+            runtime_id: rt.runtime_id.clone(),
+            status: rt.status.clone(),
+            status_changed_at,
+            controller_kind: rt.controller_kind.clone(),
+            active_invocation_id: rt.active_invocation_id.clone(),
+            state: rt.state_object(),
+            rt,
+        }
+    }
     fn participant_served(&self) -> bool {
         controller::participant_served(&self.rt)
     }
@@ -163,15 +145,7 @@ pub fn row(db: &Connection, runtime_id: &str) -> Result<Option<Row>> {
         [runtime_id],
         |r| r.get(0),
     )?;
-    Ok(Some(Row {
-        runtime_id: rt.runtime_id.clone(),
-        status: rt.status.clone(),
-        status_changed_at: changed,
-        controller_kind: rt.controller_kind.clone(),
-        active_invocation_id: rt.active_invocation_id.clone(),
-        state: rt.state_object(),
-        rt,
-    }))
+    Ok(Some(Row::from_runtime(rt, changed)))
 }
 fn invocations(db: &Connection, runtime_id: &str) -> Result<Vec<String>> {
     let mut stmt = db.prepare("SELECT invocation_id FROM broker_invocations WHERE runtime_id = ? ORDER BY created_at ASC, invocation_id ASC")?;
@@ -383,18 +357,26 @@ fn append_outcome(
     );
     Ok(())
 }
-/// recordUnboundBeforeSweep: an unbound terminal runtime's evidence is
-/// unrecoverable by design; say so before its directory may go.
-pub fn record_unbound(db: &Connection, row: &Row, now: i64) -> Result<Option<&'static str>> {
+pub const UNBOUND_OUTCOME: &str = "offline_reader_unsupported_unbound_release";
+
+/// Pending unbound outcomes must be recorded before the evidence goes.
+pub fn unbound_invocations(db: &Connection, row: &Row, now: i64) -> Result<Option<Vec<String>>> {
     if !row.broker() || !row.eligible(now) || release(&row.state).is_some() {
         return Ok(None);
     }
-    let outcome = "offline_reader_unsupported_unbound_release";
-    let at = hrc_store::timestamp();
+    let mut pending = Vec::new();
     for invocation in invocations(db, &row.runtime_id)? {
-        if latest(db, &row.runtime_id, &invocation)?.is_some() {
-            continue;
+        if latest(db, &row.runtime_id, &invocation)?.is_none() {
+            pending.push(invocation);
         }
+    }
+    Ok(Some(pending))
+}
+
+pub fn record_unbound(db: &Transaction<'_>, row: &Row, pending: &[String]) -> Result<()> {
+    let outcome = UNBOUND_OUTCOME;
+    let at = hrc_store::timestamp();
+    for invocation in pending {
         db.execute(
             "INSERT INTO retained_evidence_outcomes (runtime_id, invocation_id, recorded_at, outcome, outcome_class, trigger, attempts, detail_json) VALUES (?, ?, ?, ?, 'unbound', 'startup', 0, ?)",
             params![row.runtime_id, invocation, at, outcome, json!({"schema":OUTCOME_SCHEMA,"outcome":outcome,"class":"unbound","trigger":"startup"}).to_string()],
@@ -405,7 +387,7 @@ pub fn record_unbound(db: &Connection, row: &Row, now: i64) -> Result<Option<&'s
             json!({"runtimeId":row.runtime_id,"invocationId":invocation,"outcome":outcome,"class":"unbound","trigger":"startup","attempts":0}),
         );
     }
-    Ok(Some(outcome))
+    Ok(())
 }
 
 // ── eligibility ───────────────────────────────────────────────────────────────

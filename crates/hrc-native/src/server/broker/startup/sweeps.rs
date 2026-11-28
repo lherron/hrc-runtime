@@ -1,6 +1,7 @@
 //! Orphan sweeps and the recurring lease GC: broker tmux lease servers
 //! (lease-identity.ts sweepOrphanedBrokerTmuxLeases), Codex renderer-control
 //! sockets (lease-identity-renderer-control.ts) and startBrokerLeaseGc.
+use super::super::retained;
 use super::probe::*;
 use super::*;
 
@@ -588,37 +589,73 @@ fn attempt_can_reattach(db: &Connection, runtime_id: &str) -> bool {
     )
     .is_ok()
 }
-/// sweepOrphanedBrokerIpcDirs: a bipc directory goes only when unreferenced,
-/// unheld by retained evidence, named by no process argv, past grace, and
-/// with no socket that answers health.
-async fn ipc_dir_sweep(
+
+struct UnboundIpc {
+    record: Value,
+    pending: Vec<String>,
+    path: Option<String>,
+}
+struct IpcSnapshot {
+    version: i64,
+    referenced: Vec<String>,
+    owners: HashMap<PathBuf, Value>,
+    held_by_outcome: HashMap<PathBuf, i64>,
+    unbound: Vec<UnboundIpc>,
+}
+impl IpcSnapshot {
+    fn references(&self, dir: &Path) -> bool {
+        self.referenced.iter().any(|p| within(p, dir))
+            || self
+                .unbound
+                .iter()
+                .any(|candidate| candidate.path.as_deref().is_some_and(|p| within(p, dir)))
+    }
+}
+
+async fn ipc_snapshot(
     server: &Shared,
-    r: &mut Value,
-    grace: i64,
     now: i64,
     ttl: i64,
-) -> Result<()> {
-    use super::super::retained;
-    let root = server.runtime.join("bipc");
-    let Ok(read) = std::fs::read_dir(&root) else {
-        return Ok(());
-    };
-    let dirs: Vec<PathBuf> = read
-        .filter_map(|e| e.ok())
-        .filter(|e| e.file_type().is_ok_and(|t| t.is_dir()))
-        .map(|e| e.path())
-        .collect();
+) -> Result<(hrc_store::Store, IpcSnapshot)> {
+    let server = server.clone();
+    tokio::task::spawn_blocking(move || {
+        let reader = server.open_reader()?;
+        let version = ipc_data_version(&reader.sqlite)?;
+        let tx = reader.sqlite.unchecked_transaction()?;
+        let snapshot = ipc_claims(&server, &tx, now, ttl, version)?;
+        tx.commit()?;
+        Ok((reader, snapshot))
+    })
+    .await?
+}
+
+fn ipc_claims(
+    server: &Shared,
+    db: &Connection,
+    now: i64,
+    ttl: i64,
+    version: i64,
+) -> Result<IpcSnapshot> {
     let mut referenced: Vec<String> = Vec::new();
     let mut owners: HashMap<PathBuf, Value> = HashMap::new();
     let mut held_by_outcome: HashMap<PathBuf, i64> = HashMap::new();
-    let ids = retained::runtime_ids(&server.store.lock().unwrap().sqlite)?;
-    let lock = || server.store.lock().unwrap();
-    // Both passes keep their order: a later runtime, and the claim pass over
-    // the retained pass, overwrites the owner logged for a shared dir.
-    retained::each_runtime_sliced(lock, &ids, |db, id| {
-        let Some(row) = retained::row(db, id)? else {
-            return Ok(());
+    let mut unbound = Vec::new();
+    let ids = retained::runtime_ids(db)?;
+    let mut claim_owners = HashMap::new();
+    for id in &ids {
+        let Some(record) = db::runtime_record(db, id)? else {
+            continue;
         };
+        if record["controllerKind"] != "harness-broker" {
+            continue;
+        }
+        let c = Claim {
+            rt: db::rt_record(&record),
+            status_changed_at: record["statusChangedAt"].as_str().map(str::to_owned),
+            updated_at: record["updatedAt"].as_str().unwrap_or_default().to_owned(),
+        };
+        ipc_claim_paths(db, &c, now, ttl, &mut referenced, &mut claim_owners)?;
+        let row = retained::Row::from_runtime(c.rt, c.status_changed_at);
         let hold = retained::hold(db, &row, now)?;
         let expired = matches!(
             row.status.as_str(),
@@ -668,79 +705,177 @@ async fn ipc_dir_sweep(
                 .terminal_age(now);
                 held_by_outcome.insert(dir.to_owned(), age);
             }
-            return Ok(());
+            continue;
         }
-        if let Some(outcome) = retained::record_unbound(db, &row, now)?
-            && let Some(dir) =
-                retained::ledger_path(&row).and_then(|p| Path::new(&p).parent().map(Path::to_owned))
-        {
-            owners.insert(
-                dir,
-                json!({"runtimeId":id,"reason":"unbound_outcome","outcome":outcome}),
-            );
-        }
-        Ok(())
-    })
-    .await?;
-    retained::each_runtime_sliced(lock, &ids, |db, id| {
-        let Some(c) = claim_in(db, id)? else {
-            return Ok(());
-        };
-        if c.rt.controller_kind.as_deref() != Some("harness-broker") {
-            return Ok(());
-        }
-        let external = controller::external_lifecycle(&c.rt);
-        let terminal = lease::unavailable(&c.rt.status);
-        if !external && terminal && c.terminal_age(now) >= ttl {
-            return Ok(());
-        }
-        let Some(h) = rt_hosting(&c.rt) else {
-            return Ok(());
-        };
-        let mut paths: Vec<String> = Vec::new();
-        if h.endpoint["kind"] == "unix-jsonrpc-ndjson" {
-            paths.extend(
-                [
-                    h.endpoint["socketPath"].as_str(),
-                    h.endpoint["attachTokenRef"]["path"].as_str(),
-                ]
-                .into_iter()
-                .flatten()
-                .map(str::to_owned),
-            );
-        }
-        if let Some(l) = h.substrate["eventLedgerPath"]
-            .as_str()
-            .filter(|l| !l.is_empty() && h.substrate["kind"] == "leased-tmux")
-        {
-            paths.push(l.into());
-        }
-        let external_age = (external && terminal)
-            .then(|| retained::hold_expired_age(c.status_changed_at.as_deref(), now))
-            .flatten();
-        if let Some(age) = external_age
-            && !attempt_can_reattach(db, id)
-        {
-            for p in &paths {
-                if let Some(dir) = Path::new(p).parent() {
-                    owners.insert(
-                        dir.to_owned(),
-                        json!({"runtimeId":id,"reason":"external_hold_expired","ageMs":age}),
-                    );
-                }
+        if let Some(pending) = retained::unbound_invocations(db, &row, now)? {
+            let path = retained::ledger_path(&row);
+            if let Some(dir) = path.as_deref().and_then(|p| Path::new(p).parent()) {
+                owners.insert(
+                    dir.to_owned(),
+                    json!({"runtimeId":id,"reason":"unbound_outcome","outcome":retained::UNBOUND_OUTCOME}),
+                );
             }
-            return Ok(());
+            if !pending.is_empty() {
+                unbound.push(UnboundIpc {
+                    record,
+                    pending,
+                    path,
+                });
+            }
         }
-        referenced.extend(paths);
-        Ok(())
+    }
+    // A later runtime wins within each category, and claims take precedence
+    // over retained outcomes for the logged owner of a shared directory.
+    owners.extend(claim_owners);
+    Ok(IpcSnapshot {
+        version,
+        referenced,
+        owners,
+        held_by_outcome,
+        unbound,
     })
-    .await?;
-    if !held_by_outcome.is_empty() {
-        let bytes: u64 = held_by_outcome.keys().map(|d| directory_bytes(d)).sum();
+}
+
+fn ipc_claim_paths(
+    db: &Connection,
+    c: &Claim,
+    now: i64,
+    ttl: i64,
+    referenced: &mut Vec<String>,
+    owners: &mut HashMap<PathBuf, Value>,
+) -> Result<()> {
+    let external = controller::external_lifecycle(&c.rt);
+    let terminal = lease::unavailable(&c.rt.status);
+    if !external && terminal && c.terminal_age(now) >= ttl {
+        return Ok(());
+    }
+    let Some(h) = rt_hosting(&c.rt) else {
+        return Ok(());
+    };
+    let mut paths: Vec<String> = Vec::new();
+    if h.endpoint["kind"] == "unix-jsonrpc-ndjson" {
+        paths.extend(
+            [
+                h.endpoint["socketPath"].as_str(),
+                h.endpoint["attachTokenRef"]["path"].as_str(),
+            ]
+            .into_iter()
+            .flatten()
+            .map(str::to_owned),
+        );
+    }
+    if let Some(l) = h.substrate["eventLedgerPath"]
+        .as_str()
+        .filter(|l| !l.is_empty() && h.substrate["kind"] == "leased-tmux")
+    {
+        paths.push(l.into());
+    }
+    let external_age = (external && terminal)
+        .then(|| retained::hold_expired_age(c.status_changed_at.as_deref(), now))
+        .flatten();
+    if let Some(age) = external_age
+        && !attempt_can_reattach(db, &c.rt.runtime_id)
+    {
+        for p in &paths {
+            if let Some(dir) = Path::new(p).parent() {
+                owners.insert(
+                        dir.to_owned(),
+                        json!({"runtimeId":c.rt.runtime_id,"reason":"external_hold_expired","ageMs":age}),
+                    );
+            }
+        }
+        return Ok(());
+    }
+    referenced.extend(paths);
+    Ok(())
+}
+
+fn record_ipc_unbound(server: &Server, candidate: &UnboundIpc, now: i64) -> Result<bool> {
+    let store = server.store.lock().unwrap();
+    let tx = store.sqlite.unchecked_transaction()?;
+    let id = candidate.record["runtimeId"]
+        .as_str()
+        .context("missing IPC runtime id")?;
+    if db::runtime_record(&tx, id)?.as_ref() != Some(&candidate.record) {
+        return Ok(false);
+    }
+    let row = retained::Row::from_runtime(
+        db::rt_record(&candidate.record),
+        candidate.record["statusChangedAt"]
+            .as_str()
+            .map(str::to_owned),
+    );
+    if retained::unbound_invocations(&tx, &row, now)?.as_ref() != Some(&candidate.pending) {
+        return Ok(false);
+    }
+    retained::record_unbound(&tx, &row, &candidate.pending)?;
+    tx.commit()?;
+    Ok(true)
+}
+
+fn ipc_data_version(reader: &Connection) -> Result<i64> {
+    Ok(reader.pragma_query_value(None, "data_version", |row| row.get(0))?)
+}
+
+fn remove_ipc_if_current(
+    server: &Server,
+    reader: &Connection,
+    version: i64,
+    dir: &Path,
+) -> Result<bool> {
+    // A point re-read of known owners cannot rule out a new claimant. The
+    // same reader's data_version also fences that absence, including changes
+    // to invocations, retained outcomes and registration attempts.
+    let store = server.store.lock().unwrap();
+    let _tx = Transaction::new_unchecked(&store.sqlite, rusqlite::TransactionBehavior::Immediate)?;
+    if ipc_data_version(reader)? != version {
+        return Ok(false);
+    }
+    std::fs::remove_dir_all(dir)?;
+    Ok(true)
+}
+
+/// sweepOrphanedBrokerIpcDirs: a bipc directory goes only when unreferenced,
+/// unheld by retained evidence, named by no process argv, past grace, and
+/// with no socket that answers health.
+async fn ipc_dir_sweep(
+    server: &Shared,
+    r: &mut Value,
+    grace: i64,
+    now: i64,
+    ttl: i64,
+) -> Result<()> {
+    let root = server.runtime.join("bipc");
+    let Ok(read) = std::fs::read_dir(&root) else {
+        return Ok(());
+    };
+    let dirs: Vec<PathBuf> = read
+        .filter_map(|e| e.ok())
+        .filter(|e| e.file_type().is_ok_and(|t| t.is_dir()))
+        .map(|e| e.path())
+        .collect();
+    let (mut reader, mut scan) = ipc_snapshot(server, now, ttl).await?;
+    let mut changed = Vec::new();
+    let mut recorded = false;
+    for candidate in std::mem::take(&mut scan.unbound) {
+        if record_ipc_unbound(server, &candidate, now)? {
+            recorded = true;
+        } else {
+            changed.extend(candidate.path);
+        }
+    }
+    // Our outcome writes invalidate the snapshot too. Refresh before
+    // the filesystem probes so they need not wait on another full scan.
+    if recorded && !dirs.is_empty() {
+        (reader, scan) = ipc_snapshot(server, now, ttl).await?;
+    }
+    if !scan.held_by_outcome.is_empty() {
+        let held = &scan.held_by_outcome;
+        let bytes: u64 = held.keys().map(|d| directory_bytes(d)).sum();
         log(
             "info",
             "broker.ipc_dirs_held_by_outcome",
-            json!({"count":held_by_outcome.len(),"bytes":bytes,"oldestAgeMs":held_by_outcome.values().max()}),
+            json!({"count":held.len(),"bytes":bytes,"oldestAgeMs":held.values().max()}),
         );
     }
     // Process argv is mandatory negative evidence: without it, keep everything.
@@ -751,10 +886,11 @@ async fn ipc_dir_sweep(
             return Ok(());
         }
     };
+    let mut refreshed = false;
     for dir in dirs {
         let step: Result<()> = async {
             let Some(age) = mtime_age(&dir, now) else { return Ok(()) };
-            if age < grace || referenced.iter().any(|p| within(p, &dir)) {
+            if age < grace || scan.references(&dir) || changed.iter().any(|p| within(p, &dir)) {
                 return Ok(());
             }
             let dir_text = dir.to_string_lossy().into_owned();
@@ -768,9 +904,21 @@ async fn ipc_dir_sweep(
                     return Ok(());
                 }
             }
-            std::fs::remove_dir_all(&dir)?;
+            loop {
+                if remove_ipc_if_current(server, &reader.sqlite, scan.version, &dir)? {
+                    break;
+                }
+                if refreshed {
+                    return Ok(());
+                }
+                refreshed = true;
+                (reader, scan) = ipc_snapshot(server, now, ttl).await?;
+                if scan.references(&dir) {
+                    return Ok(());
+                }
+            }
             r["removedBrokerIpcDirs"] = (r["removedBrokerIpcDirs"].as_i64().unwrap_or(0) + 1).into();
-            let owner = owners.get(&dir);
+            let owner = scan.owners.get(&dir);
             let mut data = json!({"dirPath":dir_text,"reason":owner.map(|o| o["reason"].clone()).unwrap_or_else(|| "unreferenced".into())});
             if let Some(o) = owner {
                 for key in ["runtimeId", "outcome", "ageMs"] {
@@ -1093,12 +1241,10 @@ mod tests {
     use super::*;
     use crate::server::retained::tests::{holds_at, observed};
 
-    // Regression (T-12413 phase 3): the bipc GC read every runtime's row,
-    // holds and claim under ONE store hold (18-46 s on max3's 8.2k runtimes,
-    // every ~6 min), stalling every route. Under test the slice is zero, so a
-    // bounded sweep takes the store at least once per runtime per pass.
+    // T-12413 found that the IPC scan stalled all routes. The only writer
+    // acquisition here should guard the actual orphan removal.
     #[tokio::test]
-    async fn ipc_dir_sweep_takes_the_store_a_slice_at_a_time() -> Result<()> {
+    async fn ipc_dir_sweep_only_locks_for_removal() -> Result<()> {
         let n = 40;
         let (_scratch, server, seen) = observed(n)?;
         std::fs::create_dir_all(server.runtime.join("bipc/orphan"))?;
@@ -1107,15 +1253,12 @@ mod tests {
         let mut r = json!({});
         ipc_dir_sweep(&server, &mut r, 0, now, 0).await?;
         let holds = holds_at(&seen, "sweeps.rs");
-        assert!(
-            holds.len() > 2 * n,
-            "{} sweeps.rs holds for {n} runtimes: {holds:?}",
-            holds.len()
-        );
+        assert_eq!(holds.len(), 1, "{holds:?}");
+        assert_eq!(r["removedBrokerIpcDirs"], 1);
         Ok(())
     }
 
-    // Outcome semantics the slicing must keep: a live runtime's socket dir
+    // Outcome semantics the reader must keep: a live runtime's socket dir
     // stays; an unbound terminated runtime records its outcome and its dir
     // goes; a dir no runtime names goes.
     #[tokio::test]
