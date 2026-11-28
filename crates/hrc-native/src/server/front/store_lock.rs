@@ -27,6 +27,7 @@ const ACCOUNTING_INTERVAL: Duration = Duration::from_secs(60);
 const TOP_SITES: usize = 5;
 const WRITE_SLOW_THRESHOLD: Duration = Duration::from_millis(50);
 const WORKER_WAIT_BUDGET: Duration = Duration::from_millis(2);
+const MAX_IDLE_READERS: usize = 8;
 
 type Observe = Arc<dyn Fn(Value) + Send + Sync>;
 
@@ -68,7 +69,30 @@ struct Admission {
     waiting: VecDeque<SyncSender<()>>,
 }
 
+/// Idle WAL readers for this server's store. Checkout and return only move
+/// handles under this mutex. Opening and ending transactions happen outside it.
+#[derive(Default)]
+pub(super) struct ReaderPool {
+    idle: Mutex<Vec<Store>>,
+}
+
+impl ReaderPool {
+    pub(super) fn take(&self) -> Option<Store> {
+        self.idle.lock().unwrap().pop()
+    }
+
+    pub(super) fn recycle(&self, store: Store) {
+        if store.sqlite.is_autocommit() {
+            let mut idle = self.idle.lock().unwrap();
+            if idle.len() < MAX_IDLE_READERS {
+                idle.push(store);
+            }
+        }
+    }
+}
+
 pub struct StoreLock {
+    pub(super) readers: Arc<ReaderPool>,
     inner: Mutex<Store>,
     admission: Mutex<Admission>,
     sites: Mutex<HashMap<&'static Location<'static>, Totals>>,
@@ -99,6 +123,7 @@ impl StoreLock {
         observe: impl Fn(Value) + Send + Sync + 'static,
     ) -> Self {
         Self {
+            readers: Arc::default(),
             inner: Mutex::new(store),
             admission: Mutex::new(Admission::default()),
             sites: Mutex::new(HashMap::new()),

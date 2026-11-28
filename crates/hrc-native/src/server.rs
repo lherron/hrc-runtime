@@ -183,14 +183,19 @@ use std::{
 };
 use tokio::net::UnixListener;
 
-/// Owns its read-only connection and its deferred transaction. Closing the
-/// connection ends the transaction, including on early return.
-struct ReadSnapshot(Store);
+/// Owns its read-only connection and its deferred transaction.
+struct ReadSnapshot {
+    store: Option<Store>,
+    pool: Option<Arc<store_lock::ReaderPool>>,
+}
 
 impl ReadSnapshot {
     fn begin(store: Store) -> Result<Self> {
         store.sqlite.execute_batch("BEGIN DEFERRED")?;
-        Ok(Self(store))
+        Ok(Self {
+            store: Some(store),
+            pool: None,
+        })
     }
 }
 
@@ -198,7 +203,18 @@ impl std::ops::Deref for ReadSnapshot {
     type Target = Store;
 
     fn deref(&self) -> &Store {
-        &self.0
+        self.store.as_ref().unwrap()
+    }
+}
+
+impl Drop for ReadSnapshot {
+    fn drop(&mut self) {
+        if let Some(pool) = &self.pool {
+            let store = self.store.take().unwrap();
+            if store.sqlite.execute_batch("ROLLBACK").is_ok() {
+                pool.recycle(store);
+            }
+        }
     }
 }
 
@@ -436,6 +452,9 @@ impl IntoResponse for ApiError {
 impl Server {
     /// An independent WAL reader for request-local snapshots.
     fn open_reader(&self) -> Result<Store> {
+        if let Some(reader) = self.store.readers.take() {
+            return Ok(reader);
+        }
         let mut reader = Store::open_readonly(&self.state.join("state.sqlite"))?;
         if !self.front {
             statement_telemetry::install(&mut reader, self.accounting.clone())?;
@@ -446,7 +465,9 @@ impl Server {
     /// Open a WAL snapshot for one synchronous read phase. Open a fresh
     /// snapshot after a write to see its commit.
     fn read(&self) -> Result<ReadSnapshot> {
-        ReadSnapshot::begin(self.open_reader()?)
+        let mut snapshot = ReadSnapshot::begin(self.open_reader()?)?;
+        snapshot.pool = Some(self.store.readers.clone());
+        Ok(snapshot)
     }
 
     /// A wake carries no data: something committed, so followers query again.
