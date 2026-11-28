@@ -581,7 +581,7 @@ async fn terminate_runtime(
     }
     let pane = if tmux { Some(tmux_pane(rt)?) } else { None };
     // Self-brokered hosts keep their continuation unless explicitly dropped.
-    let dropped =
+    let mut dropped =
         if tmux || rt.state_object()["participant"]["lifecycleOwner"] == hrc_store::HRC_LAUNCHED {
             o.drop_continuation == Some(true)
         } else {
@@ -589,16 +589,33 @@ async fn terminate_runtime(
                 .unwrap_or_else(|| rt.active_run_id.is_some() && launched(server, rt))
         };
     let mut response = action_response(rt);
-    response["droppedContinuation"] = dropped.into();
     if dropped {
+        // The session's continuation belongs to its newest runtime. A late or
+        // repeated terminate of a predecessor must not disable a successor's
+        // thread (reproduced live by agent-loop T-14807's scope pool).
+        let mut superseded = false;
         commit(server, |db| {
-            db.execute(
-                "UPDATE sessions SET continuation_reuse_disabled=1, updated_at=? WHERE host_session_id=?",
-                params![now, rt.host_session_id],
+            superseded = db.query_row(
+                "SELECT EXISTS(SELECT 1 FROM runtimes WHERE host_session_id=?1 AND runtime_id<>?2 \
+                 AND created_at > (SELECT created_at FROM runtimes WHERE runtime_id=?2))",
+                params![rt.host_session_id, rt.runtime_id],
+                |r| r.get(0),
             )?;
+            if !superseded {
+                db.execute(
+                    "UPDATE sessions SET continuation_reuse_disabled=1, updated_at=? WHERE host_session_id=?",
+                    params![now, rt.host_session_id],
+                )?;
+            }
             Ok(())
         })?;
+        if superseded {
+            dropped = false;
+            response["warning"] =
+                "continuation kept: a later runtime on this host session owns it".into();
+        }
     }
+    response["droppedContinuation"] = dropped.into();
     // Repeated terminate applies the continuation disposition above without
     // re-running teardown or appending a second termination audit.
     if rt.status == "terminated" {
