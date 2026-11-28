@@ -456,7 +456,7 @@ impl Server {
 }
 async fn dispatch(State(server): State<Shared>, request: Request) -> Response {
     let mut entry = accounting::Entry::new(&request);
-    let turn_timing = entry.time_startup_turn(&request);
+    let turn_timing = entry.time_turn(&request);
     let entry = accounting::InFlight::new(entry);
     let mutating = request.method() != Method::GET
         && !(request.method() == Method::POST

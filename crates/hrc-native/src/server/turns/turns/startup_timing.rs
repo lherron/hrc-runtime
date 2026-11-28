@@ -1,4 +1,4 @@
-//! Request-local timing for early POST /v1/turns. No request payload is retained.
+//! Request-local timing for POST /v1/turns. No request payload is retained.
 use serde_json::{Value, json};
 use std::{
     collections::BTreeMap,

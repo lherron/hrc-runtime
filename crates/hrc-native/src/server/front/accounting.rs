@@ -372,12 +372,9 @@ impl Entry {
                 .map(|info| info.0.clone()),
         }
     }
-    pub fn time_startup_turn(&mut self, request: &Request) -> Option<Timing> {
+    pub fn time_turn(&mut self, request: &Request) -> Option<Timing> {
         let listening = request.extensions().get::<ListeningSince>()?;
-        if self.method != "POST"
-            || self.route != "/v1/turns"
-            || self.started.duration_since(listening.0) >= Duration::from_secs(300)
-        {
+        if self.method != "POST" || self.route != "/v1/turns" {
             return None;
         }
         let timing = Timing::new(self.started, self.started.duration_since(listening.0));
