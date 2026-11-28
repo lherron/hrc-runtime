@@ -65,6 +65,13 @@ the agent digest of the published references `/a/hrc-build-deploy-guide` and
 - `bun run check:boundaries` refuses HRC source importing ACP-owned packages;
   tests must not assert the other repo's behavior
   ([repo boundaries](docs/development-workflow.md#repo-boundaries)).
+- A test or acceptance run that makes real model turns (a live harness, an
+  agent-loop cohort or harvest) spends Lance's shared weekly budget. Before it
+  runs, state its cost in weekly points and the decision it informs. Prove
+  pacing, restart and recovery with stub or small prompts, or a few minutes at
+  full size. Anything over about 5 points needs Lance's go-ahead (Lance ruling
+  2026-11-28: "you should never waste 40% of my weekly budget running useless
+  tests"). Fake harnesses cost nothing and need no pricing.
 - Before citing any verification, ask what it would print if the thing checked
   were absent. Known commands that answer confidently while checking nothing
   (missing JSON keys, SQL `LIKE` wildcards, piped `git push`, torn `cp` of the
