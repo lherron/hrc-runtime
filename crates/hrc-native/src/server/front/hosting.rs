@@ -209,6 +209,7 @@ pub async fn serve(role: Role) -> Result<()> {
     if !front {
         statement_telemetry::install(&mut store, accounting.clone())?;
     }
+    let continuity_generation = federation::policy::track_continuities(&mut store)?;
     let writer = accounting.writer(state.clone());
     let (stop_writer, writer_stopped) = tokio::sync::oneshot::channel::<()>();
     let writer_task = tokio::spawn(writer.run(writer_stopped));
@@ -234,6 +235,7 @@ pub async fn serve(role: Role) -> Result<()> {
         reaped: Mutex::new(HashSet::new()),
         ledger: tokio::sync::watch::Sender::new(0),
         event_head,
+        continuity_generation,
         lifecycle: lifecycle::State::new(&runtime, !front),
         probing: Mutex::new(HashSet::new()),
         literal: Mutex::new(HashMap::new()),

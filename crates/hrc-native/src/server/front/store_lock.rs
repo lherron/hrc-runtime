@@ -53,6 +53,12 @@ impl Totals {
             "maxHeldNs": self.max_held.as_nanos(),
         })
     }
+
+    fn at(&self, location: &Location<'_>) -> Value {
+        let mut fields = self.fields();
+        fields["callerTag"] = location.to_string().into();
+        fields
+    }
 }
 
 #[derive(Default)]
@@ -165,6 +171,12 @@ impl StoreLock {
             }
             (sampled, window)
         };
+        window.sort_unstable_by_key(|(at, totals)| (Reverse(totals.acquisitions), *at));
+        let top_by_acquisitions: Vec<_> = window
+            .iter()
+            .take(TOP_SITES)
+            .map(|(at, totals)| totals.at(at))
+            .collect();
         window.sort_unstable_by_key(|(at, totals)| (Reverse(totals.held), *at));
         let mut total = Totals::default();
         let mut rest = Totals::default();
@@ -172,9 +184,7 @@ impl StoreLock {
         for (at, totals) in window {
             total.add(&totals);
             if top.len() < TOP_SITES {
-                let mut fields = totals.fields();
-                fields["callerTag"] = at.to_string().into();
-                top.push(fields);
+                top.push(totals.at(at));
             } else {
                 rest.add(&totals);
             }
@@ -187,6 +197,7 @@ impl StoreLock {
                 "intervalMs": sampled.duration_since(since).as_millis(),
                 "total": total.fields(),
                 "top": top,
+                "topByAcquisitions": top_by_acquisitions,
                 "rest": rest.fields(),
             }),
         );

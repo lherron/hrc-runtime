@@ -235,11 +235,37 @@ impl Drop for FollowBody {
 #[derive(Clone)]
 enum Source {
     Lifecycle(HashMap<String, String>),
-    Broker {
-        runtime: String,
-        invocation: String,
-        run: Option<String>,
-    },
+    Broker(BrokerSelector),
+}
+
+#[derive(Clone, Eq, Hash, PartialEq)]
+pub(super) struct BrokerSelector {
+    runtime: String,
+    invocation: String,
+    run: Option<String>,
+}
+
+impl BrokerSelector {
+    pub(super) fn head(&self, db: &hrc_store::Store) -> anyhow::Result<i64> {
+        let head = if let Some(run) = &self.run {
+            db.sqlite
+                .prepare_cached(
+                    "SELECT seq FROM broker_invocation_events WHERE invocation_id=? AND runtime_id=? AND run_id=? ORDER BY seq DESC LIMIT 1",
+                )?
+                .query_row(rusqlite::params![self.invocation, self.runtime, run], |r| {
+                    r.get(0)
+                })
+                .optional()?
+        } else {
+            db.sqlite
+                .prepare_cached(
+                    "SELECT seq FROM broker_invocation_events WHERE invocation_id=? AND runtime_id=? ORDER BY seq DESC LIMIT 1",
+                )?
+                .query_row([&self.invocation, &self.runtime], |r| r.get(0))
+                .optional()?
+        };
+        Ok(head.unwrap_or(0))
+    }
 }
 fn read(
     server: &Shared,
@@ -264,12 +290,24 @@ fn read(
                 events::History::new(server, q.clone(), after.saturating_add(1), None, head);
             Ok((seq, history.collect()?))
         }
-        Source::Broker {
-            runtime,
-            invocation,
-            run,
-        } => {
-            let db = server.store.lock().unwrap();
+        Source::Broker(
+            selector @ BrokerSelector {
+                runtime,
+                invocation,
+                run,
+            },
+        ) => {
+            if live && events::HeadReader::broker_head(server, selector)? <= after {
+                return Ok((after, Vec::new()));
+            }
+            // Envelope reconstruction can hydrate spilled payloads. Keep a
+            // request-local snapshot for those reads and parse off the owner
+            // lock and the shared head reader.
+            let db = hrc_store::Store::open_readonly(&server.state.join("state.sqlite"))?;
+            let tx = db
+                .sqlite
+                .unchecked_transaction()
+                .map_err(anyhow::Error::from)?;
             let mut sql = "WHERE runtime_id=? AND invocation_id=? AND seq>?".to_owned();
             let mut values = vec![
                 Sql::Text(runtime.clone()),
@@ -282,6 +320,7 @@ fn read(
             }
             sql.push_str(" ORDER BY seq ASC");
             let rows = db.broker_events(&sql, &values)?;
+            tx.commit().map_err(anyhow::Error::from)?;
             let mut envelopes = Vec::new();
             let mut head = after;
             for row in rows {
@@ -410,11 +449,11 @@ fn resolve_stream_selector(
         selector["generation"] = generation.into();
         selector["afterSeq"] = after.into();
         (
-            Source::Broker {
+            Source::Broker(BrokerSelector {
                 runtime,
                 invocation,
                 run,
-            },
+            }),
             after,
             receipt,
             selector,
@@ -470,7 +509,7 @@ fn replay_snapshot(
     after: i64,
     bounded: bool,
 ) -> Result<(Queue, i64), ApiError> {
-    let broker = matches!(source, Source::Broker { .. });
+    let broker = matches!(source, Source::Broker(_));
     let mut q = Queue {
         records: VecDeque::new(),
         bytes: 0,

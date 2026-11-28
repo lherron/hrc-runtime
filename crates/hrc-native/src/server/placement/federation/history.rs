@@ -8,7 +8,7 @@
 //! a previous owner changed), tails inserts by `message_seq` on ledger wakes, and
 //! offers [`observe`] for message write sites as they land.
 use super::transport_text;
-use crate::server::{ApiError, Shared, messages, stderr_json};
+use crate::server::{ApiError, Shared, events::HeadReader, messages, stderr_json};
 use axum::http::StatusCode;
 use hrc_store::{
     Store,
@@ -139,7 +139,8 @@ fn observe_record(server: &Shared, db: &Store, record: &Value) {
 /// batches that release the store between them.
 fn tail(server: &Shared, history: &Coordinator) -> anyhow::Result<()> {
     const BATCH: i64 = 500;
-    loop {
+    let head = HeadReader::message_head(server)?;
+    while *history.cursor.lock().unwrap() < head {
         let db = server.store.lock().unwrap();
         let mut cursor = history.cursor.lock().unwrap();
         let rows = db.message_query(&json!({"afterSeq":*cursor,"limit":BATCH}))?;
@@ -154,6 +155,7 @@ fn tail(server: &Shared, history: &Coordinator) -> anyhow::Result<()> {
             return Ok(());
         }
     }
+    Ok(())
 }
 
 /// For message write sites: observe the current state of one message and
@@ -327,11 +329,7 @@ async fn drain_due(server: &Shared) -> anyhow::Result<(bool, bool)> {
         return Ok((false, false));
     }
     let mut changed = false;
-    let due = server
-        .store
-        .lock()
-        .unwrap()
-        .history_due(&timestamp(), DUE_BATCH)?;
+    let due = HeadReader::query(server, |db| db.history_due(&timestamp(), DUE_BATCH))?;
     for replication in due {
         let attempted = chrono::Utc::now();
         let attempted_at = attempted.to_rfc3339_opts(chrono::SecondsFormat::Millis, true);
@@ -374,7 +372,7 @@ async fn drain_due(server: &Shared) -> anyhow::Result<(bool, bool)> {
         *history.last_checkpoint.lock().unwrap() = None;
     }
     let checkpoint_ok = checkpoint_if_due(server, history).await;
-    let pending = server.store.lock().unwrap().local_history_pending()?;
+    let pending = HeadReader::query(server, Store::local_history_pending)?;
     Ok((pending > 0 || !checkpoint_ok, changed))
 }
 
@@ -400,12 +398,13 @@ fn retry(
 
 /// `sendCheckpointIfDue`: tell the authority this node has caught up.
 async fn checkpoint_if_due(server: &Shared, history: &Coordinator) -> bool {
-    let (pending, max_seq) = {
-        let db = server.store.lock().unwrap();
-        match (db.local_history_pending(), db.max_message_seq()) {
-            (Ok(p), Ok(m)) => (p, m),
-            _ => return false,
-        }
+    let Ok((pending, max_seq)) = HeadReader::query(server, |db| {
+        let tx = db.sqlite.unchecked_transaction()?;
+        let checkpoint = (db.local_history_pending()?, db.max_message_seq()?);
+        tx.commit()?;
+        Ok(checkpoint)
+    }) else {
+        return false;
     };
     if server.federation.peer(AUTHORITY).is_none() {
         return true;

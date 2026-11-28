@@ -289,14 +289,20 @@ pub(super) struct HeadReader {
     // Share one short WAL snapshot per observed watch generation without
     // joining the write connection's store-lock queue.
     db: hrc_store::Store,
-    cached: Option<(u64, Arc<Head>)>,
+    generation: Option<u64>,
+    lifecycle: Option<Arc<Head>>,
+    messages: Option<i64>,
+    broker: HashMap<super::streams::BrokerSelector, i64>,
 }
 
 impl HeadReader {
     pub(super) fn open(path: &Path) -> anyhow::Result<Self> {
         Ok(Self {
             db: hrc_store::Store::open_readonly(path)?,
-            cached: None,
+            generation: None,
+            lifecycle: None,
+            messages: None,
+            broker: HashMap::new(),
         })
     }
 
@@ -309,6 +315,50 @@ impl HeadReader {
         tx.commit()?;
         Ok(Arc::new(head))
     }
+
+    fn for_wake(server: &Server) -> std::sync::MutexGuard<'_, Self> {
+        let mut reader = server.event_head.lock().unwrap();
+        // Sample before reading SQLite. A racing commit either appears in
+        // the snapshot or leaves a later wake to invalidate these heads.
+        let generation = *server.ledger.borrow();
+        if reader.generation != Some(generation) {
+            reader.generation = Some(generation);
+            reader.lifecycle = None;
+            reader.messages = None;
+            reader.broker.clear();
+        }
+        reader
+    }
+
+    pub(super) fn message_head(server: &Server) -> anyhow::Result<i64> {
+        let mut reader = Self::for_wake(server);
+        if let Some(head) = reader.messages {
+            return Ok(head);
+        }
+        let head = reader.db.max_message_seq()?;
+        reader.messages = Some(head);
+        Ok(head)
+    }
+
+    pub(super) fn broker_head(
+        server: &Server,
+        selector: &super::streams::BrokerSelector,
+    ) -> anyhow::Result<i64> {
+        let mut reader = Self::for_wake(server);
+        if let Some(&head) = reader.broker.get(selector) {
+            return Ok(head);
+        }
+        let head = selector.head(&reader.db)?;
+        reader.broker.insert(selector.clone(), head);
+        Ok(head)
+    }
+
+    pub(super) fn query<T>(
+        server: &Server,
+        read: impl FnOnce(&hrc_store::Store) -> anyhow::Result<T>,
+    ) -> anyhow::Result<T> {
+        read(&server.event_head.lock().unwrap().db)
+    }
 }
 
 impl Head {
@@ -317,18 +367,12 @@ impl Head {
     }
 
     pub(super) fn on_wake(server: &Server) -> anyhow::Result<Arc<Self>> {
-        let mut reader = server.event_head.lock().unwrap();
-        // Sample the generation before the SQLite snapshot. A commit that
-        // races the snapshot either appears in it or has a later wake to
-        // invalidate the cache. The read-only connection only sees commits.
-        let generation = *server.ledger.borrow();
-        if let Some((cached_generation, head)) = &reader.cached
-            && *cached_generation == generation
-        {
+        let mut reader = HeadReader::for_wake(server);
+        if let Some(head) = &reader.lifecycle {
             return Ok(head.clone());
         }
         let head = reader.read()?;
-        reader.cached = Some((generation, head.clone()));
+        reader.lifecycle = Some(head.clone());
         Ok(head)
     }
 }

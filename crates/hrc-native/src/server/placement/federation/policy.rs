@@ -210,6 +210,32 @@ fn watch_directory(
     Ok(())
 }
 
+pub fn track_continuities(
+    store: &mut hrc_store::Store,
+) -> anyhow::Result<std::sync::Arc<std::sync::atomic::AtomicU64>> {
+    use rusqlite::hooks::Action;
+    use std::sync::{
+        Arc,
+        atomic::{AtomicU64, Ordering},
+    };
+    let generation = Arc::new(AtomicU64::new(0));
+    let changes = generation.clone();
+    // Agent IDs are set at insertion and never updated. The hook runs under
+    // the owner lock. A refresh that observes it reads under that same lock,
+    // after the transaction has committed or rolled back.
+    store
+        .sqlite
+        .update_hook(Some(move |action, schema: &str, table: &str, _| {
+            if schema == "main"
+                && table == "continuities"
+                && matches!(action, Action::SQLITE_INSERT | Action::SQLITE_DELETE)
+            {
+                changes.fetch_add(1, Ordering::Relaxed);
+            }
+        }))?;
+    Ok(generation)
+}
+
 /// Startup backfill, filesystem invalidation, and ledger discovery of new
 /// continuity agents. Unchanged agents need neither stat nor ASP resolution.
 /// Real observer/watch failures retry with bounded backoff; absence is cached
@@ -218,8 +244,10 @@ pub fn start_refresh(server: &crate::server::Shared) {
     let mut ledger = server.ledger.subscribe();
     let server = server.clone();
     tokio::spawn(async move {
-        use std::{collections::HashSet, time::Duration};
+        use std::{collections::HashSet, sync::atomic::Ordering, time::Duration};
         let mut observed = HashSet::<String>::new();
+        let mut agents = Vec::new();
+        let mut agent_generation = None;
         let mut retry_after = std::collections::HashMap::<String, std::time::Instant>::new();
         let mut watched = HashSet::new();
         let mut delay = Duration::from_secs(1);
@@ -243,25 +271,27 @@ pub fn start_refresh(server: &crate::server::Shared) {
                     }
                 }
             }
-            let rows = {
+            if agent_generation != Some(server.continuity_generation.load(Ordering::Relaxed)) {
                 let db = server.store.lock().unwrap();
+                agent_generation = Some(server.continuity_generation.load(Ordering::Relaxed));
                 let mut stmt = db
                     .sqlite
                     .prepare(
                         "SELECT DISTINCT agent_id FROM continuities WHERE agent_id IS NOT NULL",
                     )
                     .expect("seat policy agents");
-                stmt.query_map([], |r| r.get::<_, String>(0))
+                agents = stmt
+                    .query_map([], |r| r.get::<_, String>(0))
                     .expect("seat policy rows")
                     .collect::<rusqlite::Result<Vec<_>>>()
-                    .unwrap_or_default()
-            };
-            for agent in rows {
-                if observed.contains(&agent) {
+                    .unwrap_or_default();
+            }
+            for agent in &agents {
+                if observed.contains(agent) {
                     continue;
                 }
                 if retry_after
-                    .get(&agent)
+                    .get(agent)
                     .is_some_and(|at| std::time::Instant::now() < *at)
                 {
                     failed = true;
@@ -275,7 +305,7 @@ pub fn start_refresh(server: &crate::server::Shared) {
                 let root = crate::server::placement::agents_root()
                     .map(std::path::PathBuf::from)
                     .unwrap_or_default()
-                    .join(&agent);
+                    .join(agent);
                 if let Some((watcher, _)) = watcher.as_mut()
                     && let Err(error) = watch_directory(watcher, &mut watched, &root)
                 {
@@ -323,22 +353,27 @@ pub fn start_refresh(server: &crate::server::Shared) {
                             .store
                             .lock()
                             .unwrap()
-                            .refresh_seat_kinds(&agent, &policy["placement"]);
-                        if let Err(error) = refreshed {
-                            crate::server::stderr_json(
-                                "warn",
-                                "seat",
-                                "seat.kind.refresh_failed",
-                                json!({"agentId":agent,"error":error.to_string()}),
-                            );
-                            failed = true;
-                            continue;
+                            .refresh_seat_kinds(agent, &policy["placement"]);
+                        match refreshed {
+                            Ok(changed) => {
+                                if changed {
+                                    server.ledger_committed();
+                                }
+                                observed.insert(agent.clone());
+                            }
+                            Err(error) => {
+                                crate::server::stderr_json(
+                                    "warn",
+                                    "seat",
+                                    "seat.kind.refresh_failed",
+                                    json!({"agentId":agent,"error":error.to_string()}),
+                                );
+                                failed = true;
+                            }
                         }
-                        server.ledger_committed();
-                        observed.insert(agent);
                     }
                     Policy::NoProfile(_) | Policy::NotAnAgentScope(_) => {
-                        observed.insert(agent);
+                        observed.insert(agent.clone());
                     }
                     Policy::Unreadable(detail) => {
                         crate::server::stderr_json(
@@ -351,15 +386,14 @@ pub fn start_refresh(server: &crate::server::Shared) {
                     }
                 }
             }
-            if server
-                .controller
-                .shutting_down
-                .load(std::sync::atomic::Ordering::SeqCst)
-            {
+            if server.controller.shutting_down.load(Ordering::SeqCst) {
                 return;
             }
             tokio::select! {
-                changed = ledger.changed() => {
+                changed = ledger.wait_for(|_| {
+                    agent_generation != Some(server.continuity_generation.load(Ordering::Relaxed))
+                        || server.controller.shutting_down.load(Ordering::SeqCst)
+                }) => {
                     if changed.is_err() { return; }
                 }
                 changed = async {
@@ -438,6 +472,16 @@ mod idle_tests {
             .unwrap()
             .sqlite
             .execute("DELETE FROM continuities", [])?;
+        server
+            .store
+            .lock()
+            .unwrap()
+            .message_insert(&serde_json::json!({
+                "messageId":"idle-fixture-message","kind":"dm","phase":"request",
+                "from":{"kind":"entity","entity":"agent:sender"},
+                "to":{"kind":"entity","entity":"agent:receiver"},
+                "body":"startup catch-up","execution":{"state":"not_applicable"}
+            }))?;
         history::start(&server);
         super::start_refresh(&server);
         credentials::start(&server)?;

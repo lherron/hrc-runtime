@@ -851,7 +851,8 @@ pub(crate) mod tests {
         (node_id, node_id_provenance): (&str, &'static str),
         lock: impl FnOnce(hrc_store::Store) -> crate::server::store_lock::StoreLock,
     ) -> anyhow::Result<(fixture::ScratchStore, Shared)> {
-        let (scratch, store) = fixture::ScratchStore::new()?;
+        let (scratch, mut store) = fixture::ScratchStore::new()?;
+        let continuity_generation = federation::policy::track_continuities(&mut store)?;
         let runtime = scratch.root.join("run");
         let state = scratch.root.join("state");
         let config = hrc_common::federation::FederationConfig {
@@ -886,6 +887,7 @@ pub(crate) mod tests {
             controller: Default::default(),
             reaped: Default::default(),
             ledger: tokio::sync::watch::Sender::new(0),
+            continuity_generation,
             event_head: std::sync::Mutex::new(crate::server::events::HeadReader::open(
                 &state.join("state.sqlite"),
             )?),

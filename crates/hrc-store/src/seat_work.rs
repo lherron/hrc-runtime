@@ -49,7 +49,8 @@ impl Store {
     }
 
     /// Reused at birth and whenever ASP observes changed placement declarations.
-    pub fn refresh_seat_kinds(&mut self, agent: &str, placement: &Value) -> Result<()> {
+    /// Returns whether the persisted policy changed.
+    pub fn refresh_seat_kinds(&mut self, agent: &str, placement: &Value) -> Result<bool> {
         let tx = self.sqlite.transaction()?;
         let old: Option<String> = tx
             .query_row(
@@ -59,7 +60,7 @@ impl Store {
             )
             .optional()?;
         if old.as_deref() == Some(placement.to_string().as_str()) {
-            return Ok(());
+            return Ok(false);
         }
         tx.execute("INSERT INTO seat_kind_policies(agent_id,placement_json) VALUES (?,?) ON CONFLICT(agent_id) DO UPDATE SET placement_json=excluded.placement_json",params![agent,placement.to_string()])?;
         let rows = {
@@ -92,7 +93,7 @@ impl Store {
             }
         }
         tx.commit()?;
-        Ok(())
+        Ok(true)
     }
 
     pub fn set_seat_work(

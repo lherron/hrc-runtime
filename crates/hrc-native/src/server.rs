@@ -210,6 +210,7 @@ struct Server {
     /// Bumped after every committed ledger write; followers re-query on change.
     ledger: tokio::sync::watch::Sender<u64>,
     event_head: Mutex<events::HeadReader>,
+    continuity_generation: Arc<std::sync::atomic::AtomicU64>,
     lifecycle: lifecycle::State,
     /// Runtimes with a seat probe in flight (probeSeatInBackground).
     probing: Mutex<HashSet<String>>,
