@@ -9,6 +9,7 @@ const EXACT: &[(&str, &str)] = &[
     ("GET", "/v1/sessions/metadata"),
     ("PATCH", "/v1/sessions/metadata"),
     ("GET", "/v1/sessions"),
+    ("POST", "/v1/sessions/read"),
     ("GET", "/v1/sessions/page"),
     ("GET", "/v1/sessions/facets"),
     ("GET", "/v1/events"),
@@ -89,4 +90,5 @@ const EXACT: &[(&str, &str)] = &[
     ("POST", "/v1/placements/resolve"),
     ("POST", "/v1/previews/run"),
     ("GET", "/v1/runtimes"),
+    ("POST", "/v1/runtimes/read"),
 ];

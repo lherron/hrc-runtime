@@ -38,6 +38,14 @@ fn nonempty(v: &Value) -> Option<&str> {
 /// large runtime state blobs or scanning terminal history.
 pub(super) fn attach_members(server: &Server, rows: &mut [Value]) -> Result<(), ApiError> {
     let db = server.store.lock().unwrap();
+    attach_members_from(&db, server, rows)
+}
+
+pub(super) fn attach_members_from(
+    db: &hrc_store::Store,
+    server: &Server,
+    rows: &mut [Value],
+) -> Result<(), ApiError> {
     let mut stmt = db.sqlite.prepare(
         "SELECT CASE WHEN json_valid(runtime_state_json) THEN json_extract(runtime_state_json,'$.broker') END FROM runtimes WHERE runtime_id=?"
     ).map_err(anyhow::Error::from)?;

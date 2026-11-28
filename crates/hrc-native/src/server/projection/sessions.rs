@@ -5,9 +5,15 @@ use axum::{
     http::{HeaderMap, Method, StatusCode},
     response::{IntoResponse, Response},
 };
+use base64::{Engine, engine::general_purpose::URL_SAFE_NO_PAD};
 use rusqlite::OptionalExtension;
 use serde_json::{Value, json};
-use std::collections::HashMap;
+use std::{
+    collections::HashMap,
+    sync::{Arc, Mutex},
+    time::{Duration, Instant},
+};
+use uuid::Uuid;
 
 pub async fn handle(
     server: &Server,
@@ -25,6 +31,9 @@ pub async fn handle(
     }
     if *method == Method::GET && path == "/v1/sessions" {
         return list(server, query).map(Some);
+    }
+    if *method == Method::POST && path == "/v1/sessions/read" {
+        return read(server, body).map(Some);
     }
     if is_annotation_route(method.as_str(), path) {
         return annotations(server, method, path, query, body, headers).map(Some);
@@ -149,6 +158,231 @@ fn projection_days() -> f64 {
         .filter(|v| v.is_finite() && *v >= 0.0)
         .unwrap_or(7.0)
 }
+fn projection_since(input: Option<&str>) -> Result<String, ApiError> {
+    let stamp = if let Some(value) = input {
+        let millis = hrc_common::js::parse_date(value);
+        millis
+            .is_finite()
+            .then(|| chrono::DateTime::from_timestamp_millis(millis as i64))
+            .flatten()
+            .ok_or_else(|| {
+                ApiError::bad(
+                    "updatedSince must be an ISO-8601 timestamp",
+                    Some(json!({"field":"updatedSince","value":value})),
+                )
+            })?
+    } else {
+        let ms = (projection_days() * 86_400_000.0) as i64;
+        chrono::Utc::now()
+            .checked_sub_signed(chrono::Duration::milliseconds(ms))
+            .unwrap_or(chrono::DateTime::<chrono::Utc>::MIN_UTC)
+    };
+    Ok(stamp.to_rfc3339_opts(chrono::SecondsFormat::Millis, true))
+}
+
+type Seats = Vec<(String, String)>;
+
+/// Eligibility can shrink between requests (e.g. a cold live runtime ends).
+/// Retain just the initial keys, then hydrate each page in its own snapshot.
+#[derive(Default)]
+pub(super) struct ReadWalks(Mutex<HashMap<Uuid, RetainedWalk>>);
+
+struct ReadWalk {
+    ids: Vec<String>,
+    seats: Option<Seats>,
+    since: Option<String>,
+}
+
+struct RetainedWalk {
+    walk: Arc<ReadWalk>,
+    touched: Instant,
+    complete: bool,
+}
+
+const MAX_WALKS: usize = 64;
+const WALK_IDLE: Duration = Duration::from_secs(300);
+const COMPLETED_WALK_IDLE: Duration = Duration::from_secs(30);
+
+fn invalid_cursor() -> ApiError {
+    ApiError::bad(
+        "cursor must be a current session read cursor with the same selectors",
+        Some(json!({"field":"cursor"})),
+    )
+}
+
+impl ReadWalks {
+    fn resume(&self, id: Uuid) -> Result<Arc<ReadWalk>, ApiError> {
+        let mut walks = self.0.lock().unwrap();
+        let entry = walks.get_mut(&id).ok_or_else(invalid_cursor)?;
+        let idle = if entry.complete {
+            COMPLETED_WALK_IDLE
+        } else {
+            WALK_IDLE
+        };
+        if entry.touched.elapsed() >= idle {
+            walks.remove(&id);
+            return Err(invalid_cursor());
+        }
+        entry.touched = Instant::now();
+        Ok(Arc::clone(&entry.walk))
+    }
+
+    fn insert(&self, id: Uuid, walk: Arc<ReadWalk>) -> Result<(), ApiError> {
+        let mut walks = self.0.lock().unwrap();
+        walks.retain(|_, entry| {
+            entry.touched.elapsed()
+                < if entry.complete {
+                    COMPLETED_WALK_IDLE
+                } else {
+                    WALK_IDLE
+                }
+        });
+        if walks.len() >= MAX_WALKS {
+            let oldest_complete = walks
+                .iter()
+                .filter(|(_, entry)| entry.complete)
+                .min_by_key(|(_, entry)| entry.touched)
+                .map(|(id, _)| *id);
+            if let Some(oldest) = oldest_complete {
+                walks.remove(&oldest);
+            } else {
+                return Err(ApiError::domain(
+                    StatusCode::TOO_MANY_REQUESTS,
+                    "session_read_walks_busy",
+                    "too many active session reads",
+                    None,
+                ));
+            }
+        }
+        walks.insert(
+            id,
+            RetainedWalk {
+                walk,
+                touched: Instant::now(),
+                complete: false,
+            },
+        );
+        Ok(())
+    }
+
+    fn complete(&self, id: Uuid) {
+        if let Some(entry) = self.0.lock().unwrap().get_mut(&id) {
+            entry.touched = Instant::now();
+            entry.complete = true;
+        }
+    }
+}
+
+fn read_seats(value: &Value) -> Result<Seats, ApiError> {
+    let seats = value.as_array().ok_or_else(|| {
+        ApiError::bad("seats must be an array of scopeRef and laneRef pairs", None)
+    })?;
+    if seats.len() > 500 {
+        return Err(ApiError::bad("seats must contain at most 500 pairs", None));
+    }
+    let mut pairs = Vec::with_capacity(seats.len());
+    for seat in seats {
+        let key = |field| {
+            seat[field]
+                .as_str()
+                .map(str::trim)
+                .filter(|s| !s.is_empty())
+        };
+        let (Some(scope), Some(lane)) = (key("scopeRef"), key("laneRef")) else {
+            return Err(ApiError::bad(
+                "seat scopeRef and laneRef must be nonempty strings",
+                None,
+            ));
+        };
+        // Match scoped GET's stored lane key, including historical prefixed lanes.
+        pairs.push((scope.to_owned(), lane.to_owned()));
+    }
+    pairs.sort_unstable();
+    pairs.dedup();
+    Ok(pairs)
+}
+
+fn read(server: &Server, body: &[u8]) -> Result<Response, ApiError> {
+    let value = parse_body(body)?;
+    if !value.is_object() {
+        return Err(ApiError::bad("request body must be an object", None));
+    }
+    let limit = value
+        .get("limit")
+        .map_or(Some(100), Value::as_u64)
+        .filter(|limit| (1..=200).contains(limit))
+        .ok_or_else(|| ApiError::bad("limit must be an integer between 1 and 200", None))?
+        as usize;
+    let optional_string = |key| {
+        value
+            .get(key)
+            .map(|v| {
+                v.as_str()
+                    .ok_or_else(|| ApiError::bad(format!("{key} must be a string"), None))
+            })
+            .transpose()
+    };
+    let seats = value.get("seats").map(read_seats).transpose()?;
+    let since = optional_string("updatedSince")?
+        .map(|s| projection_since(Some(s.trim())))
+        .transpose()?;
+    let cursor = optional_string("cursor")?;
+    let db = server.open_reader()?;
+    let tx = db
+        .sqlite
+        .unchecked_transaction()
+        .map_err(anyhow::Error::from)?;
+    let walks = &server.session_read_walks;
+    let (id, walk, start) = if let Some(cursor) = cursor {
+        let raw = URL_SAFE_NO_PAD
+            .decode(cursor)
+            .map_err(|_| invalid_cursor())?;
+        let (id, start): (String, usize) =
+            serde_json::from_slice(&raw).map_err(|_| invalid_cursor())?;
+        let id = Uuid::parse_str(&id).map_err(|_| invalid_cursor())?;
+        let walk = walks.resume(id)?;
+        if seats
+            .as_ref()
+            .is_some_and(|seats| walk.seats.as_ref() != Some(seats))
+            || since
+                .as_ref()
+                .is_some_and(|since| walk.since.as_ref() != Some(since))
+        {
+            return Err(invalid_cursor());
+        }
+        if !(1..walk.ids.len()).contains(&start) {
+            return Err(invalid_cursor());
+        }
+        (id, walk, start)
+    } else {
+        let since = if seats.is_none() && since.is_none() {
+            Some(projection_since(None)?)
+        } else {
+            since
+        };
+        let ids = db.session_projection_ids(seats.as_deref(), since.as_deref())?;
+        (Uuid::new_v4(), Arc::new(ReadWalk { ids, seats, since }), 0)
+    };
+
+    let end = (start + limit).min(walk.ids.len());
+    let mut items = db.session_projection_page(&walk.ids[start..end])?;
+    db.annotate_sessions(&mut items, walk.seats.is_some())?;
+    tx.commit().map_err(anyhow::Error::from)?;
+    let next = if end < walk.ids.len() {
+        let next = URL_SAFE_NO_PAD.encode(json!([id.to_string(), end]).to_string());
+        if start == 0 {
+            walks.insert(id, walk)?;
+        }
+        Some(next)
+    } else {
+        if start != 0 {
+            walks.complete(id);
+        }
+        None
+    };
+    Ok(Json(json!({"items":items,"nextCursor":next})).into_response())
+}
+
 fn list(server: &Server, query: &HashMap<String, String>) -> Result<Response, ApiError> {
     let status = optional(query, "status");
     if let Some(v) = status
@@ -177,25 +411,7 @@ fn list(server: &Server, query: &HashMap<String, String>) -> Result<Response, Ap
     let since = if scope.is_some() || affirmative(query, "all") {
         None
     } else {
-        let stamp = if let Some(v) = optional(query, "updatedSince") {
-            let millis = hrc_common::js::parse_date(v);
-            let parsed = millis
-                .is_finite()
-                .then(|| chrono::DateTime::from_timestamp_millis(millis as i64))
-                .flatten();
-            parsed.ok_or_else(|| {
-                ApiError::bad(
-                    "updatedSince must be an ISO-8601 timestamp",
-                    Some(json!({"field":"updatedSince","value":v})),
-                )
-            })?
-        } else {
-            let ms = (projection_days() * 86_400_000.0) as i64;
-            chrono::Utc::now()
-                .checked_sub_signed(chrono::Duration::milliseconds(ms))
-                .unwrap_or(chrono::DateTime::<chrono::Utc>::MIN_UTC)
-        };
-        Some(stamp.to_rfc3339_opts(chrono::SecondsFormat::Millis, true))
+        Some(projection_since(optional(query, "updatedSince"))?)
     };
     let db = server.open_reader()?;
     let tx = db
@@ -212,9 +428,7 @@ fn list(server: &Server, query: &HashMap<String, String>) -> Result<Response, Ap
     if let Some(limit) = limit {
         sessions.truncate(limit);
     }
-    for s in &mut sessions {
-        db.annotate_session(s, scope.is_some())?;
-    }
+    db.annotate_sessions(&mut sessions, scope.is_some())?;
     let total = db.count("sessions")?;
     tx.commit().map_err(anyhow::Error::from)?;
     let mut response = Json(json!(sessions)).into_response();

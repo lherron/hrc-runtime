@@ -241,14 +241,78 @@ pub fn query(
     paginate: bool,
     mode: Terminal,
 ) -> Result<(Vec<Value>, Option<String>), ApiError> {
-    query_with_reader(q, paginate, mode, || server.open_reader())
+    query_with_reader(
+        q,
+        paginate,
+        mode,
+        None,
+        || server.open_reader(),
+        |_, _| Ok(()),
+    )
+}
+
+struct ReadSelectors {
+    scope_refs: Vec<String>,
+    runtime_ids: Vec<String>,
+}
+
+pub fn read(
+    server: &Server,
+    body: &[u8],
+    mode: Terminal,
+    finish: impl FnOnce(&hrc_store::Store, &mut [Value]) -> Result<(), ApiError>,
+) -> Result<Response, ApiError> {
+    let value = super::parse_body(body)?;
+    if !value.is_object() {
+        return Err(ApiError::bad("request body must be an object", None));
+    }
+    let selectors = |key| {
+        value.get(key).cloned().map_or_else(
+            || Ok(Vec::new()),
+            |value| {
+                serde_json::from_value::<Vec<String>>(value)
+                    .map_err(|_| ApiError::bad(format!("{key} must be an array of strings"), None))
+            },
+        )
+    };
+    let batch = ReadSelectors {
+        scope_refs: selectors("scopeRefs")?,
+        runtime_ids: selectors("runtimeIds")?,
+    };
+    let count = batch.scope_refs.len() + batch.runtime_ids.len();
+    if !(1..=500).contains(&count) {
+        return Err(ApiError::bad(
+            "provide between 1 and 500 scopeRefs and runtimeIds in total",
+            None,
+        ));
+    }
+    let omit_state = match value.get("omitState") {
+        None => false,
+        Some(Value::Bool(value)) => *value,
+        _ => return Err(ApiError::bad("omitState must be a boolean", None)),
+    };
+    let q = HashMap::from([("omitState".to_owned(), omit_state.to_string())]);
+    let (mut rows, _) = query_with_reader(
+        &q,
+        false,
+        mode,
+        Some(&batch),
+        || server.open_reader(),
+        finish,
+    )?;
+    if mode == Terminal::Exclude {
+        canonicalize_lanes(&mut rows);
+    }
+    Ok(Json(json!({"runtimes":rows})).into_response())
 }
 
 fn query_with_reader(
     q: &HashMap<String, String>,
     paginate: bool,
     mode: Terminal,
+    batch: Option<&ReadSelectors>,
     open: impl FnOnce() -> anyhow::Result<hrc_store::Store>,
+    finish: impl FnOnce(&hrc_store::Store, &mut [Value]) -> Result<(), ApiError>,
 ) -> Result<(Vec<Value>, Option<String>), ApiError> {
     let transport = optional(q, "transport");
     if let Some(v) = transport
@@ -291,15 +355,29 @@ fn query_with_reader(
     // Literal predicates matching migration 0131's indexes: a json_each list
     // or an OR across them sends the planner to a full table scan (T-12413).
     let live = hrc_store::status::live_sql();
+    if let Some(batch) = batch {
+        clause.push(
+            "rowid IN (SELECT rowid FROM runtimes WHERE scope_ref IN (SELECT value FROM json_each(?)) \
+             UNION SELECT rowid FROM runtimes WHERE runtime_id IN (SELECT value FROM json_each(?)))",
+        );
+        values.extend([
+            json!(batch.scope_refs).to_string(),
+            json!(batch.runtime_ids).to_string(),
+        ]);
+    }
     let recent_clause;
     if let Some(since) = recent_since {
         // Second precision compares correctly against stored RFC 3339 text
         // with or without fractional seconds. SQLite will not OR-optimize the
         // two arms, so each arm is its own indexed lookup. Pin both indexes:
         // bundled SQLite 3.54 otherwise scans the recent arm, including on max3.
-        recent_clause = format!(
-            "rowid IN (SELECT rowid FROM runtimes INDEXED BY idx_runtimes_live WHERE {live} UNION SELECT rowid FROM runtimes INDEXED BY idx_runtimes_recent_activity WHERE {ACTIVITY_SQL} >= ?)"
-        );
+        recent_clause = if batch.is_some() {
+            format!("({live} OR {ACTIVITY_SQL} >= ?)")
+        } else {
+            format!(
+                "rowid IN (SELECT rowid FROM runtimes INDEXED BY idx_runtimes_live WHERE {live} UNION SELECT rowid FROM runtimes INDEXED BY idx_runtimes_recent_activity WHERE {ACTIVITY_SQL} >= ?)"
+            )
+        };
         clause.push(&recent_clause);
         values.push(since.format("%Y-%m-%dT%H:%M:%S").to_string());
     } else if !all {
@@ -446,15 +524,34 @@ fn query_with_reader(
     if paginate {
         hydrate_page(&db, &mut rows, omit_state, worktree_occupancy)?;
     }
-    attach_first_turn_health(&db, &mut rows)?;
+    attach_first_turn_health(&db, &mut rows, batch.is_some())?;
+    finish(&db, &mut rows)?;
     tx.commit().map_err(anyhow::Error::from)?;
     Ok((rows, next))
 }
 
-fn attach_first_turn_health(db: &hrc_store::Store, rows: &mut [Value]) -> Result<(), ApiError> {
-    let mut trips=db.sqlite.prepare("SELECT runtime_id,first_turn_missing_tripped_at,trip_event_seq,generation,bundle_dir FROM runtime_first_turn_watch WHERE first_turn_missing_tripped_at IS NOT NULL ORDER BY first_turn_missing_tripped_at ASC").map_err(anyhow::Error::from)?;
+fn attach_first_turn_health(
+    db: &hrc_store::Store,
+    rows: &mut [Value],
+    keyed: bool,
+) -> Result<(), ApiError> {
+    let mut sql = String::from(
+        "SELECT runtime_id,first_turn_missing_tripped_at,trip_event_seq,generation,bundle_dir \
+         FROM runtime_first_turn_watch WHERE first_turn_missing_tripped_at IS NOT NULL",
+    );
+    let mut args = Vec::new();
+    if keyed {
+        sql.push_str(" AND runtime_id IN (SELECT value FROM json_each(?))");
+        args.push(json!(rows.iter().map(|r| &r["runtimeId"]).collect::<Vec<_>>()).to_string());
+    }
+    sql.push_str(" ORDER BY first_turn_missing_tripped_at ASC");
+    if keyed {
+        // Match the unkeyed tripped-time index's order when times tie.
+        sql.push_str(", rowid ASC");
+    }
+    let mut trips = db.sqlite.prepare(&sql).map_err(anyhow::Error::from)?;
     let trips = trips
-        .query_map([], |r| {
+        .query_map(rusqlite::params_from_iter(args), |r| {
             Ok((
                 r.get::<_, String>(0)?,
                 r.get::<_, String>(1)?,
@@ -476,12 +573,17 @@ fn attach_first_turn_health(db: &hrc_store::Store, rows: &mut [Value]) -> Result
     Ok(())
 }
 
+fn canonicalize_lanes(rows: &mut [Value]) {
+    for row in rows {
+        row["laneRef"] =
+            hrc_store::canonical_lane(row["laneRef"].as_str().unwrap_or("main")).into();
+    }
+}
+
 /// `GET /v1/runtimes` (handleListRuntimes): one page, lane refs canonical.
 pub fn list(server: &Server, q: &HashMap<String, String>) -> Result<Response, ApiError> {
     let (mut rows, next) = query(server, q, true, Terminal::Exclude)?;
-    for r in &mut rows {
-        r["laneRef"] = hrc_store::canonical_lane(r["laneRef"].as_str().unwrap_or("main")).into();
-    }
+    canonicalize_lanes(&mut rows);
     let mut response = Json(json!(rows)).into_response();
     if let Some(cursor) = next {
         response
@@ -632,9 +734,14 @@ mod tests {
                 db.sqlite.execute("INSERT INTO runtimes(runtime_id,host_session_id,scope_ref,lane_ref,generation,transport,status,supports_inflight_input,runtime_state_json,last_activity_at,created_at,updated_at) VALUES(?,?,'agent:test:project:fixture','main',1,'hrcpty',?,0,?,?,'2026-01-01T00:00:00Z',?)", rusqlite::params![id, session["hostSessionId"].as_str(), status, state, activity, recent])?;
             }
         }
-        let (rows, _) = query_with_reader(&HashMap::new(), false, Terminal::Recent, || {
-            observed_reader(&server, &seen)
-        })
+        let (rows, _) = query_with_reader(
+            &HashMap::new(),
+            false,
+            Terminal::Recent,
+            None,
+            || observed_reader(&server, &seen),
+            |_, _| Ok(()),
+        )
         .map_err(|e| anyhow::anyhow!("{e:?}"))?;
         let ids: Vec<_> = rows.iter().map(|r| r["runtimeId"].clone()).collect();
         // Equal createdAt: runtimeId breaks the tie, as for every list.
@@ -779,8 +886,15 @@ mod tests {
                 .collect()
         };
         let run = |q: HashMap<String, String>, paginate, mode| {
-            query_with_reader(&q, paginate, mode, || observed_reader(&server, &seen))
-                .map_err(|e| anyhow::anyhow!("{e:?}"))
+            query_with_reader(
+                &q,
+                paginate,
+                mode,
+                None,
+                || observed_reader(&server, &seen),
+                |_, _| Ok(()),
+            )
+            .map_err(|e| anyhow::anyhow!("{e:?}"))
         };
         run(q(&[]), false, Terminal::Recent)?;
         run(q(&[]), true, Terminal::Exclude)?;

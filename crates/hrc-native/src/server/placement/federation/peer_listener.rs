@@ -7,7 +7,7 @@ use super::{
     history,
     locate::{locate_for_peer, observed_for_peer},
 };
-use crate::server::{Shared, accounting, dispatch_local, stderr_json};
+use crate::server::{Shared, accounting, dispatch_local, runtimes, self_restart, stderr_json};
 use anyhow::{Context, Result};
 use axum::{
     Router,
@@ -19,8 +19,9 @@ use axum::{
 use hrc_store::timestamp;
 use serde_json::{Map, Value, json};
 
-pub const ROUTE_KEYS: [&str; 28] = [
+pub const ROUTE_KEYS: [&str; 29] = [
     "GET /v1/federation/health",
+    "POST /v1/runtimes/read",
     "GET /v1/sessions/work",
     "PUT /v1/sessions/work",
     "GET /v1/sessions/metadata",
@@ -270,17 +271,13 @@ async fn route_request(server: &Shared, peer: &str, request: Request) -> Result<
                         m
                     });
             if query.get("includeRuntimes").map(String::as_str) == Some("true") {
-                match crate::server::runtimes::query(
-                    server,
-                    &query,
-                    false,
-                    crate::server::runtimes::Terminal::Recent,
-                )
-                .and_then(|(mut runtimes, _)| {
-                    super::projection::attach_members(server, &mut runtimes)?;
-                    crate::server::self_restart::armed_restart(server, &mut runtimes);
-                    Ok(runtimes)
-                }) {
+                match runtimes::query(server, &query, false, runtimes::Terminal::Recent).and_then(
+                    |(mut runtimes, _)| {
+                        super::projection::attach_members(server, &mut runtimes)?;
+                        self_restart::armed_restart(server, &mut runtimes);
+                        Ok(runtimes)
+                    },
+                ) {
                     Ok(runtimes) => health["runtimes"] = runtimes.into(),
                     // Bun's health handler throws; the peer protocol answers a generic 500.
                     Err(_) => {
@@ -293,6 +290,22 @@ async fn route_request(server: &Shared, peer: &str, request: Request) -> Result<
                 }
             }
             Ok(reply(health, StatusCode::OK))
+        }
+        ("POST", "/v1/runtimes/read") => {
+            Ok(
+                runtimes::read(server, &body, runtimes::Terminal::Recent, |db, rows| {
+                    super::projection::attach_members_from(db, server, rows)?;
+                    self_restart::armed_restart(server, rows);
+                    Ok(())
+                })
+                .unwrap_or_else(|error| {
+                    if error.status.is_server_error() {
+                        refusal(error.status, error.code, json!({"retryable":true}))
+                    } else {
+                        refusal(error.status, error.code, json!({"message":error.message}))
+                    }
+                }),
+            )
         }
         ("GET" | "PUT", "/v1/sessions/work")
         | ("GET" | "PATCH", "/v1/sessions/metadata")
@@ -592,12 +605,14 @@ mod tests {
 
     #[test]
     fn allowlist_names_the_session_writes_once() {
-        assert_eq!(ROUTE_KEYS.len(), 28);
+        assert_eq!(ROUTE_KEYS.len(), 29);
         assert_eq!(
             ROUTE_KEYS.iter().collect::<HashSet<_>>().len(),
             ROUTE_KEYS.len()
         );
+        assert!(!ROUTE_KEYS.contains(&"POST /v1/sessions/read"));
         for key in [
+            "POST /v1/runtimes/read",
             "GET /v1/sessions/metadata",
             "PATCH /v1/sessions/metadata",
             "GET /v1/sessions/work",

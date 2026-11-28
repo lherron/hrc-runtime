@@ -869,6 +869,7 @@ pub(crate) mod tests {
         let federation = federation::Node::new(config, &state, false)?;
         let started_at = hrc_store::timestamp();
         let server = Arc::new(Server {
+            session_read_walks: Default::default(),
             command_targets: Default::default(),
             store: lock(store),
             accounting: accounting::Accounting::new(),

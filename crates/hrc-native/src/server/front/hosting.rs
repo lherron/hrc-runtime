@@ -217,6 +217,7 @@ pub async fn serve(role: Role) -> Result<()> {
         command_targets,
         accounting,
         store: store_lock::StoreLock::new(store),
+        session_read_walks: Default::default(),
         brokers: Mutex::new(HashMap::new()),
         participant_work: Mutex::new(HashSet::new()),
         participant_host_requests: Mutex::new(HashMap::new()),

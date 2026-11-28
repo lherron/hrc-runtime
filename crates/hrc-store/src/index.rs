@@ -112,6 +112,13 @@ impl Store {
         Ok(())
     }
 
+    pub fn annotate_sessions(&self, rows: &mut [Value], scoped: bool) -> Result<()> {
+        for row in rows {
+            self.annotate_session(row, scoped)?;
+        }
+        Ok(())
+    }
+
     /// Bun's bounded session projection. Scope reads retain all history;
     /// callers pass no cutoff for those and for explicit all=true reads.
     pub fn sessions_for_projection(
@@ -138,17 +145,80 @@ impl Store {
             predicates.push(recent_sessions());
             values.push(since.to_owned().into());
         }
+        let mut stmt = self.session_projection(
+            "s.*",
+            "sessions s",
+            &predicates,
+            "s.scope_ref,s.lane_ref,s.generation ASC",
+        )?;
+        Ok(stmt
+            .query_map(params_from_iter(values), super::session_row)?
+            .collect::<rusqlite::Result<_>>()?)
+    }
+
+    /// Capture projection membership once, using the same window as an unscoped
+    /// list or checking recency only for hits from the exact seat index.
+    pub fn session_projection_ids(
+        &self,
+        seats: Option<&[(String, String)]>,
+        since: Option<&str>,
+    ) -> Result<Vec<String>> {
+        let mut predicates = Vec::new();
+        let mut values = Vec::<SqlValue>::new();
+        let from = if let Some(seats) = seats {
+            values.push(json!(seats).to_string().into());
+            "json_each(?) seat CROSS JOIN sessions s INDEXED BY idx_sessions_scope_lane_generation \
+             ON s.scope_ref=json_extract(seat.value,'$[0]') AND s.lane_ref=json_extract(seat.value,'$[1]')"
+        } else {
+            "sessions s"
+        };
+        if let Some(since) = since {
+            predicates.push(if seats.is_some() {
+                session_recency()
+            } else {
+                recent_sessions()
+            });
+            values.push(since.to_owned().into());
+        }
+        let mut stmt = self.session_projection(
+            "s.host_session_id",
+            from,
+            &predicates,
+            "s.scope_ref,s.lane_ref,s.generation ASC,s.host_session_id",
+        )?;
+        Ok(stmt
+            .query_map(params_from_iter(values), |row| row.get(0))?
+            .collect::<rusqlite::Result<_>>()?)
+    }
+
+    /// Hydrate only captured IDs on this page, in the captured order.
+    pub fn session_projection_page(&self, ids: &[String]) -> Result<Vec<Value>> {
+        let mut stmt = self.session_projection(
+            "s.*",
+            "json_each(?) hosts CROSS JOIN sessions s ON s.host_session_id=hosts.value",
+            &[],
+            "hosts.key",
+        )?;
+        Ok(stmt
+            .query_map([json!(ids).to_string()], super::session_row)?
+            .collect::<rusqlite::Result<_>>()?)
+    }
+
+    fn session_projection(
+        &self,
+        columns: &str,
+        from: &str,
+        predicates: &[&str],
+        order: &str,
+    ) -> Result<rusqlite::Statement<'_>> {
         let clause = if predicates.is_empty() {
             String::new()
         } else {
             format!("WHERE {}", predicates.join(" AND "))
         };
-        let mut stmt = self.sqlite.prepare(&format!(
-            "SELECT s.* FROM sessions s {clause} ORDER BY s.scope_ref,s.lane_ref,s.generation ASC"
-        ))?;
-        Ok(stmt
-            .query_map(params_from_iter(values), super::session_row)?
-            .collect::<rusqlite::Result<_>>()?)
+        Ok(self.sqlite.prepare(&format!(
+            "SELECT {columns} FROM {from} {clause} ORDER BY {order}"
+        ))?)
     }
 
     pub fn session_index_page(

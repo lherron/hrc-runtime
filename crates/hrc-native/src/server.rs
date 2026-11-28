@@ -187,6 +187,7 @@ type Shared = Arc<Server>;
 struct Server {
     command_targets: serde_json::Map<String, Value>,
     store: store_lock::StoreLock,
+    session_read_walks: sessions::ReadWalks,
     accounting: Arc<accounting::Accounting>,
     brokers: Mutex<HashMap<String, rpc::JsonRpc>>,
     participant_work: Mutex<HashSet<String>>,
@@ -430,7 +431,12 @@ impl Server {
 }
 async fn dispatch(State(server): State<Shared>, request: Request) -> Response {
     let entry = accounting::InFlight::new(accounting::Entry::new(&request));
-    let mutating = request.method() != Method::GET;
+    let mutating = request.method() != Method::GET
+        && !(request.method() == Method::POST
+            && matches!(
+                request.uri().path(),
+                "/v1/runtimes/read" | "/v1/sessions/read"
+            ));
     let headers = request.headers().clone();
     let response = federation::with_caller(&headers, dispatch_inner(&server, request, false)).await;
     // Every request-path transaction has committed once its response exists.
@@ -821,6 +827,8 @@ fn implemented(method: &Method, path: &str) -> bool {
                 "/v1/server/lifecycle",
                 "/v1/server/subscribers/ack",
                 "/v1/presentation/seats/read",
+                "/v1/runtimes/read",
+                "/v1/sessions/read",
                 "/v1/internal/mail/hint-decision",
                 "/v1/internal/mail/stop-decision",
                 "/v1/events/append",
@@ -1030,6 +1038,9 @@ async fn handle(
     }
     if method == Method::GET && path == "/v1/runtimes" {
         return runtimes::list(server, query);
+    }
+    if method == Method::POST && path == "/v1/runtimes/read" {
+        return runtimes::read(server, body, runtimes::Terminal::Exclude, |_, _| Ok(()));
     }
     if method == Method::GET && path == "/v1/runs" {
         return runs::list(server, query);
