@@ -1,0 +1,55 @@
+id: hrc-runtime.invocation-payload-storage
+kind: contract
+status: active
+owner_project: hrc-runtime
+consumers:
+  - hrc-analytics
+scope: HRC's SQLite invocation payload representation, read transparency, and cleanup
+predicate: >
+  HRC externalizes JSON string values of at least 4096 UTF-8 bytes in
+  runtime_operations.preparation_json, broker_invocations.spec_projection_json,
+  and broker_invocations.start_request_projection_json. A stub carries
+  $hrcPayload and the UTF-8 byte count. Its key is sha256: followed by the
+  lowercase hexadecimal SHA-256 of the string's UTF-8 bytes. The keyed body
+  is the exact original string and is immutable. The body, its runtime
+  reference, and the row containing the stub commit in one transaction.
+  HRC reads resolve the original strings before using the affected values,
+  including the committed preparation reread before invocation.start.
+  The lake collector sees the persisted stubs and keyed payload tables.
+  Existing inline values remain readable. The HTTP and CLI representations
+  retain their existing behavior.
+  In an authorized runtime cascade, payload_refs are deleted with the rows
+  for the selected runtime IDs. Within that transaction, only bodies among
+  the affected keys with no remaining reference are deleted. The same rule
+  applies to the T-14823 orphan cascade once that cascade is separately
+  authorized, including preparations whose runtime rows were never created.
+  This contract grants no separate prune authority. Dry-run reports count
+  refs and omit bodies. Applied reports count both actual deletions.
+authority: >
+  Daedalus approval of wrkq:T-14822 revision 2, etag 5, submitted in EN-65391
+  on 2026-11-28. Lance approved the content-addressed storage direction.
+  hrc-analytics requested a stable key for raw lake joins in EN-65318.
+source:
+  - wrkq:T-14822
+  - wrkq:T-14823
+  - wrkc:EN-65318
+  - wrkc:EN-65391
+  - crates/hrc-store/src/broker.rs
+  - crates/hrc-store/src/maintenance.rs
+  - crates/hrc-native/src/server/broker/broker.rs
+  - crates/hrc-native/src/server/broker/ledger_prune.rs
+  - architecture/records/invariants/hrc-runtime.aspd-prepared-execution-release.yaml
+  - architecture/records/invariants/hrc-runtime.ledger-tool-result-storage.yaml
+validation_scope: >
+  The requester supplies byte-identical resolved store reads, byte-identical
+  delivery of the large launch prompt in a private daemon transcript,
+  on-disk deduplication and size evidence, the read-site guard with its
+  negative control, and prune evidence for both shared and unreferenced
+  bodies. Installed evidence comes from the first harvest invocations.
+last_verified: >
+  Design approved by source review. Implementation and installed acceptance
+  evidence are pending.
+reopen_when: >
+  Affected columns, threshold, stub shape, key or body identity, transaction
+  boundary, read transparency, cascade eligibility or last-reference rule,
+  prune reporting, or the lake join contract changes.
