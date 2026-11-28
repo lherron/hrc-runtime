@@ -182,6 +182,7 @@ fn invocations(db: &Connection, runtime_id: &str) -> Result<Vec<String>> {
 }
 
 /// persistedAspdExecutionRelease
+#[derive(PartialEq)]
 pub struct Release {
     pub release_id: String,
     pub source_commit: String,
@@ -518,6 +519,7 @@ async fn read_and_project(
     row: &Row,
     invocation: &str,
     prior: Option<&(String, i64, Value)>,
+    expected: Option<&Row>,
 ) -> Result<Attempt> {
     let start = cursor(&server.store.lock().unwrap().sqlite, invocation);
     let fail = |outcome: &str, detail: Value| Attempt {
@@ -563,7 +565,7 @@ async fn read_and_project(
             json!({"releaseId":release.release_id}),
         ));
     };
-    let expected = validate::Identity {
+    let identity = validate::Identity {
         release_id: release.release_id.clone(),
         source_commit: release.source_commit.clone(),
         built_at: release.built_at.clone(),
@@ -610,7 +612,7 @@ async fn read_and_project(
                 });
             }
             reader::Kind::Typed(response) => {
-                return Ok(match validate::typed_error(&response, &expected) {
+                return Ok(match validate::typed_error(&response, &identity) {
                     Err((outcome, detail)) => Attempt {
                         outcome,
                         detail: detail_with(detail),
@@ -629,7 +631,7 @@ async fn read_and_project(
             }
             reader::Kind::Ok(response) => response,
         };
-        let page = match validate::page(&response, &expected, invocation, after) {
+        let page = match validate::page(&response, &identity, invocation, after) {
             Err((outcome, detail)) => {
                 return Ok(Attempt {
                     outcome,
@@ -662,6 +664,7 @@ async fn read_and_project(
         for envelope in &page.events {
             let applied = {
                 let db = server.store.lock().unwrap();
+                require_pending_write(&db.sqlite, expected, invocation, prior)?;
                 projection::apply_retained(&db.sqlite, &mut mem, envelope).and_then(|outcome| {
                     if !outcome.ignored_delta && !outcome.idempotent {
                         history(&db.sqlite, &row.runtime_id, envelope)?;
@@ -684,6 +687,7 @@ async fn read_and_project(
         }
         {
             let db = server.store.lock().unwrap();
+            require_pending_write(&db.sqlite, expected, invocation, prior)?;
             projection::flush_retained(&db.sqlite, &mut mem, invocation)?;
         }
         after = page.next_after_seq;
@@ -817,15 +821,89 @@ fn response(
     out["detail"] = detail;
     out
 }
+fn same_pending_runtime(current: &Row, expected: &Row) -> bool {
+    current.rt.generation == expected.rt.generation
+        && current.status == expected.status
+        && current.status_changed_at == expected.status_changed_at
+        && current.active_invocation_id == expected.active_invocation_id
+        && current.participant_served() == expected.participant_served()
+        && release(&current.state) == release(&expected.state)
+        && ledger_path(current) == ledger_path(expected)
+}
+
+#[derive(Debug)]
+struct CandidateChanged;
+
+impl std::fmt::Display for CandidateChanged {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("retained evidence candidate changed")
+    }
+}
+impl std::error::Error for CandidateChanged {}
+
+fn require_pending_write(
+    db: &Connection,
+    expected: Option<&Row>,
+    invocation: &str,
+    prior: Option<&(String, i64, Value)>,
+) -> Result<()> {
+    let Some(expected) = expected else {
+        return Ok(());
+    };
+    if let Some(current) = row(db, &expected.runtime_id)?
+        && same_pending_runtime(&current, expected)
+        && triggers::pending_row(db, &current, now_ms())?
+        && target_invocation(db, &current)?.as_deref() == Some(invocation)
+        && latest(db, &current.runtime_id, invocation)?.as_ref() == prior
+    {
+        return Ok(());
+    }
+    Err(CandidateChanged.into())
+}
+
+struct Candidate {
+    row: Row,
+    invocation: String,
+}
+
+async fn recover_if_pending(server: &Shared, candidate: &Candidate) -> Result<Option<Value>> {
+    recover_inner(
+        server,
+        &candidate.row.runtime_id,
+        "startup",
+        Some(candidate),
+    )
+    .await
+}
+
 /// One recovery attempt for a runtime's current invocation. Refusals that
 /// must not become audit rows (worker live, revivable) return unrecorded.
 pub async fn recover(server: &Shared, runtime_id: &str, trigger: &str) -> Result<Option<Value>> {
+    recover_inner(server, runtime_id, trigger, None).await
+}
+
+async fn recover_inner(
+    server: &Shared,
+    runtime_id: &str,
+    trigger: &str,
+    candidate: Option<&Candidate>,
+) -> Result<Option<Value>> {
+    let expected = candidate.map(|candidate| &candidate.row);
     let (row0, invocation, prior) = {
         let db = server.store.lock().unwrap();
         let Some(r) = row(&db.sqlite, runtime_id)? else {
             return Ok(None);
         };
+        if let Some(expected) = expected
+            && (!same_pending_runtime(&r, expected)
+                || !triggers::pending_row(&db.sqlite, &r, now_ms())?)
+        {
+            return Ok(None);
+        }
         let invocation = target_invocation(&db.sqlite, &r)?;
+        if candidate.is_some_and(|candidate| invocation.as_ref() != Some(&candidate.invocation)) {
+            return Ok(None);
+        }
         let prior = match &invocation {
             Some(i) => latest(&db.sqlite, runtime_id, i)?,
             None => None,
@@ -866,9 +944,13 @@ pub async fn recover(server: &Shared, runtime_id: &str, trigger: &str) -> Result
             false,
         )));
     }
-    let result = async {
+    let result: Result<Value> = async {
         // Re-read inside ownership: eligibility is never judged on a stale row.
-        let owned = row(&server.store.lock().unwrap().sqlite, runtime_id)?.unwrap_or(row0);
+        let owned = {
+            let db = server.store.lock().unwrap();
+            require_pending_write(&db.sqlite, expected, &invocation, prior.as_ref())?;
+            row(&db.sqlite, runtime_id)?.unwrap_or(row0)
+        };
         if let Some((outcome, reason)) = refusal(server, &owned, &invocation).await {
             log("info", "retained_evidence.refused", json!({"runtimeId":runtime_id,"invocationId":invocation,"outcome":outcome,"reason":reason,"trigger":trigger}));
             return Ok(response(server, runtime_id, Some(&invocation), trigger, outcome, false, prior_attempts, false, projected_now, None, json!({"reason":reason}), false));
@@ -882,24 +964,35 @@ pub async fn recover(server: &Shared, runtime_id: &str, trigger: &str) -> Result
             }
             if class == "retryable" && *attempts >= RETRY_BUDGET {
                 let detail = json!({"priorOutcome":outcome,"requestedAfterSeq":projected_now});
-                append_outcome(&server.store.lock().unwrap().sqlite, &owned, &invocation, trigger, "paused_needs_disposition", *attempts, detail.clone())?;
+                {
+                    let db = server.store.lock().unwrap();
+                    require_pending_write(&db.sqlite, expected, &invocation, prior.as_ref())?;
+                    append_outcome(&db.sqlite, &owned, &invocation, trigger, "paused_needs_disposition", *attempts, detail.clone())?;
+                }
                 return Ok(response(server, runtime_id, Some(&invocation), trigger, "paused_needs_disposition", true, *attempts, false, projected_now, None, detail, false));
             }
         }
-        let attempt = read_and_project(server, &owned, &invocation, prior.as_ref()).await?;
+        let attempt = read_and_project(server, &owned, &invocation, prior.as_ref(), expected).await?;
         let attempts = if budget_free(&attempt.outcome) { prior_attempts } else { prior_attempts + 1 };
         let mut recorded = attempt.detail.clone();
         recorded["projectedThroughSeq"] = attempt.projected.into();
         if let Some(c) = attempt.current {
             recorded["currentSeq"] = c.into();
         }
-        append_outcome(&server.store.lock().unwrap().sqlite, &owned, &invocation, trigger, &attempt.outcome, attempts, recorded)?;
+        {
+            let db = server.store.lock().unwrap();
+            require_pending_write(&db.sqlite, expected, &invocation, prior.as_ref())?;
+            append_outcome(&db.sqlite, &owned, &invocation, trigger, &attempt.outcome, attempts, recorded)?;
+        }
         server.ledger_committed();
         Ok(response(server, runtime_id, Some(&invocation), trigger, &attempt.outcome, true, attempts, attempt.spawned, attempt.projected, attempt.current, attempt.detail, false))
     }
     .await;
     OWNED.lock().unwrap().remove(runtime_id);
-    result.map(Some)
+    match result {
+        Err(error) if error.is::<CandidateChanged>() => Ok(None),
+        other => other.map(Some),
+    }
 }
 
 mod triggers;

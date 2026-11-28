@@ -6,6 +6,7 @@ use super::*;
 
 // ── orphan lease sweep (sweepOrphanedBrokerTmuxLeases) ────────────────────────
 
+#[derive(PartialEq)]
 pub(super) struct Claim {
     rt: db::Rt,
     status_changed_at: Option<String>,
@@ -21,14 +22,6 @@ impl Claim {
             .unwrap_or(&self.updated_at);
         parse_ms(at).map(|t| (now - t).max(0)).unwrap_or(i64::MAX)
     }
-    /// runtimeLeaseFingerprint
-    fn fingerprint(&self) -> String {
-        let h = rt_hosting(&self.rt).map(|h| json!({"endpoint":h.endpoint,"substrate":h.substrate,"presentation":h.presentation}));
-        json!({"runtimeId":self.rt.runtime_id,"status":self.rt.status,"statusChangedAt":self.status_changed_at,"updatedAt":self.updated_at,"tmuxJson":self.rt.tmux,"hosting":h,"brokerRecovery":recovery(&self.rt.state_object())}).to_string()
-    }
-}
-pub(super) fn claim(server: &Server, id: &str) -> Result<Option<Claim>> {
-    claim_in(&server.store.lock().unwrap().sqlite, id)
 }
 fn claim_in(db: &Connection, id: &str) -> Result<Option<Claim>> {
     let Some(rt) = db::runtime(db, id)? else {
@@ -241,7 +234,26 @@ pub(super) async fn observe_claim(
 /// An hrcpty supervisor outliving its runtime is ended (T-12046 §4.6) once
 /// identified and its broker no longer answers; a row whose supervisor is
 /// gone is settled once (T-12536).
-async fn hrcpty_orphans(server: &Shared, brokers: &[db::Rt], r: &mut Value) {
+fn settle_hrcpty_orphan(
+    server: &Server,
+    expected: &db::Rt,
+    pid: Option<i64>,
+    reason: &str,
+) -> Result<bool> {
+    let db = server.store.lock().unwrap();
+    if db::runtime(&db.sqlite, &expected.runtime_id)?.as_ref() != Some(expected) {
+        return Ok(false);
+    }
+    hrcpty::settle(&db.sqlite, &expected.runtime_id, pid, reason)?;
+    Ok(true)
+}
+
+async fn hrcpty_orphans(
+    server: &Shared,
+    reader: &mut hrc_store::Store,
+    brokers: &[db::Rt],
+    r: &mut Value,
+) {
     let bump = |r: &mut Value, k: &str| r[k] = (r[k].as_i64().unwrap_or(0) + 1).into();
     // Its socket lives in bipc, never in btmux.
     for rt in brokers {
@@ -252,27 +264,31 @@ async fn hrcpty_orphans(server: &Shared, brokers: &[db::Rt], r: &mut Value) {
         {
             continue;
         }
-        // A pid in use is not a supervisor (T-12536): the OS reuses pids.
-        let Some(supervisor) = hrcpty::identify(&socket, pid).await else {
-            match hrcpty::settle(server, &rt.runtime_id, pid, "supervisor_gone") {
-                Ok(()) => bump(r, "settledGoneSupervisors"),
-                Err(_) => bump(r, "errors"),
+        // The scan only carries broker state. Re-read the full row for the
+        // broker probe, and reject a replaced lease before probing it.
+        let full = match db::runtime(&reader.sqlite, &rt.runtime_id) {
+            Ok(Some(full))
+                if full.generation == rt.generation
+                    && full.status == rt.status
+                    && !hrcpty::settled(&full)
+                    && hrcpty::substrate(&full) == Some((socket.clone(), pid)) =>
+            {
+                full
             }
-            continue;
-        };
-        // broker_lease_rows carries only `broker` (T-12413); the probe needs
-        // the whole row, executionRelease included, or every hello mismatches.
-        let full = {
-            let db = server.store.lock().unwrap();
-            db::runtime(&db.sqlite, &rt.runtime_id)
-        };
-        let full = match full {
-            Ok(Some(full)) if lease::unavailable(&full.status) => full,
             Ok(_) => continue,
             Err(_) => {
                 bump(r, "errors");
                 continue;
             }
+        };
+        // A pid in use is not a supervisor (T-12536): the OS reuses pids.
+        let Some(supervisor) = hrcpty::identify(&socket, pid).await else {
+            match settle_hrcpty_orphan(server, &full, pid, "supervisor_gone") {
+                Ok(true) => bump(r, "settledGoneSupervisors"),
+                Ok(false) => {}
+                Err(_) => bump(r, "errors"),
+            }
+            continue;
         };
         // An out-of-service row is no death evidence (T-12228): a broker
         // that answers still holds a live harness.
@@ -284,6 +300,14 @@ async fn hrcpty_orphans(server: &Shared, brokers: &[db::Rt], r: &mut Value) {
                 json!({"runtimeId":rt.runtime_id,"status":rt.status,"socketPath":socket,"pid":supervisor,"reason":"broker_answers"}),
             );
             continue;
+        }
+        match db::runtime(&reader.sqlite, &full.runtime_id) {
+            Ok(Some(current)) if current == full => {}
+            Ok(_) => continue,
+            Err(_) => {
+                bump(r, "errors");
+                continue;
+            }
         }
         let reason = match hrcpty::end_lease(&socket, Some(supervisor)).await {
             Ok(true) => {
@@ -304,10 +328,49 @@ async fn hrcpty_orphans(server: &Shared, brokers: &[db::Rt], r: &mut Value) {
                 continue;
             }
         };
-        if hrcpty::settle(server, &rt.runtime_id, pid, reason).is_err() {
+        if settle_hrcpty_orphan(server, &full, pid, reason).is_err() {
             bump(r, "errors");
         }
     }
+}
+
+fn tmux_claim_socket(rt: &db::Rt) -> Option<String> {
+    rt_hosting(rt)
+        .and_then(|h| h.substrate["tmuxSocketPath"].as_str().map(str::to_owned))
+        .or_else(|| compat_tmux_socket(rt))
+}
+
+fn stale_lease_claims(
+    server: &Server,
+    held: &[Claim],
+    reasons: &[(String, String)],
+) -> Result<Option<usize>> {
+    let db = server.store.lock().unwrap();
+    let tx = db.sqlite.unchecked_transaction()?;
+    for c in held {
+        if claim_in(&tx, &c.rt.runtime_id)?.as_ref() != Some(c) {
+            return Ok(None);
+        }
+    }
+    let mut staled = 0;
+    for c in held {
+        if lease::unavailable(&c.rt.status) {
+            continue;
+        }
+        let reason = reasons
+            .iter()
+            .find(|(id, _)| id == &c.rt.runtime_id)
+            .map(|(_, reason)| reason.as_str())
+            .unwrap_or("broker_claimed_lease_orphaned");
+        mark_reattach_stale_in(&tx, &c.rt, reason, None)?;
+        staled += 1;
+    }
+    tx.commit()?;
+    drop(db);
+    if staled != 0 {
+        server.ledger_committed();
+    }
+    Ok(Some(staled))
 }
 
 /// sweepOrphanedBrokerTmuxLeases (removeDeadSocketFiles + killLiveLeaseServers).
@@ -324,19 +387,13 @@ pub(super) async fn lease_sweep(server: &Shared, grace: i64) -> Result<Value> {
         .unwrap_or_default();
     entries.retain(|e| e.ends_with(".sock") && !e.starts_with(RENDERER_CONTROL_SOCKET_PREFIX));
     entries.sort();
-    let mut claims: HashMap<String, Vec<String>> = HashMap::new();
-    let brokers = {
-        let db = server.store.lock().unwrap();
-        db::broker_lease_rows(&db.sqlite)?
-    };
-    hrcpty_orphans(server, &brokers, &mut r).await;
+    let mut claims: HashMap<String, Vec<db::Rt>> = HashMap::new();
+    let mut reader = server.open_reader()?;
+    let brokers = db::broker_lease_rows(&reader.sqlite)?;
+    hrcpty_orphans(server, &mut reader, &brokers, &mut r).await;
     for rt in brokers {
-        let id = rt.runtime_id.clone();
-        let socket = rt_hosting(&rt)
-            .and_then(|h| h.substrate["tmuxSocketPath"].as_str().map(str::to_owned))
-            .or_else(|| compat_tmux_socket(&rt));
-        if let Some(socket) = socket {
-            claims.entry(socket).or_default().push(id);
+        if let Some(socket) = tmux_claim_socket(&rt) {
+            claims.entry(socket).or_default().push(rt);
         }
     }
     let now = now_ms();
@@ -345,7 +402,7 @@ pub(super) async fn lease_sweep(server: &Shared, grace: i64) -> Result<Value> {
         let path = dir.join(&entry);
         let socket = path.to_string_lossy().into_owned();
         bump(&mut r, "scanned");
-        let step: Result<()> = async {
+        let mut step = async |reader: &mut hrc_store::Store| -> Result<()> {
             let classified = classify_socket(&path, now, grace).await?;
             match classified {
                 Socket::WithinGrace => {
@@ -355,18 +412,41 @@ pub(super) async fn lease_sweep(server: &Shared, grace: i64) -> Result<Value> {
                 Socket::Vanished => return Ok(()),
                 Socket::Unresponsive(age) => {
                     bump(&mut r, "errors");
-                    stderr_json("warn", "startup", "broker orphan lease socket unresponsive", json!({"socketPath":socket,"ageMs":age,"timeoutMs":LEASE_SOCKET_INSPECT_TIMEOUT.as_millis() as u64}));
+                    stderr_json(
+                        "warn",
+                        "startup",
+                        "broker orphan lease socket unresponsive",
+                        json!({"socketPath":socket,"ageMs":age,"timeoutMs":LEASE_SOCKET_INSPECT_TIMEOUT.as_millis() as u64}),
+                    );
                     return Ok(());
                 }
                 _ => {}
             }
-            let ids = claims.get(&socket).cloned().unwrap_or_default();
-            if !ids.is_empty() {
+            if let Some(candidates) = claims.get(&socket) {
+                let ids: Vec<_> = candidates.iter().map(|rt| &rt.runtime_id).collect();
                 let mut held = Vec::new();
-                for id in &ids {
-                    if let Some(c) = claim(server, id)? {
-                        held.push(c);
-                    }
+                for candidate in candidates {
+                    let Some(c) = claim_in(&reader.sqlite, &candidate.runtime_id)?.filter(|c| {
+                        c.rt.controller_kind == candidate.controller_kind
+                            && c.rt.transport == candidate.transport
+                            && c.rt.generation == candidate.generation
+                            && c.rt.status == candidate.status
+                            && c.rt.tmux == candidate.tmux
+                            && c.rt
+                                .state
+                                .as_ref()
+                                .and_then(|state| state.get("broker"))
+                                .filter(|broker| !broker.is_null())
+                                == candidate
+                                    .state
+                                    .as_ref()
+                                    .and_then(|state| state.get("broker"))
+                                    .filter(|broker| !broker.is_null())
+                    }) else {
+                        bump(&mut r, "preservedClaimed");
+                        return Ok(());
+                    };
+                    held.push(c);
                 }
                 // lifecycleOwner is the authority boundary: registration GC owns it.
                 if held.iter().any(|c| controller::external_lifecycle(&c.rt)) {
@@ -378,8 +458,14 @@ pub(super) async fn lease_sweep(server: &Shared, grace: i64) -> Result<Value> {
                 let mut evidence = serde_json::Map::new();
                 for c in &held {
                     let (disposition, reason, ev) = match &classified {
-                        Socket::LiveOrphan(_, sessions) => observe_claim(&c.rt, &socket, sessions).await?,
-                        _ => ("orphan", "broker_claimed_lease_substrate_gone".to_owned(), json!({"socketPath":socket,"observedSessions":[]})),
+                        Socket::LiveOrphan(_, sessions) => {
+                            observe_claim(&c.rt, &socket, sessions).await?
+                        }
+                        _ => (
+                            "orphan",
+                            "broker_claimed_lease_substrate_gone".to_owned(),
+                            json!({"socketPath":socket,"observedSessions":[]}),
+                        ),
                     };
                     evidence.insert(c.rt.runtime_id.clone(), ev);
                     let terminal = lease::unavailable(&c.rt.status);
@@ -405,26 +491,17 @@ pub(super) async fn lease_sweep(server: &Shared, grace: i64) -> Result<Value> {
                     bump(&mut r, "preservedClaimed");
                     return Ok(());
                 }
-                let mut raced = false;
-                for c in &held {
-                    if claim(server, &c.rt.runtime_id)?.map(|l| l.fingerprint()) != Some(c.fingerprint()) {
-                        raced = true;
-                        break;
-                    }
-                }
-                if raced {
+                let Some(staled) = stale_lease_claims(server, &held, &reasons)? else {
                     bump(&mut r, "preservedClaimed");
-                    log("info", "broker.claimed_lease_sweep_race_preserved", json!({"socketPath":socket,"runtimeIds":ids}));
+                    log(
+                        "info",
+                        "broker.claimed_lease_sweep_race_preserved",
+                        json!({"socketPath":socket,"runtimeIds":ids}),
+                    );
                     return Ok(());
-                }
-                for c in &held {
-                    if lease::unavailable(&c.rt.status) {
-                        continue;
-                    }
-                    let why = reasons.iter().find(|(id, _)| id == &c.rt.runtime_id).map(|(_, w)| w.as_str()).unwrap_or("broker_claimed_lease_orphaned");
-                    mark_reattach_stale(server, &c.rt.runtime_id, why, None)?;
-                    bump(&mut r, "staledClaimedRuntimes");
-                }
+                };
+                r["staledClaimedRuntimes"] =
+                    (r["staledClaimedRuntimes"].as_u64().unwrap_or(0) + staled as u64).into();
                 bump(&mut r, "reapedClaimedOrphans");
                 let mut unique: Vec<String> = Vec::new();
                 for (_, w) in &reasons {
@@ -432,13 +509,21 @@ pub(super) async fn lease_sweep(server: &Shared, grace: i64) -> Result<Value> {
                         unique.push(w.clone());
                     }
                 }
-                log("info", "broker.claimed_lease_orphan_swept", json!({"socketPath":socket,"runtimeIds":ids,"reason":unique.first().cloned().unwrap_or_else(|| "broker_claimed_lease_orphaned".into()),"reasons":unique,"claimEvidence":evidence}));
+                log(
+                    "info",
+                    "broker.claimed_lease_orphan_swept",
+                    json!({"socketPath":socket,"runtimeIds":ids,"reason":unique.first().cloned().unwrap_or_else(|| "broker_claimed_lease_orphaned".into()),"reasons":unique,"claimEvidence":evidence}),
+                );
             }
             match classified {
                 Socket::Dead(age) => {
                     let _ = std::fs::remove_file(&path);
                     bump(&mut r, "removedDeadSocketFiles");
-                    log("info", "broker.dead_lease_socket_removed", json!({"socketPath":socket,"ageMs":age,"graceMs":grace}));
+                    log(
+                        "info",
+                        "broker.dead_lease_socket_removed",
+                        json!({"socketPath":socket,"ageMs":age,"graceMs":grace}),
+                    );
                 }
                 Socket::LiveOrphan(age, sessions) => {
                     // killServer: a gone server is fine; the socket file goes either way.
@@ -446,14 +531,17 @@ pub(super) async fn lease_sweep(server: &Shared, grace: i64) -> Result<Value> {
                     let _ = std::fs::remove_file(&path);
                     killed?;
                     bump(&mut r, "killedLiveLeaseServers");
-                    log("info", "broker.orphan_lease_swept", json!({"socketPath":socket,"sessions":sessions,"ageMs":age,"graceMs":grace}));
+                    log(
+                        "info",
+                        "broker.orphan_lease_swept",
+                        json!({"socketPath":socket,"sessions":sessions,"ageMs":age,"graceMs":grace}),
+                    );
                 }
                 _ => {}
             }
             Ok(())
-        }
-        .await;
-        if let Err(e) = step {
+        };
+        if let Err(e) = step(&mut reader).await {
             bump(&mut r, "errors");
             startup_issue(
                 "broker orphan lease sweep failed",

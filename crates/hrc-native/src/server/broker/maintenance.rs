@@ -758,7 +758,8 @@ pub async fn tmux_aging(server: &Server) -> std::result::Result<Value, ApiError>
 /// lease). The supervisor's own answer is the probe, so no age cutoff applies;
 /// a supervisor that runs but does not answer is left alone.
 pub async fn hrcpty_aging(server: &super::Shared) -> std::result::Result<Value, ApiError> {
-    let all = server.store.lock().unwrap().runtimes_where(
+    let mut reader = server.open_reader()?;
+    let all = reader.runtimes_where(
         "status IN ('ready','busy') AND transport='hrcpty'",
         rusqlite::params![],
     )?;
@@ -766,7 +767,7 @@ pub async fn hrcpty_aging(server: &super::Shared) -> std::result::Result<Value, 
     let (mut stale, mut live, mut errors) = (0u64, 0u64, 0u64);
     for r in &all {
         let id = r["runtimeId"].as_str().unwrap_or("");
-        let reason = match server.store.lock().unwrap().maintenance_facts(r) {
+        let reason = match reader.maintenance_facts(r) {
             Err(e) => Err(e),
             Ok(facts) => Ok(in_flight(r, &facts)),
         };
@@ -783,11 +784,12 @@ pub async fn hrcpty_aging(server: &super::Shared) -> std::result::Result<Value, 
             }
             Ok(reason) => reason,
         };
-        let rt = {
-            let db = server.store.lock().unwrap();
-            super::projection::db::runtime(&db.sqlite, id)?
-        };
-        let Some(rt) = rt.filter(|rt| matches!(rt.status.as_str(), "ready" | "busy")) else {
+        let rt = super::projection::db::runtime(&reader.sqlite, id)?;
+        let Some(rt) = rt.filter(|rt| {
+            rt.transport == "hrcpty"
+                && r["status"].as_str() == Some(rt.status.as_str())
+                && r["generation"].as_i64() == Some(rt.generation)
+        }) else {
             *skipped.entry("runtime_changed".into()).or_default() += 1;
             continue;
         };
@@ -815,20 +817,18 @@ pub async fn hrcpty_aging(server: &super::Shared) -> std::result::Result<Value, 
             }
             continue;
         }
-        if let Err(e) = super::lease::reconcile_liveness(server, id).await {
-            errors += 1;
-            super::stderr_json(
-                "warn",
-                "sweep",
-                "runtime.hrcpty_aging_error",
-                json!({"runtimeId":id,"error":e.to_string()}),
-            );
-            continue;
-        }
-        let after = server.store.lock().unwrap().runtime(id)?;
-        match after.as_ref().and_then(|r| r["status"].as_str()) {
-            Some(s) if hrc_store::status::UNAVAILABLE.contains(&s) => stale += 1,
-            _ => *skipped.entry("runtime_changed".into()).or_default() += 1,
+        match super::lease::reconcile_aging_hrcpty(server, &mut reader, &rt, &socket, pid).await {
+            Ok(true) => stale += 1,
+            Ok(false) => *skipped.entry("runtime_changed".into()).or_default() += 1,
+            Err(e) => {
+                errors += 1;
+                super::stderr_json(
+                    "warn",
+                    "sweep",
+                    "runtime.hrcpty_aging_error",
+                    json!({"runtimeId":id,"error":e.to_string()}),
+                );
+            }
         }
     }
     let summary = json!({"type":"summary","matched":all.len(),"stale":stale,"live":live,"skipped":skipped.values().sum::<u64>(),"skippedByReason":skipped,"errors":errors});

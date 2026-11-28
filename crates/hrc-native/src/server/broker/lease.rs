@@ -312,11 +312,23 @@ fn user_exit(db: &Connection, rt: &db::Rt) -> Option<String> {
         .filter(|r| ["prompt_input_exit", "logout", "clear"].contains(&r.as_str()))
 }
 fn not_live(server: &Server, runtime_id: &str, payload: Value) -> Result<()> {
+    not_live_if(server, runtime_id, payload, None).map(|_| ())
+}
+
+fn not_live_if(
+    server: &Server,
+    runtime_id: &str,
+    payload: Value,
+    expected: Option<&db::Rt>,
+) -> Result<bool> {
     let db = server.store.lock().unwrap();
     let tx = db.sqlite.unchecked_transaction()?;
     let Some(rt) = db::runtime(&tx, runtime_id)? else {
-        return Ok(());
+        return Ok(false);
     };
+    if expected.is_some_and(|expected| *expected != rt) {
+        return Ok(false);
+    }
     match user_exit(&tx, &rt) {
         Some(reason) => {
             let mut payload = payload;
@@ -337,7 +349,7 @@ fn not_live(server: &Server, runtime_id: &str, payload: Value) -> Result<()> {
     }
     tx.commit()?;
     server.ledger_committed();
-    Ok(())
+    Ok(true)
 }
 
 /// reconcileTmuxRuntimeLiveness for a broker runtime; other runtimes unchanged.
@@ -355,32 +367,9 @@ pub async fn reconcile_liveness(server: &Server, runtime_id: &str) -> Result<()>
     {
         return Ok(());
     }
-    let lifecycle_reason = {
-        let db = server.store.lock().unwrap();
-        match &rt.active_invocation_id {
-            Some(id) => db::invocation(&db.sqlite, id)?.and_then(|i| i.lifecycle_terminal_reason),
-            None => None,
-        }
-    };
+    let lifecycle_reason = invocation_terminal_reason(&server.store.lock().unwrap().sqlite, &rt)?;
     if let Some(reason) = lifecycle_reason {
-        let db = server.store.lock().unwrap();
-        let tx = db.sqlite.unchecked_transaction()?;
-        mark_stale(
-            &tx,
-            &rt,
-            &json!({"runtimeId":rt.runtime_id,"reason":reason,"classification":"lifecycle_terminal","invocationId":rt.active_invocation_id}),
-        )?;
-        db::update_runtime(
-            &tx,
-            runtime_id,
-            &[
-                ("lifecycle_terminal_reason", db::text(reason)),
-                ("updated_at", db::text(hrc_store::timestamp())),
-            ],
-        )?;
-        tx.commit()?;
-        server.ledger_committed();
-        return Ok(());
+        return stale_terminal_invocation(server, &rt, &reason, false).map(|_| ());
     }
     if let Some((socket, pid)) = supervisor {
         return hrcpty_liveness(server, &rt, &socket, pid).await.map(|_| ());
@@ -422,6 +411,64 @@ pub async fn reconcile_liveness(server: &Server, runtime_id: &str) -> Result<()>
     not_live(server, runtime_id, payload.clone())?;
     kill_lease(&socket, &payload).await;
     Ok(())
+}
+
+fn invocation_terminal_reason(db: &Connection, rt: &db::Rt) -> Result<Option<String>> {
+    match &rt.active_invocation_id {
+        Some(id) => Ok(db::invocation(db, id)?.and_then(|i| i.lifecycle_terminal_reason)),
+        None => Ok(None),
+    }
+}
+
+fn stale_terminal_invocation(
+    server: &Server,
+    rt: &db::Rt,
+    reason: &str,
+    fenced: bool,
+) -> Result<bool> {
+    let db = server.store.lock().unwrap();
+    let tx = db.sqlite.unchecked_transaction()?;
+    if fenced
+        && (db::runtime(&tx, &rt.runtime_id)?.as_ref() != Some(rt)
+            || invocation_terminal_reason(&tx, rt)?.as_deref() != Some(reason))
+    {
+        return Ok(false);
+    }
+    mark_stale(
+        &tx,
+        rt,
+        &json!({"runtimeId":rt.runtime_id,"reason":reason,"classification":"lifecycle_terminal","invocationId":rt.active_invocation_id}),
+    )?;
+    db::update_runtime(
+        &tx,
+        &rt.runtime_id,
+        &[
+            ("lifecycle_terminal_reason", db::text(reason)),
+            ("updated_at", db::text(hrc_store::timestamp())),
+        ],
+    )?;
+    tx.commit()?;
+    server.ledger_committed();
+    Ok(true)
+}
+
+pub(super) async fn reconcile_aging_hrcpty(
+    server: &Server,
+    reader: &mut hrc_store::Store,
+    rt: &db::Rt,
+    socket: &std::path::Path,
+    pid: Option<i64>,
+) -> Result<bool> {
+    if controller::external_lifecycle(rt)
+        || rt.controller_kind.as_deref() != Some("harness-broker")
+        || db::runtime(&reader.sqlite, &rt.runtime_id)?.as_ref() != Some(rt)
+    {
+        return Ok(false);
+    }
+    if let Some(reason) = invocation_terminal_reason(&reader.sqlite, rt)? {
+        return stale_terminal_invocation(server, rt, &reason, true);
+    }
+    hrcpty_liveness_if(server, rt, socket, pid, Some(rt)).await
 }
 
 /// The same seat-specific verdict for the broker-close condemnation guard.
@@ -486,6 +533,16 @@ pub(crate) async fn hrcpty_liveness(
     socket: &std::path::Path,
     pid: Option<i64>,
 ) -> Result<bool> {
+    hrcpty_liveness_if(server, rt, socket, pid, None).await
+}
+
+async fn hrcpty_liveness_if(
+    server: &Server,
+    rt: &db::Rt,
+    socket: &std::path::Path,
+    pid: Option<i64>,
+    expected: Option<&db::Rt>,
+) -> Result<bool> {
     let status = hrcpty_status(socket, pid).await;
     let Some(reason) = hrcpty_dead_reason(rt, status.as_ref()) else {
         return Ok(false);
@@ -502,7 +559,9 @@ pub(crate) async fn hrcpty_liveness(
         return Ok(false);
     }
     let payload = json!({"runtimeId":rt.runtime_id,"socketPath":socket,"supervisorPid":pid,"supervisorLive":status.is_some(),"child":status.as_ref().map(|s| s["child"].clone()),"reason":reason});
-    not_live(server, &rt.runtime_id, payload.clone())?;
+    if !not_live_if(server, &rt.runtime_id, payload.clone(), expected)? {
+        return Ok(false);
+    }
     // Ending the lease stops a broker that may still run (a Claude child
     // exit); that close is ours and must not re-mark the stale seat crashed.
     controller::mark_closing(server, &rt.runtime_id, reason);

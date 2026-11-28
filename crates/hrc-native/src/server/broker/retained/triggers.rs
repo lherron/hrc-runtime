@@ -2,52 +2,42 @@
 //! eligible pending retries at 900 s, and an immediate terminal attempt.
 use super::*;
 
-/// retainedEvidencePassCandidates, a slice of runtimes per store hold.
-async fn candidates(server: &Shared) -> Result<(Vec<String>, usize, usize)> {
+/// retainedEvidencePassCandidates, on a reader that never takes the store lock.
+async fn candidates(server: &Shared) -> Result<(Vec<Candidate>, usize, usize)> {
     let now = now_ms();
-    let (mut ids, mut eligible, mut unbound) = (Vec::new(), 0, 0);
-    let all = runtime_ids(&server.store.lock().unwrap().sqlite)?;
-    each_runtime_sliced(
-        || server.store.lock().unwrap(),
-        &all,
-        |db, id| {
-            let Some(r) = row(db, id)? else {
-                return Ok(());
-            };
-            if !r.broker() || !r.eligible(now) {
-                return Ok(());
-            }
+    let (mut candidates, mut eligible, mut unbound) = (Vec::new(), 0, 0);
+    let reader = server.open_reader()?;
+    let all = runtime_ids(&reader.sqlite)?;
+    let mut slice = std::time::Instant::now();
+    for id in all {
+        if let Some(r) = row(&reader.sqlite, &id)?
+            && r.broker()
+            && r.eligible(now)
+        {
             if release(&r.state).is_none() {
                 unbound += 1;
-                return Ok(());
+            } else if pending_row(&reader.sqlite, &r, now)? {
+                eligible += 1;
+                if candidates.len() < PASS_LIMIT
+                    && let Some(invocation) = target_invocation(&reader.sqlite, &r)?
+                {
+                    candidates.push(Candidate { row: r, invocation });
+                }
             }
-            let h = hold(db, &r, now)?;
-            let (true, Some(path)) = (h.held, h.ledger_path.as_deref()) else {
-                return Ok(());
-            };
-            let retryable = h
-                .reason
-                .as_deref()
-                .is_some_and(|o| o == "not_attempted" || classify(o) == "retryable");
-            if !retryable || !Path::new(path).parent().is_some_and(Path::exists) {
-                return Ok(());
-            }
-            eligible += 1;
-            if ids.len() < PASS_LIMIT {
-                ids.push(id.to_owned());
-            }
-            Ok(())
-        },
-    )
-    .await?;
-    Ok((ids, eligible, unbound))
+        }
+        if slice.elapsed() >= RUNTIME_SLICE {
+            tokio::task::yield_now().await;
+            slice = std::time::Instant::now();
+        }
+    }
+    Ok((candidates, eligible, unbound))
 }
 static PASS: LazyLock<tokio::sync::Mutex<()>> = LazyLock::new(Default::default);
 /// runRetainedEvidencePass: at most 20 bound terminal runtimes whose evidence
 /// is unattempted or retryable. Returns whether eligible work is still pending.
 pub async fn pass(server: &Shared) -> bool {
     let _single = PASS.lock().await;
-    let (ids, eligible, unbound) = match candidates(server).await {
+    let (selected, eligible, unbound) = match candidates(server).await {
         Ok(c) => c,
         Err(e) => {
             log(
@@ -59,11 +49,14 @@ pub async fn pass(server: &Shared) -> bool {
         }
     };
     let mut outcomes = serde_json::Map::new();
-    for id in &ids {
-        let key = match recover(server, id, "startup").await {
-            Ok(r) => r
-                .and_then(|r| r["outcome"].as_str().map(str::to_owned))
-                .unwrap_or_else(|| "unknown_runtime".into()),
+    for candidate in &selected {
+        let id = &candidate.row.runtime_id;
+        let key = match recover_if_pending(server, candidate).await {
+            Ok(Some(r)) => r["outcome"]
+                .as_str()
+                .unwrap_or("unknown_runtime")
+                .to_owned(),
+            Ok(None) => "candidate_changed".into(),
             Err(e) => {
                 log(
                     "warn",
@@ -76,13 +69,13 @@ pub async fn pass(server: &Shared) -> bool {
         let n = outcomes.get(&key).and_then(Value::as_i64).unwrap_or(0);
         outcomes.insert(key, (n + 1).into());
     }
-    if ids.is_empty() && eligible == 0 && unbound == 0 {
+    if selected.is_empty() && eligible == 0 && unbound == 0 {
         return false;
     }
     log(
         "info",
         "retained_evidence.pass_complete",
-        json!({"attempted":ids.len(),"eligible":eligible,"limit":PASS_LIMIT,"outcomes":outcomes,"unboundTerminalRuntimes":unbound}),
+        json!({"attempted":selected.len(),"eligible":eligible,"limit":PASS_LIMIT,"outcomes":outcomes,"unboundTerminalRuntimes":unbound}),
     );
     // Successful recovery/budget exhaustion must disarm the retry, rather
     // than leave another full-table scan scheduled when nothing can change.
@@ -102,10 +95,14 @@ fn pending_runtime(server: &Shared, id: &str) -> Result<bool> {
     let Some(r) = row(&db.sqlite, id)? else {
         return Ok(false);
     };
+    pending_row(&db.sqlite, &r, now)
+}
+
+pub(super) fn pending_row(db: &Connection, r: &Row, now: i64) -> Result<bool> {
     if !r.broker() || !r.eligible(now) || release(&r.state).is_none() {
         return Ok(false);
     }
-    let h = hold(&db.sqlite, &r, now)?;
+    let h = hold(db, r, now)?;
     Ok(h.held
         && h.reason
             .as_deref()
@@ -236,19 +233,19 @@ mod tests {
     use super::super::tests::{holds_at, observed};
     use super::*;
 
-    // Regression (T-12413 phase 3): the candidate scan hydrated every
-    // runtime's row and holds under ONE store hold (12-14 s on max3) on
-    // startup and every lease-GC tick. Under test the slice is zero, so a
-    // bounded scan takes the store at least once per runtime.
+    // The candidate scan must not acquire the writer, even on a nonempty store.
     #[tokio::test]
-    async fn pass_scans_candidates_a_slice_at_a_time() -> Result<()> {
+    async fn pass_scans_candidates_without_the_store_lock() -> Result<()> {
         let n = 40;
         let (_scratch, server, seen) = observed(n)?;
         seen.lock().unwrap().clear();
-        assert!(!pass(&server).await, "unbound rows armed a retry");
+        let (selected, eligible, unbound) = candidates(&server).await?;
+        assert!(selected.is_empty());
+        assert_eq!(eligible, 0);
+        assert_eq!(unbound, n);
         let holds = holds_at(&seen, "triggers.rs");
         assert!(
-            holds.len() > n,
+            holds.is_empty(),
             "{} triggers.rs holds for {n} runtimes: {holds:?}",
             holds.len()
         );

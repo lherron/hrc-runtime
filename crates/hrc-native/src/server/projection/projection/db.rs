@@ -72,7 +72,7 @@ pub fn invocations_for_runtime(db: &Connection, runtime: &str) -> Result<Vec<Inv
         .collect::<rusqlite::Result<_>>()?)
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct Rt {
     pub runtime_id: String,
     pub host_session_id: String,

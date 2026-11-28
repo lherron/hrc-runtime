@@ -250,35 +250,42 @@ fn mark_reattach_stale(
     error: Option<&str>,
 ) -> Result<Outcome> {
     let external = with_row(server, runtime_id, |tx, rt| {
-        if controller::participant_served(rt) {
-            return Ok(true);
-        }
-        let mut payload =
-            json!({"runtimeId":rt.runtime_id,"reason":reason,"generation":rt.generation});
-        if let Some(e) = error {
-            payload["error"] = e.into();
-        }
-        lease::mark_stale(tx, rt, &payload)?;
-        let latest = db::runtime(tx, runtime_id)?.context("runtime vanished")?;
-        let mut state = latest.state_object();
-        let now = hrc_store::timestamp();
-        let mut control = state["control"].as_object().cloned().unwrap_or_default();
-        control.insert("mode".into(), "broker-ipc".into());
-        control.insert("brokerAttached".into(), false.into());
-        control.insert(
-            "lastAttachError".into(),
-            json!({"code":reason,"message":error.unwrap_or(reason)}),
-        );
-        state["control"] = Value::Object(control);
-        state["updatedAt"] = now.as_str().into();
-        db::update_runtime_state(tx, runtime_id, &state, &now)?;
-        Ok(false)
+        mark_reattach_stale_in(tx, rt, reason, error)
     })?;
     Ok(if external == Some(true) {
         outcome("broker-ipc-unavailable", Some("external_lifecycle_owner"))
     } else {
         outcome("stale", Some(reason))
     })
+}
+fn mark_reattach_stale_in(
+    tx: &Transaction<'_>,
+    rt: &db::Rt,
+    reason: &str,
+    error: Option<&str>,
+) -> Result<bool> {
+    if controller::participant_served(rt) {
+        return Ok(true);
+    }
+    let mut payload = json!({"runtimeId":rt.runtime_id,"reason":reason,"generation":rt.generation});
+    if let Some(e) = error {
+        payload["error"] = e.into();
+    }
+    lease::mark_stale(tx, rt, &payload)?;
+    let latest = db::runtime(tx, &rt.runtime_id)?.context("runtime vanished")?;
+    let mut state = latest.state_object();
+    let now = hrc_store::timestamp();
+    let mut control = state["control"].as_object().cloned().unwrap_or_default();
+    control.insert("mode".into(), "broker-ipc".into());
+    control.insert("brokerAttached".into(), false.into());
+    control.insert(
+        "lastAttachError".into(),
+        json!({"code":reason,"message":error.unwrap_or(reason)}),
+    );
+    state["control"] = Value::Object(control);
+    state["updatedAt"] = now.as_str().into();
+    db::update_runtime_state(tx, &rt.runtime_id, &state, &now)?;
+    Ok(false)
 }
 /// gcBrokerRuntimeOnRestart
 fn gc_on_restart(server: &Server, runtime_id: &str, reason: &str) -> Result<()> {

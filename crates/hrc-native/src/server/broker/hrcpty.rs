@@ -393,9 +393,13 @@ pub fn settled(rt: &db::Rt) -> bool {
     rt.state_object()["broker"]["substrate"]["endedAt"].is_string()
 }
 /// Mark the row's hrcpty substrate settled, fenced on the pid it recorded.
-pub fn settle(server: &Server, runtime_id: &str, pid: Option<i64>, reason: &str) -> Result<()> {
-    let db = server.store.lock().unwrap();
-    db.sqlite.execute(
+pub fn settle(
+    db: &rusqlite::Connection,
+    runtime_id: &str,
+    pid: Option<i64>,
+    reason: &str,
+) -> Result<()> {
+    db.execute(
         "UPDATE runtimes SET runtime_state_json=json_set(runtime_state_json,'$.broker.substrate.endedAt',?1,'$.broker.substrate.endedReason',?2) \
          WHERE runtime_id=?3 AND json_valid(runtime_state_json) AND json_extract(runtime_state_json,'$.broker.substrate.kind')=?4 \
          AND json_extract(runtime_state_json,'$.broker.substrate.pid') IS ?5",
