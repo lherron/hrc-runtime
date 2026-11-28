@@ -45,9 +45,7 @@ fn target_sessions(server: &Shared, raw: &str) -> Result<Vec<Value>, ApiError> {
         vec![lane]
     };
     let mut sessions: Vec<Value> = server
-        .store
-        .lock()
-        .unwrap()
+        .read()?
         .sessions_in_scope(scope)?
         .into_iter()
         .filter(|s| {
@@ -380,9 +378,7 @@ pub async fn handle(server: &Shared, body: Value) -> Result<Response, ApiError> 
         && let Some(host) = &pinned
     {
         let current = server
-            .store
-            .lock()
-            .unwrap()
+            .read()?
             .continuity_session(target_scope, target_lane)?;
         if current.as_ref().and_then(|s| s["hostSessionId"].as_str()) != Some(host.as_str()) {
             return Err(ApiError::domain(
@@ -416,7 +412,7 @@ pub async fn handle(server: &Shared, body: Value) -> Result<Response, ApiError> 
     };
     let prior_host = prior["hostSessionId"].as_str().unwrap_or("").to_owned();
     // Resuming a live prior would fork a second runtime on one continuation.
-    if let Some(rt) = live_runtime(&server.store.lock().unwrap().sqlite, &prior_host)? {
+    if let Some(rt) = live_runtime(&server.read()?.sqlite, &prior_host)? {
         return Err(live_conflict(
             format!(
                 "cannot resume \"{raw}\": its runtime is still live; use `hrc attach`, or terminate/kill it before resume."
@@ -432,9 +428,7 @@ pub async fn handle(server: &Shared, body: Value) -> Result<Response, ApiError> 
         return resume_self_brokered(server, &raw, &prior, command).await;
     }
     let project = server
-        .store
-        .lock()
-        .unwrap()
+        .read()?
         .optional_identity(&scope, &lane)?
         .and_then(|i| i["projectId"].as_str().map(str::to_owned));
     let inherited = intent.or_else(|| {
@@ -472,45 +466,40 @@ pub async fn handle(server: &Shared, body: Value) -> Result<Response, ApiError> 
             // historical-resume door checks the reservation again.
             assert_reserved_address_allows_birth(server, &scope, &lane, "resume").await?;
         }
-        let db = server.store.lock().unwrap();
-        match raced {
-            Some(current) if historical => {
-                let current_host = current["hostSessionId"].as_str().unwrap_or("").to_owned();
-                if let Some(rt) = live_runtime(&db.sqlite, &current_host)? {
-                    return Err(live_conflict(
-                        format!("cannot resume historical session \"{prior_host}\": the current successor already has a live runtime"),
-                        json!({"hostSessionId":current_host}),
-                        rt,
-                    ));
+        server.write(|db| {
+            match raced {
+                Some(current) if historical => {
+                    let current_host = current["hostSessionId"].as_str().unwrap_or("").to_owned();
+                    if let Some(rt) = live_runtime(&db.sqlite, &current_host)? {
+                        return Err(live_conflict(
+                            format!("cannot resume historical session \"{prior_host}\": the current successor already has a live runtime"),
+                            json!({"hostSessionId":current_host}),
+                            rt,
+                        ));
+                    }
+                    let generation = prior["generation"].as_i64().unwrap_or(0).max(current["generation"].as_i64().unwrap_or(0)) + 1;
+                    mint(&db.sqlite, &prior, generation, capability.as_ref(), Some(&required), json!({"created":true,"priorHostSessionId":prior_host,"displacedHostSessionId":current_host,"reason":"successor-from-historical-continuation"}))
                 }
-                let generation = prior["generation"].as_i64().unwrap_or(0).max(current["generation"].as_i64().unwrap_or(0)) + 1;
-                mint(&db.sqlite, &prior, generation, capability.as_ref(), Some(&required), json!({"created":true,"priorHostSessionId":prior_host,"displacedHostSessionId":current_host,"reason":"successor-from-historical-continuation"}))
+                Some(current) => bind(&db.sqlite, &current, &required),
+                None => mint(
+                    &db.sqlite,
+                    &prior,
+                    prior["generation"].as_i64().unwrap_or(0) + 1,
+                    capability.as_ref(),
+                    Some(&required),
+                    json!({"created":true,"priorHostSessionId":prior_host,"reason":"successor-from-continuation"}),
+                ),
             }
-            Some(current) => bind(&db.sqlite, &current, &required),
-            None => mint(
-                &db.sqlite,
-                &prior,
-                prior["generation"].as_i64().unwrap_or(0) + 1,
-                capability.as_ref(),
-                Some(&required),
-                json!({"created":true,"priorHostSessionId":prior_host,"reason":"successor-from-continuation"}),
-            ),
-        }
+        })
     })
     .await?;
     server.ledger_committed();
     let mut successor = server
-        .store
-        .lock()
-        .unwrap()
+        .read()?
         .session(&host)?
         .ok_or_else(|| ApiError::missing_host(&host))?;
     // The session record carries the continuity's identity.
-    let identity = server
-        .store
-        .lock()
-        .unwrap()
-        .optional_identity(&scope, &lane)?;
+    let identity = server.read()?.optional_identity(&scope, &lane)?;
     if let Some(identity) = identity {
         successor["identity"] = identity;
     }
@@ -531,16 +520,12 @@ async fn resume_self_brokered(
     // resume session first would leave it orphaned when launch succeeds
     // that registration into a different session at the same generation.
     let _gate = super::broker::seat_gate(server, &scope, &lane).await;
-    let current = server
-        .store
-        .lock()
-        .unwrap()
-        .continuity_session(&scope, &lane)?;
+    let current = server.read()?.continuity_session(&scope, &lane)?;
     let Some(current) = current else {
         return Err(ApiError::missing_host(&prior_host));
     };
     let current_host = current["hostSessionId"].as_str().unwrap_or("");
-    if let Some(runtime) = live_runtime(&server.store.lock().unwrap().sqlite, current_host)? {
+    if let Some(runtime) = live_runtime(&server.read()?.sqlite, current_host)? {
         return Err(live_conflict(
             format!(
                 "cannot resume \"{raw}\": its runtime is still live; use `hrc attach`, or terminate/kill it before resume."
@@ -561,7 +546,7 @@ async fn resume_self_brokered(
     }
     let started = super::participants::launch::launch(server, &current, command, None).await?;
     let host = started["hostSessionId"].as_str().unwrap_or("");
-    let db = server.store.lock().unwrap();
+    let db = server.read()?;
     let mut successor = db
         .session(host)?
         .ok_or_else(|| ApiError::missing_host(host))?;

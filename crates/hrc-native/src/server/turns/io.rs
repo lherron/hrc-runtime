@@ -140,14 +140,14 @@ pub async fn capture(
         return Err(anyhow::anyhow!("tmux capture-pane failed: {}", stderr.trim()).into());
     }
     let now = hrc_store::timestamp();
-    {
-        let db = server.store.lock().unwrap();
+    server.write(|db| -> Result<(), ApiError> {
         db::update_runtime(
             &db.sqlite,
             &id,
             &db::activity_cols(&db.sqlite, &id, &now, &now)?,
         )?;
-    }
+        Ok(())
+    })?;
     server.ledger_committed();
     Ok(Json(json!({"text":text})).into_response())
 }
@@ -431,7 +431,7 @@ pub fn unknown_session(session_ref: &str) -> ApiError {
 /// findBoundSessionRuntime: the latest available tmux runtime, else the latest
 /// available one, else the latest.
 fn bound_runtime(server: &Shared, host: &str) -> Result<Option<db::Rt>, ApiError> {
-    let db = server.store.lock().unwrap();
+    let db = server.read()?;
     let ids: Vec<String> = db
         .sqlite
         .prepare("SELECT runtime_id FROM runtimes WHERE host_session_id=? ORDER BY created_at ASC, runtime_id ASC")
@@ -473,7 +473,7 @@ pub async fn capture_by_selector(server: &Shared, body: Value) -> Result<Respons
         let limit = lines
             .filter(|l| l.is_finite() && *l > 0.0)
             .map(|l| (l.ceil() as i64 * 32).clamp(32, 8_192));
-        let db = server.store.lock().unwrap();
+        let db = server.read()?;
         // LIMIT -1 is unbounded: the whole buffer in order.
         let mut stmt = db
             .sqlite
@@ -523,14 +523,14 @@ pub async fn capture_by_selector(server: &Shared, body: Value) -> Result<Respons
         };
     }
     let now = hrc_store::timestamp();
-    {
-        let db = server.store.lock().unwrap();
+    server.write(|db| -> Result<(), ApiError> {
         db::update_runtime(
             &db.sqlite,
             &rt.runtime_id,
             &db::activity_cols(&db.sqlite, &rt.runtime_id, &now, &now)?,
         )?;
-    }
+        Ok(())
+    })?;
     server.ledger_committed();
     Ok(
         Json(json!({"text":text,"sessionRef":selector_ref(&session),"runtimeId":rt.runtime_id}))
@@ -541,14 +541,14 @@ pub async fn capture_by_selector(server: &Shared, body: Value) -> Result<Respons
 /// Stamp capture activity on the runtime (the tmux capture's own write).
 fn touch(server: &Shared, id: &str) -> Result<(), ApiError> {
     let now = hrc_store::timestamp();
-    {
-        let db = server.store.lock().unwrap();
+    server.write(|db| -> Result<(), ApiError> {
         db::update_runtime(
             &db.sqlite,
             id,
             &db::activity_cols(&db.sqlite, id, &now, &now)?,
         )?;
-    }
+        Ok(())
+    })?;
     server.ledger_committed();
     Ok(())
 }

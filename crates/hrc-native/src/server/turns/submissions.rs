@@ -23,7 +23,7 @@ pub async fn withdraw(server: &Shared, body: Value) -> Result<Response, ApiError
     }
     let reason = parse::required(&body, "reason")?;
     {
-        let store = server.store.lock().unwrap();
+        let store = server.read()?;
         if db::runtime(&store.sqlite, &runtime)?.is_none() {
             return Err(ApiError::domain(
                 StatusCode::NOT_FOUND,

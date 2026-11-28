@@ -121,7 +121,7 @@ fn terminate_options(body: &Value) -> Result<Terminate, ApiError> {
 
 /// requireKnownRuntime
 fn known(server: &Shared, runtime_id: &str) -> Result<db::Rt, ApiError> {
-    let db = server.store.lock().unwrap();
+    let db = server.read()?;
     db::runtime(&db.sqlite, runtime_id)?.ok_or_else(|| {
         ApiError::domain(
             StatusCode::NOT_FOUND,
@@ -203,14 +203,15 @@ fn commit(
     server: &Shared,
     f: impl FnOnce(&rusqlite::Transaction<'_>) -> anyhow::Result<()>,
 ) -> Result<(), ApiError> {
-    let db = server.store.lock().unwrap();
-    let tx = db
-        .sqlite
-        .unchecked_transaction()
-        .map_err(anyhow::Error::from)?;
-    f(&tx)?;
-    tx.commit().map_err(anyhow::Error::from)?;
-    drop(db);
+    server.write(|db| -> Result<(), ApiError> {
+        let tx = db
+            .sqlite
+            .unchecked_transaction()
+            .map_err(anyhow::Error::from)?;
+        f(&tx)?;
+        tx.commit().map_err(anyhow::Error::from)?;
+        Ok(())
+    })?;
     server.ledger_committed();
     Ok(())
 }
@@ -321,10 +322,10 @@ pub async fn interrupt(server: &Shared, raw: Value) -> Result<Response, ApiError
         return interrupt_headless(server, &rt).await;
     }
     if let Some((socket, _)) = hrcpty::substrate(&rt) {
-        {
-            let db = server.store.lock().unwrap();
+        server.write(|db| -> Result<(), ApiError> {
             session_event(&db.sqlite, &rt, "")?;
-        }
+            Ok(())
+        })?;
         hrcpty::interrupt(&socket).await?;
         let now = hrc_store::timestamp();
         commit(server, |db| {
@@ -342,10 +343,10 @@ pub async fn interrupt(server: &Shared, raw: Value) -> Result<Response, ApiError
     }
     if rt.transport == "tmux" {
         let (socket, _, pane) = tmux_pane(&rt)?;
-        {
-            let db = server.store.lock().unwrap();
+        server.write(|db| -> Result<(), ApiError> {
             session_event(&db.sqlite, &rt, "")?;
-        }
+            Ok(())
+        })?;
         let (ok, _, stderr) = lease::tmux(&socket, &["send-keys", "-t", &pane, "C-c"]).await?;
         if !ok {
             return Err(anyhow::anyhow!("tmux send-keys failed: {}", stderr.trim()).into());
@@ -377,10 +378,10 @@ fn audit_transport(rt: &db::Rt) -> &'static str {
 }
 
 async fn interrupt_headless(server: &Shared, rt: &db::Rt) -> Result<Response, ApiError> {
-    {
-        let db = server.store.lock().unwrap();
+    server.write(|db| -> Result<(), ApiError> {
         session_event(&db.sqlite, rt, "")?;
-    }
+        Ok(())
+    })?;
     let Some(run_id) = rt.active_run_id.clone() else {
         let mut out = action_response(rt);
         out["warning"] = "no active run to interrupt".into();
@@ -468,7 +469,7 @@ pub async fn terminate(server: &Shared, body: Value) -> Result<Response, ApiErro
     }
     if let Some(owner) = action.owner_run_id.as_deref().filter(|_| !external) {
         let protected = {
-            let db = server.store.lock().unwrap();
+            let db = server.read()?;
             protected_owners(&db.sqlite, &rt.runtime_id, owner)?
         };
         if !protected.is_empty() {
@@ -575,10 +576,10 @@ async fn terminate_runtime(
     let tmux = rt.transport == "tmux";
     let broker = rt.controller_kind.as_deref() == Some("harness-broker");
     let now = hrc_store::timestamp();
-    {
-        let db = server.store.lock().unwrap();
+    server.write(|db| -> Result<(), ApiError> {
         session_event(&db.sqlite, rt, &now)?;
-    }
+        Ok(())
+    })?;
     let pane = if tmux { Some(tmux_pane(rt)?) } else { None };
     // Self-brokered hosts keep their continuation unless explicitly dropped.
     let mut dropped =
@@ -786,14 +787,13 @@ pub(super) fn evict_external(
 /// projected a broker event. One that never launched owns no continuation, so
 /// a default terminate leaves the scope's continuation alone (T-12228).
 fn launched(server: &Shared, rt: &db::Rt) -> bool {
-    let db = server.store.lock().unwrap();
-    db.sqlite
-        .query_row(
+    server.read().and_then(|db| {
+        Ok(db.sqlite.query_row(
             "SELECT EXISTS(SELECT 1 FROM runs WHERE run_id=?1 AND started_at IS NOT NULL) OR EXISTS(SELECT 1 FROM broker_invocations WHERE invocation_id=?2 AND last_projected_seq > 0)",
             params![rt.active_run_id, rt.active_invocation_id],
             |r| r.get::<_, bool>(0),
-        )
-        .unwrap_or(true)
+        )?)
+    }).unwrap_or(true)
 }
 
 /// finalizeRuntimeTermination
@@ -918,22 +918,23 @@ pub async fn dispose(
     match result {
         Ok(Ok(())) => {
             let now = hrc_store::timestamp();
-            let db = server.store.lock().unwrap();
-            db::update_runtime(
-                &db.sqlite,
-                runtime_id,
-                &[
-                    ("status", db::text("disposed")),
-                    ("status_changed_at", db::text(now.as_str())),
-                    ("updated_at", db::text(now.as_str())),
-                ],
-            )
-            .map_err(|e| BrokerError {
-                code: "broker_dispose_failed".into(),
-                message: e.to_string(),
-                detail: json!({}),
-            })?;
-            drop(db);
+            server
+                .write(|db| {
+                    db::update_runtime(
+                        &db.sqlite,
+                        runtime_id,
+                        &[
+                            ("status", db::text("disposed")),
+                            ("status_changed_at", db::text(now.as_str())),
+                            ("updated_at", db::text(now.as_str())),
+                        ],
+                    )
+                })
+                .map_err(|e| BrokerError {
+                    code: "broker_dispose_failed".into(),
+                    message: e.to_string(),
+                    detail: json!({}),
+                })?;
             server.ledger_committed();
             Ok(())
         }

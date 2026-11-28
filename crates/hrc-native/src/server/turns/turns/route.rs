@@ -40,7 +40,7 @@ pub struct Options<'a> {
 /// leased tmux seat proves its harness live.
 async fn reusable(server: &Shared, host: &str) -> Result<Option<db::Rt>, ApiError> {
     let latest = {
-        let db = server.store.lock().unwrap();
+        let db = server.read()?;
         let ids: Vec<String> = db
             .sqlite
             .prepare("SELECT runtime_id FROM runtimes WHERE host_session_id=? ORDER BY created_at ASC, runtime_id ASC")
@@ -63,7 +63,7 @@ async fn reusable(server: &Shared, host: &str) -> Result<Option<db::Rt>, ApiErro
         return Ok(Some(rt));
     }
     lease::reconcile_liveness(server, &rt.runtime_id).await?;
-    let db = server.store.lock().unwrap();
+    let db = server.read()?;
     Ok(db::runtime(&db.sqlite, &rt.runtime_id)?.filter(|r| !lease::unavailable(&r.status)))
 }
 
@@ -73,97 +73,100 @@ pub fn publish_presentation(
     runtime_id: &str,
     attach_pending: bool,
 ) -> anyhow::Result<()> {
-    let db = server.store.lock().unwrap();
-    let Some(rt) = db::runtime(&db.sqlite, runtime_id)? else {
-        return Ok(());
-    };
-    let hosting = crate::server::runtime_views::hosting(
-        &json!({"runtimeStateJson":rt.state_object(),"generation":rt.generation}),
-    );
-    let kind = hosting
-        .as_ref()
-        .map(|h| h["presentation"]["kind"].clone())
-        .unwrap_or(Value::Null);
-    // T-12046: an hrcpty seat attaches through its supervisor socket.
-    let hrcpty = kind == "hrcpty";
-    let attachable = kind == "tmux-tui" || kind == "observer" || hrcpty;
-    let previous: Value = db
-        .sqlite
-        .query_row(
-            "SELECT presentation_json FROM runtimes WHERE runtime_id=?",
-            [runtime_id],
-            |r| r.get::<_, Option<String>>(0),
-        )?
-        .and_then(|s| serde_json::from_str(&s).ok())
-        .unwrap_or(Value::Null);
-    let session = db.session(&rt.host_session_id)?.unwrap_or(Value::Null);
-    let presentation = &session["lastAppliedIntentJson"]["presentation"];
-    let viewer_window = presentation
-        .get("viewerWindow")
-        .or_else(|| previous.get("viewerWindow"))
-        .cloned();
-    let mut record = json!({"operatorAttachable":attachable,"viewerRequested":if presentation["operator"]=="none"{false}else{previous["viewerRequested"]==true || !attach_pending}});
-    if let Some(w) = viewer_window {
-        record["viewerWindow"] = w;
-    }
-    let now = hrc_store::timestamp();
-    db::update_runtime(
-        &db.sqlite,
-        runtime_id,
-        &[
-            ("presentation_json", db::text(record.to_string())),
-            ("updated_at", db::text(now.as_str())),
-        ],
-    )?;
-    let mut payload =
-        json!({"invocation":{"operatorAttachPending":attach_pending},"presentation":record});
-    if hrcpty {
-        let p = &hosting.as_ref().unwrap()["presentation"];
-        payload["hrcpty"] =
-            json!({"socketPath":p["socketPath"],"attachCommand":p["attachCommand"]});
-    } else if attachable && let Some(socket) = lease::socket_path(&rt) {
-        let session_name = lease::session_name(&rt);
-        let target = match rt
-            .tmux
-            .as_ref()
-            .and_then(|t| t["windowName"].as_str())
-            .filter(|w| !w.is_empty())
-        {
-            Some(w) => format!("{session_name}:{w}"),
-            None if kind == "tmux-tui"
-                && hosting
-                    .as_ref()
-                    .is_some_and(|h| h["substrate"]["kind"] == "leased-tmux") =>
-            {
-                format!(
-                    "{}:tui",
-                    hosting.as_ref().unwrap()["substrate"]["sessionName"]
-                        .as_str()
-                        .unwrap_or("")
-                )
-            }
-            None => session_name,
+    let published = server.write(|db| -> anyhow::Result<bool> {
+        let Some(rt) = db::runtime(&db.sqlite, runtime_id)? else {
+            return Ok(false);
         };
-        payload["tmux"] = json!({"socketPath":socket,"attachTarget":target});
+        let hosting = crate::server::runtime_views::hosting(
+            &json!({"runtimeStateJson":rt.state_object(),"generation":rt.generation}),
+        );
+        let kind = hosting
+            .as_ref()
+            .map(|h| h["presentation"]["kind"].clone())
+            .unwrap_or(Value::Null);
+        // T-12046: an hrcpty seat attaches through its supervisor socket.
+        let hrcpty = kind == "hrcpty";
+        let attachable = kind == "tmux-tui" || kind == "observer" || hrcpty;
+        let previous: Value = db
+            .sqlite
+            .query_row(
+                "SELECT presentation_json FROM runtimes WHERE runtime_id=?",
+                [runtime_id],
+                |r| r.get::<_, Option<String>>(0),
+            )?
+            .and_then(|s| serde_json::from_str(&s).ok())
+            .unwrap_or(Value::Null);
+        let session = db.session(&rt.host_session_id)?.unwrap_or(Value::Null);
+        let presentation = &session["lastAppliedIntentJson"]["presentation"];
+        let viewer_window = presentation
+            .get("viewerWindow")
+            .or_else(|| previous.get("viewerWindow"))
+            .cloned();
+        let mut record = json!({"operatorAttachable":attachable,"viewerRequested":if presentation["operator"]=="none"{false}else{previous["viewerRequested"]==true || !attach_pending}});
+        if let Some(w) = viewer_window {
+            record["viewerWindow"] = w;
+        }
+        let now = hrc_store::timestamp();
+        db::update_runtime(
+            &db.sqlite,
+            runtime_id,
+            &[
+                ("presentation_json", db::text(record.to_string())),
+                ("updated_at", db::text(now.as_str())),
+            ],
+        )?;
+        let mut payload =
+            json!({"invocation":{"operatorAttachPending":attach_pending},"presentation":record});
+        if hrcpty {
+            let p = &hosting.as_ref().unwrap()["presentation"];
+            payload["hrcpty"] =
+                json!({"socketPath":p["socketPath"],"attachCommand":p["attachCommand"]});
+        } else if attachable && let Some(socket) = lease::socket_path(&rt) {
+            let session_name = lease::session_name(&rt);
+            let target = match rt
+                .tmux
+                .as_ref()
+                .and_then(|t| t["windowName"].as_str())
+                .filter(|w| !w.is_empty())
+            {
+                Some(w) => format!("{session_name}:{w}"),
+                None if kind == "tmux-tui"
+                    && hosting
+                        .as_ref()
+                        .is_some_and(|h| h["substrate"]["kind"] == "leased-tmux") =>
+                {
+                    format!(
+                        "{}:tui",
+                        hosting.as_ref().unwrap()["substrate"]["sessionName"]
+                            .as_str()
+                            .unwrap_or("")
+                    )
+                }
+                None => session_name,
+            };
+            payload["tmux"] = json!({"socketPath":socket,"attachTarget":target});
+        }
+        let title =
+            db.metadata(&rt.scope_ref, hrc_store::storage_lane(&rt.lane_ref))?["metadata"]["title"]
+                .clone();
+        if title.is_string() {
+            payload["title"] = title;
+        }
+        let ev = events::Ev {
+            ts: now,
+            host_session_id: rt.host_session_id.clone(),
+            scope_ref: rt.scope_ref.clone(),
+            lane_ref: rt.lane_ref.clone(),
+            generation: rt.generation,
+            runtime_id: Some(runtime_id.into()),
+            ..Default::default()
+        };
+        events::append(&db.sqlite, "runtime.presentation", &ev, &payload)?;
+        Ok(true)
+    })?;
+    if published {
+        server.ledger_committed();
     }
-    let title =
-        db.metadata(&rt.scope_ref, hrc_store::storage_lane(&rt.lane_ref))?["metadata"]["title"]
-            .clone();
-    if title.is_string() {
-        payload["title"] = title;
-    }
-    let ev = events::Ev {
-        ts: now,
-        host_session_id: rt.host_session_id.clone(),
-        scope_ref: rt.scope_ref.clone(),
-        lane_ref: rt.lane_ref.clone(),
-        generation: rt.generation,
-        runtime_id: Some(runtime_id.into()),
-        ..Default::default()
-    };
-    events::append(&db.sqlite, "runtime.presentation", &ev, &payload)?;
-    drop(db);
-    server.ledger_committed();
     Ok(())
 }
 
@@ -228,8 +231,7 @@ async fn input_turn(
     // events are found by id however they interleave with the reply
     // (T-13704). Attribution only: admission is still written from the reply.
     let minted = format!("hrc-{}", uuid::Uuid::new_v4());
-    {
-        let db = server.store.lock().unwrap();
+    server.write(|db| -> Result<(), ApiError> {
         let now = hrc_store::timestamp();
         match db::run(&db.sqlite, o.run_id)? {
             Some(r) if r.status != "accepted" => {
@@ -300,7 +302,8 @@ async fn input_turn(
                 &events::user_prompt_payload(o.prompt),
             )?;
         }
-    }
+        Ok(())
+    })?;
     server.ledger_committed();
     let principal = session["scopeRef"].as_str().unwrap_or("");
     let fallback_origin = json!({"principalRef":o.origin.and_then(|x| x["actor"].as_str()).unwrap_or("system:hrc"),"scopeRef":principal});
@@ -349,8 +352,7 @@ async fn input_turn(
         }
     };
     let submission = response["submissionId"].as_str().unwrap_or("").to_owned();
-    {
-        let db = server.store.lock().unwrap();
+    server.write(|db| -> Result<(), ApiError> {
         let now = hrc_store::timestamp();
         db::update_run(
             &db.sqlite,
@@ -384,7 +386,8 @@ async fn input_turn(
                 },
             )?;
         }
-    }
+        Ok(())
+    })?;
     server.ledger_committed();
     let mut body = base("started");
     body["submissionId"] = submission.clone().into();
@@ -418,34 +421,36 @@ async fn wait_run(
     let deadline = tokio::time::Instant::now() + Duration::from_secs(600);
     loop {
         let run = {
-            let db = server.store.lock().unwrap();
+            let db = server.read()?;
             db::run(&db.sqlite, run_id)?
         };
         if let Some(r) = run.filter(|r| !run_active(&r.status)) {
             if !interactive {
-                let db = server.store.lock().unwrap();
-                if db::runtime(&db.sqlite, runtime_id)?
-                    .is_some_and(|x| x.active_run_id.as_deref() == Some(run_id))
-                {
-                    let now = hrc_store::timestamp();
-                    db.sqlite.execute("UPDATE runtimes SET active_run_id = NULL, updated_at = ? WHERE runtime_id = ?", params![now, runtime_id]).map_err(anyhow::Error::from)?;
-                    db::update_runtime(
-                        &db.sqlite,
-                        runtime_id,
-                        &[
-                            ("status", db::text("ready")),
-                            (
-                                "status_changed_at",
-                                db::text(r.completed_at.as_deref().unwrap_or(&now)),
-                            ),
-                            ("updated_at", db::text(now.as_str())),
-                        ],
-                    )?;
-                }
+                server.write(|db| -> Result<(), ApiError> {
+                    if db::runtime(&db.sqlite, runtime_id)?
+                        .is_some_and(|x| x.active_run_id.as_deref() == Some(run_id))
+                    {
+                        let now = hrc_store::timestamp();
+                        db.sqlite.execute("UPDATE runtimes SET active_run_id = NULL, updated_at = ? WHERE runtime_id = ?", params![now, runtime_id]).map_err(anyhow::Error::from)?;
+                        db::update_runtime(
+                            &db.sqlite,
+                            runtime_id,
+                            &[
+                                ("status", db::text("ready")),
+                                (
+                                    "status_changed_at",
+                                    db::text(r.completed_at.as_deref().unwrap_or(&now)),
+                                ),
+                                ("updated_at", db::text(now.as_str())),
+                            ],
+                        )?;
+                    }
+                    Ok(())
+                })?;
             }
             if r.status != "completed" {
                 let row = {
-                    let db = server.store.lock().unwrap();
+                    let db = server.read()?;
                     db.sqlite
                         .query_row(
                             "SELECT error_code, error_message FROM runs WHERE run_id=?",
@@ -488,8 +493,7 @@ fn input_failure(
     let message = error.message.clone();
     let timeout = error.code.ends_with("_timeout");
     let binding_missing = error.code == "broker_runtime_not_active";
-    let result: anyhow::Result<bool> = (|| {
-        let db = server.store.lock().unwrap();
+    let result: anyhow::Result<bool> = server.write(|db| {
         let now = hrc_store::timestamp();
         let inv_state = db::invocation(&db.sqlite, invocation)?.map(|i| i.invocation_state);
         let current = db::runtime(&db.sqlite, &rt.runtime_id)?;
@@ -545,7 +549,7 @@ fn input_failure(
         }
         db::update_runtime(&db.sqlite, &rt.runtime_id, &cols)?;
         Ok(reprovision)
-    })();
+    });
     server.ledger_committed();
     let reprovision = result.unwrap_or(false);
     let (headline, recommendation) = if reprovision && binding_missing {
@@ -587,14 +591,13 @@ fn submission_timeout(
     route: &str,
     error: controller::submit::BrokerError,
 ) -> Option<ApiError> {
-    let result: anyhow::Result<usize> = (|| {
-        let db = server.store.lock().unwrap();
+    let result: anyhow::Result<usize> = server.write(|db| {
         let now = hrc_store::timestamp();
         Ok(db.sqlite.execute(
             "UPDATE runs SET broker_input_fenced_at=?1, broker_input_fence_reason=?2, status='failed', completed_at=?1, updated_at=?1, error_code='runtime_unavailable', error_message=?3 WHERE run_id=?4 AND completed_at IS NULL",
             params![now, error.code, error.message, run_id],
         )?)
-    })();
+    });
     server.ledger_committed();
     match result {
         Ok(0) => return None,
@@ -623,7 +626,7 @@ fn committed(
     route: &str,
 ) -> Result<Value, ApiError> {
     let (row, admitted) = {
-        let db = server.store.lock().unwrap();
+        let db = server.read()?;
         let row = db
             .sqlite
             .query_row(
@@ -668,7 +671,7 @@ fn committed(
 /// birth would resume the same thread a second time (T-12228).
 async fn live_unbound(server: &Shared, host: &str) -> Result<Option<db::Rt>, ApiError> {
     let latest = {
-        let db = server.store.lock().unwrap();
+        let db = server.read()?;
         let id: Option<String> = db
             .sqlite
             .query_row(
@@ -803,7 +806,7 @@ fn enrich(server: &Shared, mut body: Value, plan: &Plan) -> Result<Value, ApiErr
         return Ok(body);
     };
     let invocation = {
-        let db = server.store.lock().unwrap();
+        let db = server.read()?;
         db::run(&db.sqlite, &run_id)?.and_then(|r| r.invocation_id)
     };
     let runtime_id = body["runtimeId"].clone();

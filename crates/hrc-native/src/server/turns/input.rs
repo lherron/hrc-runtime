@@ -15,12 +15,13 @@ use axum::{
 };
 use rusqlite::OptionalExtension;
 use serde_json::{Value, json};
+use std::ops::ControlFlow;
 use std::time::Duration;
 use uuid::Uuid;
 
 /// selectLatestInteractiveRuntime: the latest tmux runtime of the session.
 fn latest_interactive(server: &Shared, host: &str) -> Result<Option<db::Rt>, ApiError> {
-    let db = server.store.lock().unwrap();
+    let db = server.read()?;
     let id: Option<String> = db
         .sqlite
         .query_row(
@@ -76,26 +77,27 @@ impl Literal<'_> {
         run_id: Option<&str>,
         broker: bool,
     ) -> Result<(), ApiError> {
-        let db = server.store.lock().unwrap();
-        let tx = db
-            .sqlite
-            .unchecked_transaction()
-            .map_err(anyhow::Error::from)?;
-        if run_id.is_none() {
-            db::update_runtime(
-                &tx,
-                &self.rt.runtime_id,
-                &db::activity_cols(&tx, &self.rt.runtime_id, now, now)?,
-            )?;
-        }
-        let mut ev = self.ev(now);
-        ev.run_id = run_id.map(str::to_owned);
-        if broker {
-            ev.transport = Some("tmux".into());
-        }
-        events::append(&tx, "target.literal-input", &ev, &payload)?;
-        tx.commit().map_err(anyhow::Error::from)?;
-        drop(db);
+        server.write(|db| -> Result<(), ApiError> {
+            let tx = db
+                .sqlite
+                .unchecked_transaction()
+                .map_err(anyhow::Error::from)?;
+            if run_id.is_none() {
+                db::update_runtime(
+                    &tx,
+                    &self.rt.runtime_id,
+                    &db::activity_cols(&tx, &self.rt.runtime_id, now, now)?,
+                )?;
+            }
+            let mut ev = self.ev(now);
+            ev.run_id = run_id.map(str::to_owned);
+            if broker {
+                ev.transport = Some("tmux".into());
+            }
+            events::append(&tx, "target.literal-input", &ev, &payload)?;
+            tx.commit().map_err(anyhow::Error::from)?;
+            Ok(())
+        })?;
         server.ledger_committed();
         Ok(())
     }
@@ -127,7 +129,7 @@ pub async fn literal_by_selector(server: &Shared, body: Value) -> Result<Respons
     // Replays remain readable even after the recorded runtime stops or its
     // fences expire. A new generation resolves to a different host session.
     if let Some(key) = key {
-        let db = server.store.lock().unwrap();
+        let db = server.read()?;
         if let Some(response) = literal_replay(&db.sqlite, &host, key, &request)? {
             return Ok(Json(response).into_response());
         }
@@ -180,29 +182,35 @@ pub async fn literal_by_selector(server: &Shared, body: Value) -> Result<Respons
         session_ref: &session_ref,
     };
     let application = if let Some(key) = key {
-        let db = server.store.lock().unwrap();
-        // Recheck and reserve under the same lock: simultaneous requests
-        // cannot both pass the lookup before either inserts its reservation.
-        if let Some(response) = literal_replay(&db.sqlite, &host, key, &request)? {
-            return Ok(Json(response).into_response());
+        match server.write(|db| -> Result<_, ApiError> {
+            // Recheck and reserve under the same lock: simultaneous requests
+            // cannot both pass the lookup before either inserts its reservation.
+            if let Some(response) = literal_replay(&db.sqlite, &host, key, &request)? {
+                return Ok(ControlFlow::Break(response));
+            }
+            let id = format!("literal-input-{}", Uuid::new_v4());
+            let now = hrc_store::timestamp();
+            db.sqlite.execute(
+                "INSERT INTO active_input_deliveries (input_application_id, input_attempt_id, idempotency_key, host_session_id, generation, runtime_id, status, request_json, created_at, updated_at) VALUES (?, 'literal-input', ?, ?, ?, ?, 'pending', ?, ?, ?)",
+                rusqlite::params![id, key, host, session["generation"].as_i64(), rt.runtime_id, request.to_string(), now, now],
+            ).map_err(anyhow::Error::from)?;
+            Ok(ControlFlow::Continue(id))
+        })? {
+            ControlFlow::Continue(id) => Some(id),
+            ControlFlow::Break(response) => return Ok(Json(response).into_response()),
         }
-        let id = format!("literal-input-{}", Uuid::new_v4());
-        let now = hrc_store::timestamp();
-        db.sqlite.execute(
-            "INSERT INTO active_input_deliveries (input_application_id, input_attempt_id, idempotency_key, host_session_id, generation, runtime_id, status, request_json, created_at, updated_at) VALUES (?, 'literal-input', ?, ?, ?, ?, 'pending', ?, ?, ?)",
-            rusqlite::params![id, key, host, session["generation"].as_i64(), rt.runtime_id, request.to_string(), now, now],
-        ).map_err(anyhow::Error::from)?;
-        Some(id)
     } else {
         None
     };
     let response = deliver_literal(server, &literal, &text, enter).await?;
     if let Some(id) = application {
-        let db = server.store.lock().unwrap();
-        db.sqlite.execute(
-            "UPDATE active_input_deliveries SET status='delivered', response_json=?, run_id=?, updated_at=? WHERE input_application_id=?",
-            rusqlite::params![response.to_string(), response["runId"].as_str(), hrc_store::timestamp(), id],
-        ).map_err(anyhow::Error::from)?;
+        server.write(|db| -> Result<(), ApiError> {
+            db.sqlite.execute(
+                "UPDATE active_input_deliveries SET status='delivered', response_json=?, run_id=?, updated_at=? WHERE input_application_id=?",
+                rusqlite::params![response.to_string(), response["runId"].as_str(), hrc_store::timestamp(), id],
+            ).map_err(anyhow::Error::from)?;
+            Ok(())
+        })?;
     }
     Ok(Json(response).into_response())
 }
@@ -277,7 +285,7 @@ async fn deliver_literal(
         false,
     )?;
     let harness: Option<String> = {
-        let db = server.store.lock().unwrap();
+        let db = server.read()?;
         db.sqlite
             .query_row(
                 "SELECT harness FROM runtimes WHERE runtime_id=?",
@@ -288,16 +296,16 @@ async fn deliver_literal(
             .flatten()
     };
     if harness.as_deref() == Some("codex-cli") && enter && !text.trim().is_empty() {
-        let db = server.store.lock().unwrap();
-        let mut ev = literal.ev(&now);
-        ev.transport = Some(rt.transport.clone());
-        events::append(
-            &db.sqlite,
-            "turn.user_prompt",
-            &ev,
-            &events::user_prompt_payload(text),
-        )?;
-        drop(db);
+        server.write(|db| {
+            let mut ev = literal.ev(&now);
+            ev.transport = Some(rt.transport.clone());
+            events::append(
+                &db.sqlite,
+                "turn.user_prompt",
+                &ev,
+                &events::user_prompt_payload(text),
+            )
+        })?;
         server.ledger_committed();
     }
     Ok(delivered(session, rt, None))
@@ -510,10 +518,9 @@ pub async fn contribution(server: &Shared, body: Value) -> Result<Response, ApiE
     };
     let application = application.to_owned();
     let prompt = prompt.to_owned();
-    let rt = {
-        let db = server.store.lock().unwrap();
+    let rt = match server.write(|db| -> Result<_, ApiError> {
         if let Some(existing) = stored_delivery(&db.sqlite, &application)? {
-            return Ok(Json(existing).into_response());
+            return Ok(ControlFlow::Break(existing));
         }
         let selector = &body["selector"];
         let id: Option<String> = if let Some(id) = selector["runtimeId"].as_str() {
@@ -563,7 +570,10 @@ pub async fn contribution(server: &Shared, body: Value) -> Result<Response, ApiE
                 ],
             )
             .map_err(anyhow::Error::from)?;
-        rt
+        Ok(ControlFlow::Continue(rt))
+    })? {
+        ControlFlow::Continue(rt) => rt,
+        ControlFlow::Break(existing) => return Ok(Json(existing).into_response()),
     };
     let identity = |rt: &db::Rt| json!({"inputApplicationId":application,"hostSessionId":rt.host_session_id,"generation":rt.generation,"runtimeId":rt.runtime_id});
     let response = match &rt {
@@ -594,7 +604,7 @@ pub async fn contribution(server: &Shared, body: Value) -> Result<Response, ApiE
         Some(rt) => {
             let run = rt.active_run_id.clone().unwrap_or_default();
             let ask = (rt.transport == "tmux" || rt.transport == "hrcpty") && {
-                let db = server.store.lock().unwrap();
+                let db = server.read()?;
                 pending_ask(&db.sqlite, &run)?
             };
             if ask {
@@ -608,15 +618,15 @@ pub async fn contribution(server: &Shared, body: Value) -> Result<Response, ApiE
                     }
                     Err(message) => {
                         let now = hrc_store::timestamp();
-                        {
-                            let db = server.store.lock().unwrap();
+                        server.write(|db| -> Result<(), ApiError> {
                             db.sqlite
                                 .execute(
                                     "UPDATE active_input_deliveries SET status='ambiguous', error_code='delivery_ambiguous', error_message=?, updated_at=? WHERE input_application_id=?",
                                     rusqlite::params![message, now, application],
                                 )
                                 .map_err(anyhow::Error::from)?;
-                        }
+                            Ok(())
+                        })?;
                         let mut r = json!({"status":"pending"});
                         merge(&mut r, identity(rt));
                         merge(
@@ -639,8 +649,7 @@ pub async fn contribution(server: &Shared, body: Value) -> Result<Response, ApiE
             }
         }
     };
-    {
-        let db = server.store.lock().unwrap();
+    server.write(|db| -> Result<(), ApiError> {
         db.sqlite
             .execute(
                 "UPDATE active_input_deliveries SET host_session_id=?, generation=?, runtime_id=?, run_id=?, status=?, response_json=?, error_code=?, error_message=?, updated_at=? WHERE input_application_id=?",
@@ -658,7 +667,8 @@ pub async fn contribution(server: &Shared, body: Value) -> Result<Response, ApiE
                 ],
             )
             .map_err(anyhow::Error::from)?;
-    }
+        Ok(())
+    })?;
     server.ledger_committed();
     Ok(Json(response).into_response())
 }
@@ -708,48 +718,49 @@ fn record_answer(
     body: &Value,
 ) -> Result<(), String> {
     let now = hrc_store::timestamp();
-    let db = server.store.lock().unwrap();
-    let session: Option<(String, String, i64)> = db
-        .sqlite
-        .query_row(
-            "SELECT scope_ref, lane_ref, generation FROM sessions WHERE host_session_id=?",
-            [&rt.host_session_id],
-            |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
-        )
-        .ok();
-    let Some((scope_ref, lane_ref, generation)) = session else {
-        return Err(format!("unknown host session \"{}\"", rt.host_session_id));
-    };
-    let result: anyhow::Result<()> = (|| {
-        db::update_runtime(
-            &db.sqlite,
-            &rt.runtime_id,
-            &db::activity_cols(&db.sqlite, &rt.runtime_id, &now, &now)?,
-        )?;
-        let mut payload = json!({"prompt":prompt,"delivery":"tmux-interactive-answer"});
-        for key in ["semantics", "inputType"] {
-            if let Some(v) = body
-                .get(key)
-                .filter(|v| !v.is_null() && v.as_str() != Some(""))
-            {
-                payload[key] = v.clone();
-            }
-        }
-        let ev = events::Ev {
-            ts: now.clone(),
-            host_session_id: rt.host_session_id.clone(),
-            scope_ref,
-            lane_ref,
-            generation,
-            runtime_id: Some(rt.runtime_id.clone()),
-            run_id: Some(run_id.to_owned()),
-            transport: Some("tmux".into()),
-            ..Default::default()
+    server.write(|db| {
+        let session: Option<(String, String, i64)> = db
+            .sqlite
+            .query_row(
+                "SELECT scope_ref, lane_ref, generation FROM sessions WHERE host_session_id=?",
+                [&rt.host_session_id],
+                |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
+            )
+            .ok();
+        let Some((scope_ref, lane_ref, generation)) = session else {
+            return Err(format!("unknown host session \"{}\"", rt.host_session_id));
         };
-        events::append(&db.sqlite, "inflight.accepted", &ev, &payload)?;
-        Ok(())
-    })();
-    result.map_err(|e| e.to_string())
+        let result: anyhow::Result<()> = (|| {
+            db::update_runtime(
+                &db.sqlite,
+                &rt.runtime_id,
+                &db::activity_cols(&db.sqlite, &rt.runtime_id, &now, &now)?,
+            )?;
+            let mut payload = json!({"prompt":prompt,"delivery":"tmux-interactive-answer"});
+            for key in ["semantics", "inputType"] {
+                if let Some(v) = body
+                    .get(key)
+                    .filter(|v| !v.is_null() && v.as_str() != Some(""))
+                {
+                    payload[key] = v.clone();
+                }
+            }
+            let ev = events::Ev {
+                ts: now.clone(),
+                host_session_id: rt.host_session_id.clone(),
+                scope_ref,
+                lane_ref,
+                generation,
+                runtime_id: Some(rt.runtime_id.clone()),
+                run_id: Some(run_id.to_owned()),
+                transport: Some("tmux".into()),
+                ..Default::default()
+            };
+            events::append(&db.sqlite, "inflight.accepted", &ev, &payload)?;
+            Ok(())
+        })();
+        result.map_err(|e| e.to_string())
+    })
 }
 
 #[cfg(test)]

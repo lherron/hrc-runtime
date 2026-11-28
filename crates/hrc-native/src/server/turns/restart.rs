@@ -233,7 +233,7 @@ pub(super) fn busy(state: &str, verb: &str, detail: Value) -> ApiError {
 
 async fn assert_idle(server: &Shared, host: &str) -> Result<(), ApiError> {
     let runtimes: Vec<db::Rt> = {
-        let db = server.store.lock().unwrap();
+        let db = server.read()?;
         let ids: Vec<String> = db
             .sqlite
             .prepare("SELECT runtime_id FROM runtimes WHERE host_session_id=? ORDER BY created_at ASC, runtime_id ASC")
@@ -291,7 +291,7 @@ pub async fn check(server: &Shared, req: &Request) -> Result<Value, ApiError> {
 
 async fn admit(server: &Shared, req: &Request) -> Result<(Value, Value), ApiError> {
     let session = {
-        let db = server.store.lock().unwrap();
+        let db = server.read()?;
         db.session(&req.host)?
     }
     .ok_or_else(|| ApiError::missing_host(&req.host))?;
@@ -300,7 +300,7 @@ async fn admit(server: &Shared, req: &Request) -> Result<(Value, Value), ApiErro
     let scope = session["scopeRef"].as_str().unwrap_or("").to_owned();
     super::federation::summon::assert_scope_not_retired(server, &scope, "resolve-session").await?;
     let lane = {
-        let db = server.store.lock().unwrap();
+        let db = server.read()?;
         db.sqlite
             .query_row(
                 "SELECT lane_ref FROM sessions WHERE host_session_id=?",
@@ -310,7 +310,7 @@ async fn admit(server: &Shared, req: &Request) -> Result<(Value, Value), ApiErro
             .map_err(anyhow::Error::from)?
     };
     let active: Option<String> = {
-        let db = server.store.lock().unwrap();
+        let db = server.read()?;
         db.sqlite
             .query_row(
                 "SELECT active_host_session_id FROM continuities WHERE scope_ref=? AND lane_ref=?",
@@ -330,7 +330,7 @@ async fn admit(server: &Shared, req: &Request) -> Result<(Value, Value), ApiErro
     if active != req.host || session["generation"].as_i64() != Some(req.expected_generation) {
         let mut detail = json!({"requestedHostSessionId":req.host,"expectedGeneration":req.expected_generation,"activeHostSessionId":active});
         let active_generation = {
-            let db = server.store.lock().unwrap();
+            let db = server.read()?;
             db.session(&active)?.and_then(|s| s["generation"].as_i64())
         };
         if let Some(g) = active_generation {
@@ -487,7 +487,7 @@ pub fn refuse_participant(
     let scope = session["scopeRef"].as_str().unwrap_or("");
     let lane = session["laneRef"].as_str().unwrap_or("");
     let participant = {
-        let db = server.store.lock().unwrap();
+        let db = server.read()?;
         let served = db
             .runtimes_where("host_session_id=?", [host])?
             .into_iter()

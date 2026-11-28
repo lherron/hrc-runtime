@@ -202,10 +202,8 @@ pub fn record(server: &Shared, req: &Request<'_>, trace: &mut Trace, outcome: Ou
         run_id: trace.run_id.clone(),
         ..Default::default()
     };
-    let result = {
-        let db = server.store.lock().unwrap();
-        events::append(&db.sqlite, "submission.admission", &ev, &payload)
-    };
+    let result =
+        server.write(|db| events::append(&db.sqlite, "submission.admission", &ev, &payload));
     if let Err(error) = result {
         crate::server::stderr_json(
             "warn",
@@ -286,7 +284,7 @@ pub(crate) fn door_report(
 }
 
 fn continuity_active(server: &Shared, session: &Value) -> Result<Value, ApiError> {
-    let db = server.store.lock().unwrap();
+    let db = server.read()?;
     let active = db
         .continuity_session(
             session["scopeRef"].as_str().unwrap_or(""),
@@ -366,7 +364,7 @@ fn resolve_fences_and_idempotency(
     }
     if let Some(key) = req.idempotency_key.filter(|_| !lazy) {
         let existing: Option<String> = {
-            let db = server.store.lock().unwrap();
+            let db = server.read()?;
             db.sqlite
                 .query_row(
                     "SELECT run_id FROM runs WHERE host_session_id=? AND dispatch_idempotency_key=? LIMIT 1",
@@ -451,7 +449,7 @@ async fn steps(
             let rt = match participant.as_ref().and_then(Delivery::runtime) {
                 Some(rt) => Some(rt.clone()),
                 None => {
-                    let db = server.store.lock().unwrap();
+                    let db = server.read()?;
                     active_broker_runtime(
                         &db.sqlite,
                         session["hostSessionId"].as_str().unwrap_or(""),
@@ -491,7 +489,7 @@ async fn steps(
         }
     }
     let (report, report_runtime) = {
-        let db = server.store.lock().unwrap();
+        let db = server.read()?;
         door_report(&db.sqlite, &session, req.intent)?
     };
     trace.effective_door = report["effectiveDoor"]
@@ -533,7 +531,7 @@ async fn steps(
     trace.session = session.clone();
     // launch-carry-observation
     let observation = {
-        let db = server.store.lock().unwrap();
+        let db = server.read()?;
         let from: i64 = db
             .sqlite
             .query_row("SELECT COALESCE(MAX(hrc_seq),0) FROM hrc_events", [], |r| {
@@ -591,7 +589,7 @@ async fn participant_resolution(
     Ok(if lazy && !self_brokered {
         // No session yet: a participant address is never substituted by a birth.
         let registered = {
-            let db = server.store.lock().unwrap();
+            let db = server.read()?;
             db.participant_registration_by_scope(session["scopeRef"].as_str().unwrap_or(""))?
                 .is_some()
         };
@@ -699,7 +697,7 @@ pub async fn preempt_admission(
     origin: &Value,
 ) -> Result<&'static str, ApiError> {
     let runtime = {
-        let db = server.store.lock().unwrap();
+        let db = server.read()?;
         let rt =
             active_broker_runtime(&db.sqlite, session["hostSessionId"].as_str().unwrap_or(""))?;
         let refuses = rt.as_ref().is_some_and(|r| {
@@ -782,7 +780,7 @@ async fn origin_owns_active_turn(
     let Some(ids) = active_turn_submissions(server, runtime_id).await else {
         return Ok(false);
     };
-    let db = server.store.lock().unwrap();
+    let db = server.read()?;
     let mut stmt = db
         .sqlite
         .prepare("SELECT broker_event_json FROM broker_invocation_events WHERE invocation_id=? AND type='admission.requested' ORDER BY seq ASC")

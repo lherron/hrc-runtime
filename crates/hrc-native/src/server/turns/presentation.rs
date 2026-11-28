@@ -9,7 +9,7 @@ use hrc_store::canonical_lane;
 use serde_json::{Value, json};
 use std::collections::HashSet;
 pub fn list(server: &Server) -> Result<Response, ApiError> {
-    let db = server.store.lock().unwrap();
+    let db = server.read()?;
     let mut output = hrc_store::presentation::runtimes(&db)?;
     annotate_attach(server, &mut output);
     Ok(Json(output).into_response())
@@ -40,7 +40,7 @@ pub async fn seats(server: &Server, body: &[u8]) -> Result<Response, ApiError> {
         }
     }
     let mut output = {
-        let db = server.store.lock().unwrap();
+        let db = server.read()?;
         for value in input["runtimeIds"].as_array().unwrap() {
             if let Some((scope, lane)) = db.presentation_runtime_seat(value.as_str().unwrap())? {
                 let key = format!("{scope}/lane:{}", canonical_lane(&lane));

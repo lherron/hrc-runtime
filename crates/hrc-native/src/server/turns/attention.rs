@@ -52,11 +52,7 @@ pub fn append(server: &Server, body: &[u8]) -> Result<Response, ApiError> {
     let runtime = non_empty(request, "runtimeId")?;
     let turn = non_empty(request, "turnId")?;
     let payload = classification(request.get("payload"), turn)?;
-    let outcome = server
-        .store
-        .lock()
-        .unwrap()
-        .append_turn_attention(runtime, turn, &payload)?;
+    let outcome = server.write(|db| db.append_turn_attention(runtime, turn, &payload))?;
     let (appended, event) = match outcome {
         TurnAttention::Appended(event) => (true, event),
         TurnAttention::Existing(event) => (false, event),

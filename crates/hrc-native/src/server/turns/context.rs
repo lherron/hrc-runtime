@@ -81,7 +81,7 @@ fn request(body: &Value) -> Result<(String, Rotation), ApiError> {
 pub async fn clear_context(server: &Shared, body: Value) -> Result<Response, ApiError> {
     let (host, rotation) = request(&body)?;
     let session = {
-        let db = server.store.lock().unwrap();
+        let db = server.read()?;
         db.session(&host)?
     }
     .ok_or_else(|| ApiError::missing_host(&host))?;
@@ -110,7 +110,7 @@ pub(super) fn without_operator_choice(mut intent: Value) -> Value {
 /// finalized, every bound surface unbound. Returns (surfaces, runtimes).
 async fn invalidate(server: &Shared, host: &str, reason: &str) -> Result<(i64, i64), ApiError> {
     let runtimes: Vec<db::Rt> = {
-        let db = server.store.lock().unwrap();
+        let db = server.read()?;
         let ids: Vec<String> = db
             .sqlite
             .prepare("SELECT runtime_id FROM runtimes WHERE host_session_id=? ORDER BY created_at ASC, runtime_id ASC")
@@ -162,8 +162,7 @@ async fn invalidate(server: &Shared, host: &str, reason: &str) -> Result<(i64, i
             }
         }
         let now = hrc_store::timestamp();
-        {
-            let db = server.store.lock().unwrap();
+        server.write(|db| -> Result<(), ApiError> {
             let tx = db
                 .sqlite
                 .unchecked_transaction()
@@ -180,20 +179,20 @@ async fn invalidate(server: &Shared, host: &str, reason: &str) -> Result<(i64, i
                 &json!({"transport":rt.transport,"reason":reason}),
             )?;
             tx.commit().map_err(anyhow::Error::from)?;
-        }
+            Ok(())
+        })?;
         server.ledger_committed();
         terminated += 1;
     }
     let now = hrc_store::timestamp();
-    let unbound = {
-        let db = server.store.lock().unwrap();
-        db.sqlite
+    let unbound = server.write(|db| -> Result<i64, ApiError> {
+        Ok(db.sqlite
             .execute(
                 "UPDATE surface_bindings SET unbound_at=?, reason=? WHERE host_session_id=? AND unbound_at IS NULL",
                 params![now, reason, host],
             )
-            .map_err(anyhow::Error::from)? as i64
-    };
+            .map_err(anyhow::Error::from)? as i64)
+    })?;
     Ok((unbound, terminated))
 }
 
@@ -201,7 +200,7 @@ async fn invalidate(server: &Shared, host: &str, reason: &str) -> Result<(i64, i
 pub async fn rotate(server: &Shared, session: &Value, o: Rotation) -> Result<Value, ApiError> {
     let host = session["hostSessionId"].as_str().unwrap_or("").to_owned();
     let (scope, lane, generation) = {
-        let db = server.store.lock().unwrap();
+        let db = server.read()?;
         db.sqlite
             .query_row(
                 "SELECT scope_ref, lane_ref, generation FROM sessions WHERE host_session_id=?",
@@ -221,7 +220,7 @@ pub async fn rotate(server: &Shared, session: &Value, o: Rotation) -> Result<Val
     // one re-reads the active host under the same gate.
     let seat = crate::server::broker::seat_gate(server, &scope, &lane).await;
     let active: Option<String> = {
-        let db = server.store.lock().unwrap();
+        let db = server.read()?;
         db.sqlite
             .query_row(
                 "SELECT active_host_session_id FROM continuities WHERE scope_ref=? AND lane_ref=?",
@@ -263,8 +262,7 @@ pub async fn rotate(server: &Shared, session: &Value, o: Rotation) -> Result<Val
     let (surfaces, runtimes) = invalidate(server, &host, &reason).await?;
     let next = format!("hsid-{}", Uuid::new_v4());
     let now = hrc_store::timestamp();
-    {
-        let db = server.store.lock().unwrap();
+    server.write(|db| -> Result<(), ApiError> {
         let tx = db
             .sqlite
             .unchecked_transaction()
@@ -309,7 +307,8 @@ pub async fn rotate(server: &Shared, session: &Value, o: Rotation) -> Result<Val
             &json!({"created":true,"priorHostSessionId":host}),
         )?;
         tx.commit().map_err(anyhow::Error::from)?;
-    }
+        Ok(())
+    })?;
     server.ledger_committed();
     drop(seat);
     if o.relaunch {
@@ -322,7 +321,7 @@ pub async fn rotate(server: &Shared, session: &Value, o: Rotation) -> Result<Val
             ));
         };
         let next_session = {
-            let db = server.store.lock().unwrap();
+            let db = server.read()?;
             db.session(&next)?
         }
         .ok_or_else(|| ApiError::missing_host(&next))?;
@@ -336,7 +335,7 @@ pub async fn rotate(server: &Shared, session: &Value, o: Rotation) -> Result<Val
 /// The session a rotation answered (requireSession on its hostSessionId).
 pub fn session(server: &Shared, rotation: &Value) -> Result<Value, ApiError> {
     let host = rotation["hostSessionId"].as_str().unwrap_or("");
-    let db = server.store.lock().unwrap();
+    let db = server.read()?;
     db.session(host)?
         .ok_or_else(|| ApiError::missing_host(host))
 }
@@ -355,7 +354,7 @@ pub async fn auto_rotate(
     };
     let host = session["hostSessionId"].as_str().unwrap_or("").to_owned();
     let live_interactive: Option<String> = {
-        let db = server.store.lock().unwrap();
+        let db = server.read()?;
         db.sqlite
             .query_row(
                 "SELECT runtime_id, status FROM runtimes WHERE host_session_id=? AND transport IN ('tmux','hrcpty') ORDER BY created_at DESC, runtime_id DESC LIMIT 1",
@@ -399,8 +398,7 @@ pub async fn auto_rotate(
     )
     .await?;
     let next = self::session(server, &rotation)?;
-    {
-        let db = server.store.lock().unwrap();
+    server.write(|db| -> Result<(), ApiError> {
         let ev = events::Ev {
             ts: hrc_store::timestamp(),
             host_session_id: next["hostSessionId"].as_str().unwrap_or("").into(),
@@ -415,7 +413,8 @@ pub async fn auto_rotate(
             &ev,
             &json!({"priorHostSessionId":host,"priorGeneration":session["generation"],"nextHostSessionId":next["hostSessionId"],"nextGeneration":next["generation"],"ageSec":age,"thresholdSec":threshold,"trigger":trigger}),
         )?;
-    }
+        Ok(())
+    })?;
     server.ledger_committed();
     Ok(next)
 }
@@ -460,60 +459,63 @@ pub fn drop_continuation(server: &Shared, body: Value) -> Result<Response, ApiEr
             ));
         }
     };
-    let db = server.store.lock().unwrap();
-    let row = db
-        .sqlite
-        .query_row(
-            "SELECT scope_ref, lane_ref, generation, continuation_json, continuation_reuse_disabled FROM sessions WHERE host_session_id=?",
-            [&host],
-            |r| {
-                Ok((
-                    r.get::<_, String>(0)?,
-                    r.get::<_, String>(1)?,
-                    r.get::<_, i64>(2)?,
-                    r.get::<_, Option<String>>(3)?,
-                    r.get::<_, i64>(4)?,
-                ))
-            },
-        )
-        .optional()
-        .map_err(anyhow::Error::from)?;
-    let Some((scope, lane, generation, continuation, disabled)) = row else {
-        return Err(ApiError::missing_host(&host));
-    };
-    let continuation: Option<Value> = continuation.and_then(|c| serde_json::from_str(&c).ok());
-    let previous = continuation
-        .as_ref()
-        .map(|c| c["key"].clone())
-        .filter(|k| !k.is_null())
-        .unwrap_or(Value::Null);
-    let dropped = continuation.is_some() && disabled == 0;
-    if dropped {
-        let now = hrc_store::timestamp();
-        let tx = db
+    let (dropped, previous) = server.write(|db| -> Result<_, ApiError> {
+        let row = db
             .sqlite
-            .unchecked_transaction()
+            .query_row(
+                "SELECT scope_ref, lane_ref, generation, continuation_json, continuation_reuse_disabled FROM sessions WHERE host_session_id=?",
+                [&host],
+                |r| {
+                    Ok((
+                        r.get::<_, String>(0)?,
+                        r.get::<_, String>(1)?,
+                        r.get::<_, i64>(2)?,
+                        r.get::<_, Option<String>>(3)?,
+                        r.get::<_, i64>(4)?,
+                    ))
+                },
+            )
+            .optional()
             .map_err(anyhow::Error::from)?;
-        tx.execute(
-            "UPDATE sessions SET continuation_reuse_disabled=1, updated_at=? WHERE host_session_id=?",
-            params![now, host],
-        )
-        .map_err(anyhow::Error::from)?;
-        let mut payload = json!({"hostSessionId":host,"previousContinuationKey":previous});
-        if let Some(r) = &reason {
-            payload["reason"] = r.as_str().into();
-        }
-        let ev = events::Ev {
-            ts: now,
-            host_session_id: host.clone(),
-            scope_ref: scope,
-            lane_ref: lane,
-            generation,
-            ..Default::default()
+        let Some((scope, lane, generation, continuation, disabled)) = row else {
+            return Err(ApiError::missing_host(&host));
         };
-        events::append(&tx, "session.continuation_dropped", &ev, &payload)?;
-        tx.commit().map_err(anyhow::Error::from)?;
-        drop(db);
+        let continuation: Option<Value> = continuation.and_then(|c| serde_json::from_str(&c).ok());
+        let previous = continuation
+            .as_ref()
+            .map(|c| c["key"].clone())
+            .filter(|k| !k.is_null())
+            .unwrap_or(Value::Null);
+        let dropped = continuation.is_some() && disabled == 0;
+        if dropped {
+            let now = hrc_store::timestamp();
+            let tx = db
+                .sqlite
+                .unchecked_transaction()
+                .map_err(anyhow::Error::from)?;
+            tx.execute(
+                "UPDATE sessions SET continuation_reuse_disabled=1, updated_at=? WHERE host_session_id=?",
+                params![now, host],
+            )
+            .map_err(anyhow::Error::from)?;
+            let mut payload = json!({"hostSessionId":host,"previousContinuationKey":previous});
+            if let Some(r) = &reason {
+                payload["reason"] = r.as_str().into();
+            }
+            let ev = events::Ev {
+                ts: now,
+                host_session_id: host.clone(),
+                scope_ref: scope,
+                lane_ref: lane,
+                generation,
+                ..Default::default()
+            };
+            events::append(&tx, "session.continuation_dropped", &ev, &payload)?;
+            tx.commit().map_err(anyhow::Error::from)?;
+        }
+        Ok((dropped, previous))
+    })?;
+    if dropped {
         server.ledger_committed();
     }
     Ok(Json(json!({"ok":true,"hostSessionId":host,"dropped":dropped,"previousContinuationKey":previous})).into_response())

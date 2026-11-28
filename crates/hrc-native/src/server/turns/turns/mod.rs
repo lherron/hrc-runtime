@@ -61,7 +61,7 @@ fn public_body(
 /// The run row and its (error_code, error_message).
 type RunError = (Option<db::Run>, Option<(Option<String>, Option<String>)>);
 fn run_error(server: &Shared, run_id: &str) -> Result<RunError, ApiError> {
-    let db = server.store.lock().unwrap();
+    let db = server.read()?;
     let run = db::run(&db.sqlite, run_id)?;
     let error: Option<(Option<String>, Option<String>)> = db
         .sqlite
@@ -99,7 +99,7 @@ fn dispatched(server: &Shared, body: Value, require_submission: bool) -> Result<
 
 /// replayDispatchBody (idempotent replay of a recorded run).
 pub fn replay_body(server: &Shared, run_id: &str) -> Result<Value, ApiError> {
-    let db = server.store.lock().unwrap();
+    let db = server.read()?;
     let run = db::run(&db.sqlite, run_id)?
         .ok_or_else(|| admission::unavailable("idempotency replay disappeared", json!({})))?;
     let runtime = match &run.runtime_id {
@@ -203,7 +203,7 @@ fn settle(
     submission: &str,
     turn_terminal: bool,
 ) -> Result<Option<Value>, ApiError> {
-    let db = server.store.lock().unwrap();
+    let db = server.read()?;
     let mut stmt = db.sqlite.prepare("SELECT type, broker_event_json, run_id FROM broker_invocation_events WHERE invocation_id=? ORDER BY seq ASC").map_err(anyhow::Error::from)?;
     let rows: Vec<(String, Value, Option<String>)> = stmt
         .query_map([invocation], |r| {
@@ -386,7 +386,7 @@ async fn wait_stage(
     let mut base = base;
     if let Some(i) = &invocation {
         let format = {
-            let db = server.store.lock().unwrap();
+            let db = server.read()?;
             db::invocation(&db.sqlite, i)?.map(|x| x.execution_format)
         };
         base["executionFormat"] = format
@@ -529,52 +529,53 @@ async fn admitted(
         }
     };
     if let Some(requested) = plan.door_report.get("requestedDoor") {
-        let db = server.store.lock().unwrap();
-        let s = &plan.session;
-        let mut payload = json!({});
-        if let Some(rt) = routed["runtimeId"]
-            .as_str()
-            .map(str::to_owned)
-            .or_else(|| plan.report_runtime.as_ref().map(|r| r.runtime_id.clone()))
-        {
-            payload["runtimeId"] = rt.into();
-        }
-        if let Some(i) = routed["observation"]["broker"]["selector"]["invocationId"]
-            .as_str()
-            .map(str::to_owned)
-            .or_else(|| {
-                plan.report_runtime
-                    .as_ref()
-                    .and_then(|r| r.active_invocation_id.clone())
-            })
-        {
-            payload["invocationId"] = i.into();
-        }
-        if let Some(sub) = routed.get("submissionId") {
-            payload["submissionId"] = sub.clone();
-        }
-        payload["requestedDoor"] = requested.clone();
-        payload["effectiveDoor"] = plan.effective_door.as_str().into();
-        payload["reason"] = plan.door_report["downgradeReason"].clone();
-        if let Some(e) = options.submission_origin.and_then(|o| o.get("envelopeId")) {
-            payload["envelopeId"] = e.clone();
-        }
-        let ev = crate::server::projection::events::Ev {
-            ts: hrc_store::timestamp(),
-            host_session_id: s["hostSessionId"].as_str().unwrap_or("").into(),
-            scope_ref: s["scopeRef"].as_str().unwrap_or("").into(),
-            lane_ref: hrc_store::storage_lane(s["laneRef"].as_str().unwrap_or("")).into(),
-            generation: s["generation"].as_i64().unwrap_or(0),
-            runtime_id: payload["runtimeId"].as_str().map(str::to_owned),
-            run_id: plan.run_id.clone(),
-            ..Default::default()
-        };
-        let _ = crate::server::projection::events::append(
-            &db.sqlite,
-            "submission.door_downgraded",
-            &ev,
-            &payload,
-        );
+        server.write(|db| {
+            let s = &plan.session;
+            let mut payload = json!({});
+            if let Some(rt) = routed["runtimeId"]
+                .as_str()
+                .map(str::to_owned)
+                .or_else(|| plan.report_runtime.as_ref().map(|r| r.runtime_id.clone()))
+            {
+                payload["runtimeId"] = rt.into();
+            }
+            if let Some(i) = routed["observation"]["broker"]["selector"]["invocationId"]
+                .as_str()
+                .map(str::to_owned)
+                .or_else(|| {
+                    plan.report_runtime
+                        .as_ref()
+                        .and_then(|r| r.active_invocation_id.clone())
+                })
+            {
+                payload["invocationId"] = i.into();
+            }
+            if let Some(sub) = routed.get("submissionId") {
+                payload["submissionId"] = sub.clone();
+            }
+            payload["requestedDoor"] = requested.clone();
+            payload["effectiveDoor"] = plan.effective_door.as_str().into();
+            payload["reason"] = plan.door_report["downgradeReason"].clone();
+            if let Some(e) = options.submission_origin.and_then(|o| o.get("envelopeId")) {
+                payload["envelopeId"] = e.clone();
+            }
+            let ev = crate::server::projection::events::Ev {
+                ts: hrc_store::timestamp(),
+                host_session_id: s["hostSessionId"].as_str().unwrap_or("").into(),
+                scope_ref: s["scopeRef"].as_str().unwrap_or("").into(),
+                lane_ref: hrc_store::storage_lane(s["laneRef"].as_str().unwrap_or("")).into(),
+                generation: s["generation"].as_i64().unwrap_or(0),
+                runtime_id: payload["runtimeId"].as_str().map(str::to_owned),
+                run_id: plan.run_id.clone(),
+                ..Default::default()
+            };
+            let _ = crate::server::projection::events::append(
+                &db.sqlite,
+                "submission.door_downgraded",
+                &ev,
+                &payload,
+            );
+        });
     }
     admission::record(
         server,
@@ -613,7 +614,7 @@ pub async fn dispatch_turn(server: &Shared, body: Value) -> Result<Response, Api
     startup_timing::field("hostSessionId", req.host.as_str());
     startup_timing::field("waitFor", req.wait_for.as_str());
     let session = {
-        let db = server.store.lock().unwrap();
+        let db = server.read()?;
         db.session(&req.host)?
             .ok_or_else(|| ApiError::missing_host(&req.host))?
     };
@@ -673,7 +674,7 @@ pub(super) fn submission_target(
     allow_host: bool,
 ) -> Result<Option<Value>, ApiError> {
     if allow_host {
-        let db = server.store.lock().unwrap();
+        let db = server.read()?;
         if let Some(exact) = db.session(target)? {
             let active = db.continuity_session(
                 exact["scopeRef"].as_str().unwrap_or(""),
@@ -938,7 +939,7 @@ pub async fn continue_cold(
     let requested = dispatch["submissionDoor"].as_str().unwrap_or("invoke");
     // The admitted run's door, decided where admission decides it.
     let (door_report, lifecycle_from_seq) = {
-        let db = server.store.lock().unwrap();
+        let db = server.read()?;
         let (report, _) = admission::door_report(&db.sqlite, &session, requested)?;
         let seq = db
             .sqlite

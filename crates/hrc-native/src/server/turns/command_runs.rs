@@ -144,11 +144,7 @@ fn parse(raw: &[u8]) -> Result<(Value, Map<String, Value>, String, String), ApiE
 }
 
 async fn session(server: &Shared, scope: &str, lane: &str) -> Result<Value, ApiError> {
-    let existing = server
-        .store
-        .lock()
-        .unwrap()
-        .continuity_session(scope, lane)?;
+    let existing = server.read()?.continuity_session(scope, lane)?;
     if let Some(session) = existing {
         return Ok(session);
     }
@@ -165,16 +161,17 @@ async fn session(server: &Shared, scope: &str, lane: &str) -> Result<Value, ApiE
             provision: None,
         },
         || async {
-            let mut store = server.store.lock().unwrap();
-            Ok(store
-                .create_session_then(
-                    scope,
-                    lane,
-                    None,
-                    &json!({"created":true,"commandRun":true}),
-                    |_, _, _| Ok(()),
-                )?
-                .0)
+            server.write(|store| {
+                Ok(store
+                    .create_session_then(
+                        scope,
+                        lane,
+                        None,
+                        &json!({"created":true,"commandRun":true}),
+                        |_, _, _| Ok(()),
+                    )?
+                    .0)
+            })
         },
     )
     .await
@@ -186,7 +183,7 @@ pub async fn launch(server: &Shared, raw: &[u8]) -> Result<Response, ApiError> {
     let target = body["configuredTargetId"].as_str().unwrap().trim();
     let run_id = format!("run-{}", &compile::digest(key.as_bytes())[..32]);
     {
-        let store = server.store.lock().unwrap();
+        let store = server.read()?;
         if let Some(run) = db::run(&store.sqlite, &run_id)? {
             return response(&run, true);
         }
@@ -216,11 +213,10 @@ pub async fn launch(server: &Shared, raw: &[u8]) -> Result<Response, ApiError> {
         transport: Some("tmux".into()),
         ..Default::default()
     };
-    let reply = {
-        let mut store = server.store.lock().unwrap();
+    let (reply, replayed) = server.write(|store| -> Result<_, ApiError> {
         // Session authority can await: recheck under the same lock as insertion.
         if let Some(run) = db::run(&store.sqlite, &run_id)? {
-            return response(&run, true);
+            return Ok((response(&run, true)?, true));
         }
         let tx = store.sqlite.transaction().map_err(anyhow::Error::from)?;
         tx.execute("INSERT INTO runtimes(runtime_id,host_session_id,scope_ref,lane_ref,generation,transport,harness,provider,status,status_changed_at,supports_inflight_input,active_run_id,last_activity_at,created_at,updated_at) VALUES(?,?,?,?,?,'tmux','codex-cli','openai','busy',?,0,?,?,?,?)",
@@ -234,11 +230,15 @@ pub async fn launch(server: &Shared, raw: &[u8]) -> Result<Response, ApiError> {
             &json!({"configuredTargetId":target,"binding":binding,"idempotencyKey":key}),
         )?;
         tx.commit().map_err(anyhow::Error::from)?;
-        response(
+        let reply = response(
             &db::run(&store.sqlite, &run_id)?.context("created command run missing")?,
             false,
-        )?
-    };
+        )?;
+        Ok((reply, false))
+    })?;
+    if replayed {
+        return Ok(reply);
+    }
     let server = server.clone();
     let target = target.to_owned();
     tokio::spawn(async move {
@@ -403,8 +403,7 @@ fn finalize(
     let Some(_guard) = server.owner_writes.enter() else {
         return Ok(());
     };
-    {
-        let mut store = server.store.lock().unwrap();
+    server.write(|store| -> Result<()> {
         let tx = store.sqlite.transaction()?;
         tx.execute("UPDATE runs SET status=?,completed_at=?,updated_at=?,error_code=?,error_message=? WHERE run_id=?", params![status,event.ts,event.ts,failed.then_some("internal_error"),error,event.run_id])?;
         tx.execute("UPDATE runtimes SET active_run_id=NULL,status='terminated',status_changed_at=?,updated_at=? WHERE runtime_id=?", params![event.ts,event.ts,event.runtime_id])?;
@@ -415,7 +414,8 @@ fn finalize(
             &json!({"configuredTargetId":target,"binding":binding,"status":status,"exitCode":exit.code,"signal":exit.signal.map(signal_name)}),
         )?;
         tx.commit()?;
-    }
+        Ok(())
+    })?;
     server.ledger_committed();
     super::stderr_json(
         if failed { "error" } else { "info" },
