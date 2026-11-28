@@ -605,7 +605,10 @@ mod tests {
             .collect();
         assert_eq!(replayed, all, "follow replay is not the history rows");
         let holds = holds_at(&seen, "lifecycle_events.rs");
-        assert!(holds.is_empty(), "follow replay took the store lock: {holds:?}");
+        assert!(
+            holds.is_empty(),
+            "follow replay took the store lock: {holds:?}"
+        );
         Ok(())
     }
 }
