@@ -257,6 +257,9 @@ pub async fn serve(role: Role) -> Result<()> {
             started_at,
         },
     ));
+    if !front {
+        store_lock::clear_stale_pressure(&server).await?;
+    }
     store_lock::start_accounting(&server);
     status_runtime::start(&server);
     startup_phase("server_state", state_started);

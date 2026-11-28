@@ -10,7 +10,10 @@ use super::{
     statement_telemetry, status_runtime, subscribers, transcript, writes,
 };
 use anyhow::Result;
-use hrc_store::Store;
+use hrc_store::{
+    EventWrite, Store, append_event,
+    migrate::{STORE_EVENT_HOST_SESSION_ID, STORE_EVENT_LANE_REF, STORE_EVENT_SCOPE_REF},
+};
 use serde_json::{Value, json};
 use std::{
     cmp::Reverse,
@@ -31,6 +34,9 @@ use tokio::runtime::{Handle, RuntimeFlavor};
 pub const HOLD_THRESHOLD: Duration = Duration::from_millis(250);
 
 const ACCOUNTING_INTERVAL: Duration = Duration::from_secs(60);
+const PRESSURE_WAIT_SECONDS_PER_MIN: u128 = 60;
+const PRESSURE_INTERVALS: u8 = 3;
+const PRESSURE_EVENT: &str = "store.lock_pressure";
 const TOP_SITES: usize = 5;
 const WRITE_SLOW_THRESHOLD: Duration = Duration::from_millis(50);
 const WORKER_WAIT_BUDGET: Duration = Duration::from_millis(2);
@@ -68,6 +74,13 @@ impl Totals {
         fields["callerTag"] = location.to_string().into();
         fields
     }
+}
+
+struct LockSample {
+    sampled: Instant,
+    interval_ms: u128,
+    total: Totals,
+    top_caller: Option<&'static Location<'static>>,
 }
 
 #[derive(Default)]
@@ -340,7 +353,7 @@ impl StoreLock {
         admission.occupied = false;
     }
 
-    fn report(&self, since: Instant) -> Instant {
+    fn report(&self, since: Instant) -> LockSample {
         let (sampled, mut window) = {
             let mut sites = self.sites.lock().unwrap();
             let sampled = Instant::now();
@@ -360,6 +373,7 @@ impl StoreLock {
             .map(|(at, totals)| totals.at(at))
             .collect();
         window.sort_unstable_by_key(|(at, totals)| (Reverse(totals.held), *at));
+        let top_caller = window.first().map(|(at, _)| *at);
         let mut total = Totals::default();
         let mut rest = Totals::default();
         let mut top = Vec::with_capacity(window.len().min(TOP_SITES));
@@ -371,19 +385,25 @@ impl StoreLock {
                 rest.add(&totals);
             }
         }
+        let interval_ms = sampled.duration_since(since).as_millis();
         super::stderr_json(
             "info",
             "store",
             "store.lock_accounting",
             json!({
-                "intervalMs": sampled.duration_since(since).as_millis(),
+                "intervalMs": interval_ms,
                 "total": total.fields(),
                 "top": top,
                 "topByAcquisitions": top_by_acquisitions,
                 "rest": rest.fields(),
             }),
         );
-        sampled
+        LockSample {
+            sampled,
+            interval_ms,
+            total,
+            top_caller,
+        }
     }
 }
 
@@ -409,16 +429,132 @@ impl Drop for PendingSlot<'_> {
     }
 }
 
+pub(super) async fn clear_stale_pressure(server: &super::Shared) -> Result<()> {
+    let server = server.clone();
+    tokio::task::spawn_blocking(move || {
+        let cleared = server.write(|store| -> Result<bool> {
+            let filters = HashMap::from([
+                ("scopeRef".into(), STORE_EVENT_SCOPE_REF.into()),
+                ("eventKind".into(), PRESSURE_EVENT.into()),
+            ]);
+            let latest = store.event_history(&filters, 0, None, Some(1), true, false)?;
+            if latest
+                .first()
+                .is_some_and(|row| row["payload"]["state"] == "raised")
+            {
+                record_pressure(store, false, 0.0, 0, None)?;
+                return Ok(true);
+            }
+            Ok(false)
+        })?;
+        if cleared {
+            server.ledger_committed();
+        }
+        Ok(())
+    })
+    .await?
+}
+
+fn record_pressure(
+    store: &mut Store,
+    raised: bool,
+    wait_seconds_per_min: f64,
+    intervals: u8,
+    top_caller: Option<&Location<'_>>,
+) -> Result<()> {
+    let tx = store.sqlite.transaction()?;
+    append_event(
+        &tx,
+        &EventWrite {
+            ts: &hrc_store::timestamp(),
+            host_session_id: Some(STORE_EVENT_HOST_SESSION_ID),
+            scope_ref: Some(STORE_EVENT_SCOPE_REF),
+            lane_ref: Some(STORE_EVENT_LANE_REF),
+            generation: Some(0),
+            category: "store",
+            event_kind: PRESSURE_EVENT,
+            payload_json: &json!({
+                "state": if raised { "raised" } else { "cleared" },
+                "waitSecondsPerMin": (wait_seconds_per_min * 10.0).round() / 10.0,
+                "intervals": intervals,
+                "topCallerTag": top_caller.map(ToString::to_string),
+            })
+            .to_string(),
+            ..Default::default()
+        },
+    )?;
+    tx.commit()?;
+    Ok(())
+}
+
 pub(super) fn start_accounting(server: &super::Shared) {
     let weak = Arc::downgrade(server);
     let mut since = Instant::now();
     tokio::spawn(async move {
+        let mut raised = false;
+        let mut consecutive = 0;
         loop {
             tokio::time::sleep_until((since + ACCOUNTING_INTERVAL).into()).await;
             let Some(server) = weak.upgrade() else {
                 break;
             };
-            since = server.store.report(since);
+            let sample = server.store.report(since);
+            since = sample.sampled;
+            if server.front {
+                continue;
+            }
+            // Classify before rounding, including intervals exactly at the threshold.
+            let wait_ns_times_seconds_per_min = sample.total.waited.as_nanos() * 60;
+            let interval_ns = sample.interval_ms * 1_000_000;
+            let under_pressure =
+                wait_ns_times_seconds_per_min >= interval_ns * PRESSURE_WAIT_SECONDS_PER_MIN;
+            if under_pressure == raised {
+                consecutive = 0;
+                continue;
+            }
+            consecutive = (consecutive + 1).min(PRESSURE_INTERVALS);
+            if consecutive < PRESSURE_INTERVALS {
+                continue;
+            }
+            let wait_seconds_per_min = wait_ns_times_seconds_per_min as f64 / interval_ns as f64;
+
+            // FIFO writer admission lets the event join a moving queue and
+            // usually land within the next interval. A stuck holder can delay
+            // or prevent the append. The kernel's feed_stale alarm covers a
+            // stalled feed after 180 seconds without confirmation.
+            let result = tokio::task::spawn_blocking(move || -> Result<bool> {
+                let Some(_guard) = server.owner_writes.enter() else {
+                    return Ok(false);
+                };
+                server.write(|store| {
+                    record_pressure(
+                        store,
+                        under_pressure,
+                        wait_seconds_per_min,
+                        consecutive,
+                        sample.top_caller,
+                    )
+                })?;
+                server.ledger_committed();
+                Ok(true)
+            })
+            .await;
+            match result
+                .map_err(anyhow::Error::from)
+                .and_then(|result| result)
+            {
+                Ok(true) => {
+                    raised = under_pressure;
+                    consecutive = 0;
+                }
+                Ok(false) => break,
+                Err(error) => super::stderr_json(
+                    "error",
+                    "store",
+                    "store.lock_pressure_write_failed",
+                    json!({"error": error.to_string()}),
+                ),
+            }
         }
     });
 }
