@@ -59,7 +59,7 @@ def main():
             time.sleep(.05)
         raise AssertionError(kind+' not ready')
     try:
-        subprocess.run(['wrkqadm','migrate'],env=base,check=True,capture_output=True)
+        subprocess.run([str(Path.home() / '.local/bin/wrkqadm'), 'migrate'],env=base,check=True,capture_output=True)
         native=up('native')
         subprocess.run([str(Path.home() / ".local/bin/wrkq"),'mkdir','/n1-t11818','--kind','project','--as','agent:cody'],env=base,check=True,capture_output=True)
         http=UnixHTTP(native)

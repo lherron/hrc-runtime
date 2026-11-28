@@ -172,7 +172,7 @@ class Scratch:
 
     def init_substrate(self):
         self.command('project-init', ['git', 'init', '-q'])
-        self.command('wrkq-migrate', ['wrkqadm', 'migrate'])
+        self.command('wrkq-migrate', [str(Path.home() / '.local/bin/wrkqadm'), 'migrate'])
         self.command('wrkq-project', [str(Path.home() / ".local/bin/wrkq"), 'mkdir', '/' + self.project_id, '--kind', 'project', '--json'])
         self.command('wrkq-root', [str(Path.home() / ".local/bin/wrkq"), 'set', '/' + self.project_id, '--root', self.project, '--json'])
         self.command('schema-create', [self.binary, 'store', 'migrate', self.db_path])

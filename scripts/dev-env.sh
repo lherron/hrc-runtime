@@ -200,8 +200,10 @@ provision_build() {
 # WRKQ_DB (T-08302). Without wrkqadm the path stays unmigrated and wrkq refuses
 # fast, which the suites tolerate.
 provision_wrkq() {
-  if command -v wrkqadm >/dev/null 2>&1; then
-    env -u WRKQ_DB_PATH -u WRKQ_DB_PATH_FILE WRKQ_DB="${WRKQ_DB_FILE}" wrkqadm migrate >/dev/null \
+  # Named by path: prae seats filter owner binaries off PATH.
+  local wrkqadm="${HOME}/.local/bin/wrkqadm"
+  if [ -x "$wrkqadm" ]; then
+    env -u WRKQ_DB_PATH -u WRKQ_DB_PATH_FILE WRKQ_DB="${WRKQ_DB_FILE}" "$wrkqadm" migrate >/dev/null \
       || die "could not migrate the ephemeral wrkq ledger at ${WRKQ_DB_FILE}"
   else
     log "wrkqadm not found; ${WRKQ_DB_FILE} stays unmigrated and wrkq will refuse"

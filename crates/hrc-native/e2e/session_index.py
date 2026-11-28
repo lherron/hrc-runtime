@@ -96,7 +96,7 @@ def main():
     query = lambda path, **kw: path+'?'+urlencode(kw)
     try:
         subprocess.run([str(args.binary.resolve()), 'store', 'migrate', str(dbpath)], env=env, check=True, capture_output=True)
-        subprocess.run(['wrkqadm', 'migrate'], env=env, check=True, capture_output=True)
+        subprocess.run([str(Path.home() / '.local/bin/wrkqadm'), 'migrate'], env=env, check=True, capture_output=True)
         subprocess.run([str(Path.home()/'.local/bin/wrkq'), 'mkdir', '/n1-t11818', '--kind', 'project', '--as', 'agent:clod'], env=env, check=True, capture_output=True)
         up('prime')
         hosts = {}

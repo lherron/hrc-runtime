@@ -118,7 +118,7 @@ def record(name,path,body,settle=False,raw=False):
  rows.append({'case':name,'path':path,'request':body,'status':status,'body':value,'before':before,'after':time.time(),'beforeDurable':before_rows,'durable':snapshot()});return value
 
 try:
- subprocess.run(['wrkqadm','migrate'],env=e,check=True,capture_output=True)
+ subprocess.run([str(Path.home() / '.local/bin/wrkqadm'), 'migrate'],env=e,check=True,capture_output=True)
  subprocess.run([str(Path.home()/'.local/bin/wrkq'),'mkdir','/n1-t11818','--kind','project','--as','agent:cody'],env=e,check=True,capture_output=True)
  up('native')
  reg='/v1/participants/register';attach='/v1/participants/attach';base={'registrationMode':'direct','requestedSessionRef':scope,'hostIncarnationId':host}

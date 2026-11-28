@@ -138,7 +138,7 @@ def substrate(root, artifacts, binary):
     r.socket = root / "run/hrc/hrc.sock"
     # A private wrkq ledger behind a private wrkqd (n3_scratch.py's shape): an
     # implicit birth reads the scope's birth envelope over wrkq RPC.
-    for argv in (['wrkqadm', 'migrate'], [str(Path.home() / ".local/bin/wrkq"), 'mkdir', '/' + PROJECT, '--kind', 'project', '--json'],
+    for argv in ([str(Path.home() / '.local/bin/wrkqadm'), 'migrate'], [str(Path.home() / ".local/bin/wrkq"), 'mkdir', '/' + PROJECT, '--kind', 'project', '--json'],
                  [str(Path.home() / ".local/bin/wrkq"), 'set', '/' + PROJECT, '--root', str(root / PROJECT), '--json']):
         subprocess.run(argv, env=dict(env, WRKQ_PRINCIPAL_REF='agent:clod'), cwd=root / PROJECT,
                        check=True, capture_output=True, timeout=60)
@@ -151,7 +151,7 @@ def substrate(root, artifacts, binary):
     port = free_port('127.0.0.1')
     wrkqd_log = (artifacts / 'wrkqd.log').open('w')
     r.logs.append(wrkqd_log)
-    r.owners.append(subprocess.Popen(['wrkqd', '-addr', f'127.0.0.1:{port}', '-db', str(root / 'wrkq.db')],
+    r.owners.append(subprocess.Popen([str(Path.home() / '.local/bin/wrkqd'), '-addr', f'127.0.0.1:{port}', '-db', str(root / 'wrkq.db')],
                                      env=dict(env, WRKF_HOOK_CATALOG=str(catalog), WRKQD_TOKEN=token),
                                      cwd=root / PROJECT, stdout=wrkqd_log, stderr=wrkqd_log))
     r.wait(lambda: socket.socket().connect_ex(('127.0.0.1', port)) == 0, 10, 'private wrkqd')

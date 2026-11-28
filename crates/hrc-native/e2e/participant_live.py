@@ -22,7 +22,7 @@ for k in ['HRC_SESSION_REF','HRC_RUNTIME_ID','HRC_RUN_ID','HRC_HOST_SESSION_ID',
 project=root/'n1-t11818';project.mkdir()
 base.update(ASP_PROJECT_ROOT_OVERRIDE=str(project),HRC_PROJECT_SEARCH_ROOTS=str(project),HRC_STATE_DIR=str(root/'state'),HRC_RUNTIME_DIR=str(root/'run'))
 config=root/'federation.json';config.write_text(json.dumps({'nodeId':socket.gethostname().split('.')[0].lower(),'peers':{}}));config.chmod(0o600);base['HRC_PEER_CONFIG_FILE']=str(config)
-subprocess.run(['wrkqadm','migrate'],env=base,capture_output=True,check=True);subprocess.run([str(Path.home() / ".local/bin/wrkq"),'mkdir','/n1-t11818','--kind','project','--as','agent:cody'],env=base,capture_output=True,check=True)
+subprocess.run([str(Path.home() / '.local/bin/wrkqadm'), 'migrate'],env=base,capture_output=True,check=True);subprocess.run([str(Path.home() / ".local/bin/wrkq"),'mkdir','/n1-t11818','--kind','project','--as','agent:cody'],env=base,capture_output=True,check=True)
 class Rpc:
  def __init__(self,path):
   self.s=socket.socket(socket.AF_UNIX,socket.SOCK_STREAM);self.s.settimeout(120);self.s.connect(str(path));self.f=self.s.makefile('rwb');self.id=0

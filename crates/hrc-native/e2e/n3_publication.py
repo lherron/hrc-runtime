@@ -61,7 +61,7 @@ def main():
             nonlocal authority
             s.down(authority);backup(empty,s.root/'wrkq.db')
             log=(a.artifacts/('wrkqd-'+tag+'.log')).open('w');s.logs.append(log)
-            authority=subprocess.Popen(['wrkqd','-addr','127.0.0.1:'+str(s.authority['port']),'-db',str(s.root/'wrkq.db')],env={**s.env,'WRKQ_DB':str(s.root/'wrkq.db'),'WRKQD_TOKEN':(s.root/'wrkqd-token').read_text().strip(),'WRKF_HOOK_CATALOG':str(s.root/'hook-catalog.json')},cwd=s.project,stdout=log,stderr=log);s.owners.append(authority)
+            authority=subprocess.Popen([str(Path.home() / '.local/bin/wrkqd'), '-addr','127.0.0.1:'+str(s.authority['port']),'-db',str(s.root/'wrkq.db')],env={**s.env,'WRKQ_DB':str(s.root/'wrkq.db'),'WRKQD_TOKEN':(s.root/'wrkqd-token').read_text().strip(),'WRKF_HOOK_CATALOG':str(s.root/'hook-catalog.json')},cwd=s.project,stdout=log,stderr=log);s.owners.append(authority)
             time.sleep(.5);s.command('initialize-'+tag,[str(Path.home() / ".local/bin/wrkq"),'projects','--json'])
         types=[r['type'] for r in expected]
         assert not [k for k in types if k.startswith('server.')],('scratch owner published its server timeline',types)

@@ -128,7 +128,7 @@ def main():
     rows, failures, unchanged = [], [], True
     try:
         subprocess.run([str(a.binary.resolve()), 'store', 'migrate', str(state)], env=env, check=True, capture_output=True)
-        subprocess.run(['wrkqadm', 'migrate'], env=env, check=True, capture_output=True)
+        subprocess.run([str(Path.home() / '.local/bin/wrkqadm'), 'migrate'], env=env, check=True, capture_output=True)
         with sqlite3.connect(state) as src, sqlite3.connect(root / 'empty.sqlite') as dst: src.backup(dst)
         runs = [('native', None, cases)] + [(name, value, [(name, '/v1/sessions')]) for name, value in [('config-zero', '0'), ('config-prefix', '1000days'), ('config-invalid', '-1')]]
         for label, days, subset in runs:

@@ -82,7 +82,7 @@ def main(prepare=None, case_factory=None, observe=None, suite="n1-routes", settl
     host = None
     query = lambda path,**kw:path+'?'+urlencode(kw)
     try:
-        subprocess.run(['wrkqadm','migrate'],env=env,check=True,capture_output=True)
+        subprocess.run([str(Path.home() / '.local/bin/wrkqadm'), 'migrate'],env=env,check=True,capture_output=True)
         subprocess.run([str(Path.home() / ".local/bin/wrkq"),'mkdir','/n1-t11818','--kind','project','--as','agent:cody'],env=env,check=True,capture_output=True)
         up('native','prime')
         for lane in ('main','alternate'):
