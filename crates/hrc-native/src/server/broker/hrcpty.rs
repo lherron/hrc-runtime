@@ -476,7 +476,7 @@ async fn follow(server: &Shared, runtime_id: &str, socket: &Path) -> Result<()> 
         );
         record(server, runtime_id, key, &frame["params"])?;
         let active = {
-            let db = server.store.lock().unwrap();
+            let db = server.read()?;
             db::runtime(&db.sqlite, runtime_id)?.is_some_and(|rt| {
                 rt.active_run_id.is_some()
                     || rt.state_object()["participant"]["lifecycleOwner"] == hrc_store::HRC_LAUNCHED
@@ -494,18 +494,21 @@ fn record(server: &Server, runtime_id: &str, key: &str, exit: &Value) -> Result<
     let Some(_write) = server.owner_writes.enter() else {
         return Ok(());
     };
-    let db = server.store.lock().unwrap();
-    let Some(rt) = db::runtime(&db.sqlite, runtime_id)? else {
-        return Ok(());
-    };
-    let mut state = rt.state_object();
-    let now = hrc_store::timestamp();
-    let mut exit = exit.clone();
-    exit["at"] = now.as_str().into();
-    state["hrcpty"][key] = exit;
-    db::update_runtime_state(&db.sqlite, runtime_id, &state, &now)?;
-    drop(db);
-    server.ledger_committed();
+    let recorded = server.write(|db| -> Result<bool> {
+        let Some(rt) = db::runtime(&db.sqlite, runtime_id)? else {
+            return Ok(false);
+        };
+        let mut state = rt.state_object();
+        let now = hrc_store::timestamp();
+        let mut exit = exit.clone();
+        exit["at"] = now.as_str().into();
+        state["hrcpty"][key] = exit;
+        db::update_runtime_state(&db.sqlite, runtime_id, &state, &now)?;
+        Ok(true)
+    })?;
+    if recorded {
+        server.ledger_committed();
+    }
     Ok(())
 }
 

@@ -33,60 +33,63 @@ fn fail(
     let Some(_write) = server.owner_writes.enter() else {
         return Ok(false);
     };
-    let db = server.store.lock().unwrap();
-    let Some(run) = db::run(&db.sqlite, run_id)? else {
-        return Ok(false);
-    };
-    if run.status != "accepted" || run.dispatched_input_id.is_some() {
-        return Ok(false);
-    }
-    let message = message
-        .unwrap_or("cold-birth accepted run lost the continuation that owed its prompt")
-        .to_owned();
-    let now = hrc_store::timestamp();
-    let tx = db.sqlite.unchecked_transaction()?;
-    db::mark_run_completed(
-        &tx,
-        run_id,
-        db::Completion {
-            status: "failed",
-            completed_at: &now,
-            updated_at: &now,
-            error_code: Some(code),
-            error_message: Some(&message),
-        },
-    )?;
-    let mut log = json!({"runId":run_id,"runtimeId":run.runtime_id,"hostSessionId":run.host_session_id,"scopeRef":run.scope_ref,"errorCode":code,"phase":phase,"error":message});
-    let mut payload = json!({"code":code,"message":message,"phase":phase});
-    if let Value::Object(extra) = &detail {
-        for (k, v) in extra {
-            log[k] = v.clone();
-            payload[k] = v.clone();
+    let changed = server.write(|db| -> anyhow::Result<bool> {
+        let Some(run) = db::run(&db.sqlite, run_id)? else {
+            return Ok(false);
+        };
+        if run.status != "accepted" || run.dispatched_input_id.is_some() {
+            return Ok(false);
         }
+        let message = message
+            .unwrap_or("cold-birth accepted run lost the continuation that owed its prompt")
+            .to_owned();
+        let now = hrc_store::timestamp();
+        let tx = db.sqlite.unchecked_transaction()?;
+        db::mark_run_completed(
+            &tx,
+            run_id,
+            db::Completion {
+                status: "failed",
+                completed_at: &now,
+                updated_at: &now,
+                error_code: Some(code),
+                error_message: Some(&message),
+            },
+        )?;
+        let mut log = json!({"runId":run_id,"runtimeId":run.runtime_id,"hostSessionId":run.host_session_id,"scopeRef":run.scope_ref,"errorCode":code,"phase":phase,"error":message});
+        let mut payload = json!({"code":code,"message":message,"phase":phase});
+        if let Value::Object(extra) = &detail {
+            for (k, v) in extra {
+                log[k] = v.clone();
+                payload[k] = v.clone();
+            }
+        }
+        super::stderr_json(
+            "error",
+            "broker",
+            "broker.cold_boot_input.continuation_failed",
+            log,
+        );
+        let ev = events::Ev {
+            ts: now,
+            host_session_id: run.host_session_id.clone(),
+            scope_ref: run.scope_ref.clone(),
+            lane_ref: run.lane_ref.clone(),
+            generation: run.generation,
+            runtime_id: run.runtime_id.clone(),
+            run_id: Some(run_id.to_owned()),
+            transport: Some("headless".into()),
+            error_code: Some(code.into()),
+            ..Default::default()
+        };
+        events::append(&tx, "turn.failed", &ev, &payload)?;
+        tx.commit()?;
+        Ok(true)
+    })?;
+    if changed {
+        server.ledger_committed();
     }
-    super::stderr_json(
-        "error",
-        "broker",
-        "broker.cold_boot_input.continuation_failed",
-        log,
-    );
-    let ev = events::Ev {
-        ts: now,
-        host_session_id: run.host_session_id.clone(),
-        scope_ref: run.scope_ref.clone(),
-        lane_ref: run.lane_ref.clone(),
-        generation: run.generation,
-        runtime_id: run.runtime_id.clone(),
-        run_id: Some(run_id.to_owned()),
-        transport: Some("headless".into()),
-        error_code: Some(code.into()),
-        ..Default::default()
-    };
-    events::append(&tx, "turn.failed", &ev, &payload)?;
-    tx.commit()?;
-    drop(db);
-    server.ledger_committed();
-    Ok(true)
+    Ok(changed)
 }
 
 /// The continuation is lost: nothing can deliver the owed prompt.
@@ -116,7 +119,9 @@ async fn wait_priming(server: &Shared, runtime_id: &str) -> bool {
             return false;
         }
         let active = {
-            let db = server.store.lock().unwrap();
+            let Ok(db) = server.read() else {
+                return false;
+            };
             db::runtime(&db.sqlite, runtime_id)
                 .ok()
                 .flatten()
@@ -132,7 +137,9 @@ async fn wait_priming(server: &Shared, runtime_id: &str) -> bool {
 
 async fn recover_one(server: Shared, run_id: String) {
     let (run, correlation) = {
-        let db = server.store.lock().unwrap();
+        let Ok(db) = server.read() else {
+            return;
+        };
         let run = db::run(&db.sqlite, &run_id).ok().flatten();
         let correlation = run.as_ref().and_then(|r| r.correlation_json.clone());
         (run, correlation)
@@ -142,7 +149,9 @@ async fn recover_one(server: Shared, run_id: String) {
         return lost(&server, &run_id, json!({"reason":"prompt_not_durable"}));
     };
     let rt = {
-        let db = server.store.lock().unwrap();
+        let Ok(db) = server.read() else {
+            return;
+        };
         match &run.runtime_id {
             Some(id) => db::runtime(&db.sqlite, id).ok().flatten(),
             None => None,
@@ -200,7 +209,7 @@ async fn recover_one(server: Shared, run_id: String) {
     let result: Result<Value, ApiError> = async {
         // continueAdmittedTurn's provenance check, re-read inside the continuation.
         let (current, session) = {
-            let db = server.store.lock().unwrap();
+            let db = server.read()?;
             (
                 db::run(&db.sqlite, &run_id)?,
                 db.session(&run.host_session_id)?,
@@ -257,7 +266,9 @@ async fn recover_one(server: Shared, run_id: String) {
 /// recoverColdBootInputContinuations: after reattach, every candidate at once.
 pub fn start(server: &Shared) {
     let ids: Vec<String> = {
-        let db = server.store.lock().unwrap();
+        let Ok(db) = server.read() else {
+            return;
+        };
         db.sqlite
             .prepare("SELECT run_id FROM runs WHERE status='accepted' AND transport='headless' AND dispatched_input_id IS NULL AND completed_at IS NULL ORDER BY accepted_at ASC, run_id ASC")
             .and_then(|mut s| s.query_map([], |r| r.get(0))?.collect())

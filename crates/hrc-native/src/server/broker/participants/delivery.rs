@@ -56,7 +56,7 @@ impl Delivery {
 pub async fn classify(server: &Shared, session: &Value) -> Result<Option<Delivery>, ApiError> {
     let scope = session["scopeRef"].as_str().unwrap_or("");
     let candidate = {
-        let store = server.store.lock().unwrap();
+        let store = server.read()?;
         match store.participant_registration_by_scope(scope)? {
             None => crate::server::turns::admission::active_broker_runtime(
                 &store.sqlite,
@@ -114,177 +114,178 @@ fn needs_reconnect(server: &Server, attempt: &Value) -> bool {
 /// resolveParticipantDelivery: None is the ONLY answer that leaves ordinary
 /// dispatch untouched.
 pub fn resolve(server: &Server, session: &Value) -> Result<Option<Delivery>, ApiError> {
-    let store = server.store.lock().unwrap();
-    let db = &store.sqlite;
-    let scope = session["scopeRef"].as_str().unwrap_or("");
-    let Some(reg) = store.participant_registration_by_scope(scope)? else {
-        return Ok(None);
-    };
-    let refuse = |kind, reason, detail: String| {
-        Ok(Some(Delivery::Refused {
-            kind,
-            reason,
-            detail,
-        }))
-    };
-    let registration_id = reg["registration_id"].as_str().unwrap_or("");
-    let Some(attempt) = store.participant_latest_attempt(registration_id)? else {
-        return refuse(
-            "unavailable",
-            "participant_attempt_unavailable",
-            "the participant registration has no durable attempt to deliver into".into(),
-        );
-    };
-    let attempt_id = attempt["attempt_id"].as_str().unwrap_or("");
-    let state = attempt["state"].as_str().unwrap_or("");
-    if attempt["prepared_profile_json"].is_null() {
-        return refuse(
-            "pending",
-            "participant_attachment_pending",
-            format!(
-                "participant {registration_id} has joined but not attached; addressed work stays pending until it does"
-            ),
-        );
-    }
-    if matches!(state, "SUPERSEDED" | "ABANDONED" | "TERMINAL") {
-        return refuse(
-            "unavailable",
-            "participant_attempt_absorbing",
-            format!(
-                "participant attempt {attempt_id} is {state}; it will not serve addressed work"
-            ),
-        );
-    }
-    if state != "ACTIVE" {
-        let work = attempt["establishment_work_state"].as_str().unwrap_or("");
-        if work == "exhausted" {
+    server.write(|store| {
+        let db = &store.sqlite;
+        let scope = session["scopeRef"].as_str().unwrap_or("");
+        let Some(reg) = store.participant_registration_by_scope(scope)? else {
+            return Ok(None);
+        };
+        let refuse = |kind, reason, detail: String| {
+            Ok(Some(Delivery::Refused {
+                kind,
+                reason,
+                detail,
+            }))
+        };
+        let registration_id = reg["registration_id"].as_str().unwrap_or("");
+        let Some(attempt) = store.participant_latest_attempt(registration_id)? else {
             return refuse(
                 "unavailable",
-                "participant_reconnect_exhausted",
+                "participant_attempt_unavailable",
+                "the participant registration has no durable attempt to deliver into".into(),
+            );
+        };
+        let attempt_id = attempt["attempt_id"].as_str().unwrap_or("");
+        let state = attempt["state"].as_str().unwrap_or("");
+        if attempt["prepared_profile_json"].is_null() {
+            return refuse(
+                "pending",
+                "participant_attachment_pending",
                 format!(
-                    "participant attempt {attempt_id} is {state} with an exhausted reconnect budget after {} attempt(s); it needs an explicit re-attach, and its addressed work stays pending meanwhile",
-                    attempt["establishment_attempt_count"]
+                    "participant {registration_id} has joined but not attached; addressed work stays pending until it does"
                 ),
             );
         }
-        return if matches!(work, "pending" | "retry_wait") {
-            refuse(
-                "pending",
-                "participant_reconnect_in_progress",
-                format!(
-                    "participant attempt {attempt_id} is {state} with a reconnect cycle in progress; addressed work stays pending until it is restored"
-                ),
-            )
-        } else {
-            refuse(
-                "pending",
-                "participant_activation_pending",
-                format!(
-                    "participant attempt {attempt_id} is {state}, not ACTIVE; its broker establishment has not finished activating"
-                ),
-            )
-        };
-    }
-    if let Some(binding_id) = attempt["host_binding_id"].as_str() {
-        let Some(binding) = store.participant_host_binding(binding_id)? else {
+        if matches!(state, "SUPERSEDED" | "ABANDONED" | "TERMINAL") {
             return refuse(
                 "unavailable",
-                "participant_linkage_stale",
+                "participant_attempt_absorbing",
                 format!(
-                    "participant attempt {attempt_id} names host binding {binding_id}, which no longer exists"
+                    "participant attempt {attempt_id} is {state}; it will not serve addressed work"
                 ),
             );
-        };
-        let binding_state = binding["state"].as_str().unwrap_or("");
-        if binding_state != "BOUND" {
-            return refuse(
-                if binding_state == "BINDING" {
-                    "pending"
-                } else {
-                    "unavailable"
-                },
-                "participant_binding_not_bound",
-                format!("participant host binding {binding_id} is {binding_state}, not BOUND"),
-            );
         }
-        if binding["registration_id"] != reg["registration_id"]
-            || binding["host_incarnation_id"] != reg["host_incarnation_id"]
-            || binding["host_session_id"] != reg["host_session_id"]
-            || binding["generation"] != reg["generation"]
-            || binding["runtime_id"] != attempt["runtime_id"]
+        if state != "ACTIVE" {
+            let work = attempt["establishment_work_state"].as_str().unwrap_or("");
+            if work == "exhausted" {
+                return refuse(
+                    "unavailable",
+                    "participant_reconnect_exhausted",
+                    format!(
+                        "participant attempt {attempt_id} is {state} with an exhausted reconnect budget after {} attempt(s); it needs an explicit re-attach, and its addressed work stays pending meanwhile",
+                        attempt["establishment_attempt_count"]
+                    ),
+                );
+            }
+            return if matches!(work, "pending" | "retry_wait") {
+                refuse(
+                    "pending",
+                    "participant_reconnect_in_progress",
+                    format!(
+                        "participant attempt {attempt_id} is {state} with a reconnect cycle in progress; addressed work stays pending until it is restored"
+                    ),
+                )
+            } else {
+                refuse(
+                    "pending",
+                    "participant_activation_pending",
+                    format!(
+                        "participant attempt {attempt_id} is {state}, not ACTIVE; its broker establishment has not finished activating"
+                    ),
+                )
+            };
+        }
+        if let Some(binding_id) = attempt["host_binding_id"].as_str() {
+            let Some(binding) = store.participant_host_binding(binding_id)? else {
+                return refuse(
+                    "unavailable",
+                    "participant_linkage_stale",
+                    format!(
+                        "participant attempt {attempt_id} names host binding {binding_id}, which no longer exists"
+                    ),
+                );
+            };
+            let binding_state = binding["state"].as_str().unwrap_or("");
+            if binding_state != "BOUND" {
+                return refuse(
+                    if binding_state == "BINDING" {
+                        "pending"
+                    } else {
+                        "unavailable"
+                    },
+                    "participant_binding_not_bound",
+                    format!("participant host binding {binding_id} is {binding_state}, not BOUND"),
+                );
+            }
+            if binding["registration_id"] != reg["registration_id"]
+                || binding["host_incarnation_id"] != reg["host_incarnation_id"]
+                || binding["host_session_id"] != reg["host_session_id"]
+                || binding["generation"] != reg["generation"]
+                || binding["runtime_id"] != attempt["runtime_id"]
+            {
+                return refuse(
+                    "unavailable",
+                    "participant_linkage_stale",
+                    format!(
+                        "participant host binding {binding_id} no longer matches the registration's incarnation, session, generation or runtime"
+                    ),
+                );
+            }
+        }
+        let reg_host = reg["host_session_id"].as_str().unwrap_or("");
+        let reg_generation = reg["generation"].as_i64().unwrap_or_default();
+        if session["hostSessionId"].as_str() != Some(reg_host)
+            || session["generation"].as_i64() != Some(reg_generation)
         {
             return refuse(
                 "unavailable",
                 "participant_linkage_stale",
                 format!(
-                    "participant host binding {binding_id} no longer matches the registration's incarnation, session, generation or runtime"
+                    "participant {registration_id} is bound to session {reg_host} generation {reg_generation}, not {} generation {}",
+                    session["hostSessionId"].as_str().unwrap_or(""),
+                    session["generation"]
                 ),
             );
         }
-    }
-    let reg_host = reg["host_session_id"].as_str().unwrap_or("");
-    let reg_generation = reg["generation"].as_i64().unwrap_or_default();
-    if session["hostSessionId"].as_str() != Some(reg_host)
-        || session["generation"].as_i64() != Some(reg_generation)
-    {
-        return refuse(
-            "unavailable",
-            "participant_linkage_stale",
-            format!(
-                "participant {registration_id} is bound to session {reg_host} generation {reg_generation}, not {} generation {}",
-                session["hostSessionId"].as_str().unwrap_or(""),
-                session["generation"]
-            ),
-        );
-    }
-    let runtime_id = attempt["runtime_id"].as_str().unwrap_or("");
-    let Some(rt) = db::runtime(db, runtime_id)? else {
-        return refuse(
-            "pending",
-            "participant_runtime_not_materialized",
-            format!("participant runtime {runtime_id} is reserved but not yet materialized"),
-        );
-    };
-    if lease::unavailable(&rt.status) {
-        return refuse(
-            "unavailable",
-            "participant_host_unavailable",
-            format!(
-                "participant runtime {runtime_id} is {}; the external host is not serving this address right now",
-                rt.status
-            ),
-        );
-    }
-    if rt.active_invocation_id.as_deref() != attempt["invocation_id"].as_str() {
-        return refuse(
-            "unavailable",
-            "participant_linkage_stale",
-            format!(
-                "participant runtime {runtime_id} is serving invocation {}, not the current attempt's {}",
-                rt.active_invocation_id.as_deref().unwrap_or("(none)"),
-                attempt["invocation_id"].as_str().unwrap_or("")
-            ),
-        );
-    }
-    if rt.host_session_id != reg_host || rt.generation != reg_generation {
-        return refuse(
-            "unavailable",
-            "participant_linkage_stale",
-            format!(
-                "participant runtime {runtime_id} belongs to session {} generation {}, not the registration's {reg_host} generation {reg_generation}",
-                rt.host_session_id, rt.generation
-            ),
-        );
-    }
-    Ok(Some(if needs_reconnect(server, &attempt) {
-        Delivery::Reconnect {
-            registration_id: registration_id.to_owned(),
-            attempt_id: attempt_id.to_owned(),
-            runtime: rt,
+        let runtime_id = attempt["runtime_id"].as_str().unwrap_or("");
+        let Some(rt) = db::runtime(db, runtime_id)? else {
+            return refuse(
+                "pending",
+                "participant_runtime_not_materialized",
+                format!("participant runtime {runtime_id} is reserved but not yet materialized"),
+            );
+        };
+        if lease::unavailable(&rt.status) {
+            return refuse(
+                "unavailable",
+                "participant_host_unavailable",
+                format!(
+                    "participant runtime {runtime_id} is {}; the external host is not serving this address right now",
+                    rt.status
+                ),
+            );
         }
-    } else {
-        Delivery::Attached(rt)
-    }))
+        if rt.active_invocation_id.as_deref() != attempt["invocation_id"].as_str() {
+            return refuse(
+                "unavailable",
+                "participant_linkage_stale",
+                format!(
+                    "participant runtime {runtime_id} is serving invocation {}, not the current attempt's {}",
+                    rt.active_invocation_id.as_deref().unwrap_or("(none)"),
+                    attempt["invocation_id"].as_str().unwrap_or("")
+                ),
+            );
+        }
+        if rt.host_session_id != reg_host || rt.generation != reg_generation {
+            return refuse(
+                "unavailable",
+                "participant_linkage_stale",
+                format!(
+                    "participant runtime {runtime_id} belongs to session {} generation {}, not the registration's {reg_host} generation {reg_generation}",
+                    rt.host_session_id, rt.generation
+                ),
+            );
+        }
+        Ok(Some(if needs_reconnect(server, &attempt) {
+            Delivery::Reconnect {
+                registration_id: registration_id.to_owned(),
+                attempt_id: attempt_id.to_owned(),
+                runtime: rt,
+            }
+        } else {
+            Delivery::Attached(rt)
+        }))
+    })
 }
 
 /// participantDeliveryUnavailable: both kinds are `runtime_unavailable` on the
@@ -344,15 +345,12 @@ fn reconnecting(session: &Value) -> ApiError {
 /// cycle to the establishment machinery (single-flight per attempt), and wait
 /// for that one operation to finish.
 async fn reconnect(server: &Shared, registration_id: &str, attempt_id: &str) {
-    let armed = server
-        .store
-        .lock()
-        .unwrap()
+    let armed = server.write(|db| db
         .sqlite
         .execute(
             "UPDATE participant_registration_attempts SET establishment_work_state='pending',establishment_attempt_count=0,establishment_next_attempt_at=NULL,establishment_last_error=NULL,updated_at=? WHERE attempt_id=? AND state='ACTIVE' AND establishment_work_state='completed' AND prepared_profile_json IS NOT NULL",
             rusqlite::params![hrc_store::timestamp(), attempt_id],
-        )
+        ))
         .unwrap_or(0);
     let running = server.participant_work.lock().unwrap().contains(attempt_id);
     if armed == 0 && !running {

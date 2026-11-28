@@ -241,12 +241,13 @@ fn settle_hrcpty_orphan(
     pid: Option<i64>,
     reason: &str,
 ) -> Result<bool> {
-    let db = server.store.lock().unwrap();
-    if db::runtime(&db.sqlite, &expected.runtime_id)?.as_ref() != Some(expected) {
-        return Ok(false);
-    }
-    hrcpty::settle(&db.sqlite, &expected.runtime_id, pid, reason)?;
-    Ok(true)
+    server.write(|db| {
+        if db::runtime(&db.sqlite, &expected.runtime_id)?.as_ref() != Some(expected) {
+            return Ok(false);
+        }
+        hrcpty::settle(&db.sqlite, &expected.runtime_id, pid, reason)?;
+        Ok(true)
+    })
 }
 
 async fn hrcpty_orphans(
@@ -346,28 +347,32 @@ fn stale_lease_claims(
     held: &[Claim],
     reasons: &[(String, String)],
 ) -> Result<Option<usize>> {
-    let db = server.store.lock().unwrap();
-    let tx = db.sqlite.unchecked_transaction()?;
-    for c in held {
-        if claim_in(&tx, &c.rt.runtime_id)?.as_ref() != Some(c) {
-            return Ok(None);
+    let staled = server.write(|db| -> Result<_> {
+        let tx = db.sqlite.unchecked_transaction()?;
+        for c in held {
+            if claim_in(&tx, &c.rt.runtime_id)?.as_ref() != Some(c) {
+                return Ok(None);
+            }
         }
-    }
-    let mut staled = 0;
-    for c in held {
-        if lease::unavailable(&c.rt.status) {
-            continue;
+        let mut staled = 0;
+        for c in held {
+            if lease::unavailable(&c.rt.status) {
+                continue;
+            }
+            let reason = reasons
+                .iter()
+                .find(|(id, _)| id == &c.rt.runtime_id)
+                .map(|(_, reason)| reason.as_str())
+                .unwrap_or("broker_claimed_lease_orphaned");
+            mark_reattach_stale_in(&tx, &c.rt, reason, None)?;
+            staled += 1;
         }
-        let reason = reasons
-            .iter()
-            .find(|(id, _)| id == &c.rt.runtime_id)
-            .map(|(_, reason)| reason.as_str())
-            .unwrap_or("broker_claimed_lease_orphaned");
-        mark_reattach_stale_in(&tx, &c.rt, reason, None)?;
-        staled += 1;
-    }
-    tx.commit()?;
-    drop(db);
+        tx.commit()?;
+        Ok(Some(staled))
+    })?;
+    let Some(staled) = staled else {
+        return Ok(None);
+    };
     if staled != 0 {
         server.ledger_committed();
     }
@@ -791,26 +796,27 @@ fn ipc_claim_paths(
 }
 
 fn record_ipc_unbound(server: &Server, candidate: &UnboundIpc, now: i64) -> Result<bool> {
-    let store = server.store.lock().unwrap();
-    let tx = store.sqlite.unchecked_transaction()?;
-    let id = candidate.record["runtimeId"]
-        .as_str()
-        .context("missing IPC runtime id")?;
-    if db::runtime_record(&tx, id)?.as_ref() != Some(&candidate.record) {
-        return Ok(false);
-    }
-    let row = retained::Row::from_runtime(
-        db::rt_record(&candidate.record),
-        candidate.record["statusChangedAt"]
+    server.write(|store| {
+        let tx = store.sqlite.unchecked_transaction()?;
+        let id = candidate.record["runtimeId"]
             .as_str()
-            .map(str::to_owned),
-    );
-    if retained::unbound_invocations(&tx, &row, now)?.as_ref() != Some(&candidate.pending) {
-        return Ok(false);
-    }
-    retained::record_unbound(&tx, &row, &candidate.pending)?;
-    tx.commit()?;
-    Ok(true)
+            .context("missing IPC runtime id")?;
+        if db::runtime_record(&tx, id)?.as_ref() != Some(&candidate.record) {
+            return Ok(false);
+        }
+        let row = retained::Row::from_runtime(
+            db::rt_record(&candidate.record),
+            candidate.record["statusChangedAt"]
+                .as_str()
+                .map(str::to_owned),
+        );
+        if retained::unbound_invocations(&tx, &row, now)?.as_ref() != Some(&candidate.pending) {
+            return Ok(false);
+        }
+        retained::record_unbound(&tx, &row, &candidate.pending)?;
+        tx.commit()?;
+        Ok(true)
+    })
 }
 
 fn ipc_data_version(reader: &Connection) -> Result<i64> {
@@ -826,13 +832,15 @@ fn remove_ipc_if_current(
     // A point re-read of known owners cannot rule out a new claimant. The
     // same reader's data_version also fences that absence, including changes
     // to invocations, retained outcomes and registration attempts.
-    let store = server.store.lock().unwrap();
-    let _tx = Transaction::new_unchecked(&store.sqlite, rusqlite::TransactionBehavior::Immediate)?;
-    if ipc_data_version(reader)? != version {
-        return Ok(false);
-    }
-    std::fs::remove_dir_all(dir)?;
-    Ok(true)
+    server.write(|store| {
+        let _tx =
+            Transaction::new_unchecked(&store.sqlite, rusqlite::TransactionBehavior::Immediate)?;
+        if ipc_data_version(reader)? != version {
+            return Ok(false);
+        }
+        std::fs::remove_dir_all(dir)?;
+        Ok(true)
+    })
 }
 
 /// sweepOrphanedBrokerIpcDirs: a bipc directory goes only when unreferenced,
@@ -1220,13 +1228,15 @@ pub(super) fn hrcpty_log_sweep(server: &Server) -> Result<()> {
             continue;
         }
         // Fail closed on store errors: an unproven row must never lose its log.
-        let db = server.store.lock().unwrap();
-        if db::runtime(&db.sqlite, id)?.is_some_and(|rt| !lease::unavailable(&rt.status)) {
-            kept_live += 1;
-            continue;
-        }
-        std::fs::remove_file(&path)?;
-        removed += 1;
+        server.write(|db| -> Result<()> {
+            if db::runtime(&db.sqlite, id)?.is_some_and(|rt| !lease::unavailable(&rt.status)) {
+                kept_live += 1;
+                return Ok(());
+            }
+            std::fs::remove_file(&path)?;
+            removed += 1;
+            Ok(())
+        })?;
     }
     log(
         "info",

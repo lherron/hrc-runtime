@@ -90,7 +90,7 @@ pub fn assert_runtime(
         return Ok(());
     }
     let caps = {
-        let store = server.store.lock().unwrap();
+        let store = server.read()?;
         runtime
             .active_invocation_id
             .as_deref()

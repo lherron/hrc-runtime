@@ -183,7 +183,7 @@ async fn ensure(server: &Shared, body: &Value) -> Result<Response, ApiError> {
     parse::require_harness(&body["intent"])?;
     let intent = parse::runtime_intent(&body["intent"]);
     let session = {
-        let db = server.store.lock().unwrap();
+        let db = server.read()?;
         db.session(&host)?
     }
     .ok_or_else(|| ApiError::missing_host(&host))?;
@@ -202,7 +202,7 @@ fn with_identity(server: &Shared, started: Value) -> Result<Value, ApiError> {
     }
     let host = started["hostSessionId"].as_str().unwrap_or("");
     let identity = {
-        let db = server.store.lock().unwrap();
+        let db = server.read()?;
         let scope: Option<String> = db
             .sqlite
             .query_row(
@@ -645,7 +645,7 @@ impl Claim {
         }
         let scope = session["scopeRef"].as_str().unwrap_or("");
         let (lane, identity) = {
-            let db = server.store.lock().unwrap();
+            let db = server.read()?;
             let lane = stored_lane(&db.sqlite, &host)?;
             let identity = db.identity(scope, &lane)?;
             (lane, identity)
@@ -683,16 +683,12 @@ impl Claim {
         let replayed = recorded.is_some();
         let session = match recorded {
             Some((session, _)) => Some(session),
-            None => server
-                .store
-                .lock()
-                .unwrap()
-                .continuity_session(scope, lane)?,
+            None => server.read()?.continuity_session(scope, lane)?,
         };
         if let Some(session) = &session {
             let host = session["hostSessionId"].as_str().unwrap();
             let ids = {
-                let db = server.store.lock().unwrap();
+                let db = server.read()?;
                 let mut stmt = db
                     .sqlite
                     .prepare("SELECT runtime_id FROM runtimes WHERE host_session_id=?")
@@ -704,7 +700,7 @@ impl Claim {
             };
             for id in ids {
                 super::lease::reconcile_liveness(server, &id).await?;
-                let runtime = server.store.lock().unwrap().runtime(&id)?;
+                let runtime = server.read()?.runtime(&id)?;
                 if let Some(runtime) = runtime
                     .filter(|r| !super::lease::unavailable(r["status"].as_str().unwrap_or("")))
                 {
@@ -767,7 +763,7 @@ impl Claim {
     /// replayRecordedClaim: an identical retry resumes its recorded successor;
     /// a different body under the key, or a superseded successor, refuses.
     fn replay(&self, server: &Shared) -> Result<Option<(Value, String)>, ApiError> {
-        let db = server.store.lock().unwrap();
+        let db = server.read()?;
         let recorded = db
             .sqlite
             .query_row(
@@ -849,11 +845,7 @@ impl Claim {
         let lane = &self.scope.lane_ref;
         for slot in slots {
             let scope = self.scope.with_task(&slot);
-            let existing = server
-                .store
-                .lock()
-                .unwrap()
-                .continuity_session(&scope, lane)?;
+            let existing = server.read()?.continuity_session(&scope, lane)?;
             let Some(existing) = existing else {
                 return Ok((
                     self.mint(server, &scope, row, reason, details).await?,
@@ -866,11 +858,8 @@ impl Claim {
                     return Err(self.propose_alternate(server, &existing)?);
                 }
                 if self.policy == "reject" {
-                    let host_not_serving = server
-                        .store
-                        .lock()
-                        .unwrap()
-                        .participant_host_not_serving(&scope, lane)?;
+                    let host_not_serving =
+                        server.read()?.participant_host_not_serving(&scope, lane)?;
                     if host_not_serving {
                         summon::assert_reserved_address_allows_birth(server, &scope, lane, "start")
                             .await?;
@@ -917,9 +906,7 @@ impl Claim {
         for task in self.scope.roster().into_iter().skip(1) {
             let scope = self.scope.with_task(&task);
             let existing = server
-                .store
-                .lock()
-                .unwrap()
+                .read()?
                 .continuity_session(&scope, &self.scope.lane_ref)?;
             if let Some(session) = existing
                 && !free(server, &session)?
@@ -928,7 +915,7 @@ impl Claim {
             }
             let host = occupied["hostSessionId"].as_str().unwrap_or("");
             let is_live = {
-                let db = server.store.lock().unwrap();
+                let db = server.read()?;
                 let mut stmt = db
                     .sqlite
                     .prepare("SELECT status FROM runtimes WHERE host_session_id=?")
@@ -993,12 +980,13 @@ impl Claim {
             .unwrap()
             .extend(details.as_object().cloned().unwrap_or_default());
         summon::with_summon_authority(server, request, || async {
-            let mut db = server.store.lock().unwrap();
-            let (session, _) =
-                db.create_session_then(scope, lane, None, &payload, |tx, host, now| {
-                    row.insert(tx, scope, host, now)
-                })?;
-            Ok(session)
+            server.write(|db| {
+                let (session, _) =
+                    db.create_session_then(scope, lane, None, &payload, |tx, host, now| {
+                        row.insert(tx, scope, host, now)
+                    })?;
+                Ok(session)
+            })
         })
         .await
     }
@@ -1012,7 +1000,7 @@ fn free(server: &Shared, session: &Value) -> Result<bool, ApiError> {
     if STARTING.lock().unwrap().contains(host) {
         return Ok(false);
     }
-    let db = server.store.lock().unwrap();
+    let db = server.read()?;
     let reserved: bool = db
         .sqlite
         .query_row(

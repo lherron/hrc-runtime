@@ -154,7 +154,7 @@ pub struct Submit<'a> {
 }
 
 fn classes(server: &Shared, invocation: &str) -> Option<Vec<String>> {
-    let db = server.store.lock().unwrap();
+    let db = server.read().ok()?;
     let inv = db::invocation(&db.sqlite, invocation).ok().flatten()?;
     let caps: Value = serde_json::from_str(&inv.capabilities_json).ok()?;
     caps["admission"]["classes"].as_array().map(|a| {
@@ -285,21 +285,22 @@ pub async fn submit(server: &Shared, s: Submit<'_>) -> Result<Value, BrokerError
         startup_timing::mark("brokerAcceptedMs");
         let observed = hrc_store::timestamp();
         let result = {
-            let db = server.store.lock().unwrap();
-            let submission = response["submissionId"].as_str().unwrap_or("");
-            observe::update_submission(
-                &db.sqlite,
-                &observe::Submission {
-                    runtime_id: s.runtime_id,
-                    invocation_id: &invocation,
-                    submission_id: submission,
-                    run_id: s.run_id,
-                    door: s.door,
-                    admission_class: Some(class),
-                    observed_at: &observed,
-                },
-                |_| json!({"admissionClass":class,"acceptedAt":observed,"lastMilestone":"accepted"}),
-            )
+            server.write(|db| {
+                let submission = response["submissionId"].as_str().unwrap_or("");
+                observe::update_submission(
+                    &db.sqlite,
+                    &observe::Submission {
+                        runtime_id: s.runtime_id,
+                        invocation_id: &invocation,
+                        submission_id: submission,
+                        run_id: s.run_id,
+                        door: s.door,
+                        admission_class: Some(class),
+                        observed_at: &observed,
+                    },
+                    |_| json!({"admissionClass":class,"acceptedAt":observed,"lastMilestone":"accepted"}),
+                )
+            })
         };
         match result {
             Ok(()) => server.ledger_committed(),
@@ -373,7 +374,9 @@ async fn with_retries(
         }
         if let Some(run_id) = s.run_id {
             let completed = {
-                let db = server.store.lock().unwrap();
+                let Ok(db) = server.read() else {
+                    return Err(error);
+                };
                 db::run(&db.sqlite, run_id)
                     .ok()
                     .flatten()

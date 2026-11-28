@@ -65,7 +65,7 @@ pub async fn session_gate(server: &Shared, session: &Value) -> tokio::sync::Owne
 pub fn require_active_host(server: &Shared, session: &Value) -> Result<(), ApiError> {
     let host = session["hostSessionId"].as_str().unwrap_or("");
     let row: Option<(String, Option<String>)> = {
-        let db = server.store.lock().unwrap();
+        let db = server.read()?;
         db.sqlite
             .query_row(
                 "SELECT s.status, c.active_host_session_id FROM sessions s LEFT JOIN continuities c ON c.scope_ref=s.scope_ref AND c.lane_ref=s.lane_ref WHERE s.host_session_id=?",
@@ -170,9 +170,7 @@ async fn prepare_dispatch(server: &Shared, birth: &Birth<'_>) -> Result<(Value, 
         ));
     }
     let reuse_disabled = server
-        .store
-        .lock()
-        .unwrap()
+        .read()?
         .sqlite
         .query_row(
             "SELECT continuation_reuse_disabled FROM sessions WHERE host_session_id=?",
@@ -345,11 +343,7 @@ pub async fn birth(server: &Shared, birth: Birth<'_>) -> Result<Value, ApiError>
         }
         return super::participants::launch(server, &birth.session, command, birth.attach).await;
     }
-    let registration = server
-        .store
-        .lock()
-        .unwrap()
-        .participant_registration_by_scope(scope)?;
+    let registration = server.read()?.participant_registration_by_scope(scope)?;
     if let Some(registration) = registration {
         return Err(crate::server::turns::admission::unavailable(
             "participant address cannot be served by a substitute runtime",
@@ -405,17 +399,19 @@ pub async fn birth(server: &Shared, birth: Birth<'_>) -> Result<Value, ApiError>
                 })?;
             attempt.graph_committed = true;
             if run.is_some() {
-                crate::server::projection::turns::arm_first_turn(
-                    &server.store.lock().unwrap().sqlite,
-                    &record["admission"]["identity"],
-                    &session,
-                    if allocation.get("tuiWindow").is_some() {
-                        "tmux"
-                    } else {
-                        "headless"
-                    },
-                    first_turn_timeout_ms,
-                );
+                server.write(|db| {
+                    crate::server::projection::turns::arm_first_turn(
+                        &db.sqlite,
+                        &record["admission"]["identity"],
+                        &session,
+                        if allocation.get("tuiWindow").is_some() {
+                            "tmux"
+                        } else {
+                            "headless"
+                        },
+                        first_turn_timeout_ms,
+                    )
+                });
             }
         }
         server.ledger_committed();
@@ -469,15 +465,17 @@ pub async fn birth(server: &Shared, birth: Birth<'_>) -> Result<Value, ApiError>
     let mut submission = execution["dispatchRequest"]["startRequest"]["initialInput"]["inputId"]
         .as_str()
         .map(str::to_owned);
-    server.store.lock().unwrap().finish_broker_start(
-        &record,
-        &hello,
-        &allocation,
-        &started,
-        &snapshot,
-        submission.as_deref(),
-        attach_pending,
-    )?;
+    server.write(|db| {
+        db.finish_broker_start(
+            &record,
+            &hello,
+            &allocation,
+            &started,
+            &snapshot,
+            submission.as_deref(),
+            attach_pending,
+        )
+    })?;
     let runtime_id = string(&identity, "runtimeId")?.to_owned();
     let invocation_id = string(&identity, "invocationId")?.to_owned();
     controller::bind(server, &runtime_id, &invocation_id, client.clone());
@@ -513,9 +511,7 @@ pub async fn birth(server: &Shared, birth: Birth<'_>) -> Result<Value, ApiError>
         submission = Some(launch_carried_submission(server, run_id, &runtime_id).await?);
     }
     let from_seq = server
-        .store
-        .lock()
-        .unwrap()
+        .read()?
         .sqlite
         .query_row("SELECT COALESCE(MAX(hrc_seq),0) FROM hrc_events", [], |r| {
             r.get::<_, i64>(0)
@@ -612,7 +608,7 @@ async fn release_failed_start(
             }
         }
     } else if !attempt.graph_committed {
-        let status = server.store.lock().unwrap().operation_status(operation);
+        let status = server.read().and_then(|db| db.operation_status(operation));
         if !matches!(status, Ok(Some(ref s)) if s == "prepared") {
             return;
         }
@@ -689,70 +685,71 @@ fn settle_refused_start(
     let runtime = string(id, "runtimeId")?;
     let operation = string(id, "operationId")?;
     let invocation = string(id, "invocationId")?;
-    let store = server.store.lock().unwrap();
-    let tx = store.sqlite.unchecked_transaction()?;
-    let Some(rt) = db::runtime(&tx, runtime)? else {
-        return Ok(false);
-    };
-    let Some(inv) = db::invocation(&tx, invocation)? else {
-        return Ok(false);
-    };
-    if rt.status != "starting"
-        || rt.controller_kind.as_deref() != Some("harness-broker")
-        || controller::external_lifecycle(&rt)
-        || rt.active_operation_id.as_deref() != Some(operation)
-        || rt.active_invocation_id.as_deref() != Some(invocation)
-        || rt.active_run_id.as_deref() != id["runId"].as_str()
-        || inv.runtime_id != runtime
-        || inv.operation_id != operation
-        || inv.invocation_state != "starting"
-        || store.operation_status(operation)?.as_deref() != Some("starting")
-    {
-        return Ok(false);
-    }
-    let now = hrc_store::timestamp();
-    let reason = "broker_start_refused";
-    let code = if error.code == "internal_error" {
-        "broker_start_failed"
-    } else {
-        error.code
-    };
-    let message = refusal["message"].as_str().unwrap_or(&error.message);
-    let ev = events::Ev {
-        ts: now.clone(),
-        host_session_id: rt.host_session_id.clone(),
-        scope_ref: rt.scope_ref.clone(),
-        lane_ref: rt.lane_ref.clone(),
-        generation: rt.generation,
-        runtime_id: Some(runtime.into()),
-        run_id: id["runId"].as_str().map(str::to_owned),
-        transport: Some(rt.transport.clone()),
-        error_code: Some(code.into()),
-        ..Default::default()
-    };
-    let payload = json!({"reason":reason,"operationId":operation,"invocationId":invocation,"error":{"code":code,"message":message,"brokerRpcCode":refusal["code"]}});
-    if let Some(run) = id["runId"].as_str() {
-        let changed = tx.execute("UPDATE runs SET status='failed',completed_at=?,updated_at=?,error_code=?,error_message=? WHERE run_id=? AND runtime_id=? AND operation_id=? AND invocation_id=? AND status='accepted' AND completed_at IS NULL", params![now,now,code,message,run,runtime,operation,invocation])?;
-        if changed > 0 {
-            events::append(&tx, "turn.failed", &ev, &payload)?;
+    server.write(|store| {
+        let tx = store.sqlite.unchecked_transaction()?;
+        let Some(rt) = db::runtime(&tx, runtime)? else {
+            return Ok(false);
+        };
+        let Some(inv) = db::invocation(&tx, invocation)? else {
+            return Ok(false);
+        };
+        if rt.status != "starting"
+            || rt.controller_kind.as_deref() != Some("harness-broker")
+            || controller::external_lifecycle(&rt)
+            || rt.active_operation_id.as_deref() != Some(operation)
+            || rt.active_invocation_id.as_deref() != Some(invocation)
+            || rt.active_run_id.as_deref() != id["runId"].as_str()
+            || inv.runtime_id != runtime
+            || inv.operation_id != operation
+            || inv.invocation_state != "starting"
+            || store.operation_status(operation)?.as_deref() != Some("starting")
+        {
+            return Ok(false);
         }
-    }
-    tx.execute("UPDATE broker_invocations SET invocation_state='disposed',lifecycle_terminal_reason=?,updated_at=? WHERE invocation_id=?",params![reason,now,invocation])?;
-    tx.execute("UPDATE runtime_operations SET status='failed',completed_at=?,updated_at=?,error_code=?,error_message=? WHERE operation_id=?",params![now,now,code,message,operation])?;
-    let mut state = rt.state_object();
-    state["status"] = "terminated".into();
-    state["terminalReason"] = reason.into();
-    state["updatedAt"] = now.clone().into();
-    state["startRefusal"] = payload.clone();
-    state["executionRelease"] = record["executionRelease"].clone();
-    state["executionRelease"]["source"] = "aspd".into();
-    state["executionRelease"]["worker"]["executable"] = record["hosting"]["executable"].clone();
-    state["broker"] = json!({"eventLedgerPath":record["hosting"]["paths"]["eventLedgerPath"]});
-    tx.execute("UPDATE runtimes SET status='terminated',status_changed_at=?,updated_at=?,lifecycle_terminal_reason=?,active_run_id=NULL,active_operation_id=NULL,active_invocation_id=NULL,runtime_state_json=? WHERE runtime_id=?",params![now,now,reason,state.to_string(),runtime])?;
-    turns::disarm_first_turn(&tx, runtime, rt.generation, reason, &now);
-    events::append(&tx, "runtime.terminated", &ev, &payload)?;
-    tx.commit()?;
-    Ok(true)
+        let now = hrc_store::timestamp();
+        let reason = "broker_start_refused";
+        let code = if error.code == "internal_error" {
+            "broker_start_failed"
+        } else {
+            error.code
+        };
+        let message = refusal["message"].as_str().unwrap_or(&error.message);
+        let ev = events::Ev {
+            ts: now.clone(),
+            host_session_id: rt.host_session_id.clone(),
+            scope_ref: rt.scope_ref.clone(),
+            lane_ref: rt.lane_ref.clone(),
+            generation: rt.generation,
+            runtime_id: Some(runtime.into()),
+            run_id: id["runId"].as_str().map(str::to_owned),
+            transport: Some(rt.transport.clone()),
+            error_code: Some(code.into()),
+            ..Default::default()
+        };
+        let payload = json!({"reason":reason,"operationId":operation,"invocationId":invocation,"error":{"code":code,"message":message,"brokerRpcCode":refusal["code"]}});
+        if let Some(run) = id["runId"].as_str() {
+            let changed = tx.execute("UPDATE runs SET status='failed',completed_at=?,updated_at=?,error_code=?,error_message=? WHERE run_id=? AND runtime_id=? AND operation_id=? AND invocation_id=? AND status='accepted' AND completed_at IS NULL", params![now,now,code,message,run,runtime,operation,invocation])?;
+            if changed > 0 {
+                events::append(&tx, "turn.failed", &ev, &payload)?;
+            }
+        }
+        tx.execute("UPDATE broker_invocations SET invocation_state='disposed',lifecycle_terminal_reason=?,updated_at=? WHERE invocation_id=?",params![reason,now,invocation])?;
+        tx.execute("UPDATE runtime_operations SET status='failed',completed_at=?,updated_at=?,error_code=?,error_message=? WHERE operation_id=?",params![now,now,code,message,operation])?;
+        let mut state = rt.state_object();
+        state["status"] = "terminated".into();
+        state["terminalReason"] = reason.into();
+        state["updatedAt"] = now.clone().into();
+        state["startRefusal"] = payload.clone();
+        state["executionRelease"] = record["executionRelease"].clone();
+        state["executionRelease"]["source"] = "aspd".into();
+        state["executionRelease"]["worker"]["executable"] = record["hosting"]["executable"].clone();
+        state["broker"] = json!({"eventLedgerPath":record["hosting"]["paths"]["eventLedgerPath"]});
+        tx.execute("UPDATE runtimes SET status='terminated',status_changed_at=?,updated_at=?,lifecycle_terminal_reason=?,active_run_id=NULL,active_operation_id=NULL,active_invocation_id=NULL,runtime_state_json=? WHERE runtime_id=?",params![now,now,reason,state.to_string(),runtime])?;
+        turns::disarm_first_turn(&tx, runtime, rt.generation, reason, &now);
+        events::append(&tx, "runtime.terminated", &ev, &payload)?;
+        tx.commit()?;
+        Ok(true)
+    })
 }
 
 async fn launch_carried_submission(
@@ -763,7 +760,7 @@ async fn launch_carried_submission(
     let deadline = tokio::time::Instant::now() + Duration::from_secs(60);
     loop {
         let row = {
-            let db = server.store.lock().unwrap();
+            let db = server.read()?;
             crate::server::projection::db::run(&db.sqlite, run_id)?
         };
         if let Some(row) = row {
@@ -772,9 +769,7 @@ async fn launch_carried_submission(
             }
             if !matches!(row.status.as_str(), "accepted" | "started" | "running") {
                 let message: Option<String> = server
-                    .store
-                    .lock()
-                    .unwrap()
+                    .read()?
                     .sqlite
                     .query_row(
                         "SELECT error_message FROM runs WHERE run_id=?",

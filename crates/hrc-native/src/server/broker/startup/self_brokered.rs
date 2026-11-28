@@ -4,7 +4,7 @@ use super::*;
 pub(super) async fn reconcile(server: &Shared) -> Result<()> {
     // Attempts precede runtime rows, so enumerate attempts, not broker candidates.
     let interrupted: Vec<(String, String)> = {
-        let db = server.store.lock().unwrap();
+        let db = server.read()?;
         db.sqlite.prepare("SELECT a.attempt_id,a.runtime_id FROM participant_registration_attempts a JOIN participant_registrations p USING(registration_id) WHERE p.lifecycle_owner='hrc-launched' AND a.state NOT IN ('ABANDONED','TERMINAL','SUPERSEDED') AND (a.prepared_profile_json IS NULL OR a.hosting_intent_json IS NULL)")?
             .query_map([], |r| Ok((r.get(0)?, r.get(1)?)))?
             .collect::<rusqlite::Result<_>>()?

@@ -107,6 +107,11 @@ struct Options {
     trigger: &'static str,
 }
 
+struct Candidate {
+    runtime: Value,
+    facts: Value,
+}
+
 #[derive(Default)]
 struct Tally {
     eligible: usize,
@@ -117,7 +122,7 @@ struct Tally {
     max_hold: Duration,
     deleted_ids: Vec<String>,
     skipped_ids: Vec<Value>,
-    pending: Vec<String>,
+    pending: Vec<Candidate>,
     backlog: usize,
 }
 impl Tally {
@@ -128,58 +133,61 @@ impl Tally {
     }
 }
 
-/// 4(b)-(f) for one runtime past the window: None when it may be deleted.
-async fn judge(server: &Server, r: &Value, mark: &Mark, cutoff_ms: f64) -> Option<String> {
+/// 4(b)-(f) for one runtime past the window: return the facts that must still match before deletion.
+async fn judge(server: &Server, r: &Value, mark: &Mark, cutoff_ms: f64) -> Result<Value, String> {
     let id = r["runtimeId"].as_str().unwrap_or("");
     if !hrc_store::status::UNAVAILABLE
         .iter()
         .any(|s| r["status"] == *s)
     {
-        return Some("status_not_terminal".into());
+        return Err("status_not_terminal".into());
     }
     let updated = r["updatedAt"]
         .as_str()
         .map(hrc_common::js::parse_date)
         .unwrap_or(f64::NAN);
     if !updated.is_finite() {
-        return Some("updated_at_invalid".into());
+        return Err("updated_at_invalid".into());
     }
     if updated >= cutoff_ms {
-        return Some("inside_window".into());
+        return Err("inside_window".into());
     }
     if updated >= mark.reconciled_ms {
-        return Some("changed_after_mark".into());
+        return Err("changed_after_mark".into());
     }
     let (heads, facts) = {
-        let store = server.store.lock().unwrap();
+        let store = match server.read() {
+            Ok(store) => store,
+            Err(e) => return Err(format!("guard_error:{e}")),
+        };
         (store.runtime_ledger_heads(id), store.maintenance_facts(r))
     };
     let (hrc, broker) = match heads {
         Ok(h) => h,
-        Err(e) => return Some(format!("guard_error:{e}")),
+        Err(e) => return Err(format!("guard_error:{e}")),
     };
     if hrc.is_some_and(|k| k >= mark.anchors[0].0) || broker.is_some_and(|k| k >= mark.anchors[1].0)
     {
-        return Some("at_or_above_anchor".into());
+        return Err("at_or_above_anchor".into());
     }
     let facts = match facts {
         Ok(f) => f,
-        Err(e) => return Some(format!("guard_error:{e}")),
+        Err(e) => return Err(format!("guard_error:{e}")),
     };
     match maintenance::prune_guard(server, r, &facts).await {
-        Ok(Some(reason)) => return Some(reason),
+        Ok(Some(reason)) => return Err(reason),
         Ok(None) => {}
-        Err(e) => return Some(format!("guard_error:{e}")),
+        Err(e) => return Err(format!("guard_error:{e}")),
     }
     match maintenance::process_live(&r["runtimeStateJson"]["broker"]["brokerPid"]) {
-        Ok(false) => None,
-        Ok(true) => Some("live_broker_pid".into()),
-        Err(e) => Some(format!("guard_error:{e}")),
+        Ok(false) => Ok(facts),
+        Ok(true) => Err("live_broker_pid".into()),
+        Err(e) => Err(format!("guard_error:{e}")),
     }
 }
 
 /// Delete (or, on a dry run, count) `t.pending` in bounded batches.
-async fn drain(server: &Server, o: &Options, t: &mut Tally) -> Result<(), Stop> {
+async fn drain(server: &Server, o: &Options, t: &mut Tally, mark: &Mark) -> Result<(), Stop> {
     // Start with one runtime, then size each batch from the cost per runtime
     // the last one showed; a single runtime is the floor.
     let mut size = 1usize;
@@ -188,9 +196,13 @@ async fn drain(server: &Server, o: &Options, t: &mut Tally) -> Result<(), Stop> 
             return Err(("deadline", Value::Null));
         }
         let n = size.min(t.pending.len());
-        let ids: Vec<String> = t.pending.drain(..n).collect();
+        let candidates: Vec<_> = t.pending.drain(..n).collect();
+        let ids: Vec<String> = candidates
+            .iter()
+            .map(|c| c.runtime["runtimeId"].as_str().unwrap_or("").to_owned())
+            .collect();
         if o.dry_run {
-            let counts = server.store.lock().unwrap().runtime_cascade_counts(&ids);
+            let counts = server.read().and_then(|db| db.runtime_cascade_counts(&ids));
             match counts {
                 Ok(counts) => counts
                     .into_iter()
@@ -201,11 +213,32 @@ async fn drain(server: &Server, o: &Options, t: &mut Tally) -> Result<(), Stop> 
             continue;
         }
         let Some(_write) = server.owner_writes.enter() else {
-            t.pending.splice(0..0, ids);
+            t.pending.splice(0..0, candidates);
             return Err(("shutdown", Value::Null));
         };
         let held = Instant::now();
-        let result = server.store.lock().unwrap().prune_runtime_batch(&ids);
+        let result = server.write(|db| -> anyhow::Result<_> {
+            anyhow::ensure!(
+                db.ledger_incarnation()? == mark.incarnation,
+                "ledger incarnation changed before prune apply"
+            );
+            for (ledger, (key, created)) in LEDGERS.iter().zip(&mark.anchors) {
+                anyhow::ensure!(
+                    db.ledger_anchor_created(ledger, *key)?.as_ref() == Some(created),
+                    "ledger anchor changed before prune apply: {ledger}"
+                );
+            }
+            for (candidate, id) in candidates.iter().zip(&ids) {
+                let (hrc, broker) = db.runtime_ledger_heads(id)?;
+                anyhow::ensure!(
+                    !hrc.is_some_and(|key| key >= mark.anchors[0].0)
+                        && !broker.is_some_and(|key| key >= mark.anchors[1].0)
+                        && maintenance::still_matches(db, &candidate.runtime, &candidate.facts)?,
+                    "runtime prune candidate changed before apply: {id}"
+                );
+            }
+            db.prune_runtime_batch(&ids)
+        });
         let hold = held.elapsed();
         drop(_write);
         t.max_hold = t.max_hold.max(hold);
@@ -218,7 +251,7 @@ async fn drain(server: &Server, o: &Options, t: &mut Tally) -> Result<(), Stop> 
                 t.deleted_ids.extend(ids);
             }
             Err(e) => {
-                t.pending.splice(0..0, ids);
+                t.pending.splice(0..0, candidates);
                 return Err(("error", json!({"error":e.to_string()})));
             }
         }
@@ -247,7 +280,7 @@ async fn prune(server: &Server, o: &Options, t: &mut Tally, mark_out: &mut Value
         Err(stop) => return stop,
     };
     *mark_out = mark.summary();
-    let ours = server.store.lock().unwrap().ledger_incarnation();
+    let ours = server.read().and_then(|db| db.ledger_incarnation());
     match ours {
         Ok(ours) if ours == mark.incarnation => {}
         Ok(ours) => {
@@ -260,10 +293,8 @@ async fn prune(server: &Server, o: &Options, t: &mut Tally, mark_out: &mut Value
     }
     for (ledger, (key, created)) in LEDGERS.iter().zip(&mark.anchors) {
         let found = server
-            .store
-            .lock()
-            .unwrap()
-            .ledger_anchor_created(ledger, *key);
+            .read()
+            .and_then(|db| db.ledger_anchor_created(ledger, *key));
         match found {
             Ok(Some(found)) if found == *created => {}
             Ok(found) => {
@@ -282,10 +313,8 @@ async fn prune(server: &Server, o: &Options, t: &mut Tally, mark_out: &mut Value
     let mut after = String::new();
     loop {
         let page = server
-            .store
-            .lock()
-            .unwrap()
-            .ledger_prune_candidates(&after, &cutoff, PAGE);
+            .read()
+            .and_then(|db| db.ledger_prune_candidates(&after, &cutoff, PAGE));
         let page = match page {
             Ok(page) => page,
             Err(e) => return ("error", json!({"error":e.to_string()})),
@@ -298,29 +327,28 @@ async fn prune(server: &Server, o: &Options, t: &mut Tally, mark_out: &mut Value
             if Local::now() >= o.deadline {
                 t.backlog = page.len() - i
                     + server
-                        .store
-                        .lock()
-                        .unwrap()
-                        .ledger_prune_backlog(&after, &cutoff)
+                        .read()
+                        .and_then(|db| db.ledger_prune_backlog(&after, &cutoff))
                         .unwrap_or(0);
                 return ("deadline", json!({"cutoff":cutoff}));
             }
             let id = r["runtimeId"].as_str().unwrap_or("");
             match judge(server, r, &mark, cutoff_ms).await {
-                Some(reason) => t.skip(id, reason),
-                None => {
+                Err(reason) => t.skip(id, reason),
+                Ok(facts) => {
                     t.eligible += 1;
-                    t.pending.push(id.to_owned());
+                    t.pending.push(Candidate {
+                        runtime: r.clone(),
+                        facts,
+                    });
                 }
             }
         }
-        if let Err((stop, detail)) = drain(server, o, t).await {
+        if let Err((stop, detail)) = drain(server, o, t, &mark).await {
             if stop == "deadline" {
                 t.backlog = server
-                    .store
-                    .lock()
-                    .unwrap()
-                    .ledger_prune_backlog(&after, &cutoff)
+                    .read()
+                    .and_then(|db| db.ledger_prune_backlog(&after, &cutoff))
                     .unwrap_or(0);
             }
             return (stop, detail);

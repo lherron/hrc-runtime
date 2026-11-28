@@ -321,41 +321,42 @@ fn not_live_if(
     payload: Value,
     expected: Option<&db::Rt>,
 ) -> Result<bool> {
-    let db = server.store.lock().unwrap();
-    let tx = db.sqlite.unchecked_transaction()?;
-    let Some(rt) = db::runtime(&tx, runtime_id)? else {
-        return Ok(false);
-    };
-    if expected.is_some_and(|expected| *expected != rt) {
-        return Ok(false);
-    }
-    match user_exit(&tx, &rt) {
-        Some(reason) => {
-            let mut payload = payload;
-            payload["userExitReason"] = reason.into();
-            mark_terminated_after_user_exit(&tx, &rt, &payload)?;
+    server.write(|db| {
+        let tx = db.sqlite.unchecked_transaction()?;
+        let Some(rt) = db::runtime(&tx, runtime_id)? else {
+            return Ok(false);
+        };
+        if expected.is_some_and(|expected| *expected != rt) {
+            return Ok(false);
         }
-        // A probe that began before the broker's EOF can land after the
-        // controller committed `crashed`; the terminal status stands.
-        None if hrc_store::status::BROKER_TERMINAL.contains(&rt.status.as_str()) => {
-            super::submission_loss::settle_runtime(
-                &tx,
-                &rt,
-                &hrc_store::timestamp(),
-                "lease_not_live",
-            )?;
+        match user_exit(&tx, &rt) {
+            Some(reason) => {
+                let mut payload = payload;
+                payload["userExitReason"] = reason.into();
+                mark_terminated_after_user_exit(&tx, &rt, &payload)?;
+            }
+            // A probe that began before the broker's EOF can land after the
+            // controller committed `crashed`; the terminal status stands.
+            None if hrc_store::status::BROKER_TERMINAL.contains(&rt.status.as_str()) => {
+                super::submission_loss::settle_runtime(
+                    &tx,
+                    &rt,
+                    &hrc_store::timestamp(),
+                    "lease_not_live",
+                )?;
+            }
+            None => mark_stale(&tx, &rt, &payload)?,
         }
-        None => mark_stale(&tx, &rt, &payload)?,
-    }
-    tx.commit()?;
-    server.ledger_committed();
-    Ok(true)
+        tx.commit()?;
+        server.ledger_committed();
+        Ok(true)
+    })
 }
 
 /// reconcileTmuxRuntimeLiveness for a broker runtime; other runtimes unchanged.
 pub async fn reconcile_liveness(server: &Server, runtime_id: &str) -> Result<()> {
     let rt = {
-        let db = server.store.lock().unwrap();
+        let db = server.read()?;
         db::runtime(&db.sqlite, runtime_id)?
     };
     let Some(rt) = rt else { return Ok(()) };
@@ -367,7 +368,7 @@ pub async fn reconcile_liveness(server: &Server, runtime_id: &str) -> Result<()>
     {
         return Ok(());
     }
-    let lifecycle_reason = invocation_terminal_reason(&server.store.lock().unwrap().sqlite, &rt)?;
+    let lifecycle_reason = invocation_terminal_reason(&server.read()?.sqlite, &rt)?;
     if let Some(reason) = lifecycle_reason {
         return stale_terminal_invocation(server, &rt, &reason, false).map(|_| ());
     }
@@ -426,30 +427,31 @@ fn stale_terminal_invocation(
     reason: &str,
     fenced: bool,
 ) -> Result<bool> {
-    let db = server.store.lock().unwrap();
-    let tx = db.sqlite.unchecked_transaction()?;
-    if fenced
-        && (db::runtime(&tx, &rt.runtime_id)?.as_ref() != Some(rt)
-            || invocation_terminal_reason(&tx, rt)?.as_deref() != Some(reason))
-    {
-        return Ok(false);
-    }
-    mark_stale(
-        &tx,
-        rt,
-        &json!({"runtimeId":rt.runtime_id,"reason":reason,"classification":"lifecycle_terminal","invocationId":rt.active_invocation_id}),
-    )?;
-    db::update_runtime(
-        &tx,
-        &rt.runtime_id,
-        &[
-            ("lifecycle_terminal_reason", db::text(reason)),
-            ("updated_at", db::text(hrc_store::timestamp())),
-        ],
-    )?;
-    tx.commit()?;
-    server.ledger_committed();
-    Ok(true)
+    server.write(|db| {
+        let tx = db.sqlite.unchecked_transaction()?;
+        if fenced
+            && (db::runtime(&tx, &rt.runtime_id)?.as_ref() != Some(rt)
+                || invocation_terminal_reason(&tx, rt)?.as_deref() != Some(reason))
+        {
+            return Ok(false);
+        }
+        mark_stale(
+            &tx,
+            rt,
+            &json!({"runtimeId":rt.runtime_id,"reason":reason,"classification":"lifecycle_terminal","invocationId":rt.active_invocation_id}),
+        )?;
+        db::update_runtime(
+            &tx,
+            &rt.runtime_id,
+            &[
+                ("lifecycle_terminal_reason", db::text(reason)),
+                ("updated_at", db::text(hrc_store::timestamp())),
+            ],
+        )?;
+        tx.commit()?;
+        server.ledger_committed();
+        Ok(true)
+    })
 }
 
 pub(super) async fn reconcile_aging_hrcpty(
@@ -583,7 +585,7 @@ pub async fn reap(server: &Shared, runtime_id: &str, reason: &str) {
     }
     let result: Result<()> = async {
         let rt = {
-            let db = server.store.lock().unwrap();
+            let db = server.read()?;
             db::runtime(&db.sqlite, runtime_id)?
         };
         let Some(rt) = rt else { return Ok(()) };
@@ -652,7 +654,9 @@ pub fn reap_after_summary(server: &Shared, runtime_id: &str, reason: &str) {
         return;
     }
     let summarized = {
-        let db = server.store.lock().unwrap();
+        let Ok(db) = server.read() else {
+            return;
+        };
         db::runtime(&db.sqlite, runtime_id)
             .ok()
             .flatten()

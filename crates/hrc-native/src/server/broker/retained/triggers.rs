@@ -90,7 +90,7 @@ pub async fn pass(server: &Shared) -> bool {
 const RETRY_INTERVAL: Duration = Duration::from_secs(900);
 
 fn pending_runtime(server: &Shared, id: &str) -> Result<bool> {
-    let db = server.store.lock().unwrap();
+    let db = server.read()?;
     let now = now_ms();
     let Some(r) = row(&db.sqlite, id)? else {
         return Ok(false);
@@ -170,21 +170,19 @@ pub fn start(server: &Shared) {
         }
     });
 }
+fn terminal_watch_head(server: &super::super::Server) -> Result<i64> {
+    Ok(server.read()?.sqlite.query_row(
+        "SELECT COALESCE(MAX(hrc_seq), 0) FROM hrc_events",
+        [],
+        |r| r.get(0),
+    )?)
+}
+
 /// The notifyEvent hook: every committed runtime.terminated row of a
 /// harness-broker runtime (live origin) schedules one attempt.
 pub fn start_terminal_watch(server: &Shared) {
     let mut watch = server.ledger.subscribe();
-    let mut after: i64 = server
-        .store
-        .lock()
-        .unwrap()
-        .sqlite
-        .query_row(
-            "SELECT COALESCE(MAX(hrc_seq), 0) FROM hrc_events",
-            [],
-            |r| r.get(0),
-        )
-        .unwrap_or(0);
+    let mut after = terminal_watch_head(server).unwrap_or(0);
     let server = server.clone();
     tokio::spawn(async move {
         loop {
@@ -198,19 +196,11 @@ pub fn start_terminal_watch(server: &Shared) {
             }
             // Bounded by the top read first, so a row committed during the scan
             // is seen by the next one.
-            let top: i64 = server
-                .store
-                .lock()
-                .unwrap()
-                .sqlite
-                .query_row(
-                    "SELECT COALESCE(MAX(hrc_seq), 0) FROM hrc_events",
-                    [],
-                    |r| r.get(0),
-                )
-                .unwrap_or(after);
+            let top = terminal_watch_head(&server).unwrap_or(after);
             let rows: Vec<String> = {
-                let db = server.store.lock().unwrap();
+                let Ok(db) = server.read() else {
+                    continue;
+                };
                 let Ok(mut stmt) = db.sqlite.prepare(
                     "SELECT e.runtime_id FROM hrc_events e JOIN runtimes r ON r.runtime_id = e.runtime_id WHERE e.hrc_seq > ? AND e.hrc_seq <= ? AND e.event_kind = 'runtime.terminated' AND e.evidence_origin IS NULL AND r.controller_kind = 'harness-broker' ORDER BY e.hrc_seq",
                 ) else {

@@ -54,7 +54,7 @@ pub async fn attach_and_replay(
         .context("activeInvocationId")?
         .to_owned();
     let (start_hash, profile_hash) = {
-        let db = server.store.lock().unwrap();
+        let db = server.read()?;
         let inv =
             db::invocation(&db.sqlite, &invocation)?.context("broker_attach_unknown_runtime")?;
         (inv.start_request_hash, inv.selected_profile_hash)
@@ -72,15 +72,15 @@ pub async fn attach_and_replay(
         let mut replayed = last;
         // Publish under the same store lock as eviction: a candidate whose
         // proof was in flight when detach committed cannot regain observation.
-        {
-            let db = server.store.lock().unwrap();
+        server.write(|db| -> Result<()> {
             let rt = db::runtime(&db.sqlite, &runtime_id)?.context("runtime vanished during attach")?;
             if rt.state_object()["terminalReason"] == "operator_evict" {
                 client.close();
                 bail!("participant_operator_evicted");
             }
             set_active(server, &runtime_id, &invocation, client.clone());
-        }
+            Ok(())
+        })?;
         // The seat monitor starts after reattach completes (below).
         for envelope in replay["events"].as_array().cloned().unwrap_or_default() {
             let outcome = apply_one(server, &envelope)?;
@@ -141,8 +141,7 @@ pub async fn attach_and_replay(
     };
     let snapshot = &proof["snapshot"];
     let base = status_from_invocation_state(snapshot["state"].as_str().unwrap_or(""));
-    {
-        let db = server.store.lock().unwrap();
+    server.write(|db| -> Result<()> {
         let tx = db.sqlite.unchecked_transaction()?;
         let rt = db::runtime(&tx, &runtime_id)?.context("runtime vanished during attach")?;
         // A detach may commit while broker proof RPCs are in flight. Never
@@ -192,7 +191,8 @@ pub async fn attach_and_replay(
         db::update_runtime(&tx, &runtime_id, &cols)?;
         tx.commit()?;
         server.ledger_committed();
-    }
+        Ok(())
+    })?;
     if let Err(error) = project_capture_state(server, &runtime_id, &snapshot["capture"]) {
         log(
             "warn",
@@ -226,70 +226,71 @@ pub fn fail_replay_stale(
         return Ok(());
     }
     mark_closing(server, runtime_id, code);
-    let db = server.store.lock().unwrap();
-    let tx = db.sqlite.unchecked_transaction()?;
-    let Some(rt) = db::runtime(&tx, runtime_id)? else {
-        return Ok(());
-    };
-    let now = hrc_store::timestamp();
-    if participant_served(&rt) {
-        super::participant::detach(&tx, &rt, &now, code)?;
+    server.write(|db| {
+        let tx = db.sqlite.unchecked_transaction()?;
+        let Some(rt) = db::runtime(&tx, runtime_id)? else {
+            return Ok(());
+        };
+        let now = hrc_store::timestamp();
+        if participant_served(&rt) {
+            super::participant::detach(&tx, &rt, &now, code)?;
+            tx.commit()?;
+            server.ledger_committed();
+            return Ok(());
+        }
+        crate::server::submission_loss::settle_runtime(&tx, &rt, &now, code)?;
+        let stale = code == "broker_replay_retention_gap" || code == "broker_replay_below_floor";
+        db::update_invocation(
+            &tx,
+            invocation,
+            &[
+                ("invocation_state", db::text("failed")),
+                ("owner_server_instance_id", db::text(server_instance_id())),
+                ("updated_at", db::text(now.as_str())),
+            ],
+        )?;
+        let mut state = rt.state_object();
+        state["status"] = "stale".into();
+        state["updatedAt"] = now.as_str().into();
+        if stale {
+            state["brokerReplay"] =
+                json!({"status":"replay-stale","reason":{"code":code,"message":message}});
+        }
+        state["control"] = json!({"mode":"broker-ipc","brokerAttached":false,"lastAttachError":{"code":code,"message":message}});
+        db::update_runtime(
+            &tx,
+            runtime_id,
+            &[
+                ("status", db::text("stale")),
+                ("status_changed_at", db::text(now.as_str())),
+                ("updated_at", db::text(now.as_str())),
+                ("runtime_state_json", db::text(state.to_string())),
+            ],
+        )?;
+        if stale {
+            let ev = projection::events::Ev {
+                ts: now.clone(),
+                host_session_id: rt.host_session_id.clone(),
+                scope_ref: rt.scope_ref.clone(),
+                lane_ref: rt.lane_ref.clone(),
+                generation: rt.generation,
+                runtime_id: Some(runtime_id.to_owned()),
+                run_id: rt.active_run_id.clone(),
+                transport: matches!(rt.transport.as_str(), "headless" | "tmux")
+                    .then(|| rt.transport.clone()),
+                ..Default::default()
+            };
+            projection::events::append(
+                &tx,
+                "runtime.stale",
+                &ev,
+                &json!({"reason":"broker_replay_stale","code":code,"invocationId":invocation}),
+            )?;
+        }
         tx.commit()?;
         server.ledger_committed();
-        return Ok(());
-    }
-    crate::server::submission_loss::settle_runtime(&tx, &rt, &now, code)?;
-    let stale = code == "broker_replay_retention_gap" || code == "broker_replay_below_floor";
-    db::update_invocation(
-        &tx,
-        invocation,
-        &[
-            ("invocation_state", db::text("failed")),
-            ("owner_server_instance_id", db::text(server_instance_id())),
-            ("updated_at", db::text(now.as_str())),
-        ],
-    )?;
-    let mut state = rt.state_object();
-    state["status"] = "stale".into();
-    state["updatedAt"] = now.as_str().into();
-    if stale {
-        state["brokerReplay"] =
-            json!({"status":"replay-stale","reason":{"code":code,"message":message}});
-    }
-    state["control"] = json!({"mode":"broker-ipc","brokerAttached":false,"lastAttachError":{"code":code,"message":message}});
-    db::update_runtime(
-        &tx,
-        runtime_id,
-        &[
-            ("status", db::text("stale")),
-            ("status_changed_at", db::text(now.as_str())),
-            ("updated_at", db::text(now.as_str())),
-            ("runtime_state_json", db::text(state.to_string())),
-        ],
-    )?;
-    if stale {
-        let ev = projection::events::Ev {
-            ts: now.clone(),
-            host_session_id: rt.host_session_id.clone(),
-            scope_ref: rt.scope_ref.clone(),
-            lane_ref: rt.lane_ref.clone(),
-            generation: rt.generation,
-            runtime_id: Some(runtime_id.to_owned()),
-            run_id: rt.active_run_id.clone(),
-            transport: matches!(rt.transport.as_str(), "headless" | "tmux")
-                .then(|| rt.transport.clone()),
-            ..Default::default()
-        };
-        projection::events::append(
-            &tx,
-            "runtime.stale",
-            &ev,
-            &json!({"reason":"broker_replay_stale","code":code,"invocationId":invocation}),
-        )?;
-    }
-    tx.commit()?;
-    server.ledger_committed();
-    Ok(())
+        Ok(())
+    })
 }
 
 /// Report-only summary recovery for a live-status broker runtime
@@ -321,7 +322,9 @@ pub async fn recover_final_summary(server: &Shared, runtime: &Value, timeout_ms:
 }
 
 fn has_final_summary(server: &Server, runtime_id: &str) -> bool {
-    let db = server.store.lock().unwrap();
+    let Ok(db) = server.read() else {
+        return false;
+    };
     db::runtime(&db.sqlite, runtime_id)
         .ok()
         .flatten()
@@ -336,8 +339,7 @@ async fn recover_final_summary_once(
 ) -> Value {
     let runtime_id = runtime["runtimeId"].as_str().unwrap_or("").to_owned();
     // resolveAttachInvocation: the active invocation, else the newest one.
-    let invocation = {
-        let db = server.store.lock().unwrap();
+    let invocation = server.read().ok().and_then(|db| {
         let active = runtime["activeInvocationId"]
             .as_str()
             .and_then(|id| db::invocation(&db.sqlite, id).ok().flatten());
@@ -346,7 +348,7 @@ async fn recover_final_summary_once(
                 .ok()
                 .and_then(|all| all.into_iter().last())
         })
-    };
+    });
     let Some(inv) = invocation else {
         return json!({"state":"unavailable","message":"runtime or broker invocation not found"});
     };

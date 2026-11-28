@@ -543,6 +543,15 @@ async fn aging(r: &Value, facts: &Value) -> Result<Option<String>> {
     Ok(None)
 }
 
+pub(super) fn still_matches(
+    store: &hrc_store::Store,
+    runtime: &Value,
+    facts: &Value,
+) -> Result<bool> {
+    let id = runtime["runtimeId"].as_str().context("runtime id")?;
+    Ok(store.runtime(id)?.as_ref() == Some(runtime) && store.maintenance_facts(runtime)? == *facts)
+}
+
 async fn manifest(
     server: &Server,
     q: &Request,
@@ -565,10 +574,10 @@ async fn manifest(
         if !allow.iter().any(|s| r["scopeRef"] == *s) {
             reasons.push("scope_not_allowlisted".to_owned());
         }
-        let facts = server.store.lock().unwrap().maintenance_facts(r);
-        let disposition = match facts {
-            Ok(f) => prune_guard(server, r, &f).await,
-            Err(e) => Err(e),
+        let facts = server.read()?.maintenance_facts(r);
+        let disposition = match &facts {
+            Ok(f) => prune_guard(server, r, f).await,
+            Err(e) => Err(anyhow::anyhow!(e.to_string())),
         };
         match disposition {
             Ok(Some(reason)) => reasons.push(reason),
@@ -576,7 +585,7 @@ async fn manifest(
             Err(e) => reasons.push(format!("safety_gate_error:{e}")),
         }
         if reasons.is_empty() {
-            matched.push(r.clone())
+            matched.push((r, facts?));
         } else {
             failures.push(json!({"runtimeId":id,"scopeRef":r["scopeRef"],"reasons":reasons}));
         }
@@ -595,9 +604,16 @@ async fn manifest(
             ),
         ));
     }
-    let counts = server.store.lock().unwrap().runtime_prune_counts(ids)?;
+    let counts = server.read()?.runtime_prune_counts(ids)?;
     if !q.dry && q.yes {
-        let removed = server.store.lock().unwrap().prune_runtime_manifest(ids)?;
+        let removed = server.write(|db| -> Result<_> {
+            for (runtime, facts) in &matched {
+                if !still_matches(db, runtime, facts)? {
+                    return Ok(0);
+                }
+            }
+            db.prune_runtime_manifest(ids)
+        })?;
         if removed != matched.len() {
             return Err(ApiError::domain(
                 StatusCode::CONFLICT,
@@ -612,7 +628,7 @@ async fn manifest(
     }
     let results = matched
         .iter()
-        .map(|r| {
+        .map(|(r, _)| {
             let mut b = base(r);
             b["status"] = "pruned".into();
             if q.dry || !q.yes {
@@ -646,7 +662,7 @@ async fn dispose(server: &Server, body: &Value) -> std::result::Result<Response,
         ));
     }
     let id = ids[0];
-    let runtime = server.store.lock().unwrap().runtime(id)?.ok_or_else(|| {
+    let runtime = server.read()?.runtime(id)?.ok_or_else(|| {
         ApiError::domain(
             StatusCode::NOT_FOUND,
             "unknown_runtime",
@@ -654,7 +670,7 @@ async fn dispose(server: &Server, body: &Value) -> std::result::Result<Response,
             Some(json!({})),
         )
     })?;
-    let facts = server.store.lock().unwrap().maintenance_facts(&runtime)?;
+    let facts = server.read()?.maintenance_facts(&runtime)?;
     if !held(&runtime, &facts) {
         return Err(ApiError::domain(
             StatusCode::CONFLICT,
@@ -693,11 +709,12 @@ async fn dispose(server: &Server, body: &Value) -> std::result::Result<Response,
             }
             Ok(None) => {
                 let by = nonempty(&body["by"]).unwrap_or("operator");
-                let removed = server
-                    .store
-                    .lock()
-                    .unwrap()
-                    .dispose_retained_runtime(id, by, reason)?;
+                let removed = server.write(|db| -> Result<_> {
+                    if !still_matches(db, &runtime, &facts)? {
+                        return Ok(false);
+                    }
+                    db.dispose_retained_runtime(id, by, reason)
+                })?;
                 result["status"] = if removed { "pruned" } else { "skipped" }.into();
                 result["reason"] = if removed {
                     "operator_disposed"
@@ -723,7 +740,7 @@ pub async fn handle(
     }
     let q = parse(&body, prune)?;
     if q.ids.is_some() {
-        let all = server.store.lock().unwrap().runtimes()?;
+        let all = server.read()?.runtimes()?;
         return manifest(server, &q, &all).await;
     }
     Ok(Json(run(server, &q, prune, "runtime_sweep", None).await?).into_response())
@@ -864,9 +881,7 @@ async fn run(
             rusqlite::params_from_iter(statuses),
         )?,
         None => server
-            .store
-            .lock()
-            .unwrap()
+            .read()?
             .runtimes_where(&status_filter, rusqlite::params_from_iter(statuses))?,
     };
     let age = if let Some(age) = &q.age {
@@ -886,7 +901,7 @@ async fn run(
         }
         let facts = match tmux_reader.as_ref() {
             Some(reader) => reader.maintenance_facts(&r),
-            None => server.store.lock().unwrap().maintenance_facts(&r),
+            None => server.read()?.maintenance_facts(&r),
         };
         let disposition = match &facts {
             Ok(f) => {
@@ -909,12 +924,12 @@ async fn run(
                     result["status"] = "pruned".into();
                     result["reason"] = "dry_run".into();
                 } else {
-                    match server
-                        .store
-                        .lock()
-                        .unwrap()
-                        .prune_runtime(r["runtimeId"].as_str().unwrap_or(""))
-                    {
+                    match server.write(|db| -> Result<_> {
+                        if !still_matches(db, &r, &facts?)? {
+                            return Ok(false);
+                        }
+                        db.prune_runtime(r["runtimeId"].as_str().unwrap_or(""))
+                    }) {
                         Ok(true) => result["status"] = "pruned".into(),
                         Ok(false) => {
                             result["status"] = "skipped".into();
@@ -929,8 +944,7 @@ async fn run(
                 let dropped = q
                     .drop
                     .unwrap_or(r["transport"] != "tmux" && r.get("activeRunId").is_some());
-                let aged = (|| -> Result<bool> {
-                    let mut store = server.store.lock().unwrap();
+                let aged = server.write(|store| -> Result<bool> {
                     let id = r["runtimeId"].as_str().unwrap_or("");
                     // The probe ran off-lock. Compare the complete runtime
                     // record, then let age_runtime fence the run and PID facts.
@@ -939,7 +953,7 @@ async fn run(
                     } else {
                         store.age_runtime(&r, &facts.unwrap()["invocation"], dropped, reason)
                     }
-                })();
+                });
                 match aged {
                     Ok(true) => {
                         result["status"] = "stale".into();
@@ -975,11 +989,7 @@ async fn run(
     }
     let response = finish(results, prune);
     if !prune && !q.dry && tmux_reader.is_none() {
-        server
-            .store
-            .lock()
-            .unwrap()
-            .runtime_sweep_summary(&response["summary"], first_host.as_deref())?;
+        server.write(|db| db.runtime_sweep_summary(&response["summary"], first_host.as_deref()))?;
     }
     Ok(response)
 }

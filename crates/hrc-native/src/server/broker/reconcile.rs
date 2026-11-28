@@ -120,7 +120,7 @@ fn awaits_submission(db: &Connection, run: &db::Run, rt: &db::Rt) -> anyhow::Res
 /// planActiveRunReconcile
 async fn plan(server: &Shared, c: &Candidate) -> anyhow::Result<Plan> {
     {
-        let db = server.store.lock().unwrap();
+        let db = server.read()?;
         // A turn parked on a user prompt is never reapable.
         if let Some(invocation) = &c.rt.active_invocation_id
             && projected::open_ask(&db.sqlite, invocation, &c.run.run_id)?
@@ -475,26 +475,29 @@ pub async fn once(
 ) -> Result<Value, ApiError> {
     if !dry_run {
         let ids = super::submission_loss::unavailable_runtimes(server)?;
-        let db = server.store.lock().unwrap();
-        let before = db.sqlite.total_changes();
-        let tx = db
-            .sqlite
-            .unchecked_transaction()
-            .map_err(anyhow::Error::from)?;
-        super::submission_loss::settle_runtimes(
-            &tx,
-            &ids,
-            &hrc_store::timestamp(),
-            "reconcile_active",
-        )?;
-        tx.commit().map_err(anyhow::Error::from)?;
-        if db.sqlite.total_changes() != before {
-            server.ledger_committed();
-        }
+        server.write(|db| {
+            let before = db.sqlite.total_changes();
+            let tx = db
+                .sqlite
+                .unchecked_transaction()
+                .map_err(anyhow::Error::from)?;
+            super::submission_loss::settle_runtimes(
+                &tx,
+                &ids,
+                &hrc_store::timestamp(),
+                "reconcile_active",
+            )?;
+            tx.commit().map_err(anyhow::Error::from)?;
+            if db.sqlite.total_changes() != before {
+                server.ledger_committed();
+            }
+
+            Ok::<_, anyhow::Error>(())
+        })?;
     }
     let cutoff = chrono::Utc::now().timestamp_millis() - older_ms;
     let found = {
-        let db = server.store.lock().unwrap();
+        let db = server.read()?;
         candidates(&db.sqlite, cutoff)?
     };
     let mut results = Vec::new();
@@ -504,8 +507,7 @@ pub async fn once(
             Err(e) => Err(e),
             Ok(p) if p.action == "suspect" => Ok(result(c, &p, "suspect", false)),
             Ok(p) if dry_run => Ok(result(c, &p, "matched", false)),
-            Ok(p) => {
-                let db = server.store.lock().unwrap();
+            Ok(p) => server.write(|db| {
                 (|| {
                     let before = db.sqlite.total_changes();
                     let tx = db.sqlite.unchecked_transaction()?;
@@ -516,7 +518,7 @@ pub async fn once(
                     }
                     anyhow::Ok(r)
                 })()
-            }
+            }),
         };
         results.push(outcome.unwrap_or_else(|e| {
             json!({"type":"run","runId":c.run.run_id,"hostSessionId":c.run.host_session_id,"runtimeId":c.rt.runtime_id,"transport":transport(&c.run),"status":"error","reason":"runtime_unavailable_with_active_run","observedAt":c.observed_at,"observedSource":c.source,"runtimeStatus":c.rt.status,"runtimeOwnershipCleared":false,"errorCode":"internal_error","errorMessage":e.to_string()})
@@ -526,7 +528,7 @@ pub async fn once(
         // Release held submissions for abandoned runs off the store lock.
         // Their terminal projection can finish them before the reaper runs.
         let held: Vec<db::Run> = {
-            let db = server.store.lock().unwrap();
+            let db = server.read()?;
             abandoned(&db.sqlite, cutoff, true)?
                 .iter()
                 .filter_map(|r| r["runId"].as_str())
@@ -547,21 +549,24 @@ pub async fn once(
         }
     }
     {
-        let db = server.store.lock().unwrap();
-        let before = db.sqlite.total_changes();
-        let tx = db
-            .sqlite
-            .unchecked_transaction()
-            .map_err(anyhow::Error::from)?;
-        results.extend(abandoned(&tx, cutoff, dry_run)?);
-        results.extend(corrupt_awaiting(&tx)?);
-        tx.commit().map_err(anyhow::Error::from)?;
-        // Compare while holding the store lock: unrelated concurrent writes
-        // must not turn a read-only pass into a ledger wake. Notify each
-        // committed write even if a later transaction in this pass fails.
-        if db.sqlite.total_changes() != before {
-            server.ledger_committed();
-        }
+        server.write(|db| {
+            let before = db.sqlite.total_changes();
+            let tx = db
+                .sqlite
+                .unchecked_transaction()
+                .map_err(anyhow::Error::from)?;
+            results.extend(abandoned(&tx, cutoff, dry_run)?);
+            results.extend(corrupt_awaiting(&tx)?);
+            tx.commit().map_err(anyhow::Error::from)?;
+            // Compare while holding the store lock: unrelated concurrent writes
+            // must not turn a read-only pass into a ledger wake. Notify each
+            // committed write even if a later transaction in this pass fails.
+            if db.sqlite.total_changes() != before {
+                server.ledger_committed();
+            }
+
+            Ok::<_, anyhow::Error>(())
+        })?;
     }
     let count = |s: &str| results.iter().filter(|r| r["status"] == s).count();
     let summary = json!({"type":"summary","matched":count("matched"),"reaped":count("reaped"),"repaired":count("repaired"),"suspect":count("suspect"),"skipped":count("skipped"),"errors":count("error")});

@@ -97,7 +97,7 @@ pub async fn allocate_claim(
     claim: Option<&super::super::start::ClaimRow>,
 ) -> Result<Allocation, ApiError> {
     let previous = {
-        let db = server.store.lock().unwrap();
+        let db = server.read()?;
         db.participant_registration_by_scope(scope)?
             .filter(|r| r["lifecycle_owner"] == hrc_store::HRC_LAUNCHED)
             .map(|r| db.participant_latest_attempt(r["registration_id"].as_str().unwrap()))
@@ -123,7 +123,7 @@ pub async fn allocate_claim(
         let pid = fs::read_to_string(socket.parent().unwrap().join("hrcpty.pid"))
             .ok()
             .and_then(|s| s.trim().parse().ok());
-        let row = server.store.lock().unwrap().runtime(runtime)?;
+        let row = server.read()?.runtime(runtime)?;
         let row_terminal = row.as_ref().is_none_or(|r| {
             r["status"]
                 .as_str()
@@ -167,9 +167,7 @@ pub async fn allocate_claim(
     // The store's selection still decides what the successor carries.
     let reuse_disabled = !host.is_empty()
         && server
-            .store
-            .lock()
-            .unwrap()
+            .read()?
             .sqlite
             .query_row(
                 "SELECT continuation_reuse_disabled FROM sessions WHERE host_session_id=?",
@@ -251,7 +249,7 @@ pub async fn launch_attempt(
         ensure!(socket.as_os_str().len() < 104 && endpoint.as_os_str().len() < 104, "self-brokered socket path too long");
         fs::create_dir_all(directory)?;
         fs::set_permissions(directory, fs::Permissions::from_mode(0o700))?;
-        server.store.lock().unwrap().set_hrc_launch_endpoint(attempt, &endpoint)?;
+        server.write(|db| db.set_hrc_launch_endpoint(attempt, &endpoint))?;
         let mut file = fs::OpenOptions::new().write(true).create_new(true).mode(0o600).open(directory.join("registration.json"))?;
         file.write_all(serde_json::to_string(registration)?.as_bytes())?; file.sync_all()?;
         let mut token = fs::OpenOptions::new().write(true).create_new(true).mode(0o600).open(directory.join("attach.token"))?;
@@ -278,7 +276,7 @@ pub async fn launch_attempt(
         done(super::attach_hrc_launched(server, id["registrationId"].as_str().unwrap(), attempt,
             id["attachEpoch"].as_u64().unwrap(), descriptor).await.map_err(|e| anyhow::anyhow!("{}: {}", e.code, e.message))?)?;
         loop {
-            let a = server.store.lock().unwrap().participant_attempt(attempt)?.context("launch attempt disappeared")?;
+            let a = server.read()?.participant_attempt(attempt)?.context("launch attempt disappeared")?;
             if a["establishment_work_state"] == "completed" {
                 ensure!(a["state"] == "ACTIVE", "launcher attempt ended before activation: {}", a["state"]);
                 break;

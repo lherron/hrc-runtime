@@ -444,9 +444,7 @@ async fn assemble(
     match (nonempty(&tmux["socketPath"]), nonempty(&tmux["paneId"])) {
         (Some(socket), Some(pane_id)) => {
             let current: Option<i64> = server
-                .store
-                .lock()
-                .unwrap()
+                .read()?
                 .sqlite
                 .query_row(
                     "SELECT generation FROM runtimes WHERE runtime_id = ?",
@@ -483,7 +481,7 @@ async fn assemble(
         _ => {
             // An hrcpty seat's screen comes from its supervisor (T-12046 §4.2).
             let supervisor = {
-                let db = server.store.lock().unwrap();
+                let db = server.read()?;
                 super::projection::db::runtime(&db.sqlite, &watch.runtime_id)?
                     .and_then(|rt| super::hrcpty::substrate(&rt))
             };
@@ -540,58 +538,59 @@ async fn publish(server: &Shared, watch: &Watch, trip: i64, tripped_at: &str) ->
         return Ok(());
     };
     let now = timestamp();
-    let db = server.store.lock().unwrap();
-    if let Some(dir) = &dir {
-        let id = format!("first-turn-missing-{trip}");
-        let hash = super::compile::digest(dir.as_bytes());
-        let insert = (|| -> Result<()> {
-            let existing: Option<(String, Option<String>)> = db
-                .sqlite
-                .query_row(
-                    "SELECT content_hash, artifact_path FROM runtime_artifacts WHERE artifact_id = ?",
-                    [&id],
-                    |r| Ok((r.get(0)?, r.get(1)?)),
-                )
-                .optional()?;
-            match existing {
-                Some((h, p)) if h != hash || p.as_deref() != Some(dir.as_str()) => anyhow::bail!(
-                    "runtime_artifacts conflict: artifact_id={id} already exists with different content"
-                ),
-                Some(_) => Ok(()),
-                None => {
-                    db.sqlite.execute(
-                        "INSERT INTO runtime_artifacts (artifact_id, operation_id, artifact_kind, media_type, storage_kind, content_hash, artifact_path, artifact_json, created_at) VALUES (?, ?, 'first-turn-missing-bundle', 'application/json', 'file-path', ?, ?, NULL, ?)",
-                        params![id, watch.runtime_id, hash, dir, now],
-                    )?;
-                    Ok(())
+    server.write(|db| -> Result<()> {
+        if let Some(dir) = &dir {
+            let id = format!("first-turn-missing-{trip}");
+            let hash = super::compile::digest(dir.as_bytes());
+            let insert = (|| -> Result<()> {
+                let existing: Option<(String, Option<String>)> = db
+                    .sqlite
+                    .query_row(
+                        "SELECT content_hash, artifact_path FROM runtime_artifacts WHERE artifact_id = ?",
+                        [&id],
+                        |r| Ok((r.get(0)?, r.get(1)?)),
+                    )
+                    .optional()?;
+                match existing {
+                    Some((h, p)) if h != hash || p.as_deref() != Some(dir.as_str()) => anyhow::bail!(
+                        "runtime_artifacts conflict: artifact_id={id} already exists with different content"
+                    ),
+                    Some(_) => Ok(()),
+                    None => {
+                        db.sqlite.execute(
+                            "INSERT INTO runtime_artifacts (artifact_id, operation_id, artifact_kind, media_type, storage_kind, content_hash, artifact_path, artifact_json, created_at) VALUES (?, ?, 'first-turn-missing-bundle', 'application/json', 'file-path', ?, ?, NULL, ?)",
+                            params![id, watch.runtime_id, hash, dir, now],
+                        )?;
+                        Ok(())
+                    }
                 }
+            })();
+            if let Err(error) = insert {
+                failures.insert("artifactRow".into(), error.to_string().into());
             }
-        })();
-        if let Err(error) = insert {
-            failures.insert("artifactRow".into(), error.to_string().into());
         }
-    }
-    let mut payload = json!({"tripEventSeq":trip});
-    if let Some(dir) = &dir {
-        payload["bundleDir"] = dir.as_str().into();
-    }
-    payload["failures"] = failures.into();
-    payload["retrieval"] = hint(trip).into();
-    let tx = db.sqlite.unchecked_transaction()?;
-    let seq = events::append(
-        &tx,
-        "first_turn_missing.diagnostics",
-        &watch.ev(&now, None),
-        &payload,
-    )?;
-    if let Some(dir) = &dir {
-        tx.execute(
-            "UPDATE runtime_first_turn_watch SET bundle_dir = ?, diagnostics_event_seq = ?, updated_at = ? WHERE runtime_id = ? AND generation = ?",
-            params![dir, seq, now, watch.runtime_id, watch.generation],
+        let mut payload = json!({"tripEventSeq":trip});
+        if let Some(dir) = &dir {
+            payload["bundleDir"] = dir.as_str().into();
+        }
+        payload["failures"] = failures.into();
+        payload["retrieval"] = hint(trip).into();
+        let tx = db.sqlite.unchecked_transaction()?;
+        let seq = events::append(
+            &tx,
+            "first_turn_missing.diagnostics",
+            &watch.ev(&now, None),
+            &payload,
         )?;
-    }
-    tx.commit()?;
-    drop(db);
+        if let Some(dir) = &dir {
+            tx.execute(
+                "UPDATE runtime_first_turn_watch SET bundle_dir = ?, diagnostics_event_seq = ?, updated_at = ? WHERE runtime_id = ? AND generation = ?",
+                params![dir, seq, now, watch.runtime_id, watch.generation],
+            )?;
+        }
+        tx.commit()?;
+        Ok(())
+    })?;
     server.ledger_committed();
     Ok(())
 }
@@ -600,7 +599,7 @@ async fn publish(server: &Shared, watch: &Watch, trip: i64, tripped_at: &str) ->
 /// throws is counted and skipped while the pass continues.
 async fn evaluate_once(server: &Shared) -> Result<Value> {
     let due = {
-        let db = server.store.lock().unwrap();
+        let db = server.read()?;
         armed_due(&db.sqlite, &timestamp())?
     };
     let (mut tripped, mut errors) = (0, 0);
@@ -609,8 +608,7 @@ async fn evaluate_once(server: &Shared) -> Result<Value> {
             let Some(_write) = server.owner_writes.enter() else {
                 break;
             };
-            let db = server.store.lock().unwrap();
-            record_trip(&db.sqlite, watch)
+            server.write(|db| record_trip(&db.sqlite, watch))
         };
         let seq = match trip {
             Err(error) => {
@@ -632,10 +630,7 @@ async fn evaluate_once(server: &Shared) -> Result<Value> {
             "runtime.first_turn_missing",
             json!({"runtimeId":watch.runtime_id,"generation":watch.generation,"scopeRef":watch.scope_ref,"runId":watch.run_id,"firstTurnDeadlineAt":watch.first_turn_deadline_at,"tripEventSeq":seq,"retrieval":hint(seq)}),
         );
-        let tripped_at: String = server
-            .store
-            .lock()
-            .unwrap()
+        let tripped_at: String = server.read()?
             .sqlite
             .query_row(
                 "SELECT first_turn_missing_tripped_at FROM runtime_first_turn_watch WHERE runtime_id = ? AND generation = ?",
@@ -691,10 +686,7 @@ pub fn start(server: &Shared) {
             {
                 return;
             }
-            let next = {
-                let db = server.store.lock().unwrap();
-                next_deadline(&db.sqlite)
-            };
+            let next = server.read().and_then(|db| next_deadline(&db.sqlite));
             let delay = match next {
                 Ok(Some(deadline)) => {
                     let now = pdb::parse_ms(&timestamp()).expect("valid current timestamp");

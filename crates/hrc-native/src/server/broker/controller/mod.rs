@@ -217,7 +217,7 @@ pub fn permission_handler(server: Weak<Server>) -> Inbound {
         let Some(server) = server.upgrade() else {
             bail!("hrc server is shutting down");
         };
-        let db = server.store.lock().unwrap();
+        let db = server.read()?;
         let invocation = db::invocation(&db.sqlite, params["invocationId"].as_str().unwrap_or(""))?;
         let runtime = match invocation {
             Some(i) => db::runtime(&db.sqlite, &i.runtime_id)?,
@@ -236,7 +236,7 @@ pub fn permission_handler(server: Weak<Server>) -> Inbound {
 }
 
 pub(super) fn last_projected(server: &Server, invocation: &str) -> Result<i64> {
-    let db = server.store.lock().unwrap();
+    let db = server.read()?;
     Ok(db::invocation(&db.sqlite, invocation)?.map_or(0, |i| i.last_projected_seq))
 }
 
@@ -277,20 +277,20 @@ fn busy(error: &anyhow::Error) -> bool {
     })
 }
 pub(super) fn apply_one(server: &Server, envelope: &Value) -> Result<Outcome> {
-    let db = server.store.lock().unwrap();
-    let mut mem = server.projection.lock().unwrap();
-    let outcome = projection::apply(&db.sqlite, &mut mem, envelope)?;
-    drop((mem, db));
+    let outcome = server.write(|db| {
+        let mut mem = server.projection.lock().unwrap();
+        projection::apply(&db.sqlite, &mut mem, envelope)
+    })?;
     if !outcome.idempotent {
         server.ledger_committed();
     }
     Ok(outcome)
 }
 pub(super) fn flush(server: &Server, invocation: &str) -> Result<i64> {
-    let db = server.store.lock().unwrap();
-    let mut mem = server.projection.lock().unwrap();
-    let through = projection::flush(&db.sqlite, &mut mem, invocation)?;
-    drop((mem, db));
+    let through = server.write(|db| {
+        let mut mem = server.projection.lock().unwrap();
+        projection::flush(&db.sqlite, &mut mem, invocation)
+    })?;
     server.ledger_committed();
     Ok(through)
 }
@@ -316,7 +316,7 @@ pub async fn project_live(server: &Shared, runtime: &str, envelope: &Value) -> R
                 return Ok(None);
             }
             flush(server, &invocation)?;
-            let db = server.store.lock().unwrap();
+            let db = server.read()?;
             let inv = db::invocation(&db.sqlite, &invocation)?;
             match inv {
                 Some(i) if i.runtime_id == runtime => {
@@ -417,7 +417,9 @@ async fn backfill(server: &Shared, runtime: &str, invocation: &str, candidates: 
         return;
     }
     let missing: Vec<i64> = {
-        let db = server.store.lock().unwrap();
+        let Ok(db) = server.read() else {
+            return;
+        };
         candidates
             .into_iter()
             .filter(|s| !projection::has_disposition(&db.sqlite, invocation, *s).unwrap_or(false))
@@ -442,7 +444,9 @@ async fn backfill(server: &Shared, runtime: &str, invocation: &str, candidates: 
         // A terminal runtime's gap is repaired only from its retained evidence;
         // a non-terminal gap waits for the next live attach.
         let terminal = {
-            let db = server.store.lock().unwrap();
+            let Ok(db) = server.read() else {
+                return;
+            };
             db::runtime(&db.sqlite, runtime)
                 .ok()
                 .flatten()
@@ -477,7 +481,7 @@ async fn backfill(server: &Shared, runtime: &str, invocation: &str, candidates: 
         for envelope in replay["events"].as_array().cloned().unwrap_or_default() {
             let seq = envelope["seq"].as_i64().unwrap_or(0);
             if !missing.contains(&seq) || {
-                let db = server.store.lock().unwrap();
+                let db = server.read()?;
                 projection::has_disposition(&db.sqlite, invocation, seq)?
             } {
                 continue;
@@ -509,7 +513,7 @@ async fn backfill(server: &Shared, runtime: &str, invocation: &str, candidates: 
         }
         let committed = last_projected(server, invocation)?;
         let still: Vec<i64> = {
-            let db = server.store.lock().unwrap();
+            let db = server.read()?;
             missing
                 .iter()
                 .copied()
@@ -564,43 +568,44 @@ pub fn project_capture_state(server: &Server, runtime_id: &str, capture: &Value)
     if capture.is_null() {
         return Ok(());
     }
-    let db = server.store.lock().unwrap();
-    let tx = db.sqlite.unchecked_transaction()?;
-    let rt = db::runtime(&tx, runtime_id)?
-        .with_context(|| format!("runtime not found for capture state: {runtime_id}"))?;
-    let mut state = rt.state_object();
-    let previous = state.get("capture").cloned();
-    if previous.as_ref() == Some(capture) {
-        return Ok(());
-    }
-    let now = hrc_store::timestamp();
-    state["capture"] = capture.clone();
-    db::update_runtime_state(&tx, runtime_id, &state, &now)?;
-    let previous_state = previous.as_ref().map(|p| p["state"].clone());
-    let flipped = previous_state.as_ref() != Some(&capture["state"])
-        && (previous_state.is_some() || capture["state"] == "blocked");
-    if flipped {
-        let ev = projection::events::Ev {
-            ts: now.clone(),
-            host_session_id: rt.host_session_id.clone(),
-            scope_ref: rt.scope_ref.clone(),
-            lane_ref: rt.lane_ref.clone(),
-            generation: rt.generation,
-            runtime_id: Some(runtime_id.to_owned()),
-            run_id: rt.active_run_id.clone(),
-            transport: Some(projection::lifecycle_transport(&rt.transport).to_owned()),
-            ..Default::default()
-        };
-        projection::events::append(
-            &tx,
-            "runtime.capture_state_changed",
-            &ev,
-            &json!({"previousCapture":previous,"capture":capture}),
-        )?;
-    }
-    tx.commit()?;
-    server.ledger_committed();
-    Ok(())
+    server.write(|db| {
+        let tx = db.sqlite.unchecked_transaction()?;
+        let rt = db::runtime(&tx, runtime_id)?
+            .with_context(|| format!("runtime not found for capture state: {runtime_id}"))?;
+        let mut state = rt.state_object();
+        let previous = state.get("capture").cloned();
+        if previous.as_ref() == Some(capture) {
+            return Ok(());
+        }
+        let now = hrc_store::timestamp();
+        state["capture"] = capture.clone();
+        db::update_runtime_state(&tx, runtime_id, &state, &now)?;
+        let previous_state = previous.as_ref().map(|p| p["state"].clone());
+        let flipped = previous_state.as_ref() != Some(&capture["state"])
+            && (previous_state.is_some() || capture["state"] == "blocked");
+        if flipped {
+            let ev = projection::events::Ev {
+                ts: now.clone(),
+                host_session_id: rt.host_session_id.clone(),
+                scope_ref: rt.scope_ref.clone(),
+                lane_ref: rt.lane_ref.clone(),
+                generation: rt.generation,
+                runtime_id: Some(runtime_id.to_owned()),
+                run_id: rt.active_run_id.clone(),
+                transport: Some(projection::lifecycle_transport(&rt.transport).to_owned()),
+                ..Default::default()
+            };
+            projection::events::append(
+                &tx,
+                "runtime.capture_state_changed",
+                &ev,
+                &json!({"previousCapture":previous,"capture":capture}),
+            )?;
+        }
+        tx.commit()?;
+        server.ledger_committed();
+        Ok(())
+    })
 }
 
 const PROBE_TYPES: [&str; 5] = [
@@ -618,8 +623,7 @@ pub async fn after_mapped(server: &Shared, runtime: &str, envelope: &Value, outc
         return;
     };
     if !outcome.idempotent {
-        let result: Result<()> = (|| {
-            let db = server.store.lock().unwrap();
+        let result: Result<()> = server.write(|db| {
             let seq = envelope["seq"].as_i64().unwrap_or(0);
             let previous = db::invocation(&db.sqlite, &invocation)?
                 .and_then(|i| i.last_event_seq)
@@ -651,7 +655,7 @@ pub async fn after_mapped(server: &Shared, runtime: &str, envelope: &Value, outc
             tx.commit()?;
             server.ledger_committed();
             Ok(())
-        })();
+        });
         if let Err(error) = result {
             log(
                 "warn",
@@ -678,17 +682,21 @@ pub async fn after_mapped(server: &Shared, runtime: &str, envelope: &Value, outc
         super::lease::reap_after_summary(server, runtime, &format!("prompt_exit:{reason}"));
     }
     if kind == "invocation.summary" {
-        let db = server.store.lock().unwrap();
-        if let Ok(Some(rt)) = db::runtime(&db.sqlite, runtime) {
-            let mut state = rt.state_object();
-            state["finalSummary"] = envelope["payload"].clone();
-            let _ = db::update_runtime_state(&db.sqlite, runtime, &state, &hrc_store::timestamp());
-        }
+        server.write(|db| {
+            if let Ok(Some(rt)) = db::runtime(&db.sqlite, runtime) {
+                let mut state = rt.state_object();
+                state["finalSummary"] = envelope["payload"].clone();
+                let _ =
+                    db::update_runtime_state(&db.sqlite, runtime, &state, &hrc_store::timestamp());
+            }
+        });
     }
     // Gap flushes below run broker RPCs; each takes its own guard.
     drop(write);
     let participant = {
-        let db = server.store.lock().unwrap();
+        let Ok(db) = server.read() else {
+            return;
+        };
         db::runtime(&db.sqlite, runtime)
             .ok()
             .flatten()
@@ -711,7 +719,9 @@ pub async fn after_mapped(server: &Shared, runtime: &str, envelope: &Value, outc
             );
         }
         let owned = {
-            let db = server.store.lock().unwrap();
+            let Ok(db) = server.read() else {
+                return;
+            };
             db::runtime(&db.sqlite, runtime)
                 .ok()
                 .flatten()
@@ -833,7 +843,9 @@ pub fn consume(
         }
         let error = "broker transport closed".to_owned();
         let runtime = {
-            let db = server.store.lock().unwrap();
+            let Ok(db) = server.read() else {
+                return;
+            };
             db::runtime(&db.sqlite, &runtime_id).ok().flatten()
         };
         if runtime.as_ref().is_some_and(external_lifecycle) {
@@ -860,7 +872,9 @@ pub fn consume(
             return;
         }
         let user_exit = {
-            let db = server.store.lock().unwrap();
+            let Ok(db) = server.read() else {
+                return;
+            };
             db::runtime(&db.sqlite, &runtime_id)
                 .ok()
                 .flatten()

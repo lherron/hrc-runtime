@@ -228,16 +228,19 @@ fn with_row<T>(
     runtime_id: &str,
     f: impl FnOnce(&Transaction<'_>, &db::Rt) -> Result<T>,
 ) -> Result<Option<T>> {
-    let db = server.store.lock().unwrap();
-    let tx = db.sqlite.unchecked_transaction()?;
-    let Some(rt) = db::runtime(&tx, runtime_id)? else {
-        return Ok(None);
-    };
-    let out = f(&tx, &rt)?;
-    tx.commit()?;
-    drop(db);
-    server.ledger_committed();
-    Ok(Some(out))
+    let out = server.write(|db| -> Result<_> {
+        let tx = db.sqlite.unchecked_transaction()?;
+        let Some(rt) = db::runtime(&tx, runtime_id)? else {
+            return Ok(None);
+        };
+        let out = f(&tx, &rt)?;
+        tx.commit()?;
+        Ok(Some(out))
+    })?;
+    if out.is_some() {
+        server.ledger_committed();
+    }
+    Ok(out)
 }
 /// markBrokerReattachStale
 fn mark_reattach_stale(
@@ -377,7 +380,9 @@ fn clear_recovery(server: &Server, runtime_id: &str) -> Result<()> {
 }
 /// hasRetainedProjection
 fn retained_projection(server: &Server, runtime_id: &str) -> bool {
-    let db = server.store.lock().unwrap();
+    let Ok(db) = server.read() else {
+        return false;
+    };
     db.sqlite
         .query_row(
             "SELECT 1 FROM broker_invocations WHERE runtime_id = ? AND retained_projected_through_seq IS NOT NULL LIMIT 1",
@@ -542,7 +547,7 @@ async fn classify(server: &Shared, rt: &db::Rt, h: &Hosting, attach_now: bool) -
 async fn attach(server: &Shared, rt: &db::Rt, h: &Hosting, token_path: &Path) -> Result<Outcome> {
     let runtime_id = rt.runtime_id.as_str();
     let runtime = {
-        let db = server.store.lock().unwrap();
+        let db = server.read()?;
         db.runtime(runtime_id)?.context("runtime vanished")?
     };
     let socket = Path::new(h.endpoint["socketPath"].as_str().unwrap_or(""));
@@ -659,7 +664,7 @@ fn broker_candidates(server: &Server) -> Result<Vec<String>> {
         .collect::<rusqlite::Result<_>>()?)
 }
 fn row(server: &Server, id: &str) -> Result<Option<db::Rt>> {
-    let db = server.store.lock().unwrap();
+    let db = server.read()?;
     db::runtime(&db.sqlite, id)
 }
 fn skipped(rt: &db::Rt) -> bool {
@@ -671,33 +676,41 @@ fn skipped(rt: &db::Rt) -> bool {
 /// reconcileTerminalRuntimeActiveRuns + settleTerminalRuntimeRuns
 fn terminal_active_runs(server: &Server) -> Result<()> {
     let rows: Vec<(String, String, String)> = {
-        let db = server.store.lock().unwrap();
+        let db = server.read()?;
         let mut stmt = db.sqlite.prepare("SELECT runtime_id, status, active_run_id FROM runtimes WHERE active_run_id IS NOT NULL AND status IN ('terminated', 'crashed', 'dead')")?;
         stmt.query_map([], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)))?
             .collect::<rusqlite::Result<_>>()?
     };
     for (runtime_id, status, active_run) in rows {
-        let db = server.store.lock().unwrap();
-        let tx = db.sqlite.unchecked_transaction()?;
-        let run_status = |tx: &Connection| -> Option<String> {
-            tx.query_row(
-                "SELECT status FROM runs WHERE run_id = ?",
-                [&active_run],
-                |r| r.get(0),
-            )
-            .ok()
-        };
-        let before = run_status(&tx);
-        let now = hrc_store::timestamp();
-        let message =
-            format!("runtime {runtime_id} is {status}; open run settled by startup reconcile");
-        if let Some(rt) = db::runtime(&tx, &runtime_id)? {
+        let Some((before, after, open)) = server.write(|db| -> Result<_> {
+            let tx = db.sqlite.unchecked_transaction()?;
+            let Some(rt) = db::runtime(&tx, &runtime_id)? else {
+                return Ok(None);
+            };
+            if rt.status != status || rt.active_run_id.as_deref() != Some(&active_run) {
+                return Ok(None);
+            }
+            let run_status = |tx: &Connection| -> Option<String> {
+                tx.query_row(
+                    "SELECT status FROM runs WHERE run_id = ?",
+                    [&active_run],
+                    |r| r.get(0),
+                )
+                .ok()
+            };
+            let before = run_status(&tx);
+            let now = hrc_store::timestamp();
+            let message =
+                format!("runtime {runtime_id} is {status}; open run settled by startup reconcile");
             super::submission_loss::settle_runtime(&tx, &rt, &now, "startup_terminal_sweep")?;
-        }
-        let open = db::settle_terminal_runtime_runs(&tx, &runtime_id, &now, &message)?;
-        let after = run_status(&tx);
-        tx.commit()?;
-        drop(db);
+            let open = db::settle_terminal_runtime_runs(&tx, &runtime_id, &now, &message)?;
+            let after = run_status(&tx);
+            tx.commit()?;
+            Ok(Some((before, after, open)))
+        })?
+        else {
+            continue;
+        };
         server.ledger_committed();
         stderr_json(
             "warn",
@@ -723,16 +736,17 @@ pub async fn reconcile(server: &Shared) -> Result<()> {
     }
     if let Err(e) = (|| -> Result<()> {
         let ids = super::submission_loss::unavailable_runtimes(server)?;
-        let db = server.store.lock().unwrap();
-        let tx = db.sqlite.unchecked_transaction()?;
-        super::submission_loss::settle_runtimes(
-            &tx,
-            &ids,
-            &hrc_store::timestamp(),
-            "startup_terminal_sweep",
-        )?;
-        tx.commit()?;
-        Ok(())
+        server.write(|db| {
+            let tx = db.sqlite.unchecked_transaction()?;
+            super::submission_loss::settle_runtimes(
+                &tx,
+                &ids,
+                &hrc_store::timestamp(),
+                "startup_terminal_sweep",
+            )?;
+            tx.commit()?;
+            Ok(())
+        })
     })() {
         startup_issue("terminal runtime submission repair failed", json!({}), &e);
     }
@@ -932,8 +946,7 @@ fn legacy_sweep(server: &Server) -> Result<()> {
         } else {
             "legacy_non_broker_controller_kind"
         };
-        let result = (|| -> Result<bool> {
-            let db = server.store.lock().unwrap();
+        let result = server.write(|db| -> Result<bool> {
             let tx = db.sqlite.unchecked_transaction()?;
             if db::runtime_record(&tx, &id)?.as_ref() != Some(&row) {
                 return Ok(false);
@@ -946,7 +959,7 @@ fn legacy_sweep(server: &Server) -> Result<()> {
             )?;
             tx.commit()?;
             Ok(true)
-        })();
+        });
         match result {
             Ok(changed) => marked |= changed,
             Err(e) => startup_issue("legacy runtime sweep failed", json!({"runtimeId":id}), &e),

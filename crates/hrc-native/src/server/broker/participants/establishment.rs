@@ -20,9 +20,7 @@ fn parsed(v: &Value, key: &str) -> Result<Value> {
 }
 fn current(server: &Shared, id: &str) -> Result<Value> {
     server
-        .store
-        .lock()
-        .unwrap()
+        .read()?
         .participant_attempt(id)?
         .context("participant attempt disappeared")
 }
@@ -34,12 +32,13 @@ fn snapshot(
     from: &str,
     to: &str,
 ) -> Result<()> {
-    let db = server.store.lock().unwrap();
-    let tx = db.sqlite.unchecked_transaction()?;
-    db.participant_snapshot_if_absent(id, column, value)?;
-    db.participant_transition(id, &[from], to)?;
-    tx.commit()?;
-    Ok(())
+    server.write(|db| {
+        let tx = db.sqlite.unchecked_transaction()?;
+        db.participant_snapshot_if_absent(id, column, value)?;
+        db.participant_transition(id, &[from], to)?;
+        tx.commit()?;
+        Ok(())
+    })
 }
 pub fn hosting(server: &Shared, reg: &Value, attempt: &Value) -> Result<()> {
     if attempt["hosting_intent_json"].is_string() {
@@ -144,9 +143,7 @@ fn presentation_socket(server: &Shared, d: &Value, attempt: &Value) -> Result<Pa
 }
 fn reg_generation(server: &Shared, attempt: &Value) -> Result<Value> {
     Ok(server
-        .store
-        .lock()
-        .unwrap()
+        .read()?
         .participant_registration(string(attempt, "registration_id")?)?
         .context("launch registration missing")?["generation"]
         .clone())
@@ -316,11 +313,9 @@ async fn establish(server: &Shared, reg: &Value, attempt: &Value) -> Result<()> 
     // generic startup reconciliation intentionally skips external lifecycles.
     let mut initial = attempt.clone();
     if initial["state"] == "ACTIVE" {
-        server.store.lock().unwrap().participant_transition(
-            string(&initial, "attempt_id")?,
-            &["ACTIVE"],
-            "DETACHED",
-        )?;
+        server.write(|db| {
+            db.participant_transition(string(&initial, "attempt_id")?, &["ACTIVE"], "DETACHED")
+        })?;
         initial = current(server, string(&initial, "attempt_id")?)?;
     }
     let mut a = realize(server, &initial).await?;
@@ -417,30 +412,20 @@ async fn establish(server: &Shared, reg: &Value, attempt: &Value) -> Result<()> 
             receipt["indeterminateReason"]
         );
         if a["state"] == "INSTALL_CONFIRMED" {
-            server.store.lock().unwrap().participant_transition(
-                &id,
-                &["INSTALL_CONFIRMED"],
-                "INVOCATION_READY",
-            )?;
+            server.write(|db| {
+                db.participant_transition(&id, &["INSTALL_CONFIRMED"], "INVOCATION_READY")
+            })?;
         }
         a = current(server, &id)?;
         ensure!(
             a["state"] == "INVOCATION_READY",
             "participant attach work is stale or no longer invocation-ready"
         );
-        server
-            .store
-            .lock()
-            .unwrap()
-            .participant_broker_graph(reg, &a, &hello)?;
+        server.write(|db| db.participant_broker_graph(reg, &a, &hello))?;
     }
     // Fresh, re-registered and reconnected establishments all said hello to
     // the broker now serving this runtime; its release is the runtime's.
-    server
-        .store
-        .lock()
-        .unwrap()
-        .participant_execution_release(string(&a, "runtime_id")?, &hello)?;
+    server.write(|db| db.participant_execution_release(string(&a, "runtime_id")?, &hello))?;
     attach_and_activate(server, reg, &a, &intent, &identity, &ack).await
 }
 
@@ -461,7 +446,7 @@ async fn attach_and_activate(
     )
     .await?;
     let controller = controller::server_instance_id();
-    let seq = server.store.lock().unwrap().sqlite.query_row(
+    let seq = server.read()?.sqlite.query_row(
         "SELECT COALESCE(last_projected_seq,0) FROM broker_invocations WHERE invocation_id=?",
         [a["invocation_id"].as_str()],
         |r| r.get::<_, i64>(0),
@@ -516,20 +501,20 @@ async fn attach_and_activate(
         status["invocationId"] == a["invocation_id"],
         "broker reattach status returned another invocation"
     );
-    server.store.lock().unwrap().participant_transition(
-        id,
-        &["INVOCATION_READY", "ACTIVE", "DETACHED"],
-        "ATTACH_CONFIRMED",
-    )?;
+    server.write(|db| {
+        db.participant_transition(
+            id,
+            &["INVOCATION_READY", "ACTIVE", "DETACHED"],
+            "ATTACH_CONFIRMED",
+        )
+    })?;
     // No event projection or ACK precedes durable participant activation.
-    server.store.lock().unwrap().activate_participant(reg, a)?;
+    server.write(|db| db.activate_participant(reg, a))?;
     // Reuse the ordinary controller's replay, delta flush, commit-before-ACK
     // and live event consumer. The candidate's notifications have been held on
     // `events` while the attempt/epoch and activation transaction were checked.
     let runtime = server
-        .store
-        .lock()
-        .unwrap()
+        .read()?
         .runtime(a["runtime_id"].as_str().unwrap_or(""))?
         .context("participant runtime disappeared before replay release")?;
     controller::attach_and_replay(
@@ -542,10 +527,10 @@ async fn attach_and_activate(
     .await?;
     // Activation is durable before replay, but work is complete only when
     // replay/ACK succeeds. A failed replay must retain the bounded retry job.
-    server.store.lock().unwrap().sqlite.execute(
+    server.write(|db| db.sqlite.execute(
         "UPDATE participant_registration_attempts SET establishment_work_state='completed',establishment_next_attempt_at=NULL,updated_at=? WHERE attempt_id=? AND attach_epoch=? AND establishment_work_state IN ('pending','retry_wait')",
         rusqlite::params![hrc_store::timestamp(), a["attempt_id"].as_str(), a["attach_epoch"].as_i64()],
-    )?;
+    ))?;
     Ok(())
 }
 
@@ -577,7 +562,7 @@ pub fn schedule(server: &Shared, registration_id: &str, attempt_id: &str) {
 async fn run(server: &Shared, registration_id: &str, id: &str) -> Result<()> {
     loop {
         let (reg, a) = {
-            let db = server.store.lock().unwrap();
+            let db = server.read()?;
             (
                 db.participant_registration(registration_id)?
                     .context("participant registration disappeared")?,
@@ -591,9 +576,7 @@ async fn run(server: &Shared, registration_id: &str, id: &str) -> Result<()> {
             return Ok(());
         }
         let latest = server
-            .store
-            .lock()
-            .unwrap()
+            .read()?
             .participant_latest_attempt(registration_id)?
             .context("participant attempt missing")?;
         if latest["attempt_id"] != a["attempt_id"] || latest["attach_epoch"] != a["attach_epoch"] {
@@ -647,12 +630,14 @@ async fn run(server: &Shared, registration_id: &str, id: &str) -> Result<()> {
                 } else {
                     5
                 };
-                server.store.lock().unwrap().participant_work_failed(
-                    &a,
-                    &error.to_string(),
-                    delays[count.min(3)],
-                    max_attempts,
-                )?;
+                server.write(|db| {
+                    db.participant_work_failed(
+                        &a,
+                        &error.to_string(),
+                        delays[count.min(3)],
+                        max_attempts,
+                    )
+                })?;
                 super::super::stderr_json(
                     "warn",
                     "server",
@@ -692,11 +677,11 @@ pub fn resume(server: &Shared) -> Result<()> {
     // reconnectActivatedParticipants / armParticipantReconnect: a new owner
     // has no active clients. Arm completed ACTIVE attempts before any broker
     // effect so an outage or crash preserves the existing bounded retry job.
-    server.store.lock().unwrap().sqlite.execute(
+    server.write(|db| db.sqlite.execute(
         "UPDATE participant_registration_attempts SET establishment_work_state='pending',establishment_attempt_count=0,establishment_next_attempt_at=NULL,establishment_last_error=NULL,updated_at=? WHERE state='ACTIVE' AND establishment_work_state='completed' AND prepared_profile_json IS NOT NULL",
         [hrc_store::timestamp()],
-    )?;
-    let work = server.store.lock().unwrap().pending_participant_work()?;
+    ))?;
+    let work = server.read()?.pending_participant_work()?;
     for (registration, attempt) in work {
         schedule(server, &registration, &attempt);
     }

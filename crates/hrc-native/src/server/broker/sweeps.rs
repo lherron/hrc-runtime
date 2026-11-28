@@ -398,7 +398,7 @@ pub(super) async fn withdraw_unwritten(
     trigger: &str,
 ) -> anyhow::Result<()> {
     let target = {
-        let db = server.store.lock().unwrap();
+        let db = server.read()?;
         // Re-read after earlier candidates' RPCs; their events may settle us.
         match db::run(&db.sqlite, &run.run_id)? {
             Some(current)
@@ -421,7 +421,7 @@ pub(super) async fn withdraw_unwritten(
         if reply["outcome"] == "withdrawn" {
             loop {
                 let committed: bool = {
-                    let db = server.store.lock().unwrap();
+                    let db = server.read().map_err(|e| ("projection_error".to_owned(), e.to_string()))?;
                     db.sqlite.query_row(
                         "SELECT EXISTS(SELECT 1 FROM broker_invocation_events WHERE invocation_id=? AND runtime_id=? AND type='submission.withdrawn' AND json_extract(broker_event_json,'$.submissionId')=?)",
                         params![invocation, runtime, submission], |r| r.get(0),
@@ -466,7 +466,7 @@ pub async fn sweep_zombies(
 ) -> Result<Value, ApiError> {
     let cutoff = chrono::Utc::now().timestamp_millis() - older_ms;
     let found = {
-        let db = server.store.lock().unwrap();
+        let db = server.read()?;
         candidates(&db.sqlite, cutoff)?
     };
     let mut results = Vec::new();
@@ -484,13 +484,12 @@ pub async fn sweep_zombies(
                 json!({"runId":c.run.run_id,"error":e.to_string()}),
             );
         }
-        let outcome = (|| {
-            let db = server.store.lock().unwrap();
+        let outcome = server.write(|db| {
             let tx = db.sqlite.unchecked_transaction()?;
             let r = zombie(&tx, c, threshold)?;
             tx.commit()?;
             anyhow::Ok(r)
-        })();
+        });
         results.push(outcome.unwrap_or_else(|e| {
             let mut r = result(c, "error");
             r["errorCode"] = "internal_error".into();
@@ -577,18 +576,29 @@ pub fn archive_idle_sessions(server: &Shared, days: f64) -> anyhow::Result<Value
     let since = chrono::Utc::now() - chrono::Duration::milliseconds((days * 86_400_000.0) as i64);
     let since = since.to_rfc3339_opts(chrono::SecondsFormat::Millis, true);
     let now = hrc_store::timestamp();
-    let db = server.store.lock().unwrap();
-    let idle: std::collections::HashSet<String> = db
-        .sqlite
-        .prepare(&format!("SELECT s.host_session_id FROM sessions s WHERE s.status = 'active' AND {SESSION_RECENCY} < ? AND NOT {SESSION_HOLDS_RUNTIME}"))?
-        .query_map([&since], |r| r.get(0))?
-        .collect::<rusqlite::Result<_>>()?;
-    let rows: Vec<(String, String, String, Option<String>)> = db
-        .sqlite
-        .prepare("SELECT host_session_id, scope_ref, status, continuation_json FROM sessions ORDER BY created_at ASC, host_session_id ASC")?
-        .query_map([], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)))?
-        .collect::<rusqlite::Result<_>>()?;
-    let (mut archived, mut primary, mut not_idle, mut no_continuation, mut app) = (0, 0, 0, 0, 0);
+    let (idle, rows) = {
+        let db = server.read()?;
+        let idle_sql = format!(
+            "SELECT s.host_session_id FROM sessions s WHERE s.status = 'active' \
+             AND {SESSION_RECENCY} < ? AND NOT {SESSION_HOLDS_RUNTIME}"
+        );
+        let idle: std::collections::HashSet<String> = db
+            .sqlite
+            .prepare(&idle_sql)?
+            .query_map([&since], |r| r.get(0))?
+            .collect::<rusqlite::Result<_>>()?;
+        let rows: Vec<(String, String, String, Option<String>)> = db
+            .sqlite
+            .prepare(
+                "SELECT host_session_id, scope_ref, status, continuation_json FROM sessions \
+                 ORDER BY created_at ASC, host_session_id ASC",
+            )?
+            .query_map([], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)))?
+            .collect::<rusqlite::Result<_>>()?;
+        (idle, rows)
+    };
+    let (mut primary, mut not_idle, mut no_continuation, mut app) = (0, 0, 0, 0);
+    let mut candidates = Vec::new();
     for (host, scope, status, continuation) in rows {
         if status != "active" {
             continue;
@@ -608,20 +618,32 @@ pub fn archive_idle_sessions(server: &Shared, days: f64) -> anyhow::Result<Value
             not_idle += 1;
             continue;
         }
-        let key = continuation
-            .and_then(|c| serde_json::from_str::<Value>(&c).ok())
-            .and_then(|c| c["key"].as_str().map(str::to_owned))
-            .filter(|k| !k.is_empty());
-        if key.is_none() {
+        let has_key = continuation
+            .as_deref()
+            .and_then(|c| serde_json::from_str::<Value>(c).ok())
+            .is_some_and(|c| c["key"].as_str().is_some_and(|key| !key.is_empty()));
+        if !has_key {
             no_continuation += 1;
             continue;
         }
-        db.sqlite.execute(
-            "UPDATE sessions SET status='archived', updated_at=? WHERE host_session_id=?",
-            params![now, host],
-        )?;
-        archived += 1;
+        candidates.push((host, scope, continuation));
     }
+    let archived = if candidates.is_empty() {
+        0
+    } else {
+        server.write(|db| -> anyhow::Result<usize> {
+            let mut archive = db.sqlite.prepare(&format!(
+                "UPDATE sessions AS s SET status='archived', updated_at=? \
+                 WHERE host_session_id=? AND scope_ref=? AND status='active' AND continuation_json=? \
+                 AND {SESSION_RECENCY} < ? AND NOT {SESSION_HOLDS_RUNTIME}"
+            ))?;
+            let mut archived = 0;
+            for (host, scope, continuation) in candidates {
+                archived += archive.execute(params![now, host, scope, continuation, since])?;
+            }
+            Ok(archived)
+        })?
+    };
     Ok(
         json!({"archived":archived,"skippedPrimary":primary,"skippedNotIdle":not_idle,"skippedNoContinuation":no_continuation,"skippedApp":app}),
     )

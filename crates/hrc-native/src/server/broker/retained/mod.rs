@@ -503,7 +503,7 @@ async fn read_and_project(
     prior: Option<&(String, i64, Value)>,
     expected: Option<&Row>,
 ) -> Result<Attempt> {
-    let start = cursor(&server.store.lock().unwrap().sqlite, invocation);
+    let start = cursor(&server.read()?.sqlite, invocation);
     let fail = |outcome: &str, detail: Value| Attempt {
         outcome: outcome.into(),
         detail,
@@ -581,8 +581,7 @@ async fn read_and_project(
         .await;
         pages += 1;
         bytes += call.stdout_bytes;
-        let projected =
-            cursor(&server.store.lock().unwrap().sqlite, invocation).max(after.min(start));
+        let projected = cursor(&server.read()?.sqlite, invocation).max(after.min(start));
         let response = match call.kind {
             reader::Kind::Failed(outcome, detail) => {
                 return Ok(Attempt {
@@ -645,13 +644,14 @@ async fn read_and_project(
         // Whole page validated: project it in order.
         for envelope in &page.events {
             let applied = {
-                let db = server.store.lock().unwrap();
-                require_pending_write(&db.sqlite, expected, invocation, prior)?;
-                projection::apply_retained(&db.sqlite, &mut mem, envelope).and_then(|outcome| {
-                    if !outcome.ignored_delta && !outcome.idempotent {
-                        history(&db.sqlite, &row.runtime_id, envelope)?;
-                    }
-                    Ok(outcome)
+                server.write(|db| {
+                    require_pending_write(&db.sqlite, expected, invocation, prior)?;
+                    projection::apply_retained(&db.sqlite, &mut mem, envelope).and_then(|outcome| {
+                        if !outcome.ignored_delta && !outcome.idempotent {
+                            history(&db.sqlite, &row.runtime_id, envelope)?;
+                        }
+                        Ok(outcome)
+                    })
                 })
             };
             server.ledger_committed();
@@ -661,19 +661,22 @@ async fn read_and_project(
                     detail: detail_with(
                         json!({"seq":envelope["seq"],"type":envelope["type"],"error":format!("{error:#}")}),
                     ),
-                    projected: cursor(&server.store.lock().unwrap().sqlite, invocation).max(after),
+                    projected: cursor(&server.read()?.sqlite, invocation).max(after),
                     current: Some(page.current_seq),
                     spawned: true,
                 });
             }
         }
         {
-            let db = server.store.lock().unwrap();
-            require_pending_write(&db.sqlite, expected, invocation, prior)?;
-            projection::flush_retained(&db.sqlite, &mut mem, invocation)?;
+            server.write(|db| {
+                require_pending_write(&db.sqlite, expected, invocation, prior)?;
+                projection::flush_retained(&db.sqlite, &mut mem, invocation)?;
+
+                Ok::<_, anyhow::Error>(())
+            })?;
         }
         after = page.next_after_seq;
-        let at = cursor(&server.store.lock().unwrap().sqlite, invocation);
+        let at = cursor(&server.read()?.sqlite, invocation);
         if !page.has_more {
             let common = json!({"currentSeq":page.current_seq,"retentionFloorSeq":page.retention_floor_seq,"integrity":page.integrity,"snapshot":page.snapshot,"pages":pages});
             let mut detail = json!({"projectedThroughSeq":at});
@@ -768,14 +771,13 @@ fn response(
     dry_run: bool,
 ) -> Value {
     let class = classify(outcome);
-    let held = {
-        let db = server.store.lock().unwrap();
+    let held = server.read().ok().is_some_and(|db| {
         row(&db.sqlite, runtime_id)
             .ok()
             .flatten()
             .and_then(|r| hold(&db.sqlite, &r, now_ms()).ok())
             .is_some_and(|h| h.held)
-    };
+    });
     let mut out = json!({"runtimeId":runtime_id});
     if let Some(i) = invocation {
         out["invocationId"] = i.into();
@@ -872,7 +874,7 @@ async fn recover_inner(
 ) -> Result<Option<Value>> {
     let expected = candidate.map(|candidate| &candidate.row);
     let (row0, invocation, prior) = {
-        let db = server.store.lock().unwrap();
+        let db = server.read()?;
         let Some(r) = row(&db.sqlite, runtime_id)? else {
             return Ok(None);
         };
@@ -909,7 +911,7 @@ async fn recover_inner(
             false,
         )));
     };
-    let projected_now = cursor(&server.store.lock().unwrap().sqlite, &invocation);
+    let projected_now = cursor(&server.read()?.sqlite, &invocation);
     if !OWNED.lock().unwrap().insert(runtime_id.to_owned()) {
         return Ok(Some(response(
             server,
@@ -929,7 +931,7 @@ async fn recover_inner(
     let result: Result<Value> = async {
         // Re-read inside ownership: eligibility is never judged on a stale row.
         let owned = {
-            let db = server.store.lock().unwrap();
+            let db = server.read()?;
             require_pending_write(&db.sqlite, expected, &invocation, prior.as_ref())?;
             row(&db.sqlite, runtime_id)?.unwrap_or(row0)
         };
@@ -946,11 +948,11 @@ async fn recover_inner(
             }
             if class == "retryable" && *attempts >= RETRY_BUDGET {
                 let detail = json!({"priorOutcome":outcome,"requestedAfterSeq":projected_now});
-                {
-                    let db = server.store.lock().unwrap();
+                server.write(|db| -> Result<()> {
                     require_pending_write(&db.sqlite, expected, &invocation, prior.as_ref())?;
                     append_outcome(&db.sqlite, &owned, &invocation, trigger, "paused_needs_disposition", *attempts, detail.clone())?;
-                }
+                    Ok(())
+                })?;
                 return Ok(response(server, runtime_id, Some(&invocation), trigger, "paused_needs_disposition", true, *attempts, false, projected_now, None, detail, false));
             }
         }
@@ -961,11 +963,11 @@ async fn recover_inner(
         if let Some(c) = attempt.current {
             recorded["currentSeq"] = c.into();
         }
-        {
-            let db = server.store.lock().unwrap();
+        server.write(|db| -> Result<()> {
             require_pending_write(&db.sqlite, expected, &invocation, prior.as_ref())?;
             append_outcome(&db.sqlite, &owned, &invocation, trigger, &attempt.outcome, attempts, recorded)?;
-        }
+            Ok(())
+        })?;
         server.ledger_committed();
         Ok(response(server, runtime_id, Some(&invocation), trigger, &attempt.outcome, true, attempts, attempt.spawned, attempt.projected, attempt.current, attempt.detail, false))
     }

@@ -15,7 +15,7 @@ struct Seat {
 }
 
 fn seat(server: &Shared, rt: &db::Rt) -> anyhow::Result<Seat> {
-    let db = server.store.lock().unwrap();
+    let db = server.read()?;
     let identity = db.identity(&rt.scope_ref, &rt.lane_ref)?;
     let kind = db.seat_state(&rt.scope_ref, &rt.lane_ref)?["kind"].clone();
     let text = |v: &Value| v.as_str().unwrap_or_default().to_owned();
@@ -41,7 +41,7 @@ async fn guard(server: &Shared, rt: &db::Rt) -> anyhow::Result<Option<&'static s
         return Ok(Some("active_run"));
     }
     let (nonterminal, protected) = {
-        let db = server.store.lock().unwrap();
+        let db = server.read()?;
         db.sqlite.query_row(
             "SELECT EXISTS(SELECT 1 FROM runs WHERE runtime_id=?1 AND status NOT IN ('completed','failed','cancelled','zombie','coalesced')), EXISTS(SELECT 1 FROM inputs WHERE runtime_id=?1 AND cleanup_protection='protected')",
             [&rt.runtime_id],
@@ -88,27 +88,28 @@ fn recently_typed(status: &Value) -> bool {
 /// terminate route's owner path does; false when anything moved since the scan.
 fn close(server: &Shared, rt: &db::Rt) -> anyhow::Result<bool> {
     let now = hrc_store::timestamp();
-    let db = server.store.lock().unwrap();
-    let tx = db.sqlite.unchecked_transaction()?;
-    let closed = tx.execute(
-        "UPDATE runtimes SET status='stopping', status_changed_at=?1, updated_at=?1 WHERE runtime_id=?2 AND status='ready' AND active_run_id IS NULL AND last_activity_at IS ?3 AND NOT EXISTS(SELECT 1 FROM runs WHERE runtime_id=?2 AND status NOT IN ('completed','failed','cancelled','zombie','coalesced'))",
-        params![now, rt.runtime_id, rt.last_activity_at],
-    )?;
-    if closed == 0 {
-        return Ok(false);
-    }
-    if let Some(invocation) = &rt.active_invocation_id {
-        db::update_invocation(
-            &tx,
-            invocation,
-            &[
-                ("invocation_state", db::text("stopping")),
-                ("updated_at", db::text(now.as_str())),
-            ],
+    server.write(|db| {
+        let tx = db.sqlite.unchecked_transaction()?;
+        let closed = tx.execute(
+            "UPDATE runtimes SET status='stopping', status_changed_at=?1, updated_at=?1 WHERE runtime_id=?2 AND status='ready' AND active_run_id IS NULL AND last_activity_at IS ?3 AND NOT EXISTS(SELECT 1 FROM runs WHERE runtime_id=?2 AND status NOT IN ('completed','failed','cancelled','zombie','coalesced'))",
+            params![now, rt.runtime_id, rt.last_activity_at],
         )?;
-    }
-    tx.commit()?;
-    Ok(true)
+        if closed == 0 {
+            return Ok(false);
+        }
+        if let Some(invocation) = &rt.active_invocation_id {
+            db::update_invocation(
+                &tx,
+                invocation,
+                &[
+                    ("invocation_state", db::text("stopping")),
+                    ("updated_at", db::text(now.as_str())),
+                ],
+            )?;
+        }
+        tx.commit()?;
+        Ok(true)
+    })
 }
 
 /// The only principal the retire door serves (T-14454).
@@ -162,7 +163,7 @@ pub async fn door(server: &Shared, headers: &HeaderMap, body: &[u8]) -> Result<R
         opaque("policyRevision")?,
     );
     let rt = {
-        let db = server.store.lock().unwrap();
+        let db = server.read()?;
         db::runtime(&db.sqlite, runtime_id)?
     }
     .ok_or_else(|| {

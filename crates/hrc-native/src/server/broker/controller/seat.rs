@@ -244,40 +244,41 @@ pub async fn probe(server: &Shared, runtime_id: &str, cause: &str) -> Result<Val
     let observed = hrc_store::timestamp();
     let current = active(server, runtime_id).map(|(i, _)| i);
     let (recorded, changed) = {
-        let db = server.store.lock().unwrap();
-        let before = db.sqlite.total_changes();
-        let recorded: Result<()> = (|| {
-            match (&result, &current) {
-                (Ok((invocation, response)), Some(active_invocation))
-                    if active_invocation == invocation =>
-                {
-                    let observation = record(
-                        &db.sqlite, runtime_id, invocation, response, &observed, cause,
-                    )?;
-                    if observation["state"] == "idle" {
-                        settle_idle(&db.sqlite, runtime_id, invocation, &observed)?;
+        server.write(|db| {
+            let before = db.sqlite.total_changes();
+            let recorded: Result<()> = (|| {
+                match (&result, &current) {
+                    (Ok((invocation, response)), Some(active_invocation))
+                        if active_invocation == invocation =>
+                    {
+                        let observation = record(
+                            &db.sqlite, runtime_id, invocation, response, &observed, cause,
+                        )?;
+                        if observation["state"] == "idle" {
+                            settle_idle(&db.sqlite, runtime_id, invocation, &observed)?;
+                        }
                     }
+                    (Ok(_), _) => record_unavailable(
+                        &db.sqlite,
+                        runtime_id,
+                        current.as_deref(),
+                        &observed,
+                        cause,
+                        "active broker binding changed during probe",
+                    )?,
+                    (Err(e), _) => record_unavailable(
+                        &db.sqlite,
+                        runtime_id,
+                        current.as_deref(),
+                        &observed,
+                        cause,
+                        &e.message,
+                    )?,
                 }
-                (Ok(_), _) => record_unavailable(
-                    &db.sqlite,
-                    runtime_id,
-                    current.as_deref(),
-                    &observed,
-                    cause,
-                    "active broker binding changed during probe",
-                )?,
-                (Err(e), _) => record_unavailable(
-                    &db.sqlite,
-                    runtime_id,
-                    current.as_deref(),
-                    &observed,
-                    cause,
-                    &e.message,
-                )?,
-            }
-            Ok(())
-        })();
-        (recorded, db.sqlite.total_changes() != before)
+                Ok(())
+            })();
+            (recorded, db.sqlite.total_changes() != before)
+        })
     };
     // Settlement and the seat stall warning can write even when the probe is equal.
     // Also notify on a partial write followed by a recording error.

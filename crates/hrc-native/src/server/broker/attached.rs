@@ -171,7 +171,7 @@ pub async fn start_carrying(
     let seat = broker::session_gate(server, &session).await;
     broker::require_active_host(server, &session)?;
     let existing = {
-        let db = server.store.lock().unwrap();
+        let db = server.read()?;
         let id: Option<String> = db
             .sqlite
             .query_row(
@@ -190,7 +190,7 @@ pub async fn start_carrying(
     }
     let live = match existing {
         Some(rt) => {
-            let db = server.store.lock().unwrap();
+            let db = server.read()?;
             db::runtime(&db.sqlite, &rt.runtime_id)?.filter(|r| {
                 r.controller_kind.as_deref() == Some("harness-broker")
                     && r.status != "failed"
@@ -251,7 +251,7 @@ fn result_runtime(result: &Value) -> Option<String> {
 pub async fn prepare(server: &Shared, body: Value) -> Result<Response, ApiError> {
     let req = request(&body)?;
     let session = {
-        let db = server.store.lock().unwrap();
+        let db = server.read()?;
         db.session(&req.host)?
     }
     .ok_or_else(|| ApiError::missing_host(&req.host))?;

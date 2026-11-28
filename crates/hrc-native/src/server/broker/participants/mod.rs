@@ -207,20 +207,17 @@ async fn register_core(server: &super::Shared, body: Value) -> Result<Answer, Ap
         hrc_store::ParticipantJoin::Refused(v) => Answer::Refused(v),
         hrc_store::ParticipantJoin::Registered(mut v) => {
             if let Some(metadata) = body.get("metadata") {
-                let written =
-                    server
-                        .store
-                        .lock()
-                        .unwrap()
-                        .write_metadata(hrc_store::MetadataWrite {
-                            scope: v["scopeRef"].as_str().unwrap_or(""),
-                            lane: v["identity"]["laneRef"].as_str().unwrap_or("main"),
-                            source: "launch",
-                            set: metadata,
-                            clear: &[],
-                            replace: true,
-                            updated_by: v["identity"]["registrationId"].as_str().unwrap_or(""),
-                        })?;
+                let written = server.write(|db| {
+                    db.write_metadata(hrc_store::MetadataWrite {
+                        scope: v["scopeRef"].as_str().unwrap_or(""),
+                        lane: v["identity"]["laneRef"].as_str().unwrap_or("main"),
+                        source: "launch",
+                        set: metadata,
+                        clear: &[],
+                        replace: true,
+                        updated_by: v["identity"]["registrationId"].as_str().unwrap_or(""),
+                    })
+                })?;
                 v["rejectedMetadata"] = written["rejected"].clone();
             }
             Answer::Done(v)
@@ -294,7 +291,7 @@ pub async fn allocate_hrc_launched_claim(
     local_scope(server, scope).await?;
     let home = participant_home(server);
     let external = {
-        let db = server.store.lock().unwrap();
+        let db = server.read()?;
         match db.participant_registration_by_scope(scope)? {
             Some(reg) if reg["lifecycle_owner"] == "externally-owned" => {
                 db.participant_latest_attempt(reg["registration_id"].as_str().unwrap_or(""))?
@@ -319,10 +316,7 @@ pub async fn allocate_hrc_launched_claim(
             detail: &gone.detail,
         },
     };
-    let joined = server
-        .store
-        .lock()
-        .unwrap()
+    let joined = server.write(|db| db
         .allocate_hrc_launched_participant_then(&body, &home, evidence, |tx, reply| {
             if let Some(claim) = claim {
                 // A replay after a failed/retired launch succeeds the same
@@ -334,7 +328,7 @@ pub async fn allocate_hrc_launched_claim(
                 anyhow::ensure!(changed == 1, "claim key belongs to a different request");
             }
             Ok(())
-        })?;
+        }))?;
     Ok(match joined {
         hrc_store::ParticipantJoin::Registered(v) => {
             server.ledger_committed();
@@ -384,11 +378,7 @@ pub fn abandon_hrc_launched(
             Some("reason"),
         ));
     }
-    let abandoned = server
-        .store
-        .lock()
-        .unwrap()
-        .abandon_hrc_launched_attempt(attempt_id, reason)?;
+    let abandoned = server.write(|db| db.abandon_hrc_launched_attempt(attempt_id, reason))?;
     Ok(match abandoned {
         hrc_store::ParticipantAbandon::Abandoned { changed } => {
             if changed {
@@ -424,11 +414,7 @@ pub async fn unpark(server: &super::Shared, body: Value) -> Result<Response, Api
             Some(json!({"homeNodeId":authority["nodeId"]})),
         ));
     }
-    let cleared = server
-        .store
-        .lock()
-        .unwrap()
-        .unpark_participant(&scope, &lane)?;
+    let cleared = server.write(|db| db.unpark_participant(&scope, &lane))?;
     let Some((id, changed)) = cleared else {
         return Err(ApiError::domain(
             StatusCode::NOT_FOUND,
@@ -461,24 +447,16 @@ async fn join(
 ) -> Result<hrc_store::ParticipantJoin, ApiError> {
     local_scope(server, body["requestedSessionRef"].as_str().unwrap()).await?;
     let home = participant_home(server);
-    let joined = server
-        .store
-        .lock()
-        .unwrap()
-        .register_direct_participant(body, &home)?;
+    let joined = server.write(|db| db.register_direct_participant(body, &home))?;
     Ok(match joined {
         hrc_store::ParticipantJoin::Succession {
             registration,
             attempt,
         } => {
             let (outcome, detail) = establishment::observe_transport_evidence(&attempt).await;
-            server.store.lock().unwrap().finish_participant_succession(
-                body,
-                &registration,
-                &attempt,
-                outcome,
-                &detail,
-            )?
+            server.write(|db| {
+                db.finish_participant_succession(body, &registration, &attempt, outcome, &detail)
+            })?
         }
         other => other,
     })
@@ -613,7 +591,7 @@ async fn attach_core(server: &super::Shared, body: Value) -> Result<Answer, ApiE
     let body = parse_attach(body)?;
     let reg_id = body["registrationId"].as_str().unwrap();
     let (reg, attempt) = {
-        let db = server.store.lock().unwrap();
+        let db = server.read()?;
         let Some(reg) = db.participant_registration(reg_id)? else {
             return Ok(Answer::refused(
                 "rejected",
@@ -653,11 +631,9 @@ async fn attach_core(server: &super::Shared, body: Value) -> Result<Answer, ApiE
         ));
     }
     if body["resumeUnsupported"] == true {
-        server
-            .store
-            .lock()
-            .unwrap()
-            .participant_resume_unsupported(&attempt, body["reason"].as_str().unwrap())?;
+        server.write(|db| {
+            db.participant_resume_unsupported(&attempt, body["reason"].as_str().unwrap())
+        })?;
         return Ok(Answer::refused(
             "pending",
             "participant_resume_unsupported",
@@ -705,15 +681,9 @@ async fn attach_core(server: &super::Shared, body: Value) -> Result<Answer, ApiE
             reg["scope_ref"].as_str().unwrap(),
         )?;
     }
-    let prepared = server
-        .store
-        .lock()
-        .unwrap()
-        .freeze_participant_descriptor(&reg, &attempt, &body)?;
+    let prepared = server.write(|db| db.freeze_participant_descriptor(&reg, &attempt, &body))?;
     let persisted = server
-        .store
-        .lock()
-        .unwrap()
+        .read()?
         .participant_attempt(attempt["attempt_id"].as_str().unwrap())?
         .unwrap();
     if !prepared {
@@ -755,12 +725,7 @@ async fn attach_core(server: &super::Shared, body: Value) -> Result<Answer, ApiE
             });
         }
     } else {
-        let current = server
-            .store
-            .lock()
-            .unwrap()
-            .participant_registration(reg_id)?
-            .unwrap();
+        let current = server.read()?.participant_registration(reg_id)?.unwrap();
         if let Err(error) = establishment::hosting(server, &current, &persisted) {
             super::stderr_json(
                 "error",
@@ -777,11 +742,8 @@ async fn attach_core(server: &super::Shared, body: Value) -> Result<Answer, ApiE
         establishment::schedule(server, reg_id, attempt["attempt_id"].as_str().unwrap());
     }
     let rejected = if let Some(metadata) = body.get("metadata") {
-        server
-            .store
-            .lock()
-            .unwrap()
-            .write_metadata(hrc_store::MetadataWrite {
+        server.write(|db| {
+            db.write_metadata(hrc_store::MetadataWrite {
                 scope: reg["scope_ref"].as_str().unwrap(),
                 lane: reg["lane_ref"].as_str().unwrap(),
                 source: "launch",
@@ -789,7 +751,8 @@ async fn attach_core(server: &super::Shared, body: Value) -> Result<Answer, ApiE
                 clear: &[],
                 replace: true,
                 updated_by: reg_id,
-            })?["rejected"]
+            })
+        })?["rejected"]
             .clone()
     } else {
         json!([])
@@ -812,8 +775,7 @@ pub fn host_refusal_detail(
     knock: bool,
 ) -> String {
     let mut parked = false;
-    let result = (|| -> anyhow::Result<bool> {
-        let store = server.store.lock().unwrap();
+    let result = server.write(|store| -> anyhow::Result<bool> {
         let Some(reservation) = store.participant_reservation(scope, lane)? else {
             return Ok(false);
         };
@@ -849,7 +811,7 @@ pub fn host_refusal_detail(
         tx.commit()?;
         requests.insert(id.to_owned(), now);
         Ok(true)
-    })();
+    });
     match result {
         Ok(true) => server.ledger_committed(),
         Ok(false) => {}

@@ -39,16 +39,15 @@ pub async fn mark_invocation_terminal(
         return Ok(());
     }
     let closing = intentional_close_reason(server, runtime_id);
-    let user_exit = {
-        let db = server.store.lock().unwrap();
+    let Some(user_exit) = server.write(|db| -> Result<_> {
         let tx = db.sqlite.unchecked_transaction()?;
         let Some(rt) = db::runtime(&tx, runtime_id)? else {
-            return Ok(());
+            return Ok(None);
         };
         if rt.active_invocation_id.as_deref() != Some(&invocation)
             || hrc_store::status::BROKER_TERMINAL.contains(&rt.status.as_str())
         {
-            return Ok(());
+            return Ok(None);
         }
         let now = hrc_store::timestamp();
         crate::server::submission_loss::settle_runtime(&tx, &rt, &now, "invocation_terminal")?;
@@ -179,7 +178,10 @@ pub async fn mark_invocation_terminal(
         }
         tx.commit()?;
         server.ledger_committed();
-        user_exit
+        Ok(Some(user_exit))
+    })?
+    else {
+        return Ok(());
     };
     if active(server, runtime_id).is_some_and(|(i, _)| i == invocation) {
         mark_closing(server, runtime_id, "broker_invocation_terminal");
@@ -199,138 +201,141 @@ pub fn mark_crash_terminal(
     code: &str,
     message: &str,
 ) -> Result<()> {
-    let db = server.store.lock().unwrap();
-    let tx = db.sqlite.unchecked_transaction()?;
-    let Some(rt) = db::runtime(&tx, runtime_id)? else {
-        return Ok(());
-    };
-    if !server
-        .brokers
-        .lock()
-        .unwrap()
-        .get(runtime_id)
-        .is_some_and(|current| current.same(client))
-    {
-        return Ok(());
-    }
-    let now = hrc_store::timestamp();
-    if external_lifecycle(&rt) {
-        super::participant::detach(&tx, &rt, &now, "broker_transport_closed")?;
-        tx.commit()?;
-        delete_active(server, runtime_id);
-        server.ledger_committed();
-        return Ok(());
-    }
-    crate::server::submission_loss::settle_runtime(&tx, &rt, &now, code)?;
-    if rt.status == "crashed" {
-        tx.commit()?;
-        delete_active(server, runtime_id);
-        server.ledger_committed();
-        return Ok(());
-    }
-    super::super::lease::retire_hrc_launched(&tx, &rt, &now, code)?;
-    let inv = match &rt.active_invocation_id {
-        Some(id) => db::invocation(&tx, id)?,
-        None => db::invocations_for_runtime(&tx, runtime_id)?.pop(),
-    };
-    let mut crashed = Vec::new();
-    for id in [
-        inv.as_ref().and_then(|i| i.run_id.clone()),
-        rt.active_run_id.clone(),
-    ]
-    .into_iter()
-    .flatten()
-    {
-        if crashed.contains(&id) {
-            continue;
-        }
-        if let Some(r) = db::run(&tx, &id)?
-            && r.completed_at.is_none()
-            && ["accepted", "started", "running"].contains(&r.status.as_str())
+    server.write(|db| {
+        let tx = db.sqlite.unchecked_transaction()?;
+        let Some(rt) = db::runtime(&tx, runtime_id)? else {
+            return Ok(());
+        };
+        if !server
+            .brokers
+            .lock()
+            .unwrap()
+            .get(runtime_id)
+            .is_some_and(|current| current.same(client))
         {
-            db::mark_run_completed(
-                &tx,
-                &id,
-                db::Completion {
-                    status: "failed",
-                    completed_at: &now,
-                    updated_at: &now,
-                    error_code: Some("runtime_unavailable"),
-                    error_message: Some(message),
-                },
-            )?;
-            crashed.push(id);
+            return Ok(());
         }
-    }
-    if let Some(inv) = &inv {
-        db::update_invocation(
+        let now = hrc_store::timestamp();
+        if external_lifecycle(&rt) {
+            super::participant::detach(&tx, &rt, &now, "broker_transport_closed")?;
+            tx.commit()?;
+            delete_active(server, runtime_id);
+            server.ledger_committed();
+            return Ok(());
+        }
+        crate::server::submission_loss::settle_runtime(&tx, &rt, &now, code)?;
+        if rt.status == "crashed" {
+            tx.commit()?;
+            delete_active(server, runtime_id);
+            server.ledger_committed();
+            return Ok(());
+        }
+        super::super::lease::retire_hrc_launched(&tx, &rt, &now, code)?;
+        let inv = match &rt.active_invocation_id {
+            Some(id) => db::invocation(&tx, id)?,
+            None => db::invocations_for_runtime(&tx, runtime_id)?.pop(),
+        };
+        let mut crashed = Vec::new();
+        for id in [
+            inv.as_ref().and_then(|i| i.run_id.clone()),
+            rt.active_run_id.clone(),
+        ]
+        .into_iter()
+        .flatten()
+        {
+            if crashed.contains(&id) {
+                continue;
+            }
+            if let Some(r) = db::run(&tx, &id)?
+                && r.completed_at.is_none()
+                && ["accepted", "started", "running"].contains(&r.status.as_str())
+            {
+                db::mark_run_completed(
+                    &tx,
+                    &id,
+                    db::Completion {
+                        status: "failed",
+                        completed_at: &now,
+                        updated_at: &now,
+                        error_code: Some("runtime_unavailable"),
+                        error_message: Some(message),
+                    },
+                )?;
+                crashed.push(id);
+            }
+        }
+        if let Some(inv) = &inv {
+            db::update_invocation(
+                &tx,
+                &inv.invocation_id,
+                &[
+                    ("invocation_state", db::text("failed")),
+                    ("updated_at", db::text(now.as_str())),
+                ],
+            )?;
+            tx.execute("UPDATE runtime_operations SET status='failed', completed_at=?, updated_at=?, error_code=?, error_message=? WHERE operation_id=?", params![now, now, code, message, inv.operation_id])?;
+        }
+        db::settle_terminal_runtime_runs(&tx, runtime_id, &now, message)?;
+        let mut state = rt.state_object();
+        state["status"] = "crashed".into();
+        state["updatedAt"] = now.as_str().into();
+        state["brokerCrash"] = json!({"code":code,"message":message});
+        db::update_runtime(
             &tx,
-            &inv.invocation_id,
+            runtime_id,
             &[
-                ("invocation_state", db::text("failed")),
+                ("status", db::text("crashed")),
+                ("status_changed_at", db::text(now.as_str())),
                 ("updated_at", db::text(now.as_str())),
+                ("runtime_state_json", db::text(state.to_string())),
             ],
         )?;
-        tx.execute("UPDATE runtime_operations SET status='failed', completed_at=?, updated_at=?, error_code=?, error_message=? WHERE operation_id=?", params![now, now, code, message, inv.operation_id])?;
-    }
-    db::settle_terminal_runtime_runs(&tx, runtime_id, &now, message)?;
-    let mut state = rt.state_object();
-    state["status"] = "crashed".into();
-    state["updatedAt"] = now.as_str().into();
-    state["brokerCrash"] = json!({"code":code,"message":message});
-    db::update_runtime(
-        &tx,
-        runtime_id,
-        &[
-            ("status", db::text("crashed")),
-            ("status_changed_at", db::text(now.as_str())),
-            ("updated_at", db::text(now.as_str())),
-            ("runtime_state_json", db::text(state.to_string())),
-        ],
-    )?;
-    let last: Option<(i64, String, String)> = match &inv {
-        Some(i) => tx.query_row("SELECT seq,type,time FROM broker_invocation_events WHERE invocation_id=? ORDER BY seq DESC LIMIT 1", [&i.invocation_id], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?))).ok(),
-        None => None,
-    };
-    let mut payload = json!({"reason":"broker_process_closed"});
-    if let Some(i) = &inv {
-        payload["invocationId"] = i.invocation_id.as_str().into();
-    }
-    payload["brokerError"] = json!({"code":code,"message":message});
-    if let Some((seq, kind, time)) = last {
-        payload["lastBrokerEvent"] = json!({"seq":seq,"type":kind,"time":time});
-    }
-    let terminal_run = [
-        inv.as_ref().and_then(|i| i.run_id.clone()),
-        rt.active_run_id.clone(),
-    ]
-    .into_iter()
-    .flatten()
-    .find(|r| crashed.contains(r));
-    let ev = projection::events::Ev {
-        ts: now.clone(),
-        host_session_id: rt.host_session_id.clone(),
-        scope_ref: rt.scope_ref.clone(),
-        lane_ref: rt.lane_ref.clone(),
-        generation: rt.generation,
-        runtime_id: Some(runtime_id.to_owned()),
-        run_id: terminal_run,
-        transport: matches!(rt.transport.as_str(), "headless" | "tmux")
-            .then(|| rt.transport.clone()),
-        error_code: Some(code.to_owned()),
-        ..Default::default()
-    };
-    projection::events::append(&tx, "runtime.crashed", &ev, &payload)?;
-    tx.commit()?;
-    delete_active(server, runtime_id);
-    server.ledger_committed();
-    Ok(())
+        let last: Option<(i64, String, String)> = match &inv {
+            Some(i) => tx.query_row("SELECT seq,type,time FROM broker_invocation_events WHERE invocation_id=? ORDER BY seq DESC LIMIT 1", [&i.invocation_id], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?))).ok(),
+            None => None,
+        };
+        let mut payload = json!({"reason":"broker_process_closed"});
+        if let Some(i) = &inv {
+            payload["invocationId"] = i.invocation_id.as_str().into();
+        }
+        payload["brokerError"] = json!({"code":code,"message":message});
+        if let Some((seq, kind, time)) = last {
+            payload["lastBrokerEvent"] = json!({"seq":seq,"type":kind,"time":time});
+        }
+        let terminal_run = [
+            inv.as_ref().and_then(|i| i.run_id.clone()),
+            rt.active_run_id.clone(),
+        ]
+        .into_iter()
+        .flatten()
+        .find(|r| crashed.contains(r));
+        let ev = projection::events::Ev {
+            ts: now.clone(),
+            host_session_id: rt.host_session_id.clone(),
+            scope_ref: rt.scope_ref.clone(),
+            lane_ref: rt.lane_ref.clone(),
+            generation: rt.generation,
+            runtime_id: Some(runtime_id.to_owned()),
+            run_id: terminal_run,
+            transport: matches!(rt.transport.as_str(), "headless" | "tmux")
+                .then(|| rt.transport.clone()),
+            error_code: Some(code.to_owned()),
+            ..Default::default()
+        };
+        projection::events::append(&tx, "runtime.crashed", &ev, &payload)?;
+        tx.commit()?;
+        delete_active(server, runtime_id);
+        server.ledger_committed();
+        Ok(())
+    })
 }
 
 /// The leased broker is still live (condemnation averted).
 pub(super) async fn broker_pane_alive(server: &Server, runtime_id: &str) -> bool {
     let state = {
-        let db = server.store.lock().unwrap();
+        let Ok(db) = server.read() else {
+            return false;
+        };
         db::runtime(&db.sqlite, runtime_id).ok().flatten()
     };
     let Some(rt) = state else { return false };

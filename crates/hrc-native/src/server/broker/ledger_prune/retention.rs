@@ -44,13 +44,14 @@ impl Budget {
         self.check()?;
         let _write = s.owner_writes.enter().context("shutdown")?;
         let (result, held) = {
-            let mut store = s.store.lock().unwrap();
-            // Recheck after waiting for the owner mutex, before taking SQLite's writer.
-            self.check()?;
-            let left = (self.deadline - Local::now()).to_std().unwrap_or_default();
-            let started = Instant::now();
-            let result = action(&mut store, MAX_WRITE_HOLD.min(left));
-            (result, started.elapsed())
+            s.write(|store| {
+                // Recheck after waiting for the owner mutex, before taking SQLite's writer.
+                self.check()?;
+                let left = (self.deadline - Local::now()).to_std().unwrap_or_default();
+                let started = Instant::now();
+                let result = action(store, MAX_WRITE_HOLD.min(left));
+                Ok::<_, anyhow::Error>((result, started.elapsed()))
+            })?
         };
         drop(_write);
         self.max_hold = self.max_hold.max(held);
@@ -134,7 +135,7 @@ fn age_backups(s: &Server, b: &mut Budget, now: i64) -> Result<()> {
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(()),
         Err(e) => return Err(e.into()),
     };
-    let ours = migrations(&s.store.lock().unwrap().sqlite);
+    let ours = migrations(&s.read()?.sqlite);
     for entry in entries {
         b.check()?;
         let entry = entry?;
@@ -183,12 +184,13 @@ async fn tables(s: &Server, b: &mut Budget, now: i64) -> Result<()> {
         let mut size = 250;
         loop {
             b.check()?;
-            let keys = s.store.lock().unwrap().retention_candidates(
-                table,
-                &cutoff,
-                size,
-                (b.deadline - Local::now()).to_std().unwrap_or_default(),
-            )?;
+            let keys = {
+                // The bounded SELECT owns its SQLite read snapshot. The
+                // connection is mutable only to install its progress handler.
+                let mut reader = s.open_reader()?;
+                let left = (b.deadline - Local::now()).to_std().unwrap_or_default();
+                reader.retention_candidates(table, &cutoff, size, left)?
+            };
             if keys.is_empty() {
                 break;
             }
@@ -236,7 +238,7 @@ fn remove_tree(path: &Path, b: &Budget) -> Result<()> {
     Ok(())
 }
 async fn bundles(s: &Server, b: &mut Budget, now: i64) -> Result<()> {
-    let trips = s.store.lock().unwrap().retention_bundle_trips()?;
+    let trips = s.read()?.retention_bundle_trips()?;
     let mut counts = BTreeMap::new();
     let mut linked = BTreeSet::new();
     let mut referenced = BTreeSet::new();
@@ -280,9 +282,19 @@ async fn bundles(s: &Server, b: &mut Budget, now: i64) -> Result<()> {
             continue;
         }
         report["deletedDirs"] = (report["deletedDirs"].as_u64().unwrap() + 1).into();
+        // Directories are named by the immutable trip sequence. Fence both
+        // pointers so cleanup cannot clear a later trip or a different path.
         let removed = b.write(s, |store| {
-            let n = store.sqlite.execute("DELETE FROM runtime_artifacts WHERE artifact_id=?", [format!("first-turn-missing-{}", trip["trip_event_seq"])])?;
-            store.sqlite.execute("UPDATE runtime_first_turn_watch SET bundle_dir=NULL,updated_at=? WHERE runtime_id=? AND generation=?", params![stamp,trip["runtime_id"].as_str(),trip["generation"].as_i64()])?;
+            let path = trip["bundle_dir"].as_str();
+            let seq = trip["trip_event_seq"].as_i64();
+            let n = store.sqlite.execute(
+                "DELETE FROM runtime_artifacts WHERE artifact_id=? AND artifact_path=?",
+                params![format!("first-turn-missing-{}", trip["trip_event_seq"]), path],
+            )?;
+            store.sqlite.execute(
+                "UPDATE runtime_first_turn_watch SET bundle_dir=NULL,updated_at=? WHERE runtime_id=? AND generation=? AND trip_event_seq=? AND bundle_dir=?",
+                params![stamp, trip["runtime_id"].as_str(), trip["generation"].as_i64(), seq, path],
+            )?;
             Ok(n)
         }).await?;
         report["deletedArtifactRows"] =
@@ -308,6 +320,15 @@ async fn bundles(s: &Server, b: &mut Budget, now: i64) -> Result<()> {
                 {
                     continue;
                 }
+                let published: bool = s.read()?.sqlite.query_row(
+                    "SELECT EXISTS(SELECT 1 FROM runtime_first_turn_watch WHERE bundle_dir=?1)
+                         OR EXISTS(SELECT 1 FROM runtime_artifacts WHERE artifact_kind='first-turn-missing-bundle' AND artifact_path=?1)",
+                    [&name],
+                    |r| r.get(0),
+                )?;
+                if published {
+                    continue;
+                }
                 report["orphanDirs"] = (report["orphanDirs"].as_u64().unwrap() + 1).into();
                 match remove_tree(&path, b) {
                     Ok(()) => {
@@ -321,19 +342,23 @@ async fn bundles(s: &Server, b: &mut Budget, now: i64) -> Result<()> {
             }
         }
     }
-    let artifacts = s.store.lock().unwrap().sqlite.prepare("SELECT artifact_id,artifact_path FROM runtime_artifacts WHERE artifact_kind='first-turn-missing-bundle'")?
+    let artifacts = s.read()?.sqlite.prepare("SELECT artifact_id,artifact_path FROM runtime_artifacts WHERE artifact_kind='first-turn-missing-bundle'")?
         .query_map([], |r| Ok((r.get::<_,String>(0)?,r.get::<_,Option<String>>(1)?)))?.collect::<rusqlite::Result<Vec<_>>>()?;
     for (id, path) in artifacts {
         b.check()?;
         let Some(path) = path else { continue };
-        if std::fs::metadata(path).is_ok() {
+        if std::fs::metadata(&path).is_ok() {
             continue;
         }
         let n = b
             .write(s, |store| {
-                Ok(store
-                    .sqlite
-                    .execute("DELETE FROM runtime_artifacts WHERE artifact_id=?", [&id])?)
+                if std::fs::metadata(&path).is_ok() {
+                    return Ok(0);
+                }
+                Ok(store.sqlite.execute(
+                    "DELETE FROM runtime_artifacts WHERE artifact_id=? AND artifact_path=?",
+                    params![id, path],
+                )?)
             })
             .await?;
         report["deletedArtifactRows"] =
@@ -365,7 +390,7 @@ pub async fn before(s: &Server, deadline: DateTime<Local>) -> Budget {
     }
     // The Bun retention operation refused all row and bundle aging when the
     // pointer map was absent. Backups alone precede that prerequisite.
-    let mode = s.store.lock().unwrap().retention_auto_vacuum();
+    let mode = s.read().and_then(|db| db.retention_auto_vacuum());
     match mode {
         Ok(2) => {}
         Ok(mode) => {
@@ -390,7 +415,7 @@ pub async fn before(s: &Server, deadline: DateTime<Local>) -> Budget {
 pub async fn after(s: &Server, mut b: Budget) {
     let vacuum = async {
         anyhow::ensure!(
-            s.store.lock().unwrap().retention_auto_vacuum()? == 2,
+            s.read()?.retention_auto_vacuum()? == 2,
             "auto_vacuum must be INCREMENTAL"
         );
         b.step(s, |store, limit| {
