@@ -1,5 +1,6 @@
 //! Bun-compatible main-listener accounting. Requests only enqueue in memory;
 //! a separate writer owns filesystem work and flushes on clean shutdown.
+use super::turns::startup_timing::Timing;
 use axum::{
     Router,
     body::{Body, Bytes},
@@ -294,6 +295,9 @@ fn route(method: &str, path: &str) -> String {
     }
     "unmatched".into()
 }
+#[derive(Clone, Copy)]
+pub(super) struct ListeningSince(pub Instant);
+
 pub(super) struct Entry {
     listener: &'static str,
     /// Federation listeners: the node the handler's own token check authenticated.
@@ -306,6 +310,7 @@ pub(super) struct Entry {
     caller: String,
     request_id: String,
     started: Instant,
+    turn_timing: Option<Timing>,
     connection: Option<Connection>,
 }
 impl Entry {
@@ -360,11 +365,24 @@ impl Entry {
                 .unwrap_or("")
                 .into(),
             started: Instant::now(),
+            turn_timing: None,
             connection: request
                 .extensions()
                 .get::<ConnectInfo<Connection>>()
                 .map(|info| info.0.clone()),
         }
+    }
+    pub fn time_startup_turn(&mut self, request: &Request) -> Option<Timing> {
+        let listening = request.extensions().get::<ListeningSince>()?;
+        if self.method != "POST"
+            || self.route != "/v1/turns"
+            || self.started.duration_since(listening.0) >= Duration::from_secs(300)
+        {
+            return None;
+        }
+        let timing = Timing::new(self.started, self.started.duration_since(listening.0));
+        self.turn_timing = Some(timing.clone());
+        Some(timing)
     }
     /// A non-main listener: its routes are exact paths, the rest `unmatched`.
     pub fn listener(
@@ -388,7 +406,17 @@ impl Entry {
         if let Some(peer) = &self.peer {
             v["peer"] = peer.clone().into();
         }
+        if let Some(timing) = &self.turn_timing {
+            v["turnTimingId"] = timing.id().into();
+        }
         v
+    }
+    fn request_data(&self, status: u16) -> Value {
+        let mut data = self.base(status);
+        if let Some(timing) = &self.turn_timing {
+            data["turnTiming"] = timing.fields(status);
+        }
+        data
     }
     pub fn observe(mut self, accounting: Arc<Accounting>, response: Response) -> Response {
         let answered = Instant::now();
@@ -445,7 +473,12 @@ impl Entry {
         if stream && status < 400 {
             emit("info", "http.stream.open", "http", self.base(status));
         } else if !error_json {
-            emit(level(status), "http.request", "http", self.base(status));
+            emit(
+                level(status),
+                "http.request",
+                "http",
+                self.request_data(status),
+            );
         }
         let (parts, body) = response.into_parts();
         let connection = self.connection.take().filter(|_| !stream);
@@ -541,7 +574,7 @@ impl ObservedBody {
                 data,
             );
         } else if self.error_json {
-            let mut data = self.entry.base(self.status);
+            let mut data = self.entry.request_data(self.status);
             if let Ok(v) = serde_json::from_slice::<Value>(&self.error) {
                 if let Some(code) = v["error"].as_str().or_else(|| v["error"]["code"].as_str()) {
                     data["code"] = code.into();
@@ -577,7 +610,7 @@ impl InFlight {
 impl Drop for InFlight {
     fn drop(&mut self) {
         if let Some(entry) = self.0.take() {
-            let mut data = entry.base(499);
+            let mut data = entry.request_data(499);
             data["code"] = "client_cancelled".into();
             emit("warn", "http.request", "http", data);
         }

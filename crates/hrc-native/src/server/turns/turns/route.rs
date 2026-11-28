@@ -205,6 +205,8 @@ async fn input_turn(
     rt: &db::Rt,
     o: &Options<'_>,
 ) -> Result<Value, ApiError> {
+    super::startup_timing::field("runtimeId", rt.runtime_id.as_str());
+    super::startup_timing::field("brokerPath", "reuse");
     let interactive = rt.transport == "tmux" && !o.headless;
     let (label, route, transport) = if interactive {
         ("interactive", "interactive-broker", "tmux")
@@ -729,9 +731,14 @@ pub async fn execute(server: &Shared, plan: &Plan, o: &Options<'_>) -> Result<Va
         .to_owned();
     // T-12418: the reuse check and any birth are one decision per continuity;
     // a sibling birth in flight or a rotation finishes first, then we re-read.
+    let gate_wait = super::startup_timing::phase("sessionGateWaitMs");
     let gate = broker::session_gate(server, &plan.session).await;
+    drop(gate_wait);
     broker::require_active_host(server, &plan.session)?;
-    let body = match reusable(server, &host).await? {
+    let reuse = super::startup_timing::phase("runtimeLookupMs");
+    let reusable = reusable(server, &host).await?;
+    drop(reuse);
+    let body = match reusable {
         Some(rt) => {
             // Delivery into a live seat may wait for the turn; never under the gate.
             drop(gate);

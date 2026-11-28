@@ -455,7 +455,9 @@ impl Server {
     }
 }
 async fn dispatch(State(server): State<Shared>, request: Request) -> Response {
-    let entry = accounting::InFlight::new(accounting::Entry::new(&request));
+    let mut entry = accounting::Entry::new(&request);
+    let turn_timing = entry.time_startup_turn(&request);
+    let entry = accounting::InFlight::new(entry);
     let mutating = request.method() != Method::GET
         && !(request.method() == Method::POST
             && matches!(
@@ -463,7 +465,11 @@ async fn dispatch(State(server): State<Shared>, request: Request) -> Response {
                 "/v1/runtimes/read" | "/v1/sessions/read"
             ));
     let headers = request.headers().clone();
-    let response = federation::with_caller(&headers, dispatch_inner(&server, request, false)).await;
+    let dispatch = federation::with_caller(&headers, dispatch_inner(&server, request, false));
+    let response = match turn_timing {
+        Some(timing) => turns::startup_timing::CURRENT.scope(timing, dispatch).await,
+        None => dispatch.await,
+    };
     // Every request-path transaction has committed once its response exists.
     if mutating {
         server.ledger_committed();
@@ -800,7 +806,17 @@ async fn dispatch_inner(server: &Shared, request: Request, local_only: bool) -> 
     } else {
         handle(server, &method, uri.path(), &query, &body, &headers).await
     };
-    result.unwrap_or_else(|error| error.into_response_for(&headers))
+    result.unwrap_or_else(|error| {
+        if method == Method::POST && uri.path() == "/v1/turns" {
+            let reason = error
+                .detail
+                .as_ref()
+                .and_then(|d| d["reason"].as_str())
+                .unwrap_or(error.code);
+            turns::startup_timing::field("reason", reason);
+        }
+        error.into_response_for(&headers)
+    })
 }
 fn runtime_seat_id(path: &str) -> Option<&str> {
     path.strip_prefix("/v1/runtimes/")?

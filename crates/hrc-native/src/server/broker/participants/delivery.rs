@@ -310,7 +310,9 @@ pub async fn target(server: &Shared, session: &Value) -> Option<Result<db::Rt, A
         ..
     } = &delivery
     {
+        let timing = crate::server::turns::startup_timing::phase("participantReattachMs");
         reconnect(server, registration_id, attempt_id).await;
+        drop(timing);
         delivery = match resolve(server, session) {
             Ok(Some(d)) => d,
             // Still not restored: typed pending, never a generic birth.

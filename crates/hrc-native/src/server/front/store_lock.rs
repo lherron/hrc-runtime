@@ -280,6 +280,7 @@ impl Drop for StoreGuard<'_> {
         // SAFETY: dropped exactly once, here; the field is never used again.
         unsafe { ManuallyDrop::drop(&mut self.guard) };
         self.lock.release_slot();
+        super::turns::startup_timing::store_wait(self.at, self.waited);
         // The report and this update can proceed without taking the store mutex.
         self.lock
             .sites

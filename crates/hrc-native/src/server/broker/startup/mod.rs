@@ -713,6 +713,10 @@ fn terminal_active_runs(server: &Server) -> Result<()> {
 /// terminal rows, classify every broker row without attaching, sweep orphans
 /// and legacy rows, then attach the durable survivors. Never fails the boot.
 pub async fn reconcile(server: &Shared) -> Result<()> {
+    use crate::server::hosting::startup_phase;
+    use std::time::Instant;
+
+    let repair_started = Instant::now();
     self_brokered::reconcile(server).await?;
     if let Err(e) = hrcpty_log_sweep(server) {
         startup_issue("hrcpty log sweep failed", json!({}), &e);
@@ -735,6 +739,8 @@ pub async fn reconcile(server: &Shared) -> Result<()> {
     if let Err(e) = terminal_active_runs(server) {
         startup_issue("terminal runtime run repair failed", json!({}), &e);
     }
+    startup_phase("runtime_repairs", repair_started);
+    let classification_started = Instant::now();
     for id in broker_candidates(server)? {
         let Some(rt) = row(server, &id)? else {
             continue;
@@ -798,6 +804,8 @@ pub async fn reconcile(server: &Shared) -> Result<()> {
             );
         }
     }
+    startup_phase("runtime_classification", classification_started);
+    let sweeps_started = Instant::now();
     let grace = std::env::var("HRC_BROKER_ORPHAN_SWEEP_GRACE_MS")
         .ok()
         .and_then(|v| v.parse::<i64>().ok())
@@ -820,11 +828,16 @@ pub async fn reconcile(server: &Shared) -> Result<()> {
         .unwrap_or(HOLDER_ENUMERATION_TIMEOUT);
     renderer_sweep(server, grace, holder_timeout, true).await;
     legacy_sweep(server)?;
+    startup_phase("startup_sweeps", sweeps_started);
     warmup(server).await
 }
 
 /// warmDurableBrokerBindings: the single attach authority.
 async fn warmup(server: &Shared) -> Result<()> {
+    use std::time::Instant;
+
+    let started = Instant::now();
+    let pid = std::process::id();
     let mut total = 0;
     let mut attached = 0;
     let mut by = serde_json::Map::new();
@@ -854,6 +867,7 @@ async fn warmup(server: &Shared) -> Result<()> {
             continue;
         }
         total += 1;
+        let attach_started = Instant::now();
         let result = if durable(&h) {
             classify(server, &rt, &h, true).await
         } else {
@@ -861,6 +875,7 @@ async fn warmup(server: &Shared) -> Result<()> {
                 "broker runtime hosting state has no leased substrate"
             ))
         };
+        let duration_ms = attach_started.elapsed().as_secs_f64() * 1000.0;
         match result {
             Ok(o) => {
                 let c = category(&o);
@@ -868,7 +883,7 @@ async fn warmup(server: &Shared) -> Result<()> {
                 if c == "attached" {
                     attached += 1;
                 }
-                let mut data = json!({"runtimeId":id,"category":c,"state":o.state});
+                let mut data = json!({"runtimeId":id,"category":c,"state":o.state,"pid":pid,"durationMs":duration_ms});
                 if let Some(r) = &o.reason {
                     data["reason"] = r.as_str().into();
                 }
@@ -879,7 +894,7 @@ async fn warmup(server: &Shared) -> Result<()> {
                 log(
                     "warn",
                     "broker.warmup.runtime_error",
-                    json!({"runtimeId":id,"error":format!("{e:#}")}),
+                    json!({"runtimeId":id,"error":format!("{e:#}"),"pid":pid,"durationMs":duration_ms}),
                 );
             }
         }
@@ -887,7 +902,7 @@ async fn warmup(server: &Shared) -> Result<()> {
     log(
         "info",
         "broker.warmup.complete",
-        json!({"total":total,"attached":attached,"byCategory":by}),
+        json!({"total":total,"attached":attached,"byCategory":by,"pid":pid,"durationMs":started.elapsed().as_secs_f64()*1000.0}),
     );
     Ok(())
 }

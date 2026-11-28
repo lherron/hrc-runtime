@@ -292,6 +292,44 @@ async fn prepare_dispatch(server: &Shared, birth: &Birth<'_>) -> Result<(Value, 
     Ok((identity, record))
 }
 
+async fn start_invocation(
+    client: &JsonRpc,
+    record: &Value,
+    allocation: &Value,
+    attempt: &mut StartAttempt,
+) -> Result<Value> {
+    use crate::server::turns::startup_timing;
+
+    let execution = &record["admission"]["execution"];
+    let mut params = json!({"startRequest":execution["dispatchRequest"]["startRequest"],"dispatchEnv":record["dispatch"]["dispatchEnv"],"lifecyclePolicy":record["dispatch"]["lifecyclePolicy"]});
+    if let Some(lease) = allocation.get("lease") {
+        params["runtime"] = json!({"terminalSurface":lease});
+    }
+    // resolveViewerPaneDispatch: a viewer pane hard-requires its lease, and the
+    // renderer reads the SAME observer socket the broker launch carries.
+    if record["hosting"]["presentation"] == "attachable"
+        && let Some(observer) = allocation.get("observerSocketPath")
+    {
+        params["runtime"]["terminalSurfaceRequired"] = true.into();
+        params["dispatchEnv"]["HARNESS_BROKER_OBSERVER_SOCKET"] = observer.clone();
+    }
+    attempt.start_sent = true;
+    let rpc = startup_timing::phase("brokerInvocationStartMs");
+    let started = client
+        .request("invocation.start", params)
+        .await
+        .inspect_err(|error| {
+            attempt.refusal = error.downcast_ref::<rpc::ErrorReply>().map(|e| e.0.clone());
+            if let Some(code) = attempt.refusal.as_ref().and_then(|v| v["code"].as_i64()) {
+                startup_timing::field("brokerRpcCode", code);
+            }
+            attempt.error = error.to_string();
+        })?;
+    drop(rpc);
+    startup_timing::mark("brokerAcceptedMs");
+    Ok(started)
+}
+
 pub async fn birth(server: &Shared, birth: Birth<'_>) -> Result<Value, ApiError> {
     // assertParticipantAddressNotSubstituted: delivery routes a participant
     // into its own runtime before any birth; this backstop is for any caller
@@ -320,7 +358,14 @@ pub async fn birth(server: &Shared, birth: Birth<'_>) -> Result<Value, ApiError>
             json!({"scopeRef":scope,"registrationId":registration["registration_id"],"reason":"participant_address_reserved"}),
         ));
     }
+    use crate::server::turns::startup_timing;
+    startup_timing::field("brokerPath", "birth");
+    let prepare = startup_timing::phase("brokerPrepareMs");
     let (identity, record) = prepare_dispatch(server, &birth).await?;
+    drop(prepare);
+    if let Some(runtime) = identity["runtimeId"].as_str() {
+        startup_timing::field("runtimeId", runtime);
+    }
     let Birth {
         session,
         prompt,
@@ -336,25 +381,31 @@ pub async fn birth(server: &Shared, birth: Birth<'_>) -> Result<Value, ApiError>
     let run = (!prompt.is_empty()).then_some(run_id);
     let mut attempt = StartAttempt::default();
     let launched = async {
+        let spawn = startup_timing::phase("brokerLaunchMs");
         let (client, events, hello, allocation) = launch(server, &record).await?;
+        drop(spawn);
         attempt.client = Some(client.clone());
         super::response_format::preflight(&record, &hello, response_format)?;
         {
-            server.store.lock().unwrap().start_broker_graph(
-                &record,
-                &session,
-                &hello,
-                &allocation,
-                origin,
-                prompt.encode_utf16().count(),
-            )
-            .map_err(|error| {
-                if error.to_string() == hrc_store::HOST_SESSION_RETIRED {
-                    retired_host(&host, "archived", None)
-                } else {
-                    ApiError::from(error)
-                }
-            })?;
+            server
+                .store
+                .lock()
+                .unwrap()
+                .start_broker_graph(
+                    &record,
+                    &session,
+                    &hello,
+                    &allocation,
+                    origin,
+                    prompt.encode_utf16().count(),
+                )
+                .map_err(|error| {
+                    if error.to_string() == hrc_store::HOST_SESSION_RETIRED {
+                        retired_host(&host, "archived", None)
+                    } else {
+                        ApiError::from(error)
+                    }
+                })?;
             attempt.graph_committed = true;
             if run.is_some() {
                 crate::server::projection::turns::arm_first_turn(
@@ -385,9 +436,11 @@ pub async fn birth(server: &Shared, birth: Birth<'_>) -> Result<Value, ApiError>
                 Ok(Ok(Ok(()))) => {}
                 Ok(Ok(Err(reason))) => return Err(anyhow::anyhow!(reason).into()),
                 Ok(Err(_)) => {
-                    return Err(
-                        anyhow::anyhow!("attached run cancelled: {}", gate.pending_start_id).into(),
-                    );
+                    return Err(anyhow::anyhow!(
+                        "attached run cancelled: {}",
+                        gate.pending_start_id
+                    )
+                    .into());
                 }
                 Err(_) => {
                     return Err(anyhow::anyhow!(
@@ -399,27 +452,7 @@ pub async fn birth(server: &Shared, birth: Birth<'_>) -> Result<Value, ApiError>
             }
             wait_attached_client(&lease).await?;
         }
-        let execution = &record["admission"]["execution"];
-        let mut params = json!({"startRequest":execution["dispatchRequest"]["startRequest"],"dispatchEnv":record["dispatch"]["dispatchEnv"],"lifecyclePolicy":record["dispatch"]["lifecyclePolicy"]});
-        if let Some(lease) = allocation.get("lease") {
-            params["runtime"] = json!({"terminalSurface":lease});
-        }
-        // resolveViewerPaneDispatch: a viewer pane hard-requires its lease, and the
-        // renderer reads the SAME observer socket the broker launch carries.
-        if record["hosting"]["presentation"] == "attachable"
-            && let Some(observer) = allocation.get("observerSocketPath")
-        {
-            params["runtime"]["terminalSurfaceRequired"] = true.into();
-            params["dispatchEnv"]["HARNESS_BROKER_OBSERVER_SOCKET"] = observer.clone();
-        }
-        attempt.start_sent = true;
-        let started = client
-            .request("invocation.start", params)
-            .await
-            .inspect_err(|error| {
-                attempt.refusal = error.downcast_ref::<rpc::ErrorReply>().map(|e| e.0.clone());
-                attempt.error = error.to_string();
-            })?;
+        let started = start_invocation(&client, &record, &allocation, &mut attempt).await?;
         Ok::<_, ApiError>((client, events, hello, allocation, started, attach_pending))
     }
     .await;
@@ -479,6 +512,7 @@ pub async fn birth(server: &Shared, birth: Birth<'_>) -> Result<Value, ApiError>
     if let Some(run_id) = run
         && submission.is_none()
     {
+        let _wait = startup_timing::phase("launchCarriedSubmissionMs");
         submission = Some(launch_carried_submission(server, run_id, &runtime_id).await?);
     }
     let from_seq = server

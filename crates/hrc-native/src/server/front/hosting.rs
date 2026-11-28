@@ -3,8 +3,18 @@ use super::*;
 use std::future::IntoFuture;
 use tokio::signal::unix::{Signal, SignalKind, signal};
 
+pub(super) fn startup_phase(phase: &str, started: Instant) {
+    stderr_json(
+        "info",
+        "server",
+        "server.startup.phase",
+        json!({"phase":phase,"pid":std::process::id(),"durationMs":started.elapsed().as_secs_f64()*1000.0}),
+    );
+}
+
 /// Boot the peer listeners, then reconcile ownership before arming background work.
 async fn start_owner_services(server: &Shared) -> Result<()> {
+    let listeners_started = Instant::now();
     // F0's registry listener: bound before serving, so a bad bind refuses boot.
     if !server.front
         && let Some(bind) = server.federation.config.registry_bind.clone()
@@ -16,13 +26,17 @@ async fn start_owner_services(server: &Shared) -> Result<()> {
     {
         federation::peer_listener::start(server.clone(), &bind).await?;
     }
+    startup_phase("peer_listeners", listeners_started);
     // The front controls no brokers; Bun behind it owns execution.
     if !server.front {
+        let lifecycle_started = Instant::now();
         publication::start(server)?;
         lifecycle::rows::boot(server)?;
         lifecycle::credentials::start(server)?;
         self_restart::start(server);
+        startup_phase("owner_lifecycle", lifecycle_started);
         startup::reconcile(server).await?;
+        let background_started = Instant::now();
         // Bun reconciles before its server (and finalizers) exist. Started
         // earlier, the pump wakes on every startup commit and rescans
         // messages under the store mutex the next row is waiting for.
@@ -53,6 +67,7 @@ async fn start_owner_services(server: &Shared) -> Result<()> {
                 json!({"operationId":prior["operationId"],"requestedBy":prior["requestedBy"],"closedAt":prior["closedAt"]}),
             );
         }
+        startup_phase("owner_background_services", background_started);
     }
     Ok(())
 }
@@ -158,7 +173,26 @@ fn migrate_store(db: &std::path::Path) -> Result<hrc_store::migrate::StoreOwner>
     }
 }
 
+async fn bind_main_socket(
+    runtime: &std::path::Path,
+    front: bool,
+) -> Result<(Owner, UnixListener, Signal, Signal)> {
+    let owner = if front {
+        Owner::acquire_front(runtime)?
+    } else {
+        Owner::acquire(runtime).await?
+    };
+    // Claim the signals before the socket exists: a SIGTERM that races boot
+    // is held until serving starts, then shuts down gracefully.
+    let term = signal(SignalKind::terminate())?;
+    let int = signal(SignalKind::interrupt())?;
+    let listener = UnixListener::bind(&owner.socket)?;
+    fs::set_permissions(&owner.socket, fs::Permissions::from_mode(0o600))?;
+    Ok((owner, listener, term, int))
+}
+
 pub async fn serve(role: Role) -> Result<()> {
+    let boot_started = Instant::now();
     install_panic_hook();
     raise_open_file_limit();
     let started_at = timestamp();
@@ -174,6 +208,7 @@ pub async fn serve(role: Role) -> Result<()> {
     // structural.
     let front = role.is_front();
     let db = state.join("state.sqlite");
+    let store_started = Instant::now();
     let _store_owner = if front {
         None
     } else {
@@ -185,6 +220,8 @@ pub async fn serve(role: Role) -> Result<()> {
         Store::open(&db)?
     };
     let event_head = Mutex::new(events::HeadReader::open(&db)?);
+    startup_phase("store_open", store_started);
+    let bind_started = Instant::now();
     // Node identity resolves before ownership: a malformed federation config
     // refuses loudly rather than letting the daemon come up as the wrong node.
     let federation = federation::Node::new(
@@ -194,17 +231,9 @@ pub async fn serve(role: Role) -> Result<()> {
         front,
     )?;
     let command_targets = command_runs::load_targets()?;
-    let owner = if front {
-        Owner::acquire_front(&runtime)?
-    } else {
-        Owner::acquire(&runtime).await?
-    };
-    // Claim the signals before the socket exists: a SIGTERM that races boot
-    // is held until serving starts, then shuts down gracefully.
-    let mut term = signal(SignalKind::terminate())?;
-    let mut int = signal(SignalKind::interrupt())?;
-    let listener = UnixListener::bind(&owner.socket)?;
-    fs::set_permissions(&owner.socket, fs::Permissions::from_mode(0o600))?;
+    let (owner, listener, mut term, mut int) = bind_main_socket(&runtime, front).await?;
+    startup_phase("main_socket_bind", bind_started);
+    let state_started = Instant::now();
     let accounting = accounting::Accounting::new();
     if !front {
         statement_telemetry::install(&mut store, accounting.clone())?;
@@ -252,7 +281,9 @@ pub async fn serve(role: Role) -> Result<()> {
     });
     store_lock::start_accounting(&server);
     status_runtime::start(&server);
+    startup_phase("server_state", state_started);
     start_owner_services(&server).await?;
+    let kernel_started = Instant::now();
     // §8.1 item 5: the owner's kernel, after the store and before the listener
     // accepts. A front starts none; a failed start is logged, never fatal.
     let kernel = if server.front {
@@ -260,16 +291,23 @@ pub async fn serve(role: Role) -> Result<()> {
     } else {
         kernel::start(&server).await
     };
+    if !server.front {
+        startup_phase("kernel", kernel_started);
+    }
     let role = if server.front { "front" } else { "native" };
     let owned = server.clone();
     let closing = server.clone();
     let final_owner = server.clone();
-    let app = Router::new().fallback(dispatch).with_state(server);
+    let listening = Instant::now();
+    let app = Router::new()
+        .fallback(dispatch)
+        .layer(axum::Extension(accounting::ListeningSince(listening)))
+        .with_state(server);
     stderr_json(
         "info",
         "server",
         "server.listening",
-        json!({"pid":std::process::id(),"socketPath":owner.socket,"owner":"rusthrc","role":role}),
+        json!({"pid":std::process::id(),"socketPath":owner.socket,"owner":"rusthrc","role":role,"startupDurationMs":listening.duration_since(boot_started).as_secs_f64()*1000.0}),
     );
     let (shutdown_started, mut shutdown_began) = tokio::sync::oneshot::channel();
     let serving = axum::serve(

@@ -4,6 +4,7 @@
 pub mod admission;
 pub mod parse;
 pub(super) mod route;
+pub(super) mod startup_timing;
 pub use route::publish_presentation;
 
 use crate::server::{ApiError, Shared, projection::db};
@@ -442,6 +443,22 @@ async fn wait_stage(
         }
         let _ = tokio::time::timeout(Duration::from_millis(250), wake.changed()).await;
     };
+    match projection["disposition"]["type"].as_str() {
+        Some("executed" | "absorbed") => {
+            startup_timing::field("outcome", "started");
+            startup_timing::mark("executionObservedMs");
+        }
+        Some(disposition) => {
+            startup_timing::field("outcome", "refused");
+            startup_timing::field(
+                "reason",
+                projection["disposition"]["reason"]
+                    .as_str()
+                    .unwrap_or(disposition),
+            );
+        }
+        None => {}
+    }
     let (run, error) = run_error(server, &run_id)?;
     let joined = if projection["disposition"]["type"] == "absorbed" {
         projection["terminal"]["status"].as_str().map(|s| match s {
@@ -478,21 +495,28 @@ async fn admitted(
     require_submission: bool,
 ) -> Result<Admit, ApiError> {
     let (result, mut trace) = admission::admit(server, &req).await;
+    startup_timing::mark("admissionDecisionMs");
     let plan = match result {
         Err(error) => {
             admission::record(server, &req, &mut trace, Outcome::Refused(&error));
             return Err(error);
         }
         Ok(Admitted::Replayed(body)) => {
+            startup_timing::field("outcome", "replayed");
+            startup_timing::field("runId", body["runId"].clone());
+            startup_timing::field("runtimeId", body["runtimeId"].clone());
             admission::record(server, &req, &mut trace, Outcome::Replayed);
             return Ok(Admit::Receipt(body, true, None));
         }
         Ok(Admitted::Rejected { code, body }) => {
+            startup_timing::field("outcome", "refused");
+            startup_timing::field("reason", code);
             admission::record(server, &req, &mut trace, Outcome::RefusedWith(code));
             return Ok(Admit::Rejected(body));
         }
         Ok(Admitted::Plan(plan)) => plan,
     };
+    startup_timing::mark("admittedMs");
     let door_report = public_door_report(req.intent, &plan.door_report);
     let routed = match route::execute(server, &plan, &options)
         .await
@@ -560,6 +584,15 @@ async fn admitted(
             accepted: routed["admission"] != "rejected",
         },
     );
+    startup_timing::field("runtimeId", routed["runtimeId"].clone());
+    if routed["admission"] == "rejected" {
+        startup_timing::field("outcome", "refused");
+        if let Some(reason) = routed["reason"].as_str() {
+            startup_timing::field("reason", reason);
+        }
+    } else {
+        startup_timing::field("outcome", "accepted");
+    }
     Ok(Admit::Receipt(routed, false, door_report))
 }
 
@@ -577,12 +610,15 @@ fn public_door_report(requested: &str, report: &Value) -> Option<Value> {
 /// POST /v1/turns
 pub async fn dispatch_turn(server: &Shared, body: Value) -> Result<Response, ApiError> {
     let req = parse::dispatch(&body)?;
+    startup_timing::field("hostSessionId", req.host.as_str());
+    startup_timing::field("waitFor", req.wait_for.as_str());
     let session = {
         let db = server.store.lock().unwrap();
         db.session(&req.host)?
             .ok_or_else(|| ApiError::missing_host(&req.host))?
     };
     let run_id = format!("run-{}", Uuid::new_v4());
+    startup_timing::field("runId", run_id.as_str());
     let mut intent = req.runtime_intent.clone();
     if let (Some(a), Some(i)) = (&req.attachments, intent.as_mut()) {
         i["attachments"] = a.clone();

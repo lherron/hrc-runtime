@@ -3,6 +3,7 @@ use super::{active, broker_answers, delete_active, log, mark_closing, seat};
 use crate::server::{
     Shared,
     projection::{db, observe},
+    turns::startup_timing,
 };
 use serde_json::{Value, json};
 use std::time::Duration;
@@ -229,6 +230,7 @@ pub async fn submit(server: &Shared, s: Submit<'_>) -> Result<Value, BrokerError
         }
         p
     };
+    let broker_wait = startup_timing::phase("brokerSubmissionMs");
     let (invocation, response, minted) = match with_retries(
         server,
         &s,
@@ -263,6 +265,7 @@ pub async fn submit(server: &Shared, s: Submit<'_>) -> Result<Value, BrokerError
             (invocation, response, true)
         }
     };
+    drop(broker_wait);
     if minted && response["submissionId"].as_str() != Some(s.submission_id) {
         log(
             "error",
@@ -279,6 +282,7 @@ pub async fn submit(server: &Shared, s: Submit<'_>) -> Result<Value, BrokerError
         });
     }
     if response["admission"] == "admitted" {
+        startup_timing::mark("brokerAcceptedMs");
         let observed = hrc_store::timestamp();
         let result = {
             let db = server.store.lock().unwrap();
